@@ -7,5 +7,11 @@ defmodule OpsondeWeb.Router do
 
   scope "/api", OpsondeWeb do
     pipe_through :api
+
+    match :*, "/*path", APIErrorController, :not_found
+  end
+
+  scope "/", OpsondeWeb do
+    get "/*path", SPAController, :index
   end
 end

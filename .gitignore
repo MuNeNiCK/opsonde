@@ -22,6 +22,10 @@ erl_crash.dump
 # Temporary files, for example, from tests.
 /tmp/
 
+# Web build output is produced from assets/ during setup and release builds.
+/priv/static/assets/
+/priv/static/index.html
+
 # Ignore package tarball (built via "mix hex.build").
 opsonde-*.tar
 
