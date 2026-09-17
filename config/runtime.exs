@@ -23,7 +23,7 @@ end
 config :opsonde, OpsondeWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-if config_env() == :prod do
+if config_env() == :prod and not Burrito.Util.running_standalone?() do
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """

@@ -8,6 +8,8 @@ defmodule Opsonde.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      default_release: :opsonde_server,
+      releases: releases(),
       aliases: aliases(),
       deps: deps(),
       listeners: [Phoenix.CodeReloader],
@@ -54,7 +56,26 @@ defmodule Opsonde.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:burrito, "== 1.5.0"}
+    ]
+  end
+
+  defp releases do
+    [
+      opsonde_server: [],
+      opsonde: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            linux_x86_64: [os: :linux, cpu: :x86_64],
+            linux_aarch64: [os: :linux, cpu: :aarch64],
+            macos_x86_64: [os: :darwin, cpu: :x86_64],
+            macos_aarch64: [os: :darwin, cpu: :aarch64],
+            windows_x86_64: [os: :windows, cpu: :x86_64]
+          ]
+        ]
+      ]
     ]
   end
 
