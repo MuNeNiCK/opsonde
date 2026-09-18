@@ -1,7 +1,7 @@
 defmodule Opsonde.Transports.SSH do
   @moduledoc false
 
-  @configuration_keys ~w(host_key_fingerprints connect_timeout_ms operation_timeout_ms max_output_bytes)
+  @configuration_keys ~w(host_key_fingerprints connect_timeout_ms operation_timeout_ms max_output_bytes legacy_algorithms)
   @credential_keys ~w(username auth_method password private_key)
   @default_connect_timeout 10_000
   @default_operation_timeout 30_000
@@ -17,6 +17,7 @@ defmodule Opsonde.Transports.SSH do
       :username,
       :authentication,
       :host_key_fingerprints,
+      :legacy_algorithms,
       :connect_timeout,
       :operation_timeout,
       :max_output_bytes
@@ -30,12 +31,25 @@ defmodule Opsonde.Transports.SSH do
     defstruct @enforce_keys
   end
 
+  defmodule ShellResult do
+    @moduledoc false
+    @enforce_keys [:output]
+    defstruct @enforce_keys
+  end
+
+  defmodule Channel do
+    @moduledoc false
+    @enforce_keys [:connection, :id, :deadline, :max_output_bytes, :reporter]
+    defstruct @enforce_keys
+  end
+
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
     with :ok <- exact_keys(configuration, @configuration_keys),
          :ok <- exact_keys(credentials, @credential_keys),
          {:ok, username} <- required_string(credentials, "username", 255),
          {:ok, authentication} <- authentication(credentials),
          {:ok, fingerprints} <- fingerprints(configuration),
+         {:ok, legacy_algorithms} <- legacy_algorithms(configuration),
          {:ok, connect_timeout} <-
            bounded_integer(configuration, "connect_timeout_ms", @default_connect_timeout, 100),
          {:ok, operation_timeout} <-
@@ -58,6 +72,7 @@ defmodule Opsonde.Transports.SSH do
          username: username,
          authentication: authentication,
          host_key_fingerprints: fingerprints,
+         legacy_algorithms: legacy_algorithms,
          connect_timeout: connect_timeout,
          operation_timeout: operation_timeout,
          max_output_bytes: max_output_bytes
@@ -80,6 +95,60 @@ defmodule Opsonde.Transports.SSH do
       end)
     end
   end
+
+  def shell(%Config{} = config, endpoint, script, cancelled? \\ fn -> false end) do
+    with :ok <- command(script) do
+      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
+        execute_shell(connection, script, config.max_output_bytes, deadline, parent, reference)
+      end)
+    end
+  end
+
+  def subsystem(%Config{} = config, endpoint, name, exchange, cancelled? \\ fn -> false end)
+      when is_function(exchange, 1) do
+    with :ok <- subsystem_name(name) do
+      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
+        execute_subsystem(
+          connection,
+          name,
+          config.max_output_bytes,
+          deadline,
+          parent,
+          reference,
+          exchange
+        )
+      end)
+    end
+  end
+
+  def channel_send(channel, data), do: channel_send(channel, data, true)
+
+  def channel_send(%Channel{} = channel, data, dispatched?)
+      when is_binary(data) and is_boolean(dispatched?) do
+    if byte_size(data) in 1..@maximum_output_bytes do
+      case :ssh_connection.send(channel.connection, channel.id, data, remaining(channel.deadline)) do
+        :ok ->
+          if dispatched? do
+            {parent, reference} = channel.reporter
+            send(parent, {:opsonde_ssh_dispatched, reference, channel.connection})
+          end
+
+          :ok
+
+        {:error, reason} ->
+          transport_error_after_dispatch(reason)
+      end
+    else
+      {:error, :failed, "SSH channel payload is invalid"}
+    end
+  end
+
+  def channel_send(_channel, _data, _dispatched?),
+    do: {:error, :failed, "SSH channel payload is invalid"}
+
+  def channel_receive(%Channel{} = channel, buffer, complete?)
+      when is_binary(buffer) and is_function(complete?, 1),
+      do: receive_channel(channel, buffer, complete?)
 
   defp run(config, endpoint, cancelled?, operation) when is_function(cancelled?, 0) do
     with {:ok, host, port, fingerprint} <- endpoint(config, endpoint),
@@ -142,7 +211,10 @@ defmodule Opsonde.Transports.SSH do
       {:auth_methods, auth_method(config.authentication)}
     ]
 
-    options = authentication_options(options, config.authentication)
+    options =
+      options
+      |> authentication_options(config.authentication)
+      |> algorithm_options(config.legacy_algorithms)
 
     case :ssh.connect(String.to_charlist(host), port, options, config.connect_timeout) do
       {:ok, connection} ->
@@ -169,6 +241,117 @@ defmodule Opsonde.Transports.SSH do
       end
     else
       {:error, reason} -> transport_error(reason)
+    end
+  end
+
+  defp execute_shell(connection, script, max_output_bytes, deadline, parent, reference) do
+    timeout = remaining(deadline)
+
+    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
+         :success <- :ssh_connection.ptty_alloc(connection, channel, [], timeout),
+         :ok <- :ssh_connection.shell(connection, channel),
+         :ok <- :ssh_connection.send(connection, channel, script, timeout) do
+      send(parent, {:opsonde_ssh_dispatched, reference, connection})
+      collect_shell(connection, channel, max_output_bytes, deadline, <<>>)
+    else
+      {:error, reason} -> transport_error(reason)
+      :failure -> {:error, :failed, "SSH shell was rejected"}
+      _other -> {:error, :failed, "SSH shell failed"}
+    end
+  end
+
+  defp execute_subsystem(
+         connection,
+         name,
+         max_output_bytes,
+         deadline,
+         parent,
+         reference,
+         exchange
+       ) do
+    timeout = remaining(deadline)
+
+    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
+         :success <-
+           :ssh_connection.subsystem(connection, channel, String.to_charlist(name), timeout) do
+      exchange.(%Channel{
+        connection: connection,
+        id: channel,
+        deadline: deadline,
+        max_output_bytes: max_output_bytes,
+        reporter: {parent, reference}
+      })
+    else
+      {:error, reason} -> transport_error(reason)
+      :failure -> {:error, :failed, "SSH subsystem is unavailable"}
+      _other -> {:error, :failed, "SSH subsystem failed"}
+    end
+  end
+
+  defp collect_shell(connection, channel, limit, deadline, output) do
+    timeout = remaining(deadline)
+
+    receive do
+      {:ssh_cm, ^connection, {:data, ^channel, _stream, data}} when is_binary(data) ->
+        if byte_size(output) + byte_size(data) > limit do
+          :ssh_connection.close(connection, channel)
+          {:error, :output_limit_after_dispatch, "SSH shell output exceeded its limit"}
+        else
+          collect_shell(connection, channel, limit, deadline, output <> data)
+        end
+
+      {:ssh_cm, ^connection, {:eof, ^channel}} ->
+        collect_shell(connection, channel, limit, deadline, output)
+
+      {:ssh_cm, ^connection, {:closed, ^channel}} ->
+        {:ok, %ShellResult{output: output}}
+
+      {:ssh_cm, ^connection, {:exit_status, ^channel, _status}} ->
+        collect_shell(connection, channel, limit, deadline, output)
+
+      {:ssh_cm, ^connection, {:exit_signal, ^channel, _signal, _error, _language}} ->
+        {:error, :disconnected_after_dispatch, "SSH shell exited unexpectedly"}
+    after
+      timeout ->
+        :ssh_connection.close(connection, channel)
+        {:error, :timeout_after_dispatch, "SSH shell timed out"}
+    end
+  end
+
+  defp receive_channel(channel, buffer, complete?) do
+    case complete?.(buffer) do
+      {:ok, value, rest} ->
+        {:ok, value, rest}
+
+      :more ->
+        timeout = remaining(channel.deadline)
+
+        receive do
+          {:ssh_cm, connection, {:data, id, _stream, data}}
+          when connection == channel.connection and id == channel.id and is_binary(data) ->
+            if byte_size(buffer) + byte_size(data) > channel.max_output_bytes do
+              :ssh_connection.close(channel.connection, channel.id)
+              {:error, :output_limit_after_dispatch, "SSH subsystem output exceeded its limit"}
+            else
+              receive_channel(channel, buffer <> data, complete?)
+            end
+
+          {:ssh_cm, connection, {:eof, id}}
+          when connection == channel.connection and id == channel.id ->
+            {:error, :disconnected_after_dispatch, "SSH subsystem closed before its reply"}
+
+          {:ssh_cm, connection, {:closed, id}}
+          when connection == channel.connection and id == channel.id ->
+            {:error, :disconnected_after_dispatch, "SSH subsystem closed before its reply"}
+        after
+          timeout -> {:error, :timeout_after_dispatch, "SSH subsystem timed out"}
+        end
+
+      {:error, _category, _message} = error ->
+        error
+
+      _other ->
+        {:error, :failed, "SSH subsystem response matcher is invalid"}
     end
   end
 
@@ -357,11 +540,53 @@ defmodule Opsonde.Transports.SSH do
 
   defp command(_value), do: {:error, :failed, "SSH command is invalid"}
 
+  defp subsystem_name(value) when is_binary(value) and byte_size(value) in 1..64 do
+    if String.match?(value, ~r/^[A-Za-z0-9._-]+$/),
+      do: :ok,
+      else: {:error, :failed, "SSH subsystem name is invalid"}
+  end
+
+  defp subsystem_name(_value), do: {:error, :failed, "SSH subsystem name is invalid"}
+
+  defp legacy_algorithms(configuration) do
+    algorithms = Map.get(configuration, "legacy_algorithms", [])
+    allowed = ~w(ssh-rsa diffie-hellman-group-exchange-sha1 diffie-hellman-group14-sha1)
+
+    if is_list(algorithms) and length(algorithms) <= length(allowed) and
+         Enum.all?(algorithms, &(&1 in allowed)) and
+         length(Enum.uniq(algorithms)) == length(algorithms),
+       do: {:ok, algorithms},
+       else: {:error, :invalid_legacy_algorithms}
+  end
+
   defp authentication_options(options, {:password, password}),
     do: [{:password, String.to_charlist(password)} | options]
 
   defp authentication_options(options, {:public_key, _key, algorithms}),
     do: [{:pref_public_key_algs, algorithms} | options]
+
+  defp algorithm_options(options, []), do: options
+
+  defp algorithm_options(options, algorithms) do
+    kex =
+      Enum.flat_map(algorithms, fn
+        "diffie-hellman-group-exchange-sha1" -> [:"diffie-hellman-group-exchange-sha1"]
+        "diffie-hellman-group14-sha1" -> [:"diffie-hellman-group14-sha1"]
+        _algorithm -> []
+      end)
+
+    public_key = if "ssh-rsa" in algorithms, do: [:"ssh-rsa"], else: []
+
+    additions =
+      []
+      |> maybe_add_algorithm(:kex, kex)
+      |> maybe_add_algorithm(:public_key, public_key)
+
+    [{:modify_algorithms, [{:append, additions}]} | options]
+  end
+
+  defp maybe_add_algorithm(values, _kind, []), do: values
+  defp maybe_add_algorithm(values, kind, algorithms), do: [{kind, algorithms} | values]
 
   defp auth_method({:password, _password}), do: ~c"password"
   defp auth_method({:public_key, _key, _algorithms}), do: ~c"publickey"

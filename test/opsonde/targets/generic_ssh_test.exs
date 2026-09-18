@@ -137,6 +137,26 @@ defmodule Opsonde.Targets.GenericSSHTest do
              end)
   end
 
+  test "legacy algorithms require an explicit bounded allowlist", context do
+    legacy_configuration =
+      configuration(context, %{
+        "legacy_algorithms" => [
+          "ssh-rsa",
+          "diffie-hellman-group-exchange-sha1",
+          "diffie-hellman-group14-sha1"
+        ]
+      })
+
+    assert {:ok, legacy} = Transport.build(legacy_configuration, password_credentials())
+    assert :ok = Transport.check(legacy, context.endpoint)
+
+    assert {:error, :invalid_configuration} =
+             Transport.build(
+               configuration(context, %{"legacy_algorithms" => ["diffie-hellman-group1-sha1"]}),
+               password_credentials()
+             )
+  end
+
   test "generic adapter exposes effects only and uses the registered method through policy",
        context do
     admin = Accounts.bootstrap!("generic-ssh-admin@example.com", @password, @password)
