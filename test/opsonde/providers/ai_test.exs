@@ -204,6 +204,7 @@ defmodule Opsonde.Providers.AITest do
   defp request(provider_revision) do
     %AI.Request{
       provider_revision: provider_revision,
+      objective: "Restore service health",
       disclosure: %AI.Disclosure{
         allowed_target_ids: ["target-1"],
         allowed_evidence_kinds: [:signal, :observation],

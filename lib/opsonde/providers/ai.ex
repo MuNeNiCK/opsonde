@@ -76,6 +76,7 @@ defmodule Opsonde.Providers.AI do
 
     @enforce_keys [
       :provider_revision,
+      :objective,
       :disclosure,
       :budget,
       :evidence,

@@ -35,6 +35,7 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
   defp validate_request(
          %AI.Request{
            provider_revision: revision,
+           objective: objective,
            budget: %AI.Budget{} = budget,
            disclosure: %AI.Disclosure{} = disclosure
          } = request
@@ -47,7 +48,7 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
       budget.remaining_turns == 0 or budget.remaining_tokens == 0 ->
         {:error, ai_error(:budget_exhausted, "AI budget is exhausted")}
 
-      not valid_disclosure?(disclosure) or not valid_items?(request) ->
+      not nonempty?(objective) or not valid_disclosure?(disclosure) or not valid_items?(request) ->
         {:error, ai_error(:invalid_input, "AI request is invalid")}
 
       not disclosed?(request) ->
@@ -109,7 +110,7 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
       evidence_allowed?(request.evidence, disclosure) and
       results_allowed?(request.observation_results, disclosure) and
       tools_allowed?(request.tools, disclosure) and
-      encoded_size(items) <= disclosure.max_bytes
+      encoded_size(request.objective, items) <= disclosure.max_bytes
   end
 
   defp evidence_allowed?(evidence, disclosure) do
@@ -133,10 +134,10 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
       Enum.all?(tools, &(&1.target_id in disclosure.allowed_target_ids))
   end
 
-  defp encoded_size(items) do
+  defp encoded_size(objective, items) do
     items = Enum.map(items, &Map.from_struct/1)
 
-    case Jason.encode(items) do
+    case Jason.encode(%{objective: objective, items: items}) do
       {:ok, encoded} -> byte_size(encoded)
       {:error, _error} -> :infinity
     end
