@@ -96,6 +96,22 @@ defmodule Opsonde.Cases do
       define :create_resolution_run_record, action: :create_record
       define :retire_resolution_run, action: :retire, args: [:expected_revision]
       define :pause_resolution_run, action: :pause, args: [:expected_revision]
+
+      define :update_resolution_run_counters,
+        action: :update_counters,
+        args: [:expected_revision]
+
+      define :charge_resolution_run,
+        action: :charge,
+        args: [
+          :case_id,
+          :resolution_run_id,
+          :kind,
+          :amount,
+          :idempotency_key,
+          :pending_intent,
+          :required_human_input
+        ]
     end
 
     resource Opsonde.Cases.CaseEvent do
@@ -106,6 +122,64 @@ defmodule Opsonde.Cases do
         args: [:case_id, :idempotency_key]
 
       define :create_case_event_record, action: :create_record
+    end
+
+    resource Opsonde.Cases.Turn do
+      define :list_turns, action: :read
+      define :get_turn, action: :read, get_by: [:id]
+
+      define :turn_by_idempotency,
+        action: :by_idempotency,
+        args: [:resolution_run_id, :idempotency_key]
+
+      define :create_turn_record, action: :create_record
+      define :complete_turn_record, action: :complete_record, args: [:expected_revision]
+
+      define :start_turn,
+        action: :start,
+        args: [
+          :case_id,
+          :resolution_run_id,
+          :idempotency_key,
+          :intent,
+          :pending_intent,
+          :required_human_input
+        ]
+
+      define :complete_turn,
+        action: :complete,
+        args: [
+          :id,
+          :expected_revision,
+          :result,
+          :progress_kind,
+          :pending_intent,
+          :required_human_input
+        ]
+    end
+
+    resource Opsonde.Cases.Evidence do
+      define :list_evidence, action: :read
+
+      define :evidence_by_idempotency,
+        action: :by_idempotency,
+        args: [:case_id, :idempotency_key]
+
+      define :create_evidence_record, action: :create_record
+
+      define :append_evidence,
+        action: :append,
+        args: [
+          :case_id,
+          :resolution_run_id,
+          :turn_id,
+          :idempotency_key,
+          :kind,
+          :source,
+          :source_ref,
+          :content,
+          :observed_at
+        ]
     end
   end
 end

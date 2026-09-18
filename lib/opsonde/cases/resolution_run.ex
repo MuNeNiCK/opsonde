@@ -68,10 +68,53 @@ defmodule Opsonde.Cases.ResolutionRun do
       change set_attribute(:status, :needs_attention)
       change optimistic_lock(:revision)
     end
+
+    update :update_counters do
+      accept [
+        :turn_count,
+        :target_request_count,
+        :effect_count,
+        :related_target_count,
+        :ai_usage_units,
+        :no_progress_turns
+      ]
+
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:active, true)
+      change optimistic_lock(:revision)
+    end
+
+    action :charge, :struct do
+      constraints instance_of: Opsonde.Cases.BudgetResult
+      transaction? false
+
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      argument :kind, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:target_request, :effect, :related_target, :ai_usage]]
+
+      argument :amount, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :idempotency_key, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      argument :pending_intent, :map, allow_nil?: false
+
+      argument :required_human_input, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      run Opsonde.Cases.ResolutionRun.Actions.Charge
+    end
   end
 
   policies do
-    policy action([:active_for_case, :create_record, :retire, :pause]) do
+    policy action([:active_for_case, :create_record, :retire, :pause, :update_counters, :charge]) do
       forbid_if always()
     end
 
