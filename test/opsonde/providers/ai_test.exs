@@ -518,6 +518,25 @@ defmodule Opsonde.Providers.AITest do
     request = resolver_request(context.provider.revision)
     intent = %AI.Handoff{reason: "Need human input", required_input: "Inspect hardware"}
 
+    for oversized_intent <- [
+          %AI.Handoff{
+            reason: String.duplicate("r", 501),
+            required_input: "Inspect hardware"
+          },
+          %AI.Handoff{
+            reason: "Need human input",
+            required_input: String.duplicate("i", 1_001)
+          },
+          %{proposal() | reason: String.duplicate("r", 501)}
+        ] do
+      assert {:error, oversized_error} =
+               resolve(context, request, fn _request ->
+                 {:ok, %AI.ResolverDecision{intent: oversized_intent, usage: usage()}}
+               end)
+
+      assert ai_error(oversized_error).category == :invalid_output
+    end
+
     assert {:error, invalid_usage} =
              resolve(context, request, fn _request ->
                {:ok,

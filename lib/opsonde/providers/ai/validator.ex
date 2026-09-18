@@ -266,7 +266,7 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:review, %AI.ReviewDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
-         true <- nonempty?(decision.reason),
+         true <- bounded_string?(decision.reason, 1_000),
          true <- review_decision_size(decision) <= @max_output_bytes do
       :ok
     else
@@ -283,7 +283,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
     if request.budget.remaining_target_requests > 0 and not is_nil(tool) and
          valid_tool_input?(choice.selectors, choice.parameters, tool.input_schema) and
-         nonempty?(choice.reason) do
+         bounded_string?(choice.reason, 500) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI observation choice is invalid")}
@@ -292,7 +292,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and bounded_string?(search.query, 200) and
-         nonempty?(search.reason) do
+         bounded_string?(search.reason, 500) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI Target search is invalid")}
@@ -308,7 +308,7 @@ defmodule Opsonde.Providers.AI.Validator do
           candidate.revision == selection.target_revision
       end)
 
-    if not is_nil(candidate) and nonempty?(selection.reason) and
+    if not is_nil(candidate) and bounded_string?(selection.reason, 500) and
          nonempty_list?(selection.evidence_ids) and
          unique?(selection.evidence_ids) and
          Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) do
@@ -327,7 +327,8 @@ defmodule Opsonde.Providers.AI.Validator do
              valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
              exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
              valid_verification_intent?(proposal.verification_intent, request.observation_tools) and
-             nonempty?(proposal.reason) and nonempty_list?(proposal.evidence_ids) and
+             bounded_string?(proposal.reason, 500) and
+             nonempty_list?(proposal.evidence_ids) and
              unique?(proposal.evidence_ids) and
              Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) do
           :ok
@@ -341,7 +342,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.RecoveryConclusion{} = conclusion, request) do
-    if request.alert_state == :recovered and nonempty?(conclusion.reason) and
+    if request.alert_state == :recovered and bounded_string?(conclusion.reason, 500) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in available_evidence_ids(request))) do
       :ok
@@ -351,7 +352,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.Handoff{} = handoff, _request) do
-    if nonempty?(handoff.reason) and nonempty?(handoff.required_input),
+    if bounded_string?(handoff.reason, 500) and bounded_string?(handoff.required_input, 1_000),
       do: :ok,
       else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
   end
@@ -363,8 +364,9 @@ defmodule Opsonde.Providers.AI.Validator do
     nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and
       positive?(proposal.target_revision) and nonempty?(proposal.access_method_id) and
       positive?(proposal.access_method_revision) and nonempty?(proposal.capability) and
-      nonempty?(proposal.operation) and is_map(proposal.parameters) and nonempty?(proposal.reason) and
-      is_map(proposal.selectors) and nonempty_list?(proposal.evidence_ids) and
+      nonempty?(proposal.operation) and is_map(proposal.parameters) and
+      bounded_string?(proposal.reason, 500) and is_map(proposal.selectors) and
+      nonempty_list?(proposal.evidence_ids) and
       unique?(proposal.evidence_ids) and
       Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) and
       is_map(proposal.expected_result) and
