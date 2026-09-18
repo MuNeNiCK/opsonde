@@ -30,6 +30,7 @@ defmodule OpsondeWeb.Router do
     get "/providers/:id", ProviderController, :show
     patch "/providers/:id", ProviderController, :update
     post "/providers/:id/check", ProviderController, :check
+    post "/providers/:id/target-capabilities", ProviderController, :target_capabilities
     post "/providers/:id/enable", ProviderController, :enable
     post "/providers/:id/disable", ProviderController, :disable
 

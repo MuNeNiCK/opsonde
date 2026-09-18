@@ -21,4 +21,20 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
       updated_at: provider.updated_at
     }
   end
+
+  def capabilities(capabilities) do
+    %{
+      observations: Enum.map(capabilities.observations, &operation/1),
+      effects: Enum.map(capabilities.effects, &operation/1)
+    }
+  end
+
+  defp operation(operation) do
+    %{
+      capability: operation.capability,
+      operation: operation.operation,
+      description: operation.description,
+      input_schema: operation.input_schema
+    }
+  end
 end

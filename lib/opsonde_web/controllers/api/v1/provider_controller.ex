@@ -88,6 +88,20 @@ defmodule OpsondeWeb.API.V1.ProviderController do
 
   def check(_conn, _params), do: {:error, :bad_request}
 
+  def target_capabilities(
+        conn,
+        %{"id" => id, "provider" => %{"expected_revision" => expected_revision}}
+      ) do
+    with {:ok, capabilities} <-
+           Providers.target_capabilities(id, expected_revision, %{},
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, ProviderJSON.capabilities(capabilities))
+    end
+  end
+
+  def target_capabilities(_conn, _params), do: {:error, :bad_request}
+
   def enable(conn, params), do: set_enabled(conn, params, :enable)
   def disable(conn, params), do: set_enabled(conn, params, :disable)
 

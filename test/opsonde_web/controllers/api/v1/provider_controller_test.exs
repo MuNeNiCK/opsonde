@@ -274,6 +274,62 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
              json_response(invalid_cursor, 422)
   end
 
+  test "enabled Target Provider exposes adapter capabilities to administrators and operators",
+       context do
+    provider =
+      create_target!(context.admin_token, "reachable", "capability-secret")
+      |> then(fn provider ->
+        post_json(
+          "/api/v1/providers/#{provider["id"]}/check",
+          %{"provider" => %{"expected_revision" => provider["revision"]}},
+          context.admin_token
+        )
+        |> json_response(200)
+        |> Map.fetch!("data")
+      end)
+      |> then(fn provider ->
+        post_json(
+          "/api/v1/providers/#{provider["id"]}/enable",
+          %{"provider" => %{"expected_revision" => provider["revision"]}},
+          context.admin_token
+        )
+        |> json_response(200)
+        |> Map.fetch!("data")
+      end)
+
+    for token <- [context.admin_token, context.operator_token] do
+      response =
+        post_json(
+          "/api/v1/providers/#{provider["id"]}/target-capabilities",
+          %{"provider" => %{"expected_revision" => provider["revision"]}},
+          token
+        )
+
+      assert %{"data" => %{"observations" => [], "effects" => []}} =
+               json_response(response, 200)
+
+      assert_secret_free(response, ["capability-secret"])
+    end
+
+    forbidden =
+      post_json(
+        "/api/v1/providers/#{provider["id"]}/target-capabilities",
+        %{"provider" => %{"expected_revision" => provider["revision"]}},
+        context.viewer_token
+      )
+
+    assert %{"error" => %{"code" => "forbidden"}} = json_response(forbidden, 403)
+
+    bad_body =
+      post_json(
+        "/api/v1/providers/#{provider["id"]}/target-capabilities",
+        %{},
+        context.admin_token
+      )
+
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(bad_body, 400)
+  end
+
   defp create_target!(token, endpoint, secret) do
     create_provider!(
       token,
