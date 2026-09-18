@@ -70,17 +70,58 @@ defmodule Opsonde.Cases.Proposal do
       validate {Opsonde.Validations.BoundedMap, attribute: :preflight_context}
     end
 
+    update :transition do
+      accept [:status]
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      change optimistic_lock(:revision)
+    end
+
     action :materialize, :struct do
       constraints instance_of: __MODULE__
       transaction? false
       argument :turn_id, :uuid, allow_nil?: false
       run Opsonde.Cases.Proposal.Actions.Materialize
     end
+
+    action :route_authority, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :route}
+    end
+
+    action :decide, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :proposal_digest, :string,
+        allow_nil?: false,
+        constraints: [min_length: 64, max_length: 64]
+
+      argument :decision, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:approved, :rejected]]
+
+      argument :reason, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :decide}
+    end
   end
 
   policies do
-    policy action([:by_source_turn, :create_record, :materialize]) do
+    policy action([:by_source_turn, :create_record, :transition, :materialize, :route_authority]) do
       forbid_if always()
+    end
+
+    policy action(:decide) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
     end
 
     policy action(:read) do

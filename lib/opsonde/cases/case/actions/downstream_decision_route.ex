@@ -4,12 +4,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Approval, Budget, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
 
   @impl true
   def run(input, _opts, _context) do
     with {:ok, source_turn} <- Cases.get_turn(input.arguments.turn_id, authorize?: false) do
-      Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, CaseEvent], fn ->
+      Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent], fn ->
         with {:ok, incident} <- lock_case(source_turn.case_id),
              {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
              {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
@@ -49,14 +49,17 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   end
 
   defp route(turn, %{"type" => "proposal"} = intent, incident, run) do
-    with {:ok, proposal} <- Cases.materialize_proposal(turn.id, authorize?: false) do
-      pending = %{
-        "action" => "route_proposal",
-        "proposal_id" => proposal.id,
-        "source_turn_id" => turn.id
-      }
-
-      persist_or_replay(turn, intent, incident, run, pending)
+    with {:ok, proposal} <- Cases.materialize_proposal(turn.id, authorize?: false),
+         pending <- %{
+           "action" => "route_proposal",
+           "proposal_id" => proposal.id,
+           "source_turn_id" => turn.id
+         },
+         %Case{} <- persist_or_replay(turn, intent, incident, run, pending),
+         {:ok, _proposal} <-
+           Cases.route_proposal_authority(proposal.id, authorize?: false),
+         {:ok, routed} <- Cases.get_case(incident.id, authorize?: false) do
+      routed
     end
   end
 

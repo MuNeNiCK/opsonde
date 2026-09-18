@@ -81,17 +81,22 @@ defmodule Opsonde.DecisionRouteWorkerTest do
     assert :ok =
              DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
 
+    assert :ok =
+             DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
     routed = Cases.get_case!(incident.id, authorize?: false)
 
     [proposal] = Cases.list_proposals!(actor: context.admin)
 
+    assert proposal.status == :recommended
+
     assert routed.pending_intent == %{
-             "action" => "route_proposal",
-             "proposal_id" => proposal.id,
-             "source_turn_id" => turn.id
+             "action" => "view_recommendation",
+             "proposal_id" => proposal.id
            }
 
-    assert routed.status == :running
+    assert routed.status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
   end
 

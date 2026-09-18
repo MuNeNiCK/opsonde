@@ -89,13 +89,17 @@ defmodule Opsonde.ProposalMaterializationTest do
       actor: context.admin
     )
 
-    {_incident, run, _evidence, turn, _intent} = proposal_turn!("denied", context)
+    {incident, run, _evidence, turn, _intent} = proposal_turn!("denied", context)
 
     assert {:ok, proposal} = Cases.materialize_proposal(turn.id, authorize?: false)
     assert proposal.status == :blocked
     assert proposal.preflight_status == :blocked
     assert proposal.preflight_context["category"] == "denied"
     assert proposal.preflight_reason == "API restart is forbidden"
+    assert {:ok, routed} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert routed.status == :blocked
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
     refute_receive {:effect, _, _}
   end

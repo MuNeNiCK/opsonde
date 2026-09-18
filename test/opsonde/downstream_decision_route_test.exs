@@ -53,14 +53,14 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     assert {:ok, routed} =
              Cases.route_downstream_decision(turn.id, authorize?: false)
 
-    assert routed.status == :running
-
     [proposal] = Cases.list_proposals!(actor: context.admin)
 
+    assert proposal.status == :recommended
+    assert routed.status == :needs_attention
+
     assert routed.pending_intent == %{
-             "action" => "route_proposal",
-             "proposal_id" => proposal.id,
-             "source_turn_id" => turn.id
+             "action" => "view_recommendation",
+             "proposal_id" => proposal.id
            }
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0

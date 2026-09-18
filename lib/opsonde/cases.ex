@@ -233,7 +233,19 @@ defmodule Opsonde.Cases do
         args: [:source_turn_id]
 
       define :create_proposal_record, action: :create_record
+      define :transition_proposal, action: :transition, args: [:expected_revision]
       define :materialize_proposal, action: :materialize, args: [:turn_id]
+      define :route_proposal_authority, action: :route_authority, args: [:proposal_id]
+
+      define :decide_proposal,
+        action: :decide,
+        args: [:proposal_id, :expected_revision, :proposal_digest, :decision, :reason]
+    end
+
+    resource Opsonde.Cases.Approval do
+      define :list_approvals, action: :read
+      define :approval_by_proposal, action: :by_proposal, args: [:proposal_id]
+      define :create_approval_record, action: :create_record
     end
   end
 end
