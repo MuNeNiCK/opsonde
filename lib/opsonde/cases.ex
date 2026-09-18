@@ -351,5 +351,41 @@ defmodule Opsonde.Cases do
       define :create_report_record, action: :create_record
       define :generate_report, action: :generate, args: [:case_id, :expected_case_revision]
     end
+
+    resource Opsonde.Cases.AuditSchedule do
+      define :list_audit_schedules, action: :read
+      define :create_audit_schedule_record, action: :create_record
+      define :advance_audit_schedule_record, action: :advance_record, args: [:expected_revision]
+      define :deactivate_audit_schedule, action: :deactivate, args: [:expected_revision]
+
+      define :schedule_audit,
+        action: :schedule,
+        args: [
+          :name,
+          :objective,
+          :timezone,
+          :cron_expression,
+          :report_language,
+          :target_ids,
+          :management_boundary_id
+        ]
+
+      define :wake_audit_schedule,
+        action: :wake,
+        args: [:id, :expected_revision, :scheduled_for]
+    end
+
+    resource Opsonde.Cases.AuditRun do
+      define :list_audit_runs, action: :read
+
+      define :audit_runs_for_occurrence,
+        action: :for_occurrence,
+        args: [:audit_schedule_id, :scheduled_for]
+
+      define :create_audit_run_record, action: :create_record
+      define :mark_audit_run_running, action: :mark_running, args: [:expected_revision]
+      define :record_audit_run_outcome, action: :record_outcome, args: [:expected_revision]
+      define :claim_audit_run, action: :claim, args: [:id]
+    end
   end
 end

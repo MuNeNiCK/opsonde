@@ -200,5 +200,6 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   defp actor_id(actor), do: actor.id
 
   defp owner_id(:signal, %{signal_automation_enabled: true, changed_by_id: id}, _actor), do: id
+  defp owner_id(:audit, %{changed_by_id: id}, _actor), do: id
   defp owner_id(_trigger_kind, _setting, actor), do: actor_id(actor)
 end

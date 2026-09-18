@@ -62,6 +62,7 @@ defmodule Opsonde.MixProject do
       {:req, "~> 0.7"},
       {:saxy, "~> 1.6"},
       {:tzdata, "~> 1.1"},
+      {:crontab, "~> 1.2"},
       {:k8s, "~> 2.8"},
       {:yaml_elixir, "~> 2.12"},
       {:jsv, "~> 0.23"},
