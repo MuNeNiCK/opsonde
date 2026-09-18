@@ -22,8 +22,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
-         :ok <- evaluate(context.policies, request),
-         :ok <- validate_authority(request) do
+         :ok <- evaluate(context.policies, request) do
       {:ok, build_clearance(current_actor, request, context)}
     end
   end

@@ -415,7 +415,7 @@ defmodule Opsonde.TargetPolicyTest do
     refute_receive {:observe, _, _}
   end
 
-  test "readonly permits observations but rejects effects before dispatch", context do
+  test "readonly permits effect recommendations but rejects their dispatch", context do
     observation =
       request(context.linux, context.ssh, :observation, :readonly,
         capability: "observe.command",
@@ -432,7 +432,14 @@ defmodule Opsonde.TargetPolicyTest do
         parameters: %{"command" => "systemctl restart service"}
       )
 
-    assert {:error, error} = Targets.clear_target_request(effect, actor: context.operator)
+    clearance = Targets.clear_target_request!(effect, actor: context.operator)
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, invocation(flunk_response()),
+               actor: context.operator,
+               authorize?: false
+             )
+
     assert policy_error(error).category == :forbidden
     refute_receive {:effect, _, _}
   end
