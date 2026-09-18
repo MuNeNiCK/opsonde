@@ -5,6 +5,7 @@ defmodule Opsonde.Inventories.NetBox.API do
   @behaviour Opsonde.Providers.Inventory
 
   alias Opsonde.Providers.Inventory
+  alias Opsonde.Transports.HTTPS
 
   @configuration_keys ~w(base_url ca_certificate connect_timeout_ms request_timeout_ms)
   @credential_keys ~w(token)
@@ -56,7 +57,7 @@ defmodule Opsonde.Inventories.NetBox.API do
          {:ok, authorization} <- authorization(credentials["token"]),
          {:ok, connect_timeout} <- timeout(configuration, "connect_timeout_ms", 10_000),
          {:ok, request_timeout} <- timeout(configuration, "request_timeout_ms", 30_000),
-         {:ok, transport_opts} <- transport_options(configuration["ca_certificate"], host) do
+         {:ok, transport_opts} <- HTTPS.transport_options(configuration["ca_certificate"], host) do
       {:ok,
        %State{
          base_url: base_url,
@@ -347,38 +348,6 @@ defmodule Opsonde.Inventories.NetBox.API do
       _error -> {:error, :invalid_token}
     end
   end
-
-  defp transport_options(nil, host), do: transport_options([], host)
-
-  defp transport_options(pem, host) when is_binary(pem) and byte_size(pem) <= 65_536 do
-    entries = :public_key.pem_decode(pem)
-
-    certificates =
-      Enum.flat_map(entries, fn
-        {:Certificate, der, :not_encrypted} -> [der]
-        _entry -> []
-      end)
-
-    if certificates == [],
-      do: {:error, :invalid_ca_certificate},
-      else: transport_options(certificates, host)
-  rescue
-    _error -> {:error, :invalid_ca_certificate}
-  end
-
-  defp transport_options(certificates, host) when is_list(certificates) do
-    {:ok,
-     [
-       verify: :verify_peer,
-       cacerts: :public_key.cacerts_get() ++ certificates,
-       server_name_indication: String.to_charlist(host),
-       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
-     ]}
-  rescue
-    _error -> {:error, :invalid_ca_certificate}
-  end
-
-  defp transport_options(_pem, _host), do: {:error, :invalid_ca_certificate}
 
   defp timeout(configuration, key, default) do
     case Map.get(configuration, key, default) do

@@ -6,6 +6,7 @@ config :opsonde,
   provider_adapters: [
     Opsonde.AI.ReqLLM,
     Opsonde.Inventories.NetBox.API,
+    Opsonde.Notifications.HTTP.Webhook,
     Opsonde.Signals.Alertmanager.Webhook,
     Opsonde.Signals.Zabbix.Webhook,
     Opsonde.Targets.Generic.SSH,
