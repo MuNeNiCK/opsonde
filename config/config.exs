@@ -68,7 +68,7 @@ config :opsonde,
   ecto_repos: [Opsonde.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true],
   ash_domains: [Opsonde.Cases, Opsonde.Targets, Opsonde.Providers, Opsonde.Accounts],
-  provider_adapters: [Opsonde.AI.ReqLLM]
+  provider_adapters: [Opsonde.AI.ReqLLM, Opsonde.Targets.Generic.SSH]
 
 config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
 

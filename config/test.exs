@@ -5,6 +5,7 @@ config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 config :opsonde,
   provider_adapters: [
     Opsonde.AI.ReqLLM,
+    Opsonde.Targets.Generic.SSH,
     Opsonde.ProviderAdapterFixture,
     Opsonde.SignalAdapterFixture,
     Opsonde.InventoryAdapterFixture,
