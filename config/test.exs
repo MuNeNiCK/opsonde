@@ -2,7 +2,11 @@ import Config
 config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 
 config :opsonde,
-  provider_adapters: [Opsonde.ProviderAdapterFixture, Opsonde.SignalAdapterFixture]
+  provider_adapters: [
+    Opsonde.ProviderAdapterFixture,
+    Opsonde.SignalAdapterFixture,
+    Opsonde.InventoryAdapterFixture
+  ]
 
 config :opsonde, Opsonde.Providers.Vault,
   ciphers: [

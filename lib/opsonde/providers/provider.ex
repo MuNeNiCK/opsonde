@@ -126,6 +126,20 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Signal
     end
 
+    action :inventory_snapshot, :struct do
+      constraints instance_of: Opsonde.Providers.Inventory.Snapshot
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Inventory.Request]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run Opsonde.Providers.Provider.Actions.Inventory
+    end
+
     action :target_observe, :struct do
       constraints instance_of: Opsonde.Providers.Target.Observation
       transaction? false
@@ -254,6 +268,11 @@ defmodule Opsonde.Providers.Provider do
 
     policy action(:signal_ingest) do
       authorize_if always()
+    end
+
+    policy action(:inventory_snapshot) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
     end
 
     policy action(:read) do
