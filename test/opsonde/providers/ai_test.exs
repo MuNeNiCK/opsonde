@@ -205,6 +205,30 @@ defmodule Opsonde.Providers.AITest do
 
     assert ai_error(proposal_error).category == :invalid_output
 
+    invented_method = %{proposal() | access_method_id: "invented-method"}
+
+    assert {:error, exact_tool_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invented_method, usage: usage()}}
+             end)
+
+    assert ai_error(exact_tool_error).category == :invalid_output
+
+    invented_verification = %{
+      proposal()
+      | verification_intent: %{
+          proposal().verification_intent
+          | tool_id: "invented-verification"
+        }
+    }
+
+    assert {:error, verification_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invented_verification, usage: usage()}}
+             end)
+
+    assert ai_error(verification_error).category == :invalid_output
+
     recovery = %AI.RecoveryConclusion{
       reason: "Assume recovered",
       evidence_ids: ["evidence-1"]
@@ -220,6 +244,14 @@ defmodule Opsonde.Providers.AITest do
     malformed_request = %{request | evidence: [%{}]}
     assert {:error, malformed} = resolve(context, malformed_request, unreachable_response())
     assert ai_error(malformed).category == :invalid_input
+
+    [observation_tool] = request.observation_tools
+    atom_capability = %{request | observation_tools: [%{observation_tool | capability: :system}]}
+
+    assert {:error, vocabulary_error} =
+             resolve(context, atom_capability, unreachable_response())
+
+    assert ai_error(vocabulary_error).category == :invalid_input
   end
 
   test "Reviewer receives an isolated proposal-only request", context do
@@ -414,7 +446,11 @@ defmodule Opsonde.Providers.AITest do
         %AI.ObservationTool{
           id: "inspect-system",
           target_id: "target-1",
-          capability: :system,
+          target_revision: 1,
+          access_method_id: "access-method-observe",
+          access_method_revision: 1,
+          capability: "observe.command",
+          operation: "system.inspect",
           description: "Inspect system state",
           input_schema: %{}
         }
@@ -423,7 +459,11 @@ defmodule Opsonde.Providers.AITest do
         %AI.ProposalTool{
           id: "restart-service",
           target_id: "target-1",
-          capability: :restart_service,
+          target_revision: 1,
+          access_method_id: "access-method-effect",
+          access_method_revision: 1,
+          capability: "effect.command",
+          operation: "service.restart",
           description: "Restart one service",
           input_schema: %{}
         }
@@ -469,12 +509,20 @@ defmodule Opsonde.Providers.AITest do
     %AI.Proposal{
       tool_id: "restart-service",
       target_id: "target-1",
-      capability: :restart_service,
+      target_revision: 1,
+      access_method_id: "access-method-effect",
+      access_method_revision: 1,
+      capability: "effect.command",
+      operation: "service.restart",
       parameters: %{service: "api"},
       reason: "Restart the unhealthy service",
       evidence_ids: ["evidence-1"],
       expected_result: %{service: "running"},
-      verification_intent: %{capability: :service_state, expected: "running"}
+      verification_intent: %AI.VerificationIntent{
+        tool_id: "inspect-system",
+        parameters: %{service: "api"},
+        expected_result: %{service: "running"}
+      }
     }
   end
 

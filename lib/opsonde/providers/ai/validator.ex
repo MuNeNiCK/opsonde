@@ -151,16 +151,12 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_relation?(_relation), do: false
 
   defp valid_tool?(%AI.ObservationTool{} = tool),
-    do:
-      nonempty?(tool.id) and nonempty?(tool.target_id) and is_atom(tool.capability) and
-        nonempty?(tool.description) and is_map(tool.input_schema)
+    do: valid_exact_tool?(tool) and nonempty?(tool.description) and is_map(tool.input_schema)
 
   defp valid_tool?(_tool), do: false
 
   defp valid_proposal_tool?(%AI.ProposalTool{} = tool),
-    do:
-      nonempty?(tool.id) and nonempty?(tool.target_id) and is_atom(tool.capability) and
-        nonempty?(tool.description) and is_map(tool.input_schema)
+    do: valid_exact_tool?(tool) and nonempty?(tool.description) and is_map(tool.input_schema)
 
   defp valid_proposal_tool?(_tool), do: false
 
@@ -210,11 +206,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp encoded_size(context, items) do
-    encoded_items =
-      Enum.map(items, fn
-        %_{} = item -> Map.from_struct(item)
-        item -> item
-      end)
+    encoded_items = Enum.map(items, &plain_value/1)
 
     case Jason.encode(%{context: context, items: encoded_items}) do
       {:ok, encoded} -> byte_size(encoded)
@@ -226,8 +218,8 @@ defmodule Opsonde.Providers.AI.Validator do
     encoded = %{
       objective: request.objective,
       policy_summary: request.policy_summary,
-      proposal: Map.from_struct(request.proposal),
-      cited_evidence: Enum.map(request.cited_evidence, &Map.from_struct/1)
+      proposal: plain_value(request.proposal),
+      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1)
     }
 
     case Jason.encode(encoded) do
@@ -277,10 +269,10 @@ defmodule Opsonde.Providers.AI.Validator do
     evidence_ids = available_evidence_ids(request)
 
     case Enum.find(request.proposal_tools, &(&1.id == proposal.tool_id)) do
-      %AI.ProposalTool{target_id: target_id, capability: capability}
-      when target_id == proposal.target_id and capability == proposal.capability ->
+      %AI.ProposalTool{} = tool ->
         if request.budget.remaining_effects > 0 and is_map(proposal.parameters) and
-             is_map(proposal.expected_result) and is_map(proposal.verification_intent) and
+             exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
+             valid_verification_intent?(proposal.verification_intent, request.observation_tools) and
              nonempty?(proposal.reason) and nonempty_list?(proposal.evidence_ids) and
              unique?(proposal.evidence_ids) and
              Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) do
@@ -314,11 +306,14 @@ defmodule Opsonde.Providers.AI.Validator do
     do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid")}
 
   defp valid_review_proposal?(%AI.Proposal{} = proposal, evidence_ids) do
-    nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and is_atom(proposal.capability) and
-      is_map(proposal.parameters) and nonempty?(proposal.reason) and
+    nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and
+      positive?(proposal.target_revision) and nonempty?(proposal.access_method_id) and
+      positive?(proposal.access_method_revision) and nonempty?(proposal.capability) and
+      nonempty?(proposal.operation) and is_map(proposal.parameters) and nonempty?(proposal.reason) and
       nonempty_list?(proposal.evidence_ids) and unique?(proposal.evidence_ids) and
       Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) and
-      is_map(proposal.expected_result) and is_map(proposal.verification_intent)
+      is_map(proposal.expected_result) and
+      valid_verification_intent?(proposal.verification_intent)
   end
 
   defp valid_review_proposal?(_proposal, _evidence_ids), do: false
@@ -336,6 +331,39 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp available_evidence_ids(request),
     do: Enum.map(request.evidence ++ request.observation_results, & &1.id)
+
+  defp valid_exact_tool?(tool) do
+    nonempty?(tool.id) and nonempty?(tool.target_id) and positive?(tool.target_revision) and
+      nonempty?(tool.access_method_id) and positive?(tool.access_method_revision) and
+      nonempty?(tool.capability) and nonempty?(tool.operation)
+  end
+
+  defp exact_proposal?(proposal, tool) do
+    proposal.target_id == tool.target_id and proposal.target_revision == tool.target_revision and
+      proposal.access_method_id == tool.access_method_id and
+      proposal.access_method_revision == tool.access_method_revision and
+      proposal.capability == tool.capability and proposal.operation == tool.operation
+  end
+
+  defp valid_verification_intent?(%AI.VerificationIntent{} = intent, observation_tools) do
+    valid_verification_intent?(intent) and
+      Enum.any?(observation_tools, &(&1.id == intent.tool_id))
+  end
+
+  defp valid_verification_intent?(_intent, _observation_tools), do: false
+
+  defp valid_verification_intent?(%AI.VerificationIntent{} = intent),
+    do: nonempty?(intent.tool_id) and is_map(intent.parameters) and is_map(intent.expected_result)
+
+  defp valid_verification_intent?(_intent), do: false
+
+  defp plain_value(%_{} = value), do: value |> Map.from_struct() |> plain_value()
+
+  defp plain_value(value) when is_map(value),
+    do: Map.new(value, fn {key, nested} -> {key, plain_value(nested)} end)
+
+  defp plain_value(value) when is_list(value), do: Enum.map(value, &plain_value/1)
+  defp plain_value(value), do: value
 
   defp validate_usage(%AI.Usage{input_tokens: input, output_tokens: output}, budget)
        when is_integer(input) and input >= 0 and is_integer(output) and output >= 0 do

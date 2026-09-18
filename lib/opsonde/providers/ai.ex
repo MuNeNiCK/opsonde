@@ -46,7 +46,19 @@ defmodule Opsonde.Providers.AI do
 
   defmodule ObservationTool do
     @moduledoc false
-    @enforce_keys [:id, :target_id, :capability, :description, :input_schema]
+
+    @enforce_keys [
+      :id,
+      :target_id,
+      :target_revision,
+      :access_method_id,
+      :access_method_revision,
+      :capability,
+      :operation,
+      :description,
+      :input_schema
+    ]
+
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -60,7 +72,26 @@ defmodule Opsonde.Providers.AI do
 
   defmodule ProposalTool do
     @moduledoc false
-    @enforce_keys [:id, :target_id, :capability, :description, :input_schema]
+
+    @enforce_keys [
+      :id,
+      :target_id,
+      :target_revision,
+      :access_method_id,
+      :access_method_revision,
+      :capability,
+      :operation,
+      :description,
+      :input_schema
+    ]
+
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule VerificationIntent do
+    @moduledoc false
+    @enforce_keys [:tool_id, :parameters, :expected_result]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -71,7 +102,11 @@ defmodule Opsonde.Providers.AI do
     @enforce_keys [
       :tool_id,
       :target_id,
+      :target_revision,
+      :access_method_id,
+      :access_method_revision,
       :capability,
+      :operation,
       :parameters,
       :reason,
       :evidence_ids,
