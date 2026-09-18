@@ -5,6 +5,8 @@ config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 config :opsonde,
   provider_adapters: [
     Opsonde.AI.ReqLLM,
+    Opsonde.Signals.Alertmanager.Webhook,
+    Opsonde.Signals.Zabbix.Webhook,
     Opsonde.Targets.Generic.SSH,
     Opsonde.Targets.IOSXE.NETCONF,
     Opsonde.Targets.IOSXE.RESTCONF,

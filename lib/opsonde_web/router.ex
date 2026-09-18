@@ -8,6 +8,9 @@ defmodule OpsondeWeb.Router do
   scope "/api", OpsondeWeb do
     pipe_through :api
 
+    post "/signals/alertmanager/:provider_id", SignalWebhookController, :alertmanager
+    post "/signals/zabbix/:provider_id", SignalWebhookController, :zabbix
+
     match :*, "/*path", APIErrorController, :not_found
   end
 

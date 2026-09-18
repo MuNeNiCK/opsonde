@@ -70,6 +70,8 @@ config :opsonde,
   ash_domains: [Opsonde.Cases, Opsonde.Targets, Opsonde.Providers, Opsonde.Accounts],
   provider_adapters: [
     Opsonde.AI.ReqLLM,
+    Opsonde.Signals.Alertmanager.Webhook,
+    Opsonde.Signals.Zabbix.Webhook,
     Opsonde.Targets.Generic.SSH,
     Opsonde.Targets.IOSXE.NETCONF,
     Opsonde.Targets.IOSXE.RESTCONF,
@@ -79,6 +81,7 @@ config :opsonde,
   ]
 
 config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
+config :tzdata, :autoupdate, :disabled
 
 # Configure the endpoint
 config :opsonde, OpsondeWeb.Endpoint,
