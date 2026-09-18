@@ -33,7 +33,10 @@ defmodule Opsonde.Providers.TargetTest do
   end
 
   test "capabilities use the Ash interface, current gate and kind policy", context do
-    capabilities = %Target.Capabilities{observations: [:system], effects: [:restart_service]}
+    capabilities = %Target.Capabilities{
+      observations: ["observe.system"],
+      effects: ["effect.restart_service"]
+    }
 
     assert ^capabilities =
              Providers.target_capabilities!(
@@ -131,6 +134,23 @@ defmodule Opsonde.Providers.TargetTest do
   end
 
   test "request retry and payload bounds stop before dispatch", context do
+    invalid_vocabulary = %{
+      observation_request(context.provider.revision, 1)
+      | capability: :system,
+        operation: ""
+    }
+
+    assert {:error, vocabulary_error} =
+             Providers.target_observe(
+               context.provider.id,
+               invalid_vocabulary,
+               invocation(flunk_response()),
+               actor: context.admin
+             )
+
+    assert target_error(vocabulary_error).message == "Invalid observation request"
+    refute_receive {:observe, _, _}
+
     excessive_retries = observation_request(context.provider.revision, 6)
 
     assert {:error, retry_error} =
@@ -275,9 +295,10 @@ defmodule Opsonde.Providers.TargetTest do
       provider_revision: provider_revision,
       target_id: "target-1",
       target_revision: 4,
-      endpoint_id: "endpoint-1",
-      endpoint_revision: 2,
-      capability: :system,
+      access_method_id: "access-method-1",
+      access_method_revision: 2,
+      capability: "observe.command",
+      operation: "system.inspect",
       authorization_digest: "authorization-digest",
       max_attempts: max_attempts
     )
@@ -288,9 +309,10 @@ defmodule Opsonde.Providers.TargetTest do
       provider_revision: provider_revision,
       target_id: "target-1",
       target_revision: 4,
-      endpoint_id: "endpoint-1",
-      endpoint_revision: 2,
-      capability: :restart_service,
+      access_method_id: "access-method-1",
+      access_method_revision: 2,
+      capability: "effect.command",
+      operation: "service.restart",
       authorization_digest: "authorization-digest",
       operation_id: operation_id,
       idempotency_key: "idempotency-#{operation_id}"
@@ -302,9 +324,10 @@ defmodule Opsonde.Providers.TargetTest do
       provider_revision: provider_revision,
       target_id: "target-1",
       target_revision: 4,
-      endpoint_id: "endpoint-1",
-      endpoint_revision: 2,
-      capability: :service_state,
+      access_method_id: "access-method-1",
+      access_method_revision: 2,
+      capability: "observe.command",
+      operation: "service.inspect",
       authorization_digest: "authorization-digest",
       operation_id: "operation-1"
     )

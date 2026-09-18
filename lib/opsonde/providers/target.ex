@@ -5,7 +5,7 @@ defmodule Opsonde.Providers.Target do
     @moduledoc false
     @enforce_keys [:observations, :effects]
     defstruct [:observations, :effects]
-    @type t :: %__MODULE__{observations: [atom()], effects: [atom()]}
+    @type t :: %__MODULE__{observations: [String.t()], effects: [String.t()]}
   end
 
   defmodule ObservationRequest do
@@ -15,13 +15,14 @@ defmodule Opsonde.Providers.Target do
       :provider_revision,
       :target_id,
       :target_revision,
-      :endpoint_id,
-      :endpoint_revision,
+      :access_method_id,
+      :access_method_revision,
       :capability,
+      :operation,
       :authorization_digest
     ]
 
-    defstruct @enforce_keys ++ [scope: %{}, parameters: %{}, max_attempts: 1]
+    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, max_attempts: 1]
     @type t :: %__MODULE__{}
   end
 
@@ -39,15 +40,16 @@ defmodule Opsonde.Providers.Target do
       :provider_revision,
       :target_id,
       :target_revision,
-      :endpoint_id,
-      :endpoint_revision,
+      :access_method_id,
+      :access_method_revision,
       :capability,
+      :operation,
       :authorization_digest,
       :operation_id,
       :idempotency_key
     ]
 
-    defstruct @enforce_keys ++ [scope: %{}, parameters: %{}]
+    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}]
     @type t :: %__MODULE__{}
   end
 
@@ -65,14 +67,15 @@ defmodule Opsonde.Providers.Target do
       :provider_revision,
       :target_id,
       :target_revision,
-      :endpoint_id,
-      :endpoint_revision,
+      :access_method_id,
+      :access_method_revision,
       :capability,
+      :operation,
       :authorization_digest,
       :operation_id
     ]
 
-    defstruct @enforce_keys ++ [scope: %{}, reference: nil, expected: %{}]
+    defstruct @enforce_keys ++ [selectors: %{}, reference: nil, expected: %{}]
     @type t :: %__MODULE__{}
   end
 

@@ -113,7 +113,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
          credentials
        )
        when is_list(observations) and is_list(effects) do
-    if bounded_atom_list?(observations) and bounded_atom_list?(effects) do
+    if bounded_string_list?(observations) and bounded_string_list?(effects) do
       {:ok, Redactor.value(value, credentials)}
     else
       {:error, target_error(:failed, "Invalid capabilities result")}
@@ -211,14 +211,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp valid_request_base?(request) do
     positive_integer?(request.provider_revision) and nonempty_binary?(request.target_id) and
-      positive_integer?(request.target_revision) and nonempty_binary?(request.endpoint_id) and
-      positive_integer?(request.endpoint_revision) and is_atom(request.capability) and
-      nonempty_binary?(request.authorization_digest) and bounded_map?(request.scope) and
+      positive_integer?(request.target_revision) and
+      nonempty_binary?(request.access_method_id) and
+      positive_integer?(request.access_method_revision) and
+      nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
+      nonempty_binary?(request.authorization_digest) and bounded_map?(request.selectors) and
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end
 
-  defp bounded_atom_list?(items),
-    do: bounded_list?(items) and Enum.all?(items, &is_atom/1)
+  defp bounded_string_list?(items),
+    do: bounded_list?(items) and Enum.all?(items, &nonempty_binary?/1)
 
   defp bounded_list?(items) when is_list(items) and length(items) <= @max_payload_items,
     do: :erlang.external_size(items) <= @max_payload_bytes
