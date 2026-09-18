@@ -29,6 +29,11 @@ defmodule Opsonde.Cases.Case do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [updated_at: :desc, id: :desc])
+    end
+
     read :by_trigger do
       get? true
       argument :trigger_kind, :atom, allow_nil?: false
@@ -142,6 +147,13 @@ defmodule Opsonde.Cases.Case do
       argument :initial_target_id, :uuid
 
       run {Opsonde.Cases.Case.Actions.Open, []}
+    end
+
+    action :reconnect, :struct do
+      constraints instance_of: Opsonde.Cases.ReconnectSnapshot
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.Reconnect
     end
 
     action :claim, :struct do
@@ -359,7 +371,7 @@ defmodule Opsonde.Cases.Case do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page, :reconnect]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

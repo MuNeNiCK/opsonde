@@ -74,6 +74,24 @@ defmodule OpsondeWeb.Router do
     get "/inventory-imports/:id", InventoryImportController, :show
     get "/inventory-imports/:id/rows", InventoryImportController, :rows
     post "/inventory-imports/:id/apply", InventoryImportController, :apply_import
+
+    get "/authority-settings", AuthoritySettingController, :index
+    get "/authority-setting", AuthoritySettingController, :show
+    put "/authority-setting", AuthoritySettingController, :update
+
+    get "/cases", CaseController, :index
+    post "/cases", CaseController, :create
+    get "/cases/:id", CaseController, :show
+    get "/cases/:id/timeline", CaseController, :timeline
+    post "/cases/:id/claim", CaseController, :claim
+    post "/cases/:id/handoff", CaseController, :handoff
+    post "/cases/:id/cancel", CaseController, :cancel
+    post "/cases/:id/resume", CaseController, :resume
+
+    get "/proposals/:id", ProposalController, :show
+    post "/proposals/:id/decision", ProposalController, :decide
+    get "/operations/:id", OperationController, :show
+    get "/verification-attempts/:id", OperationController, :show_verification
   end
 
   scope "/api/v1", OpsondeWeb do

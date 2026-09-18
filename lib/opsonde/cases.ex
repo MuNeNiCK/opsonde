@@ -5,6 +5,7 @@ defmodule Opsonde.Cases do
   resources do
     resource Opsonde.Cases.AuthoritySetting do
       define :list_authority_settings, action: :read
+      define :page_authority_settings, action: :page
       define :current_authority_setting, action: :current
       define :create_authority_setting_revision, action: :create_revision
       define :retire_authority_setting, action: :retire, args: [:expected_revision]
@@ -28,7 +29,9 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Case do
       define :list_cases, action: :read
+      define :page_cases, action: :page
       define :get_case, action: :read, get_by: [:id]
+      define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
       define :active_unresolved_signal_cases, action: :active_unresolved_signals
       define :create_case_record, action: :create_record
@@ -135,6 +138,7 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.ResolutionRun do
       define :list_resolution_runs, action: :read
       define :get_resolution_run, action: :read, get_by: [:id]
+      define :resolution_runs_for_case, action: :for_case, args: [:case_id]
       define :active_resolution_run, action: :active_for_case, args: [:case_id]
       define :create_resolution_run_record, action: :create_record
       define :retire_resolution_run, action: :retire, args: [:expected_revision]
@@ -159,6 +163,10 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.CaseEvent do
       define :list_case_events, action: :timeline
+
+      define :page_case_events,
+        action: :page_for_case,
+        args: [:case_id]
 
       define :case_event_by_idempotency,
         action: :by_idempotency,
@@ -241,6 +249,7 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.Proposal do
       define :list_proposals, action: :read
       define :get_proposal, action: :read, get_by: [:id]
+      define :proposals_for_case, action: :for_case, args: [:case_id]
 
       define :proposal_by_source_turn,
         action: :by_source_turn,
@@ -275,6 +284,7 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.Operation do
       define :list_operations, action: :read
       define :get_operation, action: :read, get_by: [:id]
+      define :operations_for_case, action: :for_case, args: [:case_id]
       define :operation_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_operation_record, action: :create_record
       define :mark_operation_dispatching, action: :mark_dispatching, args: [:expected_revision]
@@ -287,6 +297,7 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.VerificationAttempt do
       define :list_verification_attempts, action: :read
       define :get_verification_attempt, action: :read, get_by: [:id]
+      define :verification_attempts_for_case, action: :for_case, args: [:case_id]
 
       define :verification_attempt_by_operation,
         action: :by_operation,

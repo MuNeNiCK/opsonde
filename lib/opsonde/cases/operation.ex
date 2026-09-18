@@ -19,6 +19,12 @@ defmodule Opsonde.Cases.Operation do
   actions do
     defaults [:read]
 
+    read :for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(sort: [updated_at: :desc, id: :desc], limit: 100)
+    end
+
     read :by_proposal do
       get? true
       argument :proposal_id, :uuid, allow_nil?: false
@@ -125,7 +131,7 @@ defmodule Opsonde.Cases.Operation do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

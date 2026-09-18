@@ -25,7 +25,7 @@ defmodule Opsonde.Cases.AuthoritySetting.Actions.Configure do
       with {:ok, current} <- Cases.current_authority_setting(authorize?: false),
            true <-
              current.setting_revision == arguments.expected_setting_revision ||
-               {:error, "Authority setting revision changed"},
+               stale(:setting_revision),
            {:ok, _retired} <-
              Cases.retire_authority_setting(current, current.revision,
                actor: context.actor,
@@ -47,5 +47,9 @@ defmodule Opsonde.Cases.AuthoritySetting.Actions.Configure do
         setting
       end
     end)
+  end
+
+  defp stale(field) do
+    {:error, Ash.Error.Changes.StaleRecord.exception(resource: AuthoritySetting, field: field)}
   end
 end

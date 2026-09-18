@@ -150,7 +150,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       with {:ok, run} <- active_run(incident.id, arguments.resolution_run_id),
            true <-
              run.revision == arguments.expected_run_revision ||
-               {:error, "ResolutionRun revision changed"} do
+               stale(ResolutionRun) do
         Ash.transact([Case, ResolutionRun, CaseEvent], fn ->
           with {:ok, updated} <-
                  Cases.update_case_record(
@@ -224,11 +224,11 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
          true <- incident.status == :needs_attention || {:error, "Case does not need attention"},
          true <-
            incident.revision == arguments.expected_case_revision ||
-             {:error, "Case revision changed"},
+             stale(Case),
          {:ok, run} <- active_run(incident.id, arguments.resolution_run_id),
          true <-
            run.revision == arguments.expected_run_revision ||
-             {:error, "ResolutionRun revision changed"},
+             stale(ResolutionRun),
          :ok <- validate_extension(run, arguments) do
       resume_transaction(incident, run, arguments, actor, key)
     end
@@ -320,6 +320,10 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       {:ok, nil} -> perform_transition(case_id, key, transition)
       {:error, _error} = error -> error
     end
+  end
+
+  defp stale(resource) do
+    {:error, Ash.Error.Changes.StaleRecord.exception(resource: resource, field: :revision)}
   end
 
   defp perform_transition(case_id, key, transition) do

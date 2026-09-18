@@ -18,6 +18,11 @@ defmodule Opsonde.Cases.AuthoritySetting do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [setting_revision: :desc, id: :desc])
+    end
+
     read :current do
       get? true
       filter expr(active == true)
@@ -109,7 +114,7 @@ defmodule Opsonde.Cases.AuthoritySetting do
       forbid_if always()
     end
 
-    policy action([:read, :current]) do
+    policy action([:read, :page, :current]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

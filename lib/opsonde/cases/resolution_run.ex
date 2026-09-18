@@ -18,6 +18,12 @@ defmodule Opsonde.Cases.ResolutionRun do
   actions do
     defaults [:read]
 
+    read :for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(sort: [generation: :desc], limit: 100)
+    end
+
     read :active_for_case do
       get? true
       argument :case_id, :uuid, allow_nil?: false
@@ -118,7 +124,7 @@ defmodule Opsonde.Cases.ResolutionRun do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

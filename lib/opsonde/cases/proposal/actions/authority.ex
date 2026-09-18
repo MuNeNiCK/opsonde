@@ -420,10 +420,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp expected_proposal(proposal, arguments) do
     cond do
-      proposal.revision != arguments.expected_revision -> {:error, "Proposal revision changed"}
-      proposal.proposal_digest != arguments.proposal_digest -> {:error, "Proposal digest changed"}
+      proposal.revision != arguments.expected_revision -> stale(:revision)
+      proposal.proposal_digest != arguments.proposal_digest -> stale(:proposal_digest)
       true -> :ok
     end
+  end
+
+  defp stale(field) do
+    {:error, Ash.Error.Changes.StaleRecord.exception(resource: Proposal, field: field)}
   end
 
   defp human_decidable(%{status: :awaiting_human, authority_mode: mode})
