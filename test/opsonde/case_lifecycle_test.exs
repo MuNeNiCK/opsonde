@@ -291,6 +291,13 @@ defmodule Opsonde.CaseLifecycleTest do
     assert resumed_a.authority_mode == :auto
     assert resumed_a.resumed_by_id == context.operator.id
 
+    assert [resumed_turn] =
+             Cases.list_turns!(actor: context.viewer)
+             |> Enum.filter(&(&1.resolution_run_id == resumed_a.id))
+
+    assert resumed_turn.status == :started
+    assert resumed_turn.intent == %{"objective" => "Continue resolution after operator resume"}
+
     old_run = Cases.get_resolution_run!(first_run.id, actor: context.viewer)
     refute old_run.active
     assert old_run.status == :superseded

@@ -218,6 +218,11 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert snapshot["case"]["status"] == "running"
     assert Enum.map(snapshot["resolution_runs"], & &1["generation"]) == [2, 1]
     assert Enum.map(snapshot["resolution_runs"], & &1["status"]) == ["running", "superseded"]
+
+    assert %{"data" => [%{"status" => "started", "ordinal" => 1}]} =
+             "/api/v1/cases/#{incident["id"]}/turns"
+             |> get_json(context.viewer_token)
+             |> json_response(200)
   end
 
   test "Proposal decision and status polling never dispatch an effect from HTTP", context do

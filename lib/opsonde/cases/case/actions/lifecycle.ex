@@ -199,9 +199,33 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
         arguments.expected_run_revision
       ])
 
-    case event(arguments.id, key) do
-      {:ok, %CaseEvent{}} -> active_run_result(arguments.id)
-      {:ok, nil} -> resume_with_retry(arguments, actor, key)
+    result =
+      case event(arguments.id, key) do
+        {:ok, %CaseEvent{}} -> active_run_result(arguments.id)
+        {:ok, nil} -> resume_with_retry(arguments, actor, key)
+        {:error, _error} = error -> error
+      end
+
+    with {:ok, run} <- result,
+         :ok <- start_resumed_run(arguments.id, run) do
+      {:ok, run}
+    end
+  end
+
+  defp start_resumed_run(case_id, run) do
+    turn_key = "resume:#{run.id}:#{run.generation}"
+
+    case Cases.start_turn(
+           case_id,
+           run.id,
+           turn_key,
+           %{"objective" => "Continue resolution after operator resume"},
+           %{"action" => "continue"},
+           "Review Case inputs and limits",
+           authorize?: false
+         ) do
+      {:ok, %{status: status}} when status in [:charged, :duplicate] -> :ok
+      {:ok, %{status: :exhausted}} -> {:error, "Resumed Case exhausted its Resolver limits"}
       {:error, _error} = error -> error
     end
   end
