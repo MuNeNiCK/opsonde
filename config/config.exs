@@ -33,6 +33,9 @@ config :spark,
     remove_parens?: true,
     "Ash.Resource": [
       section_order: [
+        :authentication,
+        :token,
+        :user_identity,
         :postgres,
         :resource,
         :code_interface,
@@ -55,7 +58,10 @@ config :spark,
 
 config :opsonde,
   ecto_repos: [Opsonde.Repo],
-  generators: [timestamp_type: :utc_datetime, binary_id: true]
+  generators: [timestamp_type: :utc_datetime, binary_id: true],
+  ash_domains: [Opsonde.Accounts]
+
+config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
 
 # Configure the endpoint
 config :opsonde, OpsondeWeb.Endpoint,

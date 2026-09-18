@@ -1,4 +1,5 @@
 import Config
+config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Configure your database

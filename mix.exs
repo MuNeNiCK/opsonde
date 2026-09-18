@@ -58,6 +58,9 @@ defmodule Opsonde.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:argon2_elixir, "~> 4.0"},
+      {:simple_sat, "~> 0.1"},
+      {:ash_authentication, "~> 4.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},

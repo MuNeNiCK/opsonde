@@ -51,7 +51,7 @@ config :opsonde, OpsondeWeb.Endpoint,
 # different ports.
 
 # Enable dev routes for dashboard and mailbox
-config :opsonde, dev_routes: true
+config :opsonde, dev_routes: true, token_signing_secret: "rDv9+++F4uUQQEHQJgZ9CZ5+oZa3m2ls"
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

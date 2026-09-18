@@ -100,3 +100,10 @@ if config_env() == :prod and not Burrito.Util.running_standalone?() do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 end
+
+if config_env() == :prod and not Burrito.Util.running_standalone?() do
+  config :opsonde,
+    token_signing_secret:
+      System.get_env("OPSONDE_TOKEN_SIGNING_SECRET") ||
+        raise("Missing environment variable `OPSONDE_TOKEN_SIGNING_SECRET`!")
+end
