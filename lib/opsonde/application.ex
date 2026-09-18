@@ -23,6 +23,7 @@ defmodule Opsonde.Application do
     [
       OpsondeWeb.Telemetry,
       Opsonde.Repo,
+      {Oban, Application.fetch_env!(:opsonde, Oban)},
       Opsonde.Providers.Vault,
       {DNSCluster, query: Application.get_env(:opsonde, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Opsonde.PubSub},

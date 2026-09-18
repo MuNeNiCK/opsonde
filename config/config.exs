@@ -7,6 +7,14 @@
 # General application configuration
 import Config
 
+config :opsonde, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: false,
+  lifeline: [rescue_after: {2, :hours}],
+  pruner: [max_age: {1, :day}],
+  repo: Opsonde.Repo
+
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new
 # behavior and ensures a seamless upgrade. See the backwards compatibility

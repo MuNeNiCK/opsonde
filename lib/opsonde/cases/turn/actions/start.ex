@@ -21,19 +21,23 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
       event_type: "turn_started",
       event_data: %{"turn_key" => arguments.idempotency_key},
       operation: fn incident, updated_run ->
-        Cases.create_turn_record(
-          %{
-            case_id: incident.id,
-            resolution_run_id: updated_run.id,
-            ordinal: updated_run.turn_count,
-            idempotency_key: arguments.idempotency_key,
-            status: :started,
-            intent: arguments.intent,
-            result: %{},
-            started_at: DateTime.utc_now()
-          },
-          authorize?: false
-        )
+        with {:ok, turn} <-
+               Cases.create_turn_record(
+                 %{
+                   case_id: incident.id,
+                   resolution_run_id: updated_run.id,
+                   ordinal: updated_run.turn_count,
+                   idempotency_key: arguments.idempotency_key,
+                   status: :started,
+                   intent: arguments.intent,
+                   result: %{},
+                   started_at: DateTime.utc_now()
+                 },
+                 authorize?: false
+               ),
+             {:ok, _job} <- enqueue(turn.id) do
+          {:ok, turn}
+        end
       end,
       duplicate: fn _incident, run ->
         with {:ok, turn} <-
@@ -45,5 +49,15 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
         end
       end
     )
+  end
+
+  defp enqueue(turn_id) do
+    %{"turn_id" => turn_id}
+    |> Oban.Job.new(
+      worker: Opsonde.Cases.ResolverWorker,
+      queue: :resolver,
+      unique: [period: :infinity, fields: [:worker, :queue, :args], states: :all]
+    )
+    |> Oban.insert()
   end
 end

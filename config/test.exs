@@ -1,4 +1,5 @@
 import Config
+config :opsonde, Oban, testing: :manual
 config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 
 config :opsonde,

@@ -34,6 +34,7 @@ defmodule Opsonde.CaseHistoryTest do
     retried = start!(incident, run, "turn-1", intent)
     assert retried.status == :duplicate
     assert retried.value.id == started.value.id
+    assert [%Oban.Job{queue: "resolver", state: "available"}] = jobs_for(started.value.id)
 
     assert {:error, _error} =
              start(incident, run, "turn-1", %{"action" => "change-the-request"})
@@ -109,6 +110,51 @@ defmodule Opsonde.CaseHistoryTest do
              "evidence_added",
              "turn_completed"
            ]
+  end
+
+  test "Turn and Resolver job commit or roll back together", context do
+    {incident, run} = open!("atomic-turn-delivery", context.operator)
+    intent = %{"action" => "inspect"}
+
+    assert {:error, :simulated_failure} =
+             Repo.transaction(fn ->
+               started = start!(incident, run, "rolled-back-turn", intent)
+               assert [_job] = jobs_for(started.value.id)
+               Repo.rollback(:simulated_failure)
+             end)
+
+    assert Cases.list_turns!(actor: context.viewer) == []
+    assert Repo.all(Oban.Job) == []
+
+    reloaded_run = Cases.get_resolution_run!(run.id, actor: context.viewer)
+    assert reloaded_run.turn_count == 0
+
+    accepted = start!(incident, reloaded_run, "rolled-back-turn", intent)
+    assert accepted.status == :charged
+    assert [_job] = jobs_for(accepted.value.id)
+
+    retried = start!(incident, accepted.run, "rolled-back-turn", intent)
+    assert retried.status == :duplicate
+    assert retried.value.id == accepted.value.id
+    assert [_job] = jobs_for(accepted.value.id)
+  end
+
+  test "concurrent duplicate Turn delivery creates one Turn and one Resolver job", context do
+    {incident, run} = open!("concurrent-turn-delivery", context.operator)
+    intent = %{"action" => "inspect"}
+
+    results =
+      for _attempt <- 1..2 do
+        Task.async(fn -> start(incident, run, "same-turn", intent) end)
+      end
+      |> Task.await_many()
+
+    assert Enum.all?(results, &match?({:ok, _result}, &1))
+
+    accepted = Enum.map(results, fn {:ok, result} -> result end)
+    assert Enum.sort(Enum.map(accepted, & &1.status)) == [:charged, :duplicate]
+    assert [turn] = Cases.list_turns!(actor: context.viewer)
+    assert [_job] = jobs_for(turn.id)
   end
 
   test "concurrent distinct charges serialize and cannot exceed the configured limit", context do
@@ -296,6 +342,12 @@ defmodule Opsonde.CaseHistoryTest do
       "Review the exhausted limit",
       authorize?: false
     )
+  end
+
+  defp jobs_for(turn_id) do
+    Oban.Job
+    |> Repo.all()
+    |> Enum.filter(&(&1.args["turn_id"] == turn_id))
   end
 
   defp complete!(turn, result, progress_kind) do
