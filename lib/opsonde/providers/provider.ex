@@ -154,6 +154,20 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Notification
     end
 
+    action :ai_decide, :struct do
+      constraints instance_of: Opsonde.Providers.AI.Decision
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.AI.Request]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run Opsonde.Providers.Provider.Actions.AI
+    end
+
     action :target_observe, :struct do
       constraints instance_of: Opsonde.Providers.Target.Observation
       transaction? false
@@ -290,6 +304,11 @@ defmodule Opsonde.Providers.Provider do
     end
 
     policy action(:notification_deliver) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
+    end
+
+    policy action(:ai_decide) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end

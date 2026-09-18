@@ -46,6 +46,10 @@ defmodule Opsonde.Providers do
         action: :notification_deliver,
         args: [:provider_id, :request, :invocation]
 
+      define :ai_decide,
+        action: :ai_decide,
+        args: [:provider_id, :request, :invocation]
+
       define :record_provider_check,
         action: :record_check,
         args: [:expected_revision, :check_status, :check_category, :check_message]

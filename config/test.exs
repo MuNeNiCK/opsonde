@@ -6,7 +6,8 @@ config :opsonde,
     Opsonde.ProviderAdapterFixture,
     Opsonde.SignalAdapterFixture,
     Opsonde.InventoryAdapterFixture,
-    Opsonde.NotificationAdapterFixture
+    Opsonde.NotificationAdapterFixture,
+    Opsonde.AIAdapterFixture
   ]
 
 config :opsonde, Opsonde.Providers.Vault,
