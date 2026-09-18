@@ -6,6 +6,9 @@ defmodule Opsonde.Providers.Provider.Actions.Notification do
 
   @statuses [:accepted, :delivered, :failed, :unknown]
   @failures [:failed, :cancelled]
+  @max_payload_fields 100
+  @max_payload_bytes 1_048_576
+  @max_identity_bytes 1_024
 
   @impl true
   def run(input, _opts, _context) do
@@ -33,10 +36,10 @@ defmodule Opsonde.Providers.Provider.Actions.Notification do
   end
 
   defp validate_request(%Notification.Request{} = request) do
-    if positive?(request.provider_revision) and nonempty?(request.report_id) and
-         positive?(request.report_revision) and nonempty?(request.destination_id) and
-         positive?(request.destination_revision) and nonempty?(request.idempotency_key) and
-         is_map(request.payload) do
+    if positive?(request.provider_revision) and bounded_identity?(request.report_id) and
+         positive?(request.report_revision) and bounded_identity?(request.destination_id) and
+         positive?(request.destination_revision) and bounded_identity?(request.idempotency_key) and
+         bounded_payload?(request.payload) do
       :ok
     else
       {:error, notification_error(:failed, "Notification request is invalid")}
@@ -76,9 +79,14 @@ defmodule Opsonde.Providers.Provider.Actions.Notification do
   end
 
   defp normalize_result({:ok, %Notification.Result{status: status} = result}, credentials)
-       when status in @statuses and is_map(result.details) and
-              (is_nil(result.reference) or is_binary(result.reference)),
-       do: {:ok, Redactor.value(result, credentials)}
+       when status in @statuses do
+    if bounded_payload?(result.details) and
+         (is_nil(result.reference) or bounded_identity?(result.reference)) do
+      {:ok, Redactor.value(result, credentials)}
+    else
+      {:error, notification_error(:failed, "Invalid notification result")}
+    end
+  end
 
   defp normalize_result({:error, :timeout, message}, credentials) when is_binary(message),
     do: unknown(Redactor.message(message, credentials)) |> normalize_result(credentials)
@@ -105,7 +113,15 @@ defmodule Opsonde.Providers.Provider.Actions.Notification do
   defp ensure_not_cancelled(_invocation), do: :ok
 
   defp positive?(value), do: is_integer(value) and value > 0
-  defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
+
+  defp bounded_identity?(value),
+    do: is_binary(value) and byte_size(value) > 0 and byte_size(value) <= @max_identity_bytes
+
+  defp bounded_payload?(payload)
+       when is_map(payload) and map_size(payload) <= @max_payload_fields,
+       do: :erlang.external_size(payload) <= @max_payload_bytes
+
+  defp bounded_payload?(_payload), do: false
 
   defp notification_error(category, message),
     do: Notification.Error.exception(category: category, message: message)

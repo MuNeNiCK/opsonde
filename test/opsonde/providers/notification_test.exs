@@ -130,6 +130,41 @@ defmodule Opsonde.Providers.NotificationTest do
     refute_receive {:delivery, _, _}
   end
 
+  test "request and result payloads are bounded", context do
+    oversized = %{"payload" => String.duplicate("x", 1_048_577)}
+    request = %{request(context.provider.revision, "delivery-oversized") | payload: oversized}
+
+    assert {:error, request_error} =
+             Providers.notification_deliver(
+               context.provider.id,
+               request,
+               %{test_pid: self(), respond: fn -> flunk("oversized payload was dispatched") end},
+               actor: context.admin
+             )
+
+    assert notification_error(request_error).message == "Notification request is invalid"
+    refute_receive {:delivery, _, _}
+
+    valid_request = request(context.provider.revision, "delivery-oversized-result")
+
+    assert {:error, result_error} =
+             Providers.notification_deliver(
+               context.provider.id,
+               valid_request,
+               %{
+                 test_pid: self(),
+                 respond: fn ->
+                   {:ok, %Notification.Result{status: :delivered, details: oversized}}
+                 end
+               },
+               actor: context.admin
+             )
+
+    assert notification_error(result_error).message == "Invalid notification result"
+    assert_receive {:delivery, %{token: @token}, ^valid_request}
+    refute_receive {:delivery, _, _}
+  end
+
   defp deliver!(context, request, respond) do
     Providers.notification_deliver!(
       context.provider.id,
