@@ -18,6 +18,11 @@ defmodule Opsonde.Targets.Relationship do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     read :search_index do
       argument :query, :string,
         allow_nil?: false,
@@ -106,7 +111,7 @@ defmodule Opsonde.Targets.Relationship do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

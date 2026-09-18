@@ -24,6 +24,13 @@ defmodule Opsonde.Targets.InventoryImportRow do
       prepare build(sort: [position: :asc])
     end
 
+    read :page_for_import do
+      argument :inventory_import_id, :uuid, allow_nil?: false
+      filter expr(inventory_import_id == ^arg(:inventory_import_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(sort: [position: :asc, id: :asc])
+    end
+
     create :create do
       accept [
         :inventory_import_id,
@@ -49,7 +56,7 @@ defmodule Opsonde.Targets.InventoryImportRow do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_for_import]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

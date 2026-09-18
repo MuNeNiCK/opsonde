@@ -22,8 +22,8 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Apply do
   end
 
   defp apply_preview(import, expected_revision, actor) do
-    with true <- import.revision == expected_revision || {:error, "Import revision changed"},
-         true <- import.error_count == 0 || {:error, "Import contains row errors"},
+    with :ok <- current_revision(import, expected_revision),
+         :ok <- applicable(import),
          {:ok, rows} <- Targets.inventory_import_rows(import.id, authorize?: false),
          :ok <- verify_rows(import, rows) do
       Ash.transact([InventoryImport, InventoryImportRow, Target, ExternalIdentity], fn ->
@@ -91,11 +91,9 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Apply do
   defp apply_row(%{disposition: :update} = row, index, actor) do
     with %{} = identity <-
            Map.get(index, identity_key(row)) ||
-             {:error, "Stable identity changed after preview"},
-         true <- identity.target_id == row.target_id || {:error, "Stable identity target changed"},
-         true <-
-           identity.target.revision == row.target_revision ||
-             {:error, "Target changed after preview"},
+             failure(:identity_changed, "Stable identity changed after preview"),
+         :ok <- same_target(identity, row),
+         :ok <- current_target(identity, row),
          facts <- merge_imported_facts(identity.target.facts, row),
          {:ok, _target} <-
            Targets.update_target(identity.target, row.target_revision, %{facts: facts},
@@ -121,7 +119,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Apply do
 
   defp ensure_identity_absent(index, key) do
     if Map.has_key?(index, key),
-      do: {:error, "Stable identity appeared after preview"},
+      do: failure(:identity_changed, "Stable identity appeared after preview"),
       else: :ok
   end
 
@@ -137,9 +135,34 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Apply do
   defp verify_rows(import, rows) do
     if length(rows) == import.row_count and Digest.rows(rows) == import.content_digest,
       do: :ok,
-      else: {:error, "Persisted preview changed"}
+      else: failure(:preview_changed, "Persisted preview changed")
   end
 
   defp expected_digest(%{content_digest: digest}, digest), do: :ok
-  defp expected_digest(_import, _digest), do: {:error, "Import digest changed"}
+
+  defp expected_digest(_import, _digest),
+    do: failure(:digest_changed, "Import digest changed")
+
+  defp current_revision(%{revision: revision}, revision), do: :ok
+
+  defp current_revision(_import, _expected_revision),
+    do: failure(:revision_changed, "Import revision changed")
+
+  defp applicable(%{error_count: 0}), do: :ok
+
+  defp applicable(_import),
+    do: failure(:row_errors, "Import contains row errors")
+
+  defp same_target(%{target_id: target_id}, %{target_id: target_id}), do: :ok
+
+  defp same_target(_identity, _row),
+    do: failure(:identity_changed, "Stable identity target changed")
+
+  defp current_target(%{target: %{revision: revision}}, %{target_revision: revision}), do: :ok
+
+  defp current_target(_identity, _row),
+    do: failure(:target_changed, "Target changed after preview")
+
+  defp failure(category, message),
+    do: {:error, InventoryImport.Error.exception(category: category, message: message)}
 end

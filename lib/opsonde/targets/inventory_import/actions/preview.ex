@@ -14,9 +14,18 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
 
   @impl true
   def run(input, opts, context) do
-    case opts[:operation] do
-      :manual -> preview_manual(input.arguments, context.actor)
-      :inventory -> preview_inventory(input.arguments, context.actor)
+    result =
+      case opts[:operation] do
+        :manual -> preview_manual(input.arguments, context.actor)
+        :inventory -> preview_inventory(input.arguments, context.actor)
+      end
+
+    case result do
+      {:error, message} when is_binary(message) ->
+        {:error, InventoryImport.Error.exception(category: :invalid_input, message: message)}
+
+      other ->
+        other
     end
   end
 

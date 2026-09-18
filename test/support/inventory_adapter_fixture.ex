@@ -19,8 +19,12 @@ defmodule Opsonde.InventoryAdapterFixture do
   def check(_state, _input), do: :ok
 
   @impl Opsonde.Providers.Inventory
-  def fetch_page(state, request, cursor, invocation) do
-    send(invocation.test_pid, {:page, state, request, cursor})
-    invocation.respond.(cursor)
+  def fetch_page(state, request, cursor, %{test_pid: pid, respond: respond}) do
+    send(pid, {:page, state, request, cursor})
+    respond.(cursor)
+  end
+
+  def fetch_page(_state, _request, nil, _invocation) do
+    {:ok, %Opsonde.Providers.Inventory.Page{records: [], source_version: "fixture-v1"}}
   end
 end

@@ -5,6 +5,7 @@ defmodule OpsondeWeb.API.Response do
   import Phoenix.Controller, only: [json: 2]
 
   alias OpsondeWeb.API.Pagination
+  alias Opsonde.Targets.InventoryImport
 
   def data(conn, value, status \\ :ok) do
     conn
@@ -87,6 +88,16 @@ defmodule OpsondeWeb.API.Response do
   defp invalid_keyset?(_error), do: false
 
   defp conflict?(%Ash.Error.Changes.StaleRecord{}), do: true
+
+  defp conflict?(%InventoryImport.Error{category: category})
+       when category in [
+              :digest_changed,
+              :identity_changed,
+              :preview_changed,
+              :revision_changed,
+              :target_changed
+            ],
+       do: true
 
   defp conflict?(%Ash.Error.Changes.InvalidAttribute{field: :revision, message: "is stale"}),
     do: true

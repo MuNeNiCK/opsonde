@@ -5,6 +5,14 @@ defmodule Opsonde.Targets.InventoryImport do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  defmodule Error do
+    @moduledoc false
+    use Splode.Error, class: :invalid, fields: [:category, :message]
+
+    @impl true
+    def message(error), do: error.message
+  end
+
   postgres do
     table "inventory_imports"
     repo Opsonde.Repo
@@ -17,6 +25,11 @@ defmodule Opsonde.Targets.InventoryImport do
 
   actions do
     defaults [:read]
+
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
 
     create :create_preview do
       accept [
@@ -93,7 +106,7 @@ defmodule Opsonde.Targets.InventoryImport do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
