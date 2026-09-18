@@ -19,6 +19,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:get, "/api/v1/providers/:id"},
     {:patch, "/api/v1/providers/:id"},
     {:post, "/api/v1/providers/:id/check"},
+    {:post, "/api/v1/providers/:id/target-capabilities"},
     {:post, "/api/v1/providers/:id/enable"},
     {:post, "/api/v1/providers/:id/disable"},
     {:get, "/api/v1/ai-usage-role-assignments"},

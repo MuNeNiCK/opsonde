@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { SetupPage } from "@/setup-page";
+import { TargetPage } from "@/target-page";
 
 function AuthenticationGate({ children }: { children: ReactNode }) {
   const { account, loading } = useAuthentication();
@@ -195,7 +196,7 @@ function AppRoutes() {
         <Route index element={<Navigate to="/cases" replace />} />
         <Route path="cases" element={<FoundationPage title="pages.cases" />} />
         <Route path="cases/:caseId" element={<CasePage />} />
-        <Route path="targets" element={<FoundationPage title="pages.targets" />} />
+        <Route path="targets" element={<TargetPage />} />
         <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
         <Route path="audits" element={<FoundationPage title="pages.audits" />} />
         <Route path="reports" element={<FoundationPage title="pages.reports" />} />
