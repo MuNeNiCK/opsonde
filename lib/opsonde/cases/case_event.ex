@@ -34,6 +34,19 @@ defmodule Opsonde.Cases.CaseEvent do
       filter expr(case_id == ^arg(:case_id) and idempotency_key == ^arg(:idempotency_key))
     end
 
+    read :target_history do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      filter expr(
+               case_id == ^arg(:case_id) and
+                 resolution_run_id == ^arg(:resolution_run_id) and
+                 event_type in ["case_opened", "case_target_selected", "related_target_traversed"]
+             )
+
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     create :create_record do
       accept [
         :case_id,
@@ -49,7 +62,7 @@ defmodule Opsonde.Cases.CaseEvent do
   end
 
   policies do
-    policy action([:by_idempotency, :create_record]) do
+    policy action([:by_idempotency, :target_history, :create_record]) do
       forbid_if always()
     end
 

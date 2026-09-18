@@ -679,8 +679,9 @@ defmodule Opsonde.Providers.AITest do
       target_relations: [
         %AI.TargetRelation{
           id: "relation-1",
-          source_target_id: "target-1",
-          target_target_id: "target-2",
+          revision: 1,
+          source_target: target_candidate("target-1", "linux"),
+          destination_target: target_candidate("target-2", "vmware_esxi"),
           kind: "runs_on"
         }
       ],
@@ -752,6 +753,17 @@ defmodule Opsonde.Providers.AITest do
       kind: "signal",
       target_id: "target-1",
       content: %{alert: "high load"}
+    }
+  end
+
+  defp target_candidate(id, platform) do
+    %AI.TargetCandidate{
+      id: id,
+      revision: 1,
+      name: id,
+      kind: "host",
+      platform: platform,
+      facts: %{}
     }
   end
 

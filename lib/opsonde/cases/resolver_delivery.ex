@@ -258,6 +258,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
+  defp intent(%AI.TargetTraversal{} = value, request) do
+    with {:ok, relationship} <- relationship(request, value.relationship_id) do
+      {:ok,
+       value
+       |> typed_intent()
+       |> Map.put("relationship", relationship_snapshot(relationship))}
+    end
+  end
+
   defp intent(%_{} = value, _request), do: {:ok, typed_intent(value)}
 
   defp typed_intent(%module{} = value),
@@ -284,6 +293,28 @@ defmodule Opsonde.Cases.ResolverDelivery do
       _missing ->
         {:error, ai_error(:invalid_output, "AI Proposal tool snapshot is unavailable")}
     end
+  end
+
+  defp relationship(request, relationship_id) do
+    case Enum.find(request.target_relations, &(&1.id == relationship_id)) do
+      %AI.TargetRelation{} = relationship ->
+        {:ok, relationship}
+
+      _missing ->
+        {:error, ai_error(:invalid_output, "AI Target relationship snapshot is unavailable")}
+    end
+  end
+
+  defp relationship_snapshot(relationship) do
+    %{
+      "id" => relationship.id,
+      "revision" => relationship.revision,
+      "source_target_id" => relationship.source_target.id,
+      "source_target_revision" => relationship.source_target.revision,
+      "destination_target_id" => relationship.destination_target.id,
+      "destination_target_revision" => relationship.destination_target.revision,
+      "kind" => relationship.kind
+    }
   end
 
   defp tool_snapshot(tool) do

@@ -1,0 +1,415 @@
+defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
+  use Ash.Resource.Actions.Implementation
+
+  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun, Turn}
+
+  defmodule Error do
+    use Splode.Error, class: :invalid, fields: [:category, :message]
+
+    @impl true
+    def message(error), do: error.message
+  end
+
+  @impl true
+  def run(input, _opts, _context) do
+    with {:ok, turn} <- Cases.get_turn(input.arguments.turn_id, authorize?: false),
+         {:ok, intent} <- traversal_intent(turn),
+         {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
+         {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
+         {:ok, existing} <- existing_failure(incident.id, turn.id) do
+      if existing do
+        continue_after_failure(turn, existing, incident, run)
+      else
+        traverse(turn, intent, incident, run)
+      end
+    end
+  end
+
+  defp traverse(turn, intent, incident, run) do
+    result =
+      Budget.consume(
+        case_id: incident.id,
+        resolution_run_id: run.id,
+        kind: :related_target,
+        amount: 1,
+        ledger_key: traversal_key(turn),
+        actor: nil,
+        event_type: "related_target_traversed",
+        event_data: traversal_event_data(turn, intent),
+        pending_intent: %{"action" => "route_related_target", "source_turn_id" => turn.id},
+        required_human_input: "Review the related Target limit or continue the Case manually",
+        operation: fn locked_case, locked_run ->
+          select_related_target(locked_case, locked_run, intent)
+        end,
+        duplicate: fn current_case, _current_run -> {:ok, current_case} end
+      )
+
+    case result do
+      {:ok, %{status: :exhausted} = exhausted} ->
+        {:ok, exhausted}
+
+      {:ok, %{status: status, case: selected_case, run: charged_run}}
+      when status in [:charged, :duplicate] ->
+        start_next_turn(turn, selected_case, charged_run, intent)
+
+      {:error, error} ->
+        persist_failure(turn, intent, incident, run, traversal_error(error))
+    end
+  end
+
+  defp select_related_target(incident, run, intent) do
+    with {:ok, target} <- traversal_context(incident, run, intent),
+         {:ok, updated} <-
+           Cases.update_case_record(
+             incident,
+             incident.revision,
+             %{
+               selected_target_id: target.id,
+               selected_target_revision: target.revision
+             },
+             authorize?: false
+           ) do
+      {:ok, updated}
+    end
+  end
+
+  defp traversal_context(incident, run, intent) do
+    relationship_snapshot = intent["relationship"]
+
+    with :ok <- running_context(incident, run),
+         :ok <- cited_evidence(intent["evidence_ids"], incident.id, run.id),
+         {:ok, relationship} <- current_relationship(relationship_snapshot),
+         :ok <- exact_relationship(relationship, relationship_snapshot),
+         :ok <- current_endpoint(incident, relationship_snapshot),
+         :ok <- next_endpoint(intent, relationship_snapshot, incident),
+         :ok <- not_visited(incident, run, intent["next_target_id"]),
+         {:ok, actor} <- current_actor(incident),
+         {:ok, target} <- authorized_target(intent, actor),
+         :ok <- available_access_method(target) do
+      {:ok, target}
+    end
+  end
+
+  defp running_context(%{status: :running, cancel_requested: false}, %{
+         status: :running,
+         active: true
+       }),
+       do: :ok
+
+  defp running_context(%{cancel_requested: true}, _run),
+    do: traversal_failure(:cancelled, "Case cancellation was requested")
+
+  defp running_context(_incident, _run),
+    do: traversal_failure(:stale_context, "Case resolution is not running")
+
+  defp cited_evidence(ids, case_id, run_id) when is_list(ids) and ids != [] do
+    if length(ids) == MapSet.size(MapSet.new(ids)) do
+      Enum.reduce_while(ids, :ok, fn id, :ok ->
+        case Cases.get_evidence(id, authorize?: false) do
+          {:ok, %{case_id: ^case_id, resolution_run_id: ^run_id}} ->
+            {:cont, :ok}
+
+          _unavailable ->
+            {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
+        end
+      end)
+    else
+      traversal_failure(:invalid_evidence, "Cited Evidence contains duplicates")
+    end
+  end
+
+  defp cited_evidence(_ids, _case_id, _run_id),
+    do: traversal_failure(:invalid_evidence, "Cited Evidence is invalid")
+
+  defp current_relationship(%{"id" => id, "revision" => revision}) do
+    case Targets.load_relationship_for_traversal(id, revision, authorize?: false) do
+      {:ok, relationship} ->
+        {:ok, relationship}
+
+      {:error, _error} ->
+        traversal_failure(:stale_relationship, "Target relationship is unavailable or changed")
+    end
+  end
+
+  defp current_relationship(_snapshot),
+    do: traversal_failure(:stale_relationship, "Target relationship snapshot is invalid")
+
+  defp exact_relationship(relationship, snapshot) do
+    if relationship.source_target_id == snapshot["source_target_id"] and
+         relationship.destination_target_id == snapshot["destination_target_id"] and
+         relationship.kind == snapshot["kind"] do
+      :ok
+    else
+      traversal_failure(:stale_relationship, "Target relationship changed after selection")
+    end
+  end
+
+  defp current_endpoint(incident, snapshot) do
+    revisions = %{
+      snapshot["source_target_id"] => snapshot["source_target_revision"],
+      snapshot["destination_target_id"] => snapshot["destination_target_revision"]
+    }
+
+    if incident.selected_target_id in Map.keys(revisions) and
+         revisions[incident.selected_target_id] == incident.selected_target_revision do
+      :ok
+    else
+      traversal_failure(
+        :stale_context,
+        "Case selected Target changed after relationship selection"
+      )
+    end
+  end
+
+  defp next_endpoint(intent, snapshot, incident) do
+    next_target_id = intent["next_target_id"]
+
+    expected_revision =
+      cond do
+        snapshot["source_target_id"] == next_target_id ->
+          snapshot["source_target_revision"]
+
+        snapshot["destination_target_id"] == next_target_id ->
+          snapshot["destination_target_revision"]
+
+        true ->
+          nil
+      end
+
+    if next_target_id != nil and next_target_id != incident.selected_target_id and
+         expected_revision == intent["next_target_revision"] do
+      :ok
+    else
+      traversal_failure(
+        :stale_context,
+        "Related Target selection does not match the relationship"
+      )
+    end
+  end
+
+  defp not_visited(incident, run, target_id) do
+    with {:ok, history} <- Cases.case_target_history(incident.id, run.id, authorize?: false) do
+      visited =
+        Enum.reduce(history, MapSet.new([incident.selected_target_id]), fn event, target_ids ->
+          visited_target_id =
+            event.data["next_target_id"] || event.data["target_id"] ||
+              event.data["selected_target_id"]
+
+          if is_binary(visited_target_id),
+            do: MapSet.put(target_ids, visited_target_id),
+            else: target_ids
+        end)
+
+      if MapSet.member?(visited, target_id),
+        do: traversal_failure(:cycle, "Related Target was already visited in this ResolutionRun"),
+        else: :ok
+    else
+      {:error, _error} ->
+        traversal_failure(:unavailable, "Target traversal history is unavailable")
+    end
+  end
+
+  defp current_actor(%{current_owner_id: owner_id}) when is_binary(owner_id) do
+    case Accounts.get_user(owner_id, authorize?: false) do
+      {:ok, %{role: role} = actor} when role in [:admin, :operator] ->
+        {:ok, actor}
+
+      _unavailable ->
+        traversal_failure(:denied, "Case owner cannot authorize related Target access")
+    end
+  end
+
+  defp current_actor(_incident),
+    do: traversal_failure(:denied, "Case has no related Target access owner")
+
+  defp authorized_target(intent, actor) do
+    expected_revision = intent["next_target_revision"]
+
+    case Targets.get_target(intent["next_target_id"], actor: actor) do
+      {:ok, %{active: true, revision: revision} = target} ->
+        if revision == expected_revision,
+          do: {:ok, target},
+          else: traversal_failure(:stale_context, "Related Target changed after selection")
+
+      {:ok, %{active: false}} ->
+        traversal_failure(:unavailable, "Related Target is inactive")
+
+      {:error, _error} ->
+        traversal_failure(:denied, "Case owner is not authorized for the related Target")
+    end
+  end
+
+  defp available_access_method(target) do
+    case Targets.available_access_methods_for_target(target.id, authorize?: false) do
+      {:ok, [_method | _rest]} ->
+        :ok
+
+      {:ok, []} ->
+        traversal_failure(:unavailable, "Related Target has no available Access Method")
+
+      {:error, _error} ->
+        traversal_failure(:unavailable, "Related Target Access Methods are unavailable")
+    end
+  end
+
+  defp start_next_turn(turn, incident, run, intent) do
+    Cases.start_turn(
+      incident.id,
+      run.id,
+      route_key(turn, "next-turn"),
+      %{
+        "objective" => "Continue resolution on the selected related Target",
+        "source" => "target_relationship",
+        "source_turn_id" => turn.id,
+        "relationship_id" => intent["relationship_id"],
+        "relationship_revision" => intent["relationship_revision"],
+        "selected_target_id" => intent["next_target_id"],
+        "reason" => intent["reason"]
+      },
+      %{"action" => "continue_resolution", "source_turn_id" => turn.id},
+      "Review Resolver limits or continue the Case manually",
+      authorize?: false
+    )
+  end
+
+  defp persist_failure(turn, intent, incident, run, {category, message}) do
+    spec = failure_spec(intent, category, message)
+
+    Ash.transact([Case, ResolutionRun, Turn, Evidence, CaseEvent], fn ->
+      with {:ok, evidence} <- append_failure(turn, spec),
+           {:ok, next_turn} <-
+             Cases.start_turn(
+               incident.id,
+               run.id,
+               route_key(turn, "next-turn"),
+               %{
+                 "objective" => "Continue resolution after a related Target was rejected",
+                 "source" => "target_relationship",
+                 "source_turn_id" => turn.id,
+                 "evidence_id" => evidence.id
+               },
+               %{"action" => "continue_resolution", "source_turn_id" => turn.id},
+               "Review Resolver limits or continue the Case manually",
+               authorize?: false
+             ) do
+        next_turn
+      end
+    end)
+  end
+
+  defp continue_after_failure(turn, evidence, incident, run) do
+    Cases.start_turn(
+      incident.id,
+      run.id,
+      route_key(turn, "next-turn"),
+      %{
+        "objective" => "Continue resolution after a related Target was rejected",
+        "source" => "target_relationship",
+        "source_turn_id" => turn.id,
+        "evidence_id" => evidence.id
+      },
+      %{"action" => "continue_resolution", "source_turn_id" => turn.id},
+      "Review Resolver limits or continue the Case manually",
+      authorize?: false
+    )
+  end
+
+  defp append_failure(turn, spec) do
+    Cases.append_evidence(
+      turn.case_id,
+      turn.resolution_run_id,
+      turn.id,
+      failure_key(turn),
+      "relationship_traversal_error",
+      "target_relationship",
+      turn.id,
+      spec,
+      DateTime.utc_now(),
+      authorize?: false
+    )
+  end
+
+  defp existing_failure(case_id, turn_id) do
+    Cases.evidence_by_idempotency(case_id, failure_key(turn_id),
+      authorize?: false,
+      not_found_error?: false
+    )
+  end
+
+  defp failure_key(%{id: id}), do: failure_key(id)
+  defp failure_key(turn_id), do: Budget.key("resolver-route:related-target:failure", turn_id)
+
+  defp failure_spec(intent, category, message) do
+    %{
+      "status" => "rejected",
+      "category" => to_string(category),
+      "message" => message,
+      "relationship_id" => intent["relationship_id"],
+      "relationship_revision" => intent["relationship_revision"],
+      "next_target_id" => intent["next_target_id"],
+      "next_target_revision" => intent["next_target_revision"]
+    }
+  end
+
+  defp traversal_event_data(turn, intent) do
+    %{
+      "source_turn_id" => turn.id,
+      "relationship_id" => intent["relationship_id"],
+      "relationship_revision" => intent["relationship_revision"],
+      "source_target_id" => intent["relationship"]["source_target_id"],
+      "source_target_revision" => intent["relationship"]["source_target_revision"],
+      "destination_target_id" => intent["relationship"]["destination_target_id"],
+      "destination_target_revision" => intent["relationship"]["destination_target_revision"],
+      "next_target_id" => intent["next_target_id"],
+      "next_target_revision" => intent["next_target_revision"],
+      "evidence_ids" => intent["evidence_ids"],
+      "reason" => intent["reason"]
+    }
+  end
+
+  defp traversal_intent(%{
+         status: :completed,
+         result: %{"outcome" => "decision", "intent" => %{"type" => "target_traversal"} = intent}
+       }) do
+    required = [
+      "relationship_id",
+      "relationship_revision",
+      "next_target_id",
+      "next_target_revision",
+      "evidence_ids",
+      "reason",
+      "relationship"
+    ]
+
+    if Enum.all?(required, &Map.has_key?(intent, &1)),
+      do: {:ok, intent},
+      else: {:error, "Target traversal decision is incomplete"}
+  end
+
+  defp traversal_intent(_turn),
+    do: {:error, "Completed Turn does not contain a Target traversal decision"}
+
+  defp traversal_error(%Error{category: category, message: message}), do: {category, message}
+
+  defp traversal_error(%{errors: errors}) when is_list(errors) do
+    Enum.find_value(errors, &find_traversal_error/1) ||
+      {:unavailable, "Related Target traversal could not be accepted"}
+  end
+
+  defp traversal_error(_error),
+    do: {:unavailable, "Related Target traversal could not be accepted"}
+
+  defp find_traversal_error(%Error{} = error), do: traversal_error(error)
+
+  defp find_traversal_error(%{errors: errors}) when is_list(errors),
+    do: Enum.find_value(errors, &find_traversal_error/1)
+
+  defp find_traversal_error(_error), do: nil
+
+  defp traversal_failure(category, message),
+    do: {:error, Error.exception(category: category, message: message)}
+
+  defp traversal_key(turn), do: Budget.key("resolver-route:related-target", turn.id)
+  defp route_key(turn, kind), do: "resolver-route:#{turn.id}:related-target:#{kind}"
+end

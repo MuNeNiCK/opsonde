@@ -301,6 +301,13 @@ defmodule Opsonde.Cases.Case do
       run Opsonde.Cases.Case.Actions.ObservationRoute
     end
 
+    action :route_related_target, :struct do
+      constraints instance_of: Opsonde.Cases.BudgetResult
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.RelatedTargetRoute
+    end
+
     action :route_downstream_decision, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -331,6 +338,7 @@ defmodule Opsonde.Cases.Case do
              :require_attention,
              :route_target_discovery,
              :route_observation,
+             :route_related_target,
              :route_downstream_decision
            ]) do
       forbid_if always()

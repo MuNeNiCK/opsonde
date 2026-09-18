@@ -121,6 +121,10 @@ defmodule Opsonde.Cases do
         action: :route_observation,
         args: [:turn_id, :invocation]
 
+      define :route_related_target,
+        action: :route_related_target,
+        args: [:turn_id]
+
       define :route_downstream_decision,
         action: :route_downstream_decision,
         args: [:turn_id]
@@ -157,6 +161,10 @@ defmodule Opsonde.Cases do
       define :case_event_by_idempotency,
         action: :by_idempotency,
         args: [:case_id, :idempotency_key]
+
+      define :case_target_history,
+        action: :target_history,
+        args: [:case_id, :resolution_run_id]
 
       define :create_case_event_record, action: :create_record
     end

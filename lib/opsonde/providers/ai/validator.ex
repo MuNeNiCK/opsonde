@@ -165,9 +165,11 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_relation?(%AI.TargetRelation{} = relation),
     do:
-      nonempty?(relation.id) and nonempty?(relation.source_target_id) and
-        nonempty?(relation.target_target_id) and bounded_kind?(relation.kind) and
-        is_map(relation.attributes)
+      nonempty?(relation.id) and positive?(relation.revision) and
+        valid_candidate?(relation.source_target) and
+        valid_candidate?(relation.destination_target) and
+        relation.source_target.id != relation.destination_target.id and
+        bounded_kind?(relation.kind) and is_map(relation.attributes)
 
   defp valid_relation?(_relation), do: false
 
@@ -219,8 +221,8 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp relations_allowed?(relations, disclosure) do
     Enum.all?(relations, fn relation ->
-      relation.source_target_id in disclosure.allowed_target_ids and
-        relation.target_target_id in disclosure.allowed_target_ids
+      relation.source_target.id in disclosure.allowed_target_ids and
+        relation.destination_target.id in disclosure.allowed_target_ids
     end)
   end
 
@@ -319,6 +321,26 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
+  defp validate_resolver_intent(%AI.TargetTraversal{} = traversal, request) do
+    evidence_ids = available_evidence_ids(request)
+
+    relationship =
+      Enum.find(request.target_relations, fn relationship ->
+        relationship.id == traversal.relationship_id and
+          relationship.revision == traversal.relationship_revision
+      end)
+
+    if request.budget.remaining_related_targets > 0 and not is_nil(relationship) and
+         traversal_destination?(relationship, request.selected_target_id, traversal) and
+         bounded_string?(traversal.reason, 500) and
+         nonempty_list?(traversal.evidence_ids) and unique?(traversal.evidence_ids) and
+         Enum.all?(traversal.evidence_ids, &(&1 in evidence_ids)) do
+      :ok
+    else
+      {:error, ai_error(:invalid_output, "AI Target traversal is invalid")}
+    end
+  end
+
   defp validate_resolver_intent(%AI.Proposal{} = proposal, request) do
     evidence_ids = available_evidence_ids(request)
 
@@ -361,6 +383,23 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(_intent, _request),
     do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid")}
+
+  defp traversal_destination?(relationship, selected_target_id, traversal) do
+    next_target =
+      cond do
+        relationship.source_target.id == selected_target_id ->
+          relationship.destination_target
+
+        relationship.destination_target.id == selected_target_id ->
+          relationship.source_target
+
+        true ->
+          nil
+      end
+
+    not is_nil(next_target) and next_target.id == traversal.next_target_id and
+      next_target.revision == traversal.next_target_revision
+  end
 
   defp valid_review_proposal?(%AI.Proposal{} = proposal, evidence_ids) do
     nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and

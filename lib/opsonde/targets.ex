@@ -81,6 +81,10 @@ defmodule Opsonde.Targets do
       define :load_relationship_for_traversal,
         action: :for_traversal,
         args: [:id, :expected_revision]
+
+      define :adjacent_relationships_for_traversal,
+        action: :adjacent_for_traversal,
+        args: [:target_id]
     end
 
     resource Opsonde.Targets.TargetPolicy do

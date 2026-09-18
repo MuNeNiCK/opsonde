@@ -64,8 +64,24 @@ defmodule Opsonde.Providers.AI do
 
   defmodule TargetRelation do
     @moduledoc false
-    @enforce_keys [:id, :source_target_id, :target_target_id, :kind]
+    @enforce_keys [:id, :revision, :source_target, :destination_target, :kind]
     defstruct @enforce_keys ++ [attributes: %{}]
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule TargetTraversal do
+    @moduledoc false
+
+    @enforce_keys [
+      :relationship_id,
+      :relationship_revision,
+      :next_target_id,
+      :next_target_revision,
+      :evidence_ids,
+      :reason
+    ]
+
+    defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
 

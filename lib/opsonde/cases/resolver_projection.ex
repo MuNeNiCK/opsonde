@@ -16,8 +16,9 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, target} <- selected_target(incident),
+         {:ok, relations} <- relations(target, incident, run),
          {:ok, tools} <- tools(target, run, invocation),
-         request <- request(selection, incident, run, turn, evidence, target, tools),
+         request <- request(selection, incident, run, turn, evidence, target, relations, tools),
          :ok <- AI.Validator.validate_request(:resolve, request) do
       {:ok, request}
     end
@@ -67,6 +68,87 @@ defmodule Opsonde.Cases.ResolverProjection do
              {:error, "Selected Target revision changed"} do
       {:ok, target}
     end
+  end
+
+  defp relations(nil, _incident, _run), do: {:ok, []}
+
+  defp relations(_target, _incident, %{max_related_targets: maximum, related_target_count: count})
+       when count >= maximum,
+       do: {:ok, []}
+
+  defp relations(target, incident, run) do
+    with {:ok, relationships} <-
+           Targets.adjacent_relationships_for_traversal(target.id, authorize?: false),
+         {:ok, history} <-
+           Cases.case_target_history(incident.id, run.id, authorize?: false) do
+      visited = visited_target_ids(history, target.id)
+
+      relationships
+      |> Enum.reduce([], fn relationship, projected ->
+        case relation(relationship, target, visited) do
+          {:ok, value} -> [value | projected]
+          :skip -> projected
+        end
+      end)
+      |> Enum.reverse()
+      |> then(&{:ok, &1})
+    end
+  end
+
+  defp relation(relationship, target, visited) do
+    next_target_id =
+      if relationship.source_target_id == target.id,
+        do: relationship.destination_target_id,
+        else: relationship.source_target_id
+
+    if MapSet.member?(visited, next_target_id) do
+      :skip
+    else
+      case Targets.get_target(next_target_id, authorize?: false) do
+        {:ok, %{active: true} = next_target} ->
+          current = target_candidate(target)
+          adjacent = target_candidate(next_target)
+
+          {source, destination} =
+            if relationship.source_target_id == target.id,
+              do: {current, adjacent},
+              else: {adjacent, current}
+
+          {:ok,
+           %AI.TargetRelation{
+             id: relationship.id,
+             revision: relationship.revision,
+             source_target: source,
+             destination_target: destination,
+             kind: relationship.kind,
+             attributes: relationship.facts
+           }}
+
+        _unavailable ->
+          :skip
+      end
+    end
+  end
+
+  defp visited_target_ids(history, current_target_id) do
+    Enum.reduce(history, MapSet.new([current_target_id]), fn event, visited ->
+      target_id =
+        event.data["next_target_id"] || event.data["target_id"] ||
+          event.data["selected_target_id"]
+
+      if is_binary(target_id), do: MapSet.put(visited, target_id), else: visited
+    end)
+  end
+
+  defp target_candidate(target) do
+    %AI.TargetCandidate{
+      id: target.id,
+      revision: target.revision,
+      name: target.name,
+      kind: target.kind,
+      platform: target.platform,
+      facts: target.facts
+    }
   end
 
   defp tools(nil, _run, _invocation), do: {:ok, {[], []}}
@@ -164,7 +246,16 @@ defmodule Opsonde.Cases.ResolverProjection do
     "#{kind}:#{digest}"
   end
 
-  defp request(selection, incident, run, turn, evidence, target, {observations, proposals}) do
+  defp request(
+         selection,
+         incident,
+         run,
+         turn,
+         evidence,
+         target,
+         relations,
+         {observations, proposals}
+       ) do
     limits = AI.resolver_disclosure_limits()
 
     base = %AI.ResolverRequest{
@@ -193,6 +284,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
     base
     |> add_candidate_group(evidence)
+    |> add_items(:target_relations, relations)
     |> add_items(:observation_tools, observations)
     |> add_items(:proposal_tools, proposals)
     |> then(fn current ->
@@ -369,6 +461,11 @@ defmodule Opsonde.Cases.ResolverProjection do
     target_ids =
       selected_target_ids(request)
       |> Kernel.++(Enum.map(request.target_candidates, & &1.id))
+      |> Kernel.++(
+        Enum.flat_map(request.target_relations, fn relation ->
+          [relation.source_target.id, relation.destination_target.id]
+        end)
+      )
       |> Kernel.++(Enum.map(request.evidence, & &1.target_id))
       |> Kernel.++(Enum.map(request.observation_tools ++ request.proposal_tools, & &1.target_id))
       |> Enum.reject(&is_nil/1)

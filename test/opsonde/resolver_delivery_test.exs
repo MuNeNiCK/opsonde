@@ -328,6 +328,123 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
   end
 
+  test "accepted relationship snapshot reaches the durable related Target route", context do
+    {linux, linux_method, capabilities} = target_context!(context.admin)
+
+    vm =
+      Targets.create_target!(
+        "snapshot-vm",
+        "virtual_machine",
+        "vmware_vm",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    vm_method =
+      Targets.create_access_method!(
+        vm.id,
+        linux_method.provider_id,
+        "snapshot-vm-ssh",
+        "vmware_vm",
+        "ssh",
+        "ssh://snapshot-vm",
+        linux_method.provider_revision,
+        10,
+        ["observe.system"],
+        actor: context.admin
+      )
+
+    relationship =
+      Targets.create_relationship!(linux.id, vm.id, "runs_on", %{}, nil, actor: context.admin)
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        "relationship-snapshot",
+        "Investigate Linux I/O errors",
+        :critical,
+        :not_applicable,
+        %{},
+        linux.id,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "relationship-snapshot-evidence",
+        "observation",
+        "fixture",
+        "io-errors",
+        %{"target_id" => linux.id, "io_errors" => 12},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    turn = start_turn!(incident, run, "relationship-snapshot")
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation: target_invocation(capabilities),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [offered] = request.target_relations
+
+                   assert offered.id == relationship.id
+                   assert offered.revision == relationship.revision
+                   assert offered.source_target.id == linux.id
+                   assert offered.destination_target.id == vm.id
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetTraversal{
+                        relationship_id: offered.id,
+                        relationship_revision: offered.revision,
+                        next_target_id: offered.destination_target.id,
+                        next_target_revision: offered.destination_target.revision,
+                        evidence_ids: [evidence.id],
+                        reason: "The I/O evidence implicates the VM layer"
+                      },
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 3}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    intent = completed.result["intent"]
+    assert intent["type"] == "target_traversal"
+    assert intent["relationship"]["id"] == relationship.id
+    assert intent["relationship"]["revision"] == relationship.revision
+    assert intent["relationship"]["source_target_revision"] == linux.revision
+    assert intent["relationship"]["destination_target_revision"] == vm.revision
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    selected = Cases.get_case!(incident.id, authorize?: false)
+    assert selected.selected_target_id == vm.id
+    assert Cases.get_resolution_run!(run.id, authorize?: false).related_target_count == 1
+
+    [event] =
+      Cases.list_case_events!(actor: context.admin)
+      |> Enum.filter(&(&1.event_type == "related_target_traversed"))
+
+    assert event.data["relationship_id"] == relationship.id
+    assert event.data["next_target_id"] == vm.id
+
+    assert [available_method] =
+             Targets.available_access_methods_for_target!(vm.id, authorize?: false)
+
+    assert available_method.id == vm_method.id
+  end
+
   defp turn!(source_ref, actor) do
     incident =
       Cases.open_case!(
