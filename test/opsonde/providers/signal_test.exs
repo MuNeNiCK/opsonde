@@ -55,8 +55,8 @@ defmodule Opsonde.Providers.SignalTest do
     first = ingest!(context.provider, envelope, invocation)
     duplicate = ingest!(context.provider, envelope, invocation)
 
-    assert first.receipt_id == duplicate.receipt_id
-    assert first.event_key == duplicate.event_key
+    assert first.receipt.receipt_id == duplicate.receipt.receipt_id
+    assert hd(first.events).event_key == hd(duplicate.events).event_key
   end
 
   test "firing and recovery order and unresolved target data pass through without Case state",
@@ -64,14 +64,14 @@ defmodule Opsonde.Providers.SignalTest do
     target_ref = %{kind: :hostname, value: "missing-server"}
 
     firing =
-      ingest!(
+      ingest_event!(
         context.provider,
         envelope("firing"),
         valid_invocation(:firing, 10, target_ref)
       )
 
     recovered =
-      ingest!(
+      ingest_event!(
         context.provider,
         envelope("recovered"),
         valid_invocation(:recovered, 11, target_ref)
@@ -82,6 +82,76 @@ defmodule Opsonde.Providers.SignalTest do
     assert firing.event_key == recovered.event_key
     assert firing.target_ref == target_ref
     refute Map.has_key?(Map.from_struct(firing), :case_id)
+  end
+
+  test "one authenticated group normalizes into bounded individual source events", context do
+    envelope = envelope("group")
+
+    invocation = %{
+      test_pid: self(),
+      authenticate: fn adapter_state, _envelope ->
+        {:ok,
+         %Signal.AuthenticatedReceipt{
+           receipt_id: "group-receipt",
+           source: adapter_state.source,
+           metadata: %{"group" => "database"}
+         }}
+      end,
+      normalize: fn _adapter_state, _envelope, receipt ->
+        {:ok,
+         [
+           event(receipt, "alert-a", :firing, 10),
+           event(receipt, "alert-b", :recovered, 11)
+         ]}
+      end
+    }
+
+    result = ingest!(context.provider, envelope, invocation)
+
+    assert result.receipt.receipt_id == "group-receipt"
+    assert result.receipt.source == "test-monitor"
+
+    assert Enum.map(result.events, &{&1.event_key, &1.state, &1.source_sequence}) == [
+             {"alert-a", :firing, 10},
+             {"alert-b", :recovered, 11}
+           ]
+  end
+
+  test "normalization rejects empty and duplicate source-event batches", context do
+    valid = valid_invocation(:firing, 1, nil)
+
+    for events <- [
+          [],
+          [
+            %Signal.Event{
+              receipt_id: "receipt",
+              event_key: "same-alert",
+              state: :firing,
+              occurred_at: DateTime.utc_now()
+            },
+            %Signal.Event{
+              receipt_id: "receipt",
+              event_key: "same-alert",
+              state: :recovered,
+              occurred_at: DateTime.utc_now()
+            }
+          ]
+        ] do
+      invocation = %{
+        valid
+        | authenticate: fn adapter_state, _envelope ->
+            {:ok,
+             %Signal.AuthenticatedReceipt{
+               receipt_id: "receipt",
+               source: adapter_state.source
+             }}
+          end,
+          normalize: fn _state, _envelope, _receipt -> {:ok, events} end
+      }
+
+      assert {:error, error} = ingest(context.provider, envelope("invalid-batch"), invocation)
+      assert signal_error(error).message == "Invalid normalized events"
+    end
   end
 
   test "invalid envelope and stale provider revision stop before authentication", context do
@@ -113,36 +183,27 @@ defmodule Opsonde.Providers.SignalTest do
     mismatched = %{
       valid
       | normalize: fn _state, _envelope, receipt ->
-          {:ok,
-           %Signal.Event{
-             receipt_id: "another-receipt",
-             event_key: receipt.event_key,
-             state: :firing,
-             occurred_at: DateTime.utc_now(),
-             source_sequence: receipt.source_sequence
-           }}
+          {:ok, [%{event(receipt, "alert-1", :firing, 1) | receipt_id: "another-receipt"}]}
         end
     }
 
     assert {:error, error} = ingest(context.provider, envelope, mismatched)
-    assert signal_error(error).message == "Invalid normalized event"
+    assert signal_error(error).message == "Invalid normalized events"
 
     redacted = %{
       valid
       | normalize: fn _state, _envelope, receipt ->
           {:ok,
-           %Signal.Event{
-             receipt_id: receipt.receipt_id,
-             event_key: receipt.event_key,
-             state: :firing,
-             occurred_at: DateTime.utc_now(),
-             source_sequence: receipt.source_sequence,
-             attributes: %{detail: "credential=#{@secret}"}
-           }}
+           [
+             %{
+               event(receipt, "alert-1", :firing, 1)
+               | attributes: %{detail: "credential=#{@secret}"}
+             }
+           ]}
         end
     }
 
-    event = ingest!(context.provider, envelope, redacted)
+    event = ingest_event!(context.provider, envelope, redacted)
     assert event.attributes == %{detail: "credential=[REDACTED]"}
   end
 
@@ -158,7 +219,6 @@ defmodule Opsonde.Providers.SignalTest do
            %Signal.AuthenticatedReceipt{
              receipt_id: "receipt",
              source: adapter_state.source,
-             event_key: "alert-1",
              metadata: too_many_facts
            }}
         end
@@ -171,19 +231,17 @@ defmodule Opsonde.Providers.SignalTest do
       valid
       | normalize: fn _adapter_state, _envelope, receipt ->
           {:ok,
-           %Signal.Event{
-             receipt_id: receipt.receipt_id,
-             event_key: receipt.event_key,
-             state: :firing,
-             occurred_at: DateTime.utc_now(),
-             source_sequence: receipt.source_sequence,
-             attributes: %{"payload" => String.duplicate("x", 65_537)}
-           }}
+           [
+             %{
+               event(receipt, "alert-1", :firing, 1)
+               | attributes: %{"payload" => String.duplicate("x", 65_537)}
+             }
+           ]}
         end
     }
 
     assert {:error, event_error} = ingest(context.provider, envelope, oversized_event)
-    assert signal_error(event_error).message == "Normalized event facts are too large"
+    assert signal_error(event_error).message == "Invalid normalized events"
   end
 
   defp ingest(provider, envelope, invocation) do
@@ -192,6 +250,10 @@ defmodule Opsonde.Providers.SignalTest do
 
   defp ingest!(provider, envelope, invocation) do
     Providers.signal_ingest!(provider.id, provider.revision, envelope, invocation)
+  end
+
+  defp ingest_event!(provider, envelope, invocation) do
+    provider |> ingest!(envelope, invocation) |> Map.fetch!(:events) |> List.first()
   end
 
   defp valid_invocation(state, sequence, target_ref) do
@@ -203,23 +265,22 @@ defmodule Opsonde.Providers.SignalTest do
         {:ok,
          %Signal.AuthenticatedReceipt{
            receipt_id: receipt_id,
-           source: adapter_state.source,
-           event_key: "alert-1",
-           source_sequence: sequence,
-           source_time: DateTime.utc_now()
+           source: adapter_state.source
          }}
       end,
       normalize: fn _adapter_state, _envelope, receipt ->
-        {:ok,
-         %Signal.Event{
-           receipt_id: receipt.receipt_id,
-           event_key: receipt.event_key,
-           state: state,
-           occurred_at: receipt.source_time,
-           source_sequence: receipt.source_sequence,
-           target_ref: target_ref
-         }}
+        {:ok, [%{event(receipt, "alert-1", state, sequence) | target_ref: target_ref}]}
       end
+    }
+  end
+
+  defp event(receipt, event_key, state, sequence) do
+    %Signal.Event{
+      receipt_id: receipt.receipt_id,
+      event_key: event_key,
+      state: state,
+      occurred_at: DateTime.utc_now(),
+      source_sequence: sequence
     }
   end
 

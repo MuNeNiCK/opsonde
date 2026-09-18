@@ -9,6 +9,11 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
   @max_headers 100
   @max_fact_fields 100
   @max_fact_bytes 65_536
+  @max_events 1_000
+  @max_result_bytes 2_097_152
+  @max_receipt_id_bytes 500
+  @max_source_bytes 120
+  @max_event_key_bytes 500
 
   @impl true
   def run(input, _opts, _context) do
@@ -25,10 +30,12 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
          {:ok, receipt} <-
            authenticate(adapter, state, envelope, invocation, provider.credentials),
          :ok <- validate_receipt(receipt),
-         {:ok, event} <-
+         {:ok, events} <-
            normalize(adapter, state, envelope, receipt, invocation, provider.credentials),
-         :ok <- validate_event(event, receipt) do
-      {:ok, Redactor.value(event, provider.credentials)}
+         :ok <- validate_events(events, receipt),
+         result <- %Signal.IngestResult{receipt: receipt, events: events},
+         :ok <- validate_result_size(result) do
+      {:ok, Redactor.value(result, provider.credentials)}
     end
   rescue
     _error -> {:error, signal_error(:failed, "Signal provider failed")}
@@ -80,16 +87,11 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
   defp validate_receipt(%Signal.AuthenticatedReceipt{
          receipt_id: receipt_id,
          source: source,
-         event_key: event_key,
-         source_sequence: source_sequence,
-         source_time: source_time,
          metadata: metadata
        })
-       when is_binary(receipt_id) and byte_size(receipt_id) > 0 and is_binary(source) and
-              byte_size(source) > 0 and is_binary(event_key) and byte_size(event_key) > 0 and
-              (is_nil(source_sequence) or is_integer(source_sequence) or
-                 (is_binary(source_sequence) and byte_size(source_sequence) > 0)) and
-              (is_nil(source_time) or is_struct(source_time, DateTime)) do
+       when is_binary(receipt_id) and byte_size(receipt_id) > 0 and
+              byte_size(receipt_id) <= @max_receipt_id_bytes and is_binary(source) and
+              byte_size(source) > 0 and byte_size(source) <= @max_source_bytes do
     if bounded_facts?(metadata),
       do: :ok,
       else: {:error, signal_error(:invalid_input, "Authenticated receipt facts are too large")}
@@ -98,7 +100,17 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
   defp validate_receipt(_receipt),
     do: {:error, signal_error(:invalid_input, "Invalid authenticated receipt")}
 
-  defp validate_event(
+  defp validate_events(events, receipt)
+       when is_list(events) and events != [] and length(events) <= @max_events do
+    if Enum.all?(events, &valid_event?(&1, receipt)) and unique_event_keys?(events),
+      do: :ok,
+      else: {:error, signal_error(:invalid_input, "Invalid normalized events")}
+  end
+
+  defp validate_events(_events, _receipt),
+    do: {:error, signal_error(:invalid_input, "Invalid normalized events")}
+
+  defp valid_event?(
          %Signal.Event{
            receipt_id: receipt_id,
            event_key: event_key,
@@ -109,23 +121,30 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
            attributes: attributes,
            metadata: metadata
          },
-         %Signal.AuthenticatedReceipt{
-           receipt_id: receipt_id,
-           event_key: event_key,
-           source_sequence: sequence
-         }
+         %Signal.AuthenticatedReceipt{receipt_id: receipt_id}
        )
-       when state in [:firing, :recovered] do
-    if bounded_facts?(attributes) and bounded_facts?(metadata) and
-         (is_nil(target_ref) or bounded_facts?(target_ref)) do
-      :ok
-    else
-      {:error, signal_error(:invalid_input, "Normalized event facts are too large")}
-    end
+       when is_binary(event_key) and byte_size(event_key) > 0 and
+              byte_size(event_key) <= @max_event_key_bytes and
+              state in [:firing, :recovered] and
+              (is_nil(sequence) or is_integer(sequence) or
+                 (is_binary(sequence) and byte_size(sequence) > 0 and
+                    byte_size(sequence) <= @max_event_key_bytes)),
+       do:
+         bounded_facts?(attributes) and bounded_facts?(metadata) and
+           (is_nil(target_ref) or bounded_facts?(target_ref))
+
+  defp valid_event?(_event, _receipt), do: false
+
+  defp unique_event_keys?(events) do
+    keys = Enum.map(events, & &1.event_key)
+    length(keys) == MapSet.size(MapSet.new(keys))
   end
 
-  defp validate_event(_event, _receipt),
-    do: {:error, signal_error(:invalid_input, "Invalid normalized event")}
+  defp validate_result_size(result) do
+    if :erlang.external_size(result) <= @max_result_bytes,
+      do: :ok,
+      else: {:error, signal_error(:invalid_input, "Normalized Signal result is too large")}
+  end
 
   defp normalize_adapter_result({:ok, value}, _credentials), do: {:ok, value}
 

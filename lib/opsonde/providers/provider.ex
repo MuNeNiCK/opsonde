@@ -109,7 +109,7 @@ defmodule Opsonde.Providers.Provider do
     end
 
     action :signal_ingest, :struct do
-      constraints instance_of: Opsonde.Providers.Signal.Event
+      constraints instance_of: Opsonde.Providers.Signal.IngestResult
       transaction? false
 
       argument :provider_id, :uuid, allow_nil?: false

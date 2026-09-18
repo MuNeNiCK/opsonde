@@ -10,8 +10,8 @@ defmodule Opsonde.Providers.Signal do
 
   defmodule AuthenticatedReceipt do
     @moduledoc false
-    @enforce_keys [:receipt_id, :source, :event_key]
-    defstruct @enforce_keys ++ [source_sequence: nil, source_time: nil, metadata: %{}]
+    @enforce_keys [:receipt_id, :source]
+    defstruct @enforce_keys ++ [metadata: %{}]
     @type t :: %__MODULE__{}
   end
 
@@ -22,6 +22,13 @@ defmodule Opsonde.Providers.Signal do
     defstruct @enforce_keys ++
                 [source_sequence: nil, target_ref: nil, attributes: %{}, metadata: %{}]
 
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule IngestResult do
+    @moduledoc false
+    @enforce_keys [:receipt, :events]
+    defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
 
@@ -39,5 +46,5 @@ defmodule Opsonde.Providers.Signal do
   @callback authenticate(state :: term(), Envelope.t(), invocation()) ::
               {:ok, AuthenticatedReceipt.t()} | adapter_error()
   @callback normalize(state :: term(), Envelope.t(), AuthenticatedReceipt.t(), invocation()) ::
-              {:ok, Event.t()} | adapter_error()
+              {:ok, [Event.t()]} | adapter_error()
 end
