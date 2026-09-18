@@ -5,10 +5,15 @@ import { defineConfig, lazyPlugins } from "vite-plus";
 // https://vite.dev/config/
 export default defineConfig({
   fmt: {
-    ignorePatterns: ["src/components/ui/**", "src/index.css", "src/lib/utils.ts"],
+    ignorePatterns: [
+      "src/components/ui/**",
+      "src/hooks/use-mobile.ts",
+      "src/index.css",
+      "src/lib/utils.ts",
+    ],
   },
   lint: {
-    ignorePatterns: ["src/components/ui/**"],
+    ignorePatterns: ["src/components/ui/**", "src/hooks/use-mobile.ts"],
     plugins: ["react", "typescript", "oxc"],
     rules: {
       "react/rules-of-hooks": "error",
