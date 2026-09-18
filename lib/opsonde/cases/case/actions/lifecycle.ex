@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
   alias Opsonde.Accounts
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun}
 
   @limit_fields [
     :max_elapsed_seconds,
@@ -98,19 +98,49 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
     transition_once(arguments.id, key, fn incident ->
       with :ok <- ensure_mutable(incident),
-           true <- incident.alert_state == :firing || {:error, "Case has no firing source"} do
-        recovered_at = DateTime.utc_now()
+           true <- incident.alert_state == :firing || {:error, "Case has no firing source"},
+           {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false) do
+        record_recovery(incident, run, arguments.expected_revision, actor, key)
+      end
+    end)
+  end
 
-        update_with_event(
-          incident,
-          arguments.expected_revision,
-          nil,
-          actor,
-          "source_recovered",
-          key,
-          %{alert_state: :recovered, source_recovered_at: recovered_at},
-          %{"recovered_at" => DateTime.to_iso8601(recovered_at)}
-        )
+  defp record_recovery(incident, run, expected_revision, actor, key) do
+    recovered_at = DateTime.utc_now()
+
+    Ash.transact([Case, ResolutionRun, Evidence, CaseEvent], fn ->
+      with {:ok, updated} <-
+             Cases.update_case_record(
+               incident,
+               expected_revision,
+               %{alert_state: :recovered, source_recovered_at: recovered_at},
+               actor: actor,
+               authorize?: false
+             ),
+           {:ok, evidence} <-
+             Cases.create_evidence_record(
+               %{
+                 case_id: incident.id,
+                 resolution_run_id: run.id,
+                 idempotency_key: "source-recovery:#{key}",
+                 kind: "source_recovery",
+                 source: incident.source,
+                 source_ref: incident.source_ref,
+                 content: %{
+                   "alert_state" => "recovered",
+                   "source" => incident.source,
+                   "source_ref" => incident.source_ref
+                 },
+                 observed_at: recovered_at
+               },
+               authorize?: false
+             ),
+           {:ok, _event} <-
+             create_event(updated, run, actor, "source_recovered", key, %{
+               "recovered_at" => DateTime.to_iso8601(recovered_at),
+               "evidence_id" => evidence.id
+             }) do
+        updated
       end
     end)
   end

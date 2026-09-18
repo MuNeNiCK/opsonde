@@ -9,15 +9,63 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   @impl true
   def run(input, _opts, _context) do
     with {:ok, source_turn} <- Cases.get_turn(input.arguments.turn_id, authorize?: false) do
-      Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent], fn ->
-        with {:ok, incident} <- lock_case(source_turn.case_id),
-             {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
-             {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
-             {:ok, intent} <- downstream_intent(turn),
-             :ok <- validate_intent(intent, incident, run) do
-          route(turn, intent, incident, run)
-        end
-      end)
+      case resolved_replay(source_turn) do
+        {:ok, %Case{}} = replayed ->
+          replayed
+
+        :continue ->
+          Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent], fn ->
+            with {:ok, incident} <- lock_case(source_turn.case_id),
+                 {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
+                 {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
+                 {:ok, intent} <- downstream_intent(turn),
+                 :ok <- validate_intent(intent, turn, incident, run) do
+              route(turn, intent, incident, run)
+            end
+          end)
+
+        {:error, _error} = error ->
+          error
+      end
+    end
+  end
+
+  defp route(turn, %{"type" => "recovery_conclusion"} = intent, incident, run) do
+    now = DateTime.utc_now()
+
+    with :ok <- ensure_running(incident, run),
+         :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
+         {:ok, resolved} <-
+           Cases.update_case_record(
+             incident,
+             incident.revision,
+             %{
+               status: :resolved,
+               pending_intent: %{},
+               stop_reason: nil,
+               required_human_input: nil
+             },
+             authorize?: false
+           ),
+         {:ok, _ended_run} <-
+           Cases.retire_resolution_run(
+             run,
+             run.revision,
+             %{status: :completed, ended_at: now},
+             authorize?: false
+           ),
+         {:ok, _event} <-
+           Cases.create_case_event_record(
+             %{
+               case_id: incident.id,
+               resolution_run_id: run.id,
+               event_type: "case_resolved",
+               idempotency_key: route_key(turn),
+               data: resolved_event_data(turn, intent)
+             },
+             authorize?: false
+           ) do
+      resolved
     end
   end
 
@@ -30,7 +78,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
         replay_handoff(incident, event, turn, intent, pending)
       else
         with :ok <- ensure_running(incident, run),
-             :ok <- available_pending_intent(incident.pending_intent, pending) do
+             :ok <- available_pending_intent(incident.pending_intent, pending, turn) do
           Cases.require_case_attention(
             incident.id,
             incident.revision,
@@ -82,7 +130,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp persist(incident, run, turn, intent, pending, key) do
     with :ok <- ensure_running(incident, run),
-         :ok <- available_pending_intent(incident.pending_intent, pending),
+         :ok <- available_pending_intent(incident.pending_intent, pending, turn),
          {:ok, updated} <-
            Cases.update_case_record(
              incident,
@@ -141,7 +189,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp downstream_intent(_turn),
     do: {:error, "Completed Turn does not contain a downstream Resolver decision"}
 
-  defp validate_intent(%{"type" => "proposal"}, _incident, _run), do: :ok
+  defp validate_intent(%{"type" => "proposal"}, _turn, _incident, _run), do: :ok
 
   defp validate_intent(
          %{
@@ -149,12 +197,17 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            "reason" => reason,
            "evidence_ids" => evidence_ids
          },
-         %{alert_state: :recovered} = incident,
+         turn,
+         incident,
          run
        )
        when is_binary(reason) and byte_size(reason) > 0 and byte_size(reason) <= 500 and
               is_list(evidence_ids) do
-    valid_evidence(evidence_ids, incident.id, run.id)
+    with :ok <- valid_recovery_state(incident),
+         :ok <- valid_evidence(evidence_ids, incident.id, run.id),
+         :ok <- valid_fresh_verification(evidence_ids, turn, incident, run) do
+      :ok
+    end
   end
 
   defp validate_intent(
@@ -163,6 +216,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            "reason" => reason,
            "required_input" => required_input
          },
+         _turn,
          _incident,
          _run
        )
@@ -171,8 +225,42 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               byte_size(required_input) <= 1_000,
        do: :ok
 
-  defp validate_intent(_intent, _incident, _run),
+  defp validate_intent(_intent, _turn, _incident, _run),
     do: {:error, "Downstream Resolver decision is malformed"}
+
+  defp valid_recovery_state(%{trigger_kind: :signal, alert_state: :recovered}), do: :ok
+
+  defp valid_recovery_state(%{trigger_kind: kind, alert_state: state})
+       when kind in [:manual, :audit] and state in [:not_applicable, :recovered],
+       do: :ok
+
+  defp valid_recovery_state(_incident),
+    do: {:error, "Monitoring source has not confirmed recovery"}
+
+  defp valid_fresh_verification(evidence_ids, turn, incident, run) do
+    evidence_id = turn.intent["verification_evidence_id"]
+    operation_id = turn.intent["operation_id"]
+
+    if evidence_id in evidence_ids do
+      case Cases.get_evidence(evidence_id, authorize?: false) do
+        {:ok,
+         %{
+           case_id: case_id,
+           resolution_run_id: run_id,
+           kind: "target_verification",
+           source: "verification",
+           content: %{"status" => "verified", "operation_id" => ^operation_id}
+         }}
+        when case_id == incident.id and run_id == run.id ->
+          :ok
+
+        _unavailable ->
+          {:error, "Recovery conclusion lacks the current verified Target Evidence"}
+      end
+    else
+      {:error, "Recovery conclusion omits the current verification Evidence"}
+    end
+  end
 
   defp valid_evidence(ids, case_id, run_id) do
     with :ok <- unique_ids(ids) do
@@ -233,10 +321,15 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp ensure_running(_incident, _run), do: {:error, "Case resolution is not running"}
 
-  defp available_pending_intent(current, _pending) when map_size(current) == 0, do: :ok
-  defp available_pending_intent(pending, pending), do: :ok
+  defp available_pending_intent(current, _pending, _turn) when map_size(current) == 0, do: :ok
+  defp available_pending_intent(pending, pending, _turn), do: :ok
 
-  defp available_pending_intent(_current, _pending),
+  defp available_pending_intent(%{"action" => "resolve_turn", "turn_id" => id}, _pending, %{
+         id: id
+       }),
+       do: :ok
+
+  defp available_pending_intent(_current, _pending, _turn),
     do: {:error, "Case already has another pending decision"}
 
   defp existing_event(case_id, key) do
@@ -253,6 +346,35 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       "intent_type" => intent["type"],
       "pending_intent" => pending
     }
+  end
+
+  defp resolved_event_data(turn, intent) do
+    %{
+      "source_turn_id" => turn.id,
+      "result_digest" => turn.result_digest,
+      "intent_type" => intent["type"],
+      "reason" => intent["reason"],
+      "evidence_ids" => intent["evidence_ids"]
+    }
+  end
+
+  defp resolved_replay(source_turn) do
+    with {:ok, %{"type" => "recovery_conclusion"} = intent} <- downstream_intent(source_turn),
+         {:ok, event} <- existing_event(source_turn.case_id, route_key(source_turn)) do
+      case event do
+        %CaseEvent{event_type: "case_resolved", data: data} ->
+          if data == resolved_event_data(source_turn, intent),
+            do: Cases.get_case(source_turn.case_id, authorize?: false),
+            else: {:error, "Recovery conclusion was already resolved with different input"}
+
+        _other ->
+          :continue
+      end
+    else
+      {:ok, _other_intent} -> :continue
+      {:error, "Completed Turn does not contain a downstream Resolver decision"} -> :continue
+      {:error, _error} = error -> error
+    end
   end
 
   defp pending_intent(action, turn),

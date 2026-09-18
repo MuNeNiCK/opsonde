@@ -2,7 +2,14 @@ defmodule Opsonde.OperationDeliveryTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{OperationDelivery, OperationWorker}
+
+  alias Opsonde.Cases.{
+    OperationDelivery,
+    OperationWorker,
+    VerificationDelivery,
+    VerificationWorker
+  }
+
   alias Opsonde.Providers.Target
 
   @password "correct horse battery staple"
@@ -261,15 +268,437 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:effect, _, _}
   end
 
-  defp authorized_proposal!(suffix, context) do
+  test "terminal Operation automatically creates one exact VerificationAttempt and job",
+       context do
+    {_incident, run, proposal} = authorized_proposal!("verification-accept", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation({:ok, %Target.EffectResult{status: :applied, reference: "remote-1"}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    duplicate = Cases.accept_verification!(operation.id, authorize?: false)
+
+    assert duplicate.id == attempt.id
+    assert attempt.status == :queued
+    assert attempt.operation_reference == "remote-1"
+    assert attempt.parameters == %{"service" => "api"}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
+    assert verification_jobs(attempt.id) == 1
+    assert %{"verification_attempt_id" => attempt.id} == verification_job(attempt.id).args
+    refute_receive {:verify, _, _}
+  end
+
+  test "fresh verification outcomes are called and persisted once with parameters", context do
+    for status <- [:verified, :not_verified, :unknown] do
+      {incident, _run, proposal} = authorized_proposal!("verification-#{status}", context)
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+               )
+
+      assert_receive {:effect, _, _}
+      attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+      result = %Target.Verification{
+        status: status,
+        observed_at: DateTime.utc_now(),
+        facts: %{"service" => to_string(status)},
+        evidence: [%{"check" => "service"}]
+      }
+
+      assert :ok =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation({:ok, result})
+               )
+
+      assert_receive {:verify, _state, request}
+      assert request.operation_id == operation.id
+      assert request.parameters == %{"service" => "api"}
+
+      stored = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+      assert stored.status == status
+      assert stored.facts == %{"service" => to_string(status)}
+
+      assert :ok =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation(fn -> flunk("terminal verification repeated") end)
+               )
+
+      refute_receive {:verify, _, _}
+
+      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+      assert pending["action"] == "resolve_turn"
+      assert pending["verification_attempt_id"] == attempt.id
+
+      assessment = Cases.get_turn!(pending["turn_id"], authorize?: false)
+      assert assessment.status == :started
+      assert assessment.intent["verification_attempt_id"] == attempt.id
+      assert assessment.intent["verification_status"] == to_string(status)
+      assert verification_evidence(attempt.id) == 1
+    end
+  end
+
+  test "lost verification response and restart after marker never repeat the Target call",
+       context do
+    {_incident, _run, proposal} = authorized_proposal!("verification-lost", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :unknown}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    claim = Cases.claim_verification_dispatch!(attempt.id, authorize?: false)
+    assert claim.state == :claimed
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("recovered verification repeated") end)
+             )
+
+    recovered = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert recovered.status == :unknown
+    assert recovered.outcome_category == "verification_interrupted"
+    refute_receive {:verify, _, _}
+    assert verification_evidence(attempt.id) == 1
+  end
+
+  test "a lost verification response is unknown and never repeated", context do
+    {_incident, _run, proposal} = authorized_proposal!("verification-response-lost", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> raise "verification response lost" end)
+             )
+
+    assert_receive {:verify, _, _}
+    assert Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :unknown
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("unknown verification repeated") end)
+             )
+
+    refute_receive {:verify, _, _}
+  end
+
+  test "policy change after VerificationAttempt acceptance prevents Target dispatch", context do
+    {_incident, _run, proposal} = authorized_proposal!("verification-policy", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    Targets.create_target_policy!(
+      context.target.id,
+      "deny-verification-dispatch",
+      [:observation],
+      ["observe.service"],
+      ["service.inspect"],
+      %{"service" => %{"eq" => "api"}},
+      %{},
+      "Fresh service verification is temporarily forbidden",
+      actor: context.admin
+    )
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("invalidated verification was sent") end)
+             )
+
+    invalidated = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert invalidated.status == :unknown
+    assert invalidated.outcome_category == "authorization_invalidated"
+    refute_receive {:verify, _, _}
+  end
+
+  test "cancellation before verification claim prevents Target dispatch", context do
+    {incident, _run, proposal} = authorized_proposal!("verification-cancel", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    Cases.request_case_cancellation!(current.id, current.revision, actor: context.operator)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("cancelled verification was sent") end)
+             )
+
+    cancelled = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert cancelled.status == :unknown
+    assert cancelled.outcome_category == "cancelled_before_verification"
+    refute_receive {:verify, _, _}
+  end
+
+  test "verification budget exhaustion persists attention without attempt or Target call",
+       context do
+    {incident, run, proposal} = authorized_proposal!("verification-exhausted", context)
+
+    Cases.charge_resolution_run!(
+      incident.id,
+      run.id,
+      :target_request,
+      run.max_target_requests,
+      "consume-verification-budget",
+      %{"action" => "test"},
+      "test",
+      authorize?: false
+    )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    assert Cases.list_verification_attempts!(actor: context.admin) == []
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    refute_receive {:verify, _, _}
+  end
+
+  test "verified Evidence lets a Resolver conclusion resolve a manual Case exactly once",
+       context do
+    {incident, run, proposal} = authorized_proposal!("manual-recovery", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+             )
+
+    assert_receive {:verify, _, _}
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => %{
+            "type" => "recovery_conclusion",
+            "reason" => "Fresh verification satisfies the declared recovery condition",
+            "evidence_ids" => [pending["verification_evidence_id"]]
+          },
+          "resolver" => %{},
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :source_change,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    replayed = Cases.route_downstream_decision!(completed.id, authorize?: false)
+
+    assert resolved.status == :resolved
+    assert replayed.id == resolved.id
+    assert resolved.alert_state == :not_applicable
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
+    refute Cases.get_resolution_run!(run.id, authorize?: false).active
+    refute_receive {:effect, _, _}
+  end
+
+  test "a Signal Case cannot resolve until its monitoring source also recovers", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal} =
+      authorized_proposal!("signal-recovery", context,
+        trigger_kind: :signal,
+        alert_state: :firing
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+             )
+
+    assert_receive {:verify, _, _}
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => %{
+            "type" => "recovery_conclusion",
+            "reason" => "Target state is healthy after the effect",
+            "evidence_ids" => [pending["verification_evidence_id"]]
+          },
+          "resolver" => %{},
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :source_change,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert {:error, _error} = Cases.route_downstream_decision(completed.id, authorize?: false)
+    refute Cases.get_case!(incident.id, authorize?: false).status == :resolved
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    recovered =
+      Cases.record_case_source_recovery!(current.id, current.revision, actor: context.operator)
+
+    assert recovered.alert_state == :recovered
+
+    source_recovery =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.find(&(&1.case_id == incident.id and &1.kind == "source_recovery"))
+
+    assert source_recovery.source_ref == incident.source_ref
+    assert source_recovery.content["alert_state"] == "recovered"
+
+    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    assert resolved.status == :resolved
+    assert resolved.alert_state == :recovered
+    refute_receive {:effect, _, _}
+  end
+
+  test "remaining symptoms create a new Proposal without replaying the prior Operation",
+       context do
+    {incident, run, proposal} = authorized_proposal!("compound-cause", context)
+    first_operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first_operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(first_operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Verification{
+                      status: :not_verified,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"service" => "degraded"}
+                    }}
+                 )
+             )
+
+    assert_receive {:verify, _, _}
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => proposal_intent(pending["verification_evidence_id"], context),
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    routed = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    second_proposal_id = routed.pending_intent["proposal_id"]
+    second_proposal = Cases.get_proposal!(second_proposal_id, authorize?: false)
+    second_operation = Cases.accept_operation!(second_proposal.id, authorize?: false)
+
+    assert second_operation.id != first_operation.id
+    assert Cases.get_operation!(first_operation.id, authorize?: false).status == :applied
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 2
+
+    assert :ok =
+             OperationDelivery.run(first_operation.id,
+               target_invocation: invocation(fn -> flunk("prior effect was replayed") end)
+             )
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("prior verification was replayed") end)
+             )
+
+    refute_receive {:effect, _, _}
+    refute_receive {:verify, _, _}
+  end
+
+  defp authorized_proposal!(suffix, context, opts \\ []) do
+    trigger_kind = Keyword.get(opts, :trigger_kind, :manual)
+    alert_state = Keyword.get(opts, :alert_state, :not_applicable)
+
     incident =
       Cases.open_case!(
-        :manual,
+        trigger_kind,
         "test",
         "operation-#{suffix}",
         "Operation #{suffix}",
         :warning,
-        :not_applicable,
+        alert_state,
         %{},
         context.target.id,
         actor: context.operator
@@ -395,10 +824,38 @@ defmodule Opsonde.OperationDeliveryTest do
     )
   end
 
+  defp enable_signal_automation!(admin) do
+    current = Cases.current_authority_setting!(actor: admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      true,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "enable Signal recovery test",
+      actor: admin
+    )
+  end
+
   defp invocation(response) when is_function(response, 0),
     do: %{test_pid: self(), respond: response}
 
   defp invocation(response), do: %{test_pid: self(), respond: fn -> response end}
+
+  defp verified_result(facts) do
+    %Target.Verification{
+      status: :verified,
+      observed_at: DateTime.utc_now(),
+      facts: facts,
+      evidence: [%{"check" => "fresh"}]
+    }
+  end
 
   defp operation_jobs(operation_id) do
     Opsonde.Repo.aggregate(
@@ -425,6 +882,36 @@ defmodule Opsonde.OperationDeliveryTest do
     Opsonde.Repo.aggregate(
       from(evidence in Opsonde.Cases.Evidence,
         where: evidence.idempotency_key == ^"operation:outcome:#{operation_id}"
+      ),
+      :count
+    )
+  end
+
+  defp verification_jobs(attempt_id) do
+    Opsonde.Repo.aggregate(
+      from(job in Oban.Job,
+        where:
+          job.worker == ^Oban.Worker.to_string(VerificationWorker) and
+            fragment("?->>'verification_attempt_id'", job.args) == ^attempt_id
+      ),
+      :count
+    )
+  end
+
+  defp verification_job(attempt_id) do
+    Opsonde.Repo.one!(
+      from(job in Oban.Job,
+        where:
+          job.worker == ^Oban.Worker.to_string(VerificationWorker) and
+            fragment("?->>'verification_attempt_id'", job.args) == ^attempt_id
+      )
+    )
+  end
+
+  defp verification_evidence(attempt_id) do
+    Opsonde.Repo.aggregate(
+      from(evidence in Opsonde.Cases.Evidence,
+        where: evidence.idempotency_key == ^"verification:outcome:#{attempt_id}"
       ),
       :count
     )

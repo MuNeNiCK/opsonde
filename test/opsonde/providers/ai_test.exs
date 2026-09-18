@@ -193,11 +193,16 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
 
-    manual_request = %{request | alert_state: :not_applicable}
+    manual_request = %{later_request | alert_state: :not_applicable}
 
     assert %AI.ResolverDecision{intent: ^handoff} =
              resolve!(context, manual_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
+             end)
+
+    assert %AI.ResolverDecision{intent: ^recovery} =
+             resolve!(context, manual_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
              end)
   end
 

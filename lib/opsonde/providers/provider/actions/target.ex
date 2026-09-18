@@ -211,7 +211,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp validate_verification_request(%Target.VerificationRequest{} = request) do
     if valid_request_base?(request) and nonempty_binary?(request.operation_id) and
          (is_nil(request.reference) or nonempty_binary?(request.reference)) and
-         bounded_map?(request.expected) do
+         bounded_map?(request.parameters) and bounded_map?(request.expected) do
       :ok
     else
       {:error, target_error(:failed, "Invalid verification request")}

@@ -104,24 +104,54 @@ defmodule Opsonde.Cases.OperationDelivery do
              operation.completed_at,
              authorize?: false
            ),
-         {:ok, incident} <- Cases.get_case(operation.case_id, authorize?: false),
-         :ok <- available_pending(incident.pending_intent, operation),
-         {:ok, _case} <-
-           Cases.update_case_record(
-             incident,
-             incident.revision,
-             %{
-               pending_intent: %{
-                 "action" => "verify_operation",
-                 "operation_id" => operation.id,
-                 "proposal_id" => operation.proposal_id
-               },
-               stop_reason: nil,
-               required_human_input: nil
-             },
-             authorize?: false
-           ) do
-      :ok
+         {:ok, incident} <- Cases.get_case(operation.case_id, authorize?: false) do
+      continue_handoff(operation, incident)
+    end
+  end
+
+  defp continue_handoff(operation, incident) do
+    case available_pending(incident.pending_intent, operation) do
+      :ok ->
+        with {:ok, _case} <-
+               Cases.update_case_record(
+                 incident,
+                 incident.revision,
+                 %{
+                   pending_intent: %{
+                     "action" => "verify_operation",
+                     "operation_id" => operation.id,
+                     "proposal_id" => operation.proposal_id
+                   },
+                   stop_reason: nil,
+                   required_human_input: nil
+                 },
+                 authorize?: false
+               ),
+             :ok <- accept_verification(operation) do
+          :ok
+        end
+
+      {:error, _error} = conflict ->
+        case Cases.verification_attempt_by_operation(operation.id,
+               authorize?: false,
+               not_found_error?: false
+             ) do
+          {:ok, %Opsonde.Cases.VerificationAttempt{}} -> :ok
+          _missing -> conflict
+        end
+    end
+  end
+
+  defp accept_verification(operation) do
+    case Cases.accept_verification(operation.id, authorize?: false) do
+      {:ok, _attempt} ->
+        :ok
+
+      {:error, error} ->
+        case Cases.get_case(operation.case_id, authorize?: false) do
+          {:ok, %{status: :needs_attention}} -> :ok
+          _active -> {:error, error}
+        end
     end
   end
 

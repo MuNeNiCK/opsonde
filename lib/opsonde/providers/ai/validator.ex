@@ -343,7 +343,8 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.RecoveryConclusion{} = conclusion, request) do
-    if request.alert_state == :recovered and bounded_string?(conclusion.reason, 500) and
+    if request.alert_state in [:recovered, :not_applicable] and
+         bounded_string?(conclusion.reason, 500) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in available_evidence_ids(request))) do
       :ok

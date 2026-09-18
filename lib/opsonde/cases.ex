@@ -269,5 +269,26 @@ defmodule Opsonde.Cases do
       define :accept_operation, action: :accept, args: [:proposal_id]
       define :claim_operation_dispatch, action: :claim_dispatch, args: [:id]
     end
+
+    resource Opsonde.Cases.VerificationAttempt do
+      define :list_verification_attempts, action: :read
+      define :get_verification_attempt, action: :read, get_by: [:id]
+
+      define :verification_attempt_by_operation,
+        action: :by_operation,
+        args: [:operation_id]
+
+      define :create_verification_attempt_record, action: :create_record
+
+      define :mark_verification_dispatching,
+        action: :mark_dispatching,
+        args: [:expected_revision]
+
+      define :record_verification_outcome, action: :record_outcome, args: [:expected_revision]
+      define :record_verification_no_send, action: :record_no_send, args: [:expected_revision]
+      define :accept_verification, action: :accept, args: [:operation_id]
+      define :claim_verification_dispatch, action: :claim_dispatch, args: [:id]
+      define :evaluate_verification, action: :evaluate, args: [:id]
+    end
   end
 end

@@ -84,7 +84,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
            ) == 1
   end
 
-  test "recovery conclusion remains pending and cannot resolve the Case", context do
+  test "recovery conclusion cannot use ordinary Evidence as fresh verification", context do
     current = Cases.current_authority_setting!(actor: context.admin)
 
     Cases.configure_authority_setting!(
@@ -117,16 +117,9 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
     turn = completed_turn!(recovered, run, "recovery", intent, :source_change)
 
-    assert {:ok, routed} =
-             Cases.route_downstream_decision(turn.id, authorize?: false)
-
-    assert routed.status == :running
-
-    assert routed.pending_intent == %{
-             "action" => "evaluate_recovery",
-             "source_turn_id" => turn.id
-           }
-
+    assert {:error, _error} = Cases.route_downstream_decision(turn.id, authorize?: false)
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
   end
 

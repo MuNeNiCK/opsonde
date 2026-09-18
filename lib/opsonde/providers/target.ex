@@ -88,7 +88,7 @@ defmodule Opsonde.Providers.Target do
       :operation_id
     ]
 
-    defstruct @enforce_keys ++ [selectors: %{}, reference: nil, expected: %{}]
+    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, reference: nil, expected: %{}]
     @type t :: %__MODULE__{}
   end
 

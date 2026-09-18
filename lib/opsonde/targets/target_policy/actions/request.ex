@@ -211,6 +211,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       operation: clearance.operation,
       authorization_digest: clearance.digest,
       selectors: clearance.selectors,
+      parameters: clearance.parameters,
       operation_id: clearance.operation_id,
       reference: clearance.reference,
       expected: clearance.expected
