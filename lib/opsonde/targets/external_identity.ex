@@ -38,10 +38,34 @@ defmodule Opsonde.Targets.ExternalIdentity do
       prepare build(load: [:target], sort: [kind: :asc, value: :asc])
     end
 
+    read :resolve do
+      get? true
+
+      argument :source, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 120]
+
+      argument :kind, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 80]
+
+      argument :value, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      filter expr(
+               source == ^arg(:source) and kind == ^arg(:kind) and value == ^arg(:value) and
+                 active == true and target.active == true
+             )
+
+      prepare build(load: [:target])
+    end
+
     create :create do
       primary? true
       accept [:target_id, :source, :kind, :value]
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:source, :kind, :value]}
+      change Opsonde.Targets.Changes.ReconcileSignalCases
     end
 
     update :update do
@@ -53,6 +77,7 @@ defmodule Opsonde.Targets.ExternalIdentity do
 
       validate Opsonde.Validations.CurrentRevision
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:source, :kind, :value]}
+      change Opsonde.Targets.Changes.ReconcileSignalCases
       change optimistic_lock(:revision)
     end
 
@@ -70,7 +95,7 @@ defmodule Opsonde.Targets.ExternalIdentity do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:search_index, :for_source]) do
+    policy action([:search_index, :for_source, :resolve]) do
       forbid_if always()
     end
 

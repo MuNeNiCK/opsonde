@@ -8,7 +8,8 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
   @max_body_bytes 1_048_576
   @max_headers 100
   @max_fact_fields 100
-  @max_fact_bytes 65_536
+  # Leave room for the persisted evidence envelope around normalized facts.
+  @max_fact_bytes 60_000
   @max_events 1_000
   @max_result_bytes 2_097_152
   @max_receipt_id_bytes 500

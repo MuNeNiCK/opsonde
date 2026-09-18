@@ -31,6 +31,7 @@ defmodule Opsonde.Targets.Target do
       accept [:name, :kind, :platform, :facts, :management_boundary_id]
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :platform, :facts]}
+      change Opsonde.Targets.Changes.ReconcileSignalCases
     end
 
     update :update do
@@ -43,6 +44,7 @@ defmodule Opsonde.Targets.Target do
       validate Opsonde.Validations.CurrentRevision
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :platform, :facts]}
+      change Opsonde.Targets.Changes.ReconcileSignalCases
       change optimistic_lock(:revision)
     end
 

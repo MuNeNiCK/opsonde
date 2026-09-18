@@ -100,7 +100,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       initial_target_id: arguments.initial_target_id,
       selected_target_id: initial_target && initial_target.id,
       selected_target_revision: initial_target && initial_target.revision,
-      current_owner_id: actor_id(actor)
+      current_owner_id: owner_id(arguments.trigger_kind, setting, actor)
     }
 
     Cases.create_case_record(attrs, actor: actor, authorize?: false)
@@ -196,4 +196,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
 
   defp actor_id(nil), do: nil
   defp actor_id(actor), do: actor.id
+
+  defp owner_id(:signal, %{signal_automation_enabled: true, changed_by_id: id}, _actor), do: id
+  defp owner_id(_trigger_kind, _setting, actor), do: actor_id(actor)
 end

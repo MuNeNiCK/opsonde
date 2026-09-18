@@ -27,6 +27,10 @@ defmodule Opsonde.Targets do
       define :list_external_identities, action: :read
       define :external_identities_for_source, action: :for_source, args: [:source]
 
+      define :resolve_external_identity,
+        action: :resolve,
+        args: [:source, :kind, :value]
+
       define :create_external_identity,
         action: :create,
         args: [:target_id, :source, :kind, :value]

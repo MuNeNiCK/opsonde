@@ -41,6 +41,15 @@ defmodule Opsonde.Cases.Case do
              )
     end
 
+    read :active_unresolved_signals do
+      filter expr(
+               trigger_kind == :signal and alert_state == :firing and status == :running and
+                 is_nil(selected_target_id)
+             )
+
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     create :create_record do
       accept [
         :trigger_kind,
@@ -333,6 +342,7 @@ defmodule Opsonde.Cases.Case do
 
     policy action([
              :by_trigger,
+             :active_unresolved_signals,
              :create_record,
              :update_record,
              :require_attention,

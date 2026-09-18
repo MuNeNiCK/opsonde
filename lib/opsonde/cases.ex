@@ -30,6 +30,7 @@ defmodule Opsonde.Cases do
       define :list_cases, action: :read
       define :get_case, action: :read, get_by: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
+      define :active_unresolved_signal_cases, action: :active_unresolved_signals
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]
 
@@ -177,6 +178,10 @@ defmodule Opsonde.Cases do
         action: :by_idempotency,
         args: [:resolution_run_id, :idempotency_key]
 
+      define :started_turns_for_run,
+        action: :started_for_run,
+        args: [:resolution_run_id]
+
       define :create_turn_record, action: :create_record
       define :complete_turn_record, action: :complete_record, args: [:expected_revision]
 
@@ -297,6 +302,41 @@ defmodule Opsonde.Cases do
       define :accept_verification, action: :accept, args: [:operation_id]
       define :claim_verification_dispatch, action: :claim_dispatch, args: [:id]
       define :evaluate_verification, action: :evaluate, args: [:id]
+    end
+
+    resource Opsonde.Cases.SignalReceipt do
+      define :list_signal_receipts, action: :read
+
+      define :signal_receipt_by_source_identity,
+        action: :by_source_identity,
+        args: [:provider_id, :receipt_id]
+
+      define :create_signal_receipt_record, action: :create_record
+
+      define :ingest_signal,
+        action: :ingest,
+        args: [:provider_id, :provider_revision, :envelope, :invocation]
+    end
+
+    resource Opsonde.Cases.SignalEvent do
+      define :list_signal_events, action: :read
+
+      define :signal_event_by_receipt,
+        action: :by_receipt_event,
+        args: [:signal_receipt_id, :event_key]
+
+      define :create_signal_event_record, action: :create_record
+    end
+
+    resource Opsonde.Cases.SignalCorrelation do
+      define :list_signal_correlations, action: :read
+
+      define :signal_correlation_by_source,
+        action: :by_source_identity,
+        args: [:provider_id, :source, :event_key]
+
+      define :create_signal_correlation_record, action: :create_record
+      define :update_signal_correlation_record, action: :update_record, args: [:expected_revision]
     end
   end
 end

@@ -8,6 +8,7 @@ defmodule Opsonde.Cases.Turn do
   postgres do
     table "turns"
     repo Opsonde.Repo
+    identity_wheres_to_sql one_started_turn: "status = 'started'"
 
     custom_indexes do
       index [:case_id]
@@ -30,6 +31,12 @@ defmodule Opsonde.Cases.Turn do
                resolution_run_id == ^arg(:resolution_run_id) and
                  idempotency_key == ^arg(:idempotency_key)
              )
+    end
+
+    read :started_for_run do
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      filter expr(resolution_run_id == ^arg(:resolution_run_id) and status == :started)
     end
 
     create :create_record do
@@ -106,7 +113,14 @@ defmodule Opsonde.Cases.Turn do
   end
 
   policies do
-    policy action([:by_idempotency, :create_record, :complete_record, :start, :complete]) do
+    policy action([
+             :by_idempotency,
+             :started_for_run,
+             :create_record,
+             :complete_record,
+             :start,
+             :complete
+           ]) do
       forbid_if always()
     end
 
@@ -189,5 +203,9 @@ defmodule Opsonde.Cases.Turn do
   identities do
     identity :unique_idempotency, [:resolution_run_id, :idempotency_key]
     identity :unique_ordinal, [:resolution_run_id, :ordinal]
+
+    identity :one_started_turn, [:resolution_run_id] do
+      where expr(status == :started)
+    end
   end
 end
