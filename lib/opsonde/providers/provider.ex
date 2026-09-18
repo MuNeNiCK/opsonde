@@ -40,14 +40,14 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      argument :expected_role, :atom,
+      argument :expected_kind, :atom,
         allow_nil?: false,
         constraints: [one_of: [:ai, :signal, :target, :inventory, :notification]]
 
       filter expr(
                id == ^arg(:id) and
                  revision == ^arg(:expected_revision) and
-                 role == ^arg(:expected_role) and
+                 kind == ^arg(:expected_kind) and
                  enabled == true and
                  check_status == :passed and
                  checked_revision == revision
@@ -58,7 +58,7 @@ defmodule Opsonde.Providers.Provider do
 
     create :create do
       primary? true
-      accept [:name, :role, :adapter_type, :configuration, :credentials]
+      accept [:name, :kind, :adapter_type, :configuration, :credentials]
       change Opsonde.Providers.Provider.Changes.ValidateAdapter
     end
 
@@ -329,7 +329,7 @@ defmodule Opsonde.Providers.Provider do
       constraints min_length: 1, max_length: 120
     end
 
-    attribute :role, :atom do
+    attribute :kind, :atom do
       allow_nil? false
       public? true
       constraints one_of: [:ai, :signal, :target, :inventory, :notification]

@@ -33,7 +33,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "role",
+      "source": "kind",
       "type": "text"
     },
     {
@@ -187,7 +187,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "835BBE17731BBE75C32160A7CDD8E6E6BF97A3B188ADE07A63DA903464562CFF",
+  "hash": "A3289E16EE0FB71174E03985026F7DB829D5FAF45BA65CEE2C74C28199708E5D",
   "identities": [
     {
       "all_tenants?": false,

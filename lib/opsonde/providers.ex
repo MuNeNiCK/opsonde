@@ -9,11 +9,11 @@ defmodule Opsonde.Providers do
 
       define :load_provider_for_invocation,
         action: :for_invocation,
-        args: [:id, :expected_revision, :expected_role]
+        args: [:id, :expected_revision, :expected_kind]
 
       define :create_provider,
         action: :create,
-        args: [:name, :role, :adapter_type, :configuration, :credentials]
+        args: [:name, :kind, :adapter_type, :configuration, :credentials]
 
       define :update_provider, action: :update, args: [:expected_revision]
       define :check_provider, action: :check, args: [:id, :expected_revision, :input]

@@ -9,15 +9,15 @@ defmodule Opsonde.Providers.Provider.Changes.ValidateAdapter do
   @impl true
   def change(changeset, _opts, _context) do
     adapter_type = Ash.Changeset.get_attribute(changeset, :adapter_type)
-    role = Ash.Changeset.get_attribute(changeset, :role)
+    kind = Ash.Changeset.get_attribute(changeset, :kind)
 
     case Opsonde.Providers.Registry.fetch(adapter_type) do
       {:ok, adapter} ->
-        if Opsonde.Providers.Registry.role(adapter) == role do
+        if Opsonde.Providers.Registry.kind(adapter) == kind do
           changeset
         else
           Ash.Changeset.add_error(changeset,
-            field: :role,
+            field: :kind,
             message: "does not match the selected adapter"
           )
         end

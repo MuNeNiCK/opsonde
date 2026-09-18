@@ -24,7 +24,7 @@ defmodule Opsonde.ProvidersTest do
     provider = create_provider!(context.admin, "reachable")
 
     assert provider.revision == 1
-    assert provider.role == :target
+    assert provider.kind == :target
     refute provider.enabled
     assert %Ash.NotLoaded{} = provider.credentials
     assert is_binary(provider.encrypted_credentials)
@@ -56,7 +56,7 @@ defmodule Opsonde.ProvidersTest do
 
     assert {:error, error} =
              Providers.create_provider(
-               "wrong-role",
+               "wrong-kind",
                :inventory,
                "fixture-target",
                %{"endpoint" => "reachable"},
@@ -189,7 +189,7 @@ defmodule Opsonde.ProvidersTest do
     assert is_nil(current.checked_revision)
   end
 
-  test "all role actions share one Ash invocation gate", context do
+  test "all provider kinds share one Ash invocation gate", context do
     provider = create_provider!(context.admin, "reachable")
 
     assert {:error, _error} =
@@ -214,12 +214,12 @@ defmodule Opsonde.ProvidersTest do
     assert eligible.id == enabled.id
     assert eligible.credentials == %{"token" => @token}
 
-    for {revision, role} <- [{2, :target}, {1, :inventory}] do
+    for {revision, kind} <- [{2, :target}, {1, :inventory}] do
       assert {:error, _error} =
                Providers.load_provider_for_invocation(
                  enabled.id,
                  revision,
-                 role,
+                 kind,
                  authorize?: false
                )
     end

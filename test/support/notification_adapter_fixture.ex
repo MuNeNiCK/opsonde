@@ -6,7 +6,7 @@ defmodule Opsonde.NotificationAdapterFixture do
   def type, do: "fixture-notification"
 
   @impl Opsonde.Providers.Adapter
-  def role, do: :notification
+  def kind, do: :notification
 
   @impl Opsonde.Providers.Adapter
   def build(%{"destination" => destination}, %{"token" => token})

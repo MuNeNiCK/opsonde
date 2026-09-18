@@ -6,7 +6,7 @@ defmodule Opsonde.AIAdapterFixture do
   def type, do: "fixture-ai"
 
   @impl Opsonde.Providers.Adapter
-  def role, do: :ai
+  def kind, do: :ai
 
   @impl Opsonde.Providers.Adapter
   def build(%{"model" => model}, %{"api_key" => api_key})

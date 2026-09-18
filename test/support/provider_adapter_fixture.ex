@@ -8,7 +8,7 @@ defmodule Opsonde.ProviderAdapterFixture do
   def type, do: "fixture-target"
 
   @impl true
-  def role, do: :target
+  def kind, do: :target
 
   @impl true
   def build(%{"endpoint" => endpoint}, %{"token" => token})

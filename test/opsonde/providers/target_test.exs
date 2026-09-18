@@ -32,7 +32,7 @@ defmodule Opsonde.Providers.TargetTest do
     %{admin: admin, operator: operator, viewer: viewer, provider: provider}
   end
 
-  test "capabilities use the Ash interface, current gate and role policy", context do
+  test "capabilities use the Ash interface, current gate and kind policy", context do
     capabilities = %Target.Capabilities{observations: [:system], effects: [:restart_service]}
 
     assert ^capabilities =

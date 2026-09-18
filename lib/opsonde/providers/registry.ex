@@ -3,7 +3,7 @@ defmodule Opsonde.Providers.Registry do
 
   alias Opsonde.Providers.Adapter
 
-  @roles [:ai, :signal, :target, :inventory, :notification]
+  @kinds [:ai, :signal, :target, :inventory, :notification]
   @check_failures [:invalid_configuration, :authentication, :unreachable, :capability]
 
   def fetch(type) when is_binary(type) do
@@ -22,11 +22,11 @@ defmodule Opsonde.Providers.Registry do
       {:ok, adapter}
     else
       {:error, reason} -> {:error, reason}
-      false -> {:error, :unsupported_role}
+      false -> {:error, :unsupported_kind}
     end
   end
 
-  def role(adapter), do: adapter.role()
+  def kind(adapter), do: adapter.kind()
 
   def build(adapter, configuration, credentials)
       when is_atom(adapter) and is_map(configuration) and is_map(credentials) do
@@ -67,10 +67,10 @@ defmodule Opsonde.Providers.Registry do
     Code.ensure_loaded?(adapter) and
       Adapter in behaviours(adapter) and
       function_exported?(adapter, :type, 0) and
-      function_exported?(adapter, :role, 0) and
+      function_exported?(adapter, :kind, 0) and
       function_exported?(adapter, :build, 2) and
       function_exported?(adapter, :check, 2) and
-      adapter.role() in @roles
+      adapter.kind() in @kinds
   end
 
   defp behaviours(adapter) do

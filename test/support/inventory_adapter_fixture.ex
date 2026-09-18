@@ -6,7 +6,7 @@ defmodule Opsonde.InventoryAdapterFixture do
   def type, do: "fixture-inventory"
 
   @impl Opsonde.Providers.Adapter
-  def role, do: :inventory
+  def kind, do: :inventory
 
   @impl Opsonde.Providers.Adapter
   def build(%{"source" => source}, %{"token" => token})

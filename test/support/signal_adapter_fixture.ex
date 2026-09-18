@@ -6,7 +6,7 @@ defmodule Opsonde.SignalAdapterFixture do
   def type, do: "fixture-signal"
 
   @impl Opsonde.Providers.Adapter
-  def role, do: :signal
+  def kind, do: :signal
 
   @impl Opsonde.Providers.Adapter
   def build(%{"source" => source}, %{"secret" => secret})

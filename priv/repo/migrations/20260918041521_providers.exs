@@ -11,7 +11,7 @@ defmodule Opsonde.Repo.Migrations.Providers do
     create table(:providers, primary_key: false) do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :name, :text, null: false
-      add :role, :text, null: false
+      add :kind, :text, null: false
       add :adapter_type, :text, null: false
       add :configuration, :map, null: false, default: %{}
       add :revision, :bigint, null: false, default: 1
