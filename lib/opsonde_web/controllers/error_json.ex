@@ -1,21 +1,31 @@
 defmodule OpsondeWeb.ErrorJSON do
-  @moduledoc """
-  This module is invoked by your endpoint in case of errors on JSON requests.
+  @moduledoc false
 
-  See config/config.exs.
-  """
+  def render(template, assigns) do
+    status = Phoenix.Controller.status_message_from_template(template)
 
-  # If you want to customize a particular status code,
-  # you may add your own clauses, such as:
-  #
-  # def render("500.json", _assigns) do
-  #   %{errors: %{detail: "Internal Server Error"}}
-  # end
-
-  # By default, Phoenix returns the status message from
-  # the template name. For example, "404.json" becomes
-  # "Not Found".
-  def render(template, _assigns) do
-    %{errors: %{detail: Phoenix.Controller.status_message_from_template(template)}}
+    %{
+      error: %{
+        code: code(template),
+        message: status,
+        request_id: request_id(assigns)
+      }
+    }
   end
+
+  defp code("400" <> _suffix), do: "bad_request"
+  defp code("401" <> _suffix), do: "unauthenticated"
+  defp code("403" <> _suffix), do: "forbidden"
+  defp code("404" <> _suffix), do: "not_found"
+  defp code("409" <> _suffix), do: "conflict"
+  defp code("422" <> _suffix), do: "validation_failed"
+  defp code(_template), do: "internal_error"
+
+  defp request_id(%{conn: conn}) do
+    conn
+    |> Plug.Conn.get_resp_header("x-request-id")
+    |> List.first()
+  end
+
+  defp request_id(_assigns), do: nil
 end

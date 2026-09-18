@@ -39,6 +39,11 @@ defmodule Opsonde.Accounts.User do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     read :get_by_subject do
       description "Get a user by the subject claim in a JWT"
       argument :subject, :string, allow_nil?: false
