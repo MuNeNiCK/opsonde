@@ -1,0 +1,124 @@
+defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
+  use Ash.Resource.Actions.Implementation
+  require Ash.Query
+
+  alias Opsonde.Notifications
+  alias Opsonde.Cases.Report
+  alias Opsonde.Notifications.Delivery
+  alias Opsonde.Providers.Provider
+
+  @impl true
+  def run(input, _opts, _context) do
+    arguments = input.arguments
+
+    with {:ok, existing} <- existing(arguments.idempotency_key) do
+      if existing do
+        exact_replay(existing, arguments)
+      else
+        create_or_replay(arguments)
+      end
+    end
+  end
+
+  defp create_or_replay(arguments) do
+    result =
+      Ash.transact([Delivery, Report, Provider], fn ->
+        with {:ok, existing} <- existing(arguments.idempotency_key) do
+          if existing do
+            case exact_replay(existing, arguments) do
+              {:ok, delivery} -> delivery
+              {:error, error} -> {:error, error}
+            end
+          else
+            create(arguments)
+          end
+        end
+      end)
+
+    case result do
+      {:error, _error} = failed ->
+        case existing(arguments.idempotency_key) do
+          {:ok, %Delivery{} = delivery} -> exact_replay(delivery, arguments)
+          _missing -> failed
+        end
+
+      success ->
+        success
+    end
+  end
+
+  defp create(arguments) do
+    with {:ok, report} <- lock(Report, arguments.report_id, "Report is unavailable"),
+         :ok <- exact_report(report, arguments.report_revision),
+         {:ok, provider} <- lock(Provider, arguments.provider_id, "Provider is unavailable"),
+         :ok <- eligible_provider(provider, arguments.provider_revision),
+         {:ok, delivery} <-
+           Notifications.create_delivery_record(
+             %{
+               report_id: report.id,
+               report_revision: report.revision,
+               provider_id: provider.id,
+               provider_revision: provider.revision,
+               destination_id: provider.id,
+               destination_revision: provider.revision,
+               idempotency_key: arguments.idempotency_key,
+               status: :queued,
+               details: %{},
+               enqueued_at: DateTime.utc_now()
+             },
+             authorize?: false
+           ),
+         {:ok, _job} <- enqueue(delivery.id) do
+      delivery
+    end
+  end
+
+  defp exact_replay(delivery, arguments) do
+    if delivery.report_id == arguments.report_id and
+         delivery.report_revision == arguments.report_revision and
+         delivery.provider_id == arguments.provider_id and
+         delivery.provider_revision == arguments.provider_revision do
+      {:ok, delivery}
+    else
+      {:error, "Idempotency key was already used with different delivery input"}
+    end
+  end
+
+  defp exact_report(%Report{revision: revision}, revision), do: :ok
+  defp exact_report(_report, _revision), do: {:error, "Report revision changed"}
+
+  defp eligible_provider(provider, expected_revision) do
+    if provider.revision == expected_revision and provider.kind == :notification and
+         provider.enabled and provider.check_status == :passed and
+         provider.checked_revision == provider.revision do
+      :ok
+    else
+      {:error, "Notification Provider is not enabled at the requested revision"}
+    end
+  end
+
+  defp existing(idempotency_key) do
+    Notifications.delivery_by_idempotency(idempotency_key,
+      authorize?: false,
+      not_found_error?: false
+    )
+  end
+
+  defp lock(resource, id, message) do
+    resource
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(id: id)
+    |> Ash.Query.lock(:for_update)
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} -> {:error, message}
+      result -> result
+    end
+  end
+
+  defp enqueue(id) do
+    id
+    |> then(&Opsonde.Notifications.DeliveryWorker.new(%{"delivery_id" => &1}))
+    |> Oban.insert()
+  end
+end

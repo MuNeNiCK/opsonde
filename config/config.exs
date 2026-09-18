@@ -10,7 +10,7 @@ import Config
 config :opsonde, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [resolver: 10, operations: 10],
+  queues: [resolver: 10, operations: 10, notifications: 5],
   lifeline: [rescue_after: {2, :hours}],
   pruner: [max_age: {1, :day}],
   repo: Opsonde.Repo
@@ -67,7 +67,13 @@ config :spark,
 config :opsonde,
   ecto_repos: [Opsonde.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true],
-  ash_domains: [Opsonde.Cases, Opsonde.Targets, Opsonde.Providers, Opsonde.Accounts],
+  ash_domains: [
+    Opsonde.Notifications,
+    Opsonde.Cases,
+    Opsonde.Targets,
+    Opsonde.Providers,
+    Opsonde.Accounts
+  ],
   provider_adapters: [
     Opsonde.AI.ReqLLM,
     Opsonde.Inventories.NetBox.API,
