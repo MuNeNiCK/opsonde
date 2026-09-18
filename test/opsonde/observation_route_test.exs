@@ -171,6 +171,25 @@ defmodule Opsonde.ObservationRouteTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
   end
 
+  test "persisted Provider identity mismatch fails before charge or adapter dispatch", context do
+    {_incident, run, turn} =
+      observation_turn!("provider-mismatch", context,
+        provider_id: Ash.UUID.generate(),
+        provider_revision: context.provider.revision
+      )
+
+    assert {:ok, routed} =
+             Cases.route_observation(turn.id, unreachable_invocation(), authorize?: false)
+
+    assert routed.value.ordinal == 2
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 0
+
+    evidence = evidence_for_turn!(turn.id, context.admin)
+    assert evidence.source == "target_policy"
+    assert evidence.content["category"] == "stale_context"
+    refute_receive {:observe, _, _}
+  end
+
   defp observation_turn!(source_ref, context, opts \\ []) do
     incident =
       Cases.open_case!(
@@ -199,6 +218,8 @@ defmodule Opsonde.ObservationRouteTest do
       )
 
     selectors = Keyword.get(opts, :selectors, %{"path" => "/var/log/messages"})
+    provider_id = Keyword.get(opts, :provider_id, context.provider.id)
+    provider_revision = Keyword.get(opts, :provider_revision, context.provider.revision)
 
     completed =
       Cases.complete_turn!(
@@ -215,6 +236,8 @@ defmodule Opsonde.ObservationRouteTest do
               "target_revision" => context.target.revision,
               "access_method_id" => context.method.id,
               "access_method_revision" => context.method.revision,
+              "provider_id" => provider_id,
+              "provider_revision" => provider_revision,
               "capability" => "observe.system",
               "operation" => "system.inspect"
             },

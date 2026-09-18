@@ -392,6 +392,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_exact_tool?(tool) do
     nonempty?(tool.id) and nonempty?(tool.target_id) and positive?(tool.target_revision) and
       nonempty?(tool.access_method_id) and positive?(tool.access_method_revision) and
+      nonempty?(tool.provider_id) and positive?(tool.provider_revision) and
       nonempty?(tool.capability) and nonempty?(tool.operation)
   end
 

@@ -247,8 +247,14 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp intent(%AI.Proposal{} = value, request) do
-    with {:ok, tool} <- observation_tool(request, value.verification_intent.tool_id) do
-      {:ok, value |> typed_intent() |> Map.put("verification_tool", tool_snapshot(tool))}
+    with {:ok, effect_tool} <- proposal_tool(request, value.tool_id),
+         {:ok, verification_tool} <-
+           observation_tool(request, value.verification_intent.tool_id) do
+      {:ok,
+       value
+       |> typed_intent()
+       |> Map.put("tool", tool_snapshot(effect_tool))
+       |> Map.put("verification_tool", tool_snapshot(verification_tool))}
     end
   end
 
@@ -270,6 +276,16 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
+  defp proposal_tool(request, tool_id) do
+    case Enum.find(request.proposal_tools, &(&1.id == tool_id)) do
+      %AI.ProposalTool{} = tool ->
+        {:ok, tool}
+
+      _missing ->
+        {:error, ai_error(:invalid_output, "AI Proposal tool snapshot is unavailable")}
+    end
+  end
+
   defp tool_snapshot(tool) do
     %{
       "id" => tool.id,
@@ -277,6 +293,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
       "target_revision" => tool.target_revision,
       "access_method_id" => tool.access_method_id,
       "access_method_revision" => tool.access_method_revision,
+      "provider_id" => tool.provider_id,
+      "provider_revision" => tool.provider_revision,
       "capability" => tool.capability,
       "operation" => tool.operation
     }

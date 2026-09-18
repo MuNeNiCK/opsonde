@@ -31,12 +31,23 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
 
     case Targets.clear_target_request(request, actor: actor) do
       {:ok, clearance} ->
-        with {:ok, charged} <- charge(turn, incident, run) do
-          if charged.status == :exhausted do
-            {:ok, charged}
-          else
-            dispatch(turn, intent, charged.case, charged.run, actor, clearance, invocation)
-          end
+        case exact_provider(clearance, intent) do
+          :ok ->
+            with {:ok, charged} <- charge(turn, incident, run) do
+              if charged.status == :exhausted do
+                {:ok, charged}
+              else
+                dispatch(turn, intent, charged.case, charged.run, actor, clearance, invocation)
+              end
+            end
+
+          {:error, error} ->
+            persist_and_continue(
+              turn,
+              error_spec("target_policy", error, intent),
+              incident,
+              run
+            )
         end
 
       {:error, error} ->
@@ -150,6 +161,8 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
                  "target_revision" => target_revision,
                  "access_method_id" => method_id,
                  "access_method_revision" => method_revision,
+                 "provider_id" => provider_id,
+                 "provider_revision" => provider_revision,
                  "capability" => capability,
                  "operation" => operation
                },
@@ -161,6 +174,7 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
        })
        when is_binary(target_id) and is_integer(target_revision) and is_binary(method_id) and
               is_integer(method_revision) and is_binary(capability) and is_binary(operation) and
+              is_binary(provider_id) and is_integer(provider_revision) and
               is_map(selectors) and is_map(parameters) and is_binary(reason),
        do: {:ok, intent}
 
@@ -175,6 +189,21 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
   end
 
   defp current_actor(_incident), do: {:error, "Case has no Target observation owner"}
+
+  defp exact_provider(clearance, intent) do
+    tool = intent["tool"]
+
+    if clearance.provider_id == tool["provider_id"] and
+         clearance.provider_revision == tool["provider_revision"] do
+      :ok
+    else
+      {:error,
+       PolicyError.exception(
+         category: :stale_context,
+         message: "Target Provider changed after the Resolver decision"
+       )}
+    end
+  end
 
   defp existing_evidence(case_id, turn_id) do
     Cases.evidence_by_idempotency(case_id, evidence_key(turn_id),

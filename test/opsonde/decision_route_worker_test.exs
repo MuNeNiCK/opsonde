@@ -151,12 +151,16 @@ defmodule Opsonde.DecisionRouteWorkerTest do
   end
 
   defp proposal_intent(evidence_id) do
+    target_id = Ash.UUID.generate()
+    access_method_id = Ash.UUID.generate()
+    provider_id = Ash.UUID.generate()
+
     %{
       "type" => "proposal",
       "tool_id" => "effect-tool",
-      "target_id" => Ash.UUID.generate(),
+      "target_id" => target_id,
       "target_revision" => 1,
-      "access_method_id" => Ash.UUID.generate(),
+      "access_method_id" => access_method_id,
       "access_method_revision" => 1,
       "capability" => "effect.service",
       "operation" => "service.restart",
@@ -165,6 +169,17 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       "reason" => "Restart the failed service",
       "evidence_ids" => [evidence_id],
       "expected_result" => %{"service" => "running"},
+      "tool" => %{
+        "id" => "effect-tool",
+        "target_id" => target_id,
+        "target_revision" => 1,
+        "access_method_id" => access_method_id,
+        "access_method_revision" => 1,
+        "provider_id" => provider_id,
+        "provider_revision" => 1,
+        "capability" => "effect.service",
+        "operation" => "service.restart"
+      },
       "verification_intent" => %{
         "tool_id" => "observation-tool",
         "selectors" => %{"service" => "api"},
@@ -177,6 +192,8 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         "target_revision" => 1,
         "access_method_id" => Ash.UUID.generate(),
         "access_method_revision" => 1,
+        "provider_id" => Ash.UUID.generate(),
+        "provider_revision" => 1,
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }

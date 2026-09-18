@@ -134,6 +134,8 @@ defmodule Opsonde.Cases.ResolverProjection do
         target_revision: target.revision,
         access_method_id: method.id,
         access_method_revision: method.revision,
+        provider_id: method.provider_id,
+        provider_revision: method.provider_revision,
         capability: operation.capability,
         operation: operation.operation,
         description: operation.description,
@@ -152,7 +154,8 @@ defmodule Opsonde.Cases.ResolverProjection do
       :crypto.hash(
         :sha256,
         :erlang.term_to_binary(
-          {kind, method.id, method.revision, operation.capability, operation.operation},
+          {kind, method.id, method.revision, method.provider_id, method.provider_revision,
+           operation.capability, operation.operation},
           [:deterministic]
         )
       )

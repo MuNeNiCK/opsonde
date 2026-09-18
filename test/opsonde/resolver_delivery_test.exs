@@ -238,6 +238,8 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert observation_intent["tool"]["target_revision"] == target.revision
     assert observation_intent["tool"]["access_method_id"] == method.id
     assert observation_intent["tool"]["access_method_revision"] == method.revision
+    assert observation_intent["tool"]["provider_id"] == method.provider_id
+    assert observation_intent["tool"]["provider_revision"] == method.provider_revision
     assert observation_intent["tool"]["capability"] == "observe.system"
     assert observation_intent["tool"]["operation"] == "system.inspect"
 
@@ -312,6 +314,8 @@ defmodule Opsonde.ResolverDeliveryTest do
     proposal_intent = Cases.get_turn!(proposal_turn.id, authorize?: false).result["intent"]
     assert proposal_intent["type"] == "proposal"
     assert proposal_intent["selectors"] == %{"service" => "api"}
+    assert proposal_intent["tool"]["provider_id"] == method.provider_id
+    assert proposal_intent["tool"]["provider_revision"] == method.provider_revision
 
     assert proposal_intent["verification_intent"]["selectors"] == %{
              "path" => "/var/log/messages"
@@ -319,6 +323,8 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert proposal_intent["verification_tool"]["id"] =~ "observation:"
     assert proposal_intent["verification_tool"]["access_method_id"] == method.id
+    assert proposal_intent["verification_tool"]["provider_id"] == method.provider_id
+    assert proposal_intent["verification_tool"]["provider_revision"] == method.provider_revision
     assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
   end
 

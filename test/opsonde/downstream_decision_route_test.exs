@@ -240,13 +240,19 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
   defp proposal_intent(evidence_id) do
     verification_tool_id = "observation-tool"
+    target_id = Ash.UUID.generate()
+    access_method_id = Ash.UUID.generate()
+    provider_id = Ash.UUID.generate()
+    verification_target_id = Ash.UUID.generate()
+    verification_method_id = Ash.UUID.generate()
+    verification_provider_id = Ash.UUID.generate()
 
     %{
       "type" => "proposal",
       "tool_id" => "effect-tool",
-      "target_id" => Ash.UUID.generate(),
+      "target_id" => target_id,
       "target_revision" => 3,
-      "access_method_id" => Ash.UUID.generate(),
+      "access_method_id" => access_method_id,
       "access_method_revision" => 2,
       "capability" => "effect.service",
       "operation" => "service.restart",
@@ -255,6 +261,17 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       "reason" => "Restart the failed API service",
       "evidence_ids" => [evidence_id],
       "expected_result" => %{"service" => "running"},
+      "tool" => %{
+        "id" => "effect-tool",
+        "target_id" => target_id,
+        "target_revision" => 3,
+        "access_method_id" => access_method_id,
+        "access_method_revision" => 2,
+        "provider_id" => provider_id,
+        "provider_revision" => 6,
+        "capability" => "effect.service",
+        "operation" => "service.restart"
+      },
       "verification_intent" => %{
         "tool_id" => verification_tool_id,
         "selectors" => %{"service" => "api"},
@@ -263,10 +280,12 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       },
       "verification_tool" => %{
         "id" => verification_tool_id,
-        "target_id" => Ash.UUID.generate(),
+        "target_id" => verification_target_id,
         "target_revision" => 4,
-        "access_method_id" => Ash.UUID.generate(),
+        "access_method_id" => verification_method_id,
         "access_method_revision" => 5,
+        "provider_id" => verification_provider_id,
+        "provider_revision" => 7,
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }

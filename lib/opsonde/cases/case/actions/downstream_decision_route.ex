@@ -167,6 +167,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     do: {:error, "Downstream Resolver decision is malformed"}
 
   defp valid_proposal(intent) do
+    effect_tool = nested_map(intent["tool"])
     verification = nested_map(intent["verification_intent"])
     tool = nested_map(intent["verification_tool"])
 
@@ -178,20 +179,36 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
           intent["access_method_id"],
           intent["capability"],
           intent["operation"],
+          effect_tool["id"],
+          effect_tool["target_id"],
+          effect_tool["access_method_id"],
+          effect_tool["provider_id"],
+          effect_tool["capability"],
+          effect_tool["operation"],
           verification["tool_id"],
           tool["id"],
           tool["target_id"],
           tool["access_method_id"],
+          tool["provider_id"],
           tool["capability"],
           tool["operation"]
         ],
         &nonempty?/1
       ) and
+        intent["tool_id"] == effect_tool["id"] and
+        intent["target_id"] == effect_tool["target_id"] and
+        intent["target_revision"] == effect_tool["target_revision"] and
+        intent["access_method_id"] == effect_tool["access_method_id"] and
+        intent["access_method_revision"] == effect_tool["access_method_revision"] and
+        intent["capability"] == effect_tool["capability"] and
+        intent["operation"] == effect_tool["operation"] and
         verification["tool_id"] == tool["id"] and
         positive?(intent["target_revision"]) and
         positive?(intent["access_method_revision"]) and
+        positive?(effect_tool["provider_revision"]) and
         positive?(tool["target_revision"]) and
         positive?(tool["access_method_revision"]) and
+        positive?(tool["provider_revision"]) and
         bounded?(intent["reason"], 500) and
         Enum.all?(
           [

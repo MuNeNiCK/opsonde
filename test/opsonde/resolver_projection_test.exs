@@ -143,11 +143,15 @@ defmodule Opsonde.ResolverProjectionTest do
 
     assert [%AI.ObservationTool{} = observation] = request.observation_tools
     assert observation.access_method_id == context.method.id
+    assert observation.provider_id == context.provider.id
+    assert observation.provider_revision == context.provider.revision
     assert observation.capability == "observe.system"
     assert observation.operation == "system.inspect"
     assert observation.description == "Inspect using [REDACTED]"
 
     assert [%AI.ProposalTool{} = proposal] = request.proposal_tools
+    assert proposal.provider_id == context.provider.id
+    assert proposal.provider_revision == context.provider.revision
     assert proposal.capability == "effect.service"
     assert proposal.operation == "service.restart"
 
