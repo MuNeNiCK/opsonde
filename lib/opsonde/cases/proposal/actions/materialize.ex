@@ -249,6 +249,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       target_revision: intent["target_revision"],
       access_method_revision: intent["access_method_revision"],
       provider_revision: effect_tool["provider_revision"],
+      tool_id: intent["tool_id"],
       capability: intent["capability"],
       operation: intent["operation"],
       selectors: intent["selectors"],

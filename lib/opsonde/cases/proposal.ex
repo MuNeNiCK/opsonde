@@ -41,6 +41,7 @@ defmodule Opsonde.Cases.Proposal do
         :target_revision,
         :access_method_revision,
         :provider_revision,
+        :tool_id,
         :capability,
         :operation,
         :selectors,
@@ -112,10 +113,25 @@ defmodule Opsonde.Cases.Proposal do
 
       run {Opsonde.Cases.Proposal.Actions.Authority, operation: :decide}
     end
+
+    action :apply_review, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      argument :review_decision_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :review}
+    end
   end
 
   policies do
-    policy action([:by_source_turn, :create_record, :transition, :materialize, :route_authority]) do
+    policy action([
+             :by_source_turn,
+             :create_record,
+             :transition,
+             :materialize,
+             :route_authority,
+             :apply_review
+           ]) do
       forbid_if always()
     end
 
@@ -178,6 +194,12 @@ defmodule Opsonde.Cases.Proposal do
       allow_nil? false
       public? true
       constraints min: 1
+    end
+
+    attribute :tool_id, :string do
+      allow_nil? false
+      public? true
+      constraints min_length: 1, max_length: 200
     end
 
     attribute :capability, :string do

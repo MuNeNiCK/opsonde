@@ -237,6 +237,10 @@ defmodule Opsonde.Cases do
       define :materialize_proposal, action: :materialize, args: [:turn_id]
       define :route_proposal_authority, action: :route_authority, args: [:proposal_id]
 
+      define :apply_proposal_review,
+        action: :apply_review,
+        args: [:proposal_id, :review_decision_id]
+
       define :decide_proposal,
         action: :decide,
         args: [:proposal_id, :expected_revision, :proposal_digest, :decision, :reason]
@@ -246,6 +250,12 @@ defmodule Opsonde.Cases do
       define :list_approvals, action: :read
       define :approval_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_approval_record, action: :create_record
+    end
+
+    resource Opsonde.Cases.ReviewDecision do
+      define :list_review_decisions, action: :read
+      define :review_decision_by_proposal, action: :by_proposal, args: [:proposal_id]
+      define :create_review_decision_record, action: :create_record
     end
   end
 end

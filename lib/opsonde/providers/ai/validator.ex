@@ -28,7 +28,7 @@ defmodule Opsonde.Providers.AI.Validator do
       not valid_review_request?(request) ->
         {:error, ai_error(:invalid_input, "AI Reviewer request is invalid")}
 
-      exhausted?(request.budget) ->
+      review_exhausted?(request.budget) ->
         {:error, ai_error(:budget_exhausted, "AI budget is exhausted")}
 
       review_size(request) > @max_review_bytes ->
@@ -86,6 +86,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_budget?(_budget), do: false
 
   defp exhausted?(budget), do: budget.remaining_turns == 0 or budget.remaining_tokens == 0
+  defp review_exhausted?(budget), do: budget.remaining_tokens == 0
 
   defp valid_disclosure?(%AI.Disclosure{} = disclosure) do
     limits = AI.resolver_disclosure_limits()

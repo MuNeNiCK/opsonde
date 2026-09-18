@@ -63,6 +63,7 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert proposal.access_method_revision == context.method.revision
     assert proposal.provider_id == context.provider.id
     assert proposal.provider_revision == context.provider.revision
+    assert proposal.tool_id == intent["tool_id"]
     assert proposal.evidence_ids == [evidence.id]
     assert proposal.selectors == intent["selectors"]
     assert proposal.parameters == intent["parameters"]

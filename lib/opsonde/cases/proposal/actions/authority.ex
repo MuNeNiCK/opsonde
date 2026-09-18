@@ -4,7 +4,18 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   require Ash.Query
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Approval, Budget, Case, CaseEvent, Proposal, ResolutionRun, Turn}
+
+  alias Opsonde.Cases.{
+    Approval,
+    Budget,
+    Case,
+    CaseEvent,
+    Proposal,
+    ResolutionRun,
+    ReviewDecision,
+    Turn
+  }
+
   alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
 
   @impl true
@@ -12,6 +23,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     case opts[:operation] do
       :route -> route(input.arguments.proposal_id)
       :decide -> decide(input.arguments, context.actor)
+      :review -> apply_review(input.arguments.proposal_id, input.arguments.review_decision_id)
     end
   end
 
@@ -126,8 +138,75 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              "action" => "review_proposal",
              "proposal_id" => reviewing.id,
              "proposal_digest" => reviewing.proposal_digest
-           }) do
+           }),
+         {:ok, _job} <- enqueue_review(reviewing.id) do
       reviewing
+    end
+  end
+
+  defp apply_review(proposal_id, decision_id) do
+    with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false),
+         {:ok, decision} <- Cases.review_decision_by_proposal(proposal_id, authorize?: false),
+         true <- decision.id == decision_id || {:error, "ReviewDecision does not match Proposal"} do
+      Ash.transact([Case, ResolutionRun, Proposal, Approval, ReviewDecision], fn ->
+        with {:ok, incident} <- lock_case(source.case_id),
+             {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
+             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id) do
+          apply_review_locked(proposal, decision, incident, run)
+        end
+      end)
+    end
+  end
+
+  defp apply_review_locked(%{status: :authorized} = proposal, _decision, _incident, _run),
+    do: proposal
+
+  defp apply_review_locked(%{status: :awaiting_human} = proposal, _decision, _incident, _run),
+    do: proposal
+
+  defp apply_review_locked(%{status: :reviewing} = proposal, decision, incident, run) do
+    with :ok <- valid_context(proposal, incident, run),
+         true <-
+           decision.proposal_digest == proposal.proposal_digest ||
+             {:error, "ReviewDecision Proposal digest changed"} do
+      case decision.verdict do
+        :approved ->
+          approve_review(proposal, decision, incident, run)
+
+        verdict when verdict in [:rejected, :needs_human] ->
+          await_human_review(proposal, decision, incident)
+      end
+    end
+  end
+
+  defp apply_review_locked(_proposal, _decision, _incident, _run),
+    do: {:error, "Proposal is not awaiting Reviewer decision"}
+
+  defp approve_review(proposal, decision, incident, run) do
+    with {:ok, actor} <- current_owner(incident),
+         {:ok, clearance} <- revalidate(proposal, actor),
+         {:ok, approval} <-
+           create_approval(proposal, actor, :approved, :reviewer, decision.reason, clearance),
+         {:ok, authorized} <- transition(proposal, :authorized),
+         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)) do
+      authorized
+    else
+      {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp await_human_review(proposal, decision, incident) do
+    with {:ok, waiting} <- transition(proposal, :awaiting_human),
+         {:ok, _case} <-
+           update_pending(incident, %{
+             "action" => "decide_proposal",
+             "proposal_id" => waiting.id,
+             "proposal_digest" => waiting.proposal_digest,
+             "review_decision_id" => decision.id,
+             "review_reason" => decision.reason
+           }) do
+      waiting
     end
   end
 
@@ -440,4 +519,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     do: Enum.find_value(errors, &find_error/1)
 
   defp find_error(_error), do: nil
+
+  defp enqueue_review(proposal_id) do
+    %{"proposal_id" => proposal_id}
+    |> Opsonde.Cases.ReviewWorker.new()
+    |> Oban.insert()
+  end
 end

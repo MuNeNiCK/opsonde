@@ -459,6 +459,20 @@ defmodule Opsonde.Providers.AITest do
 
     assert_receive {:review, %{model: "test-model", api_key: @api_key}, ^request}
 
+    final_turn = %{request | budget: %{request.budget | remaining_turns: 0}}
+
+    assert %AI.ReviewDecision{verdict: :approved} =
+             review!(context, final_turn, fn _received ->
+               {:ok,
+                %AI.ReviewDecision{
+                  verdict: :approved,
+                  reason: "Review does not consume a Resolver Turn",
+                  usage: usage()
+                }}
+             end)
+
+    assert_receive {:review, _, ^final_turn}
+
     same_session = %{request | session_id: request.resolver_session_id}
 
     assert {:error, isolated_error} = review(context, same_session, unreachable_response())

@@ -2,6 +2,8 @@ defmodule Opsonde.ProposalAuthorityTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.Cases.{ReviewDelivery, ReviewWorker}
+  alias Opsonde.Providers.AI
 
   @password "correct horse battery staple"
 
@@ -40,7 +42,31 @@ defmodule Opsonde.ProposalAuthorityTest do
         actor: admin
       )
 
-    %{admin: admin, operator: operator, provider: provider, target: target, method: method}
+    resolver_provider = ai_provider!(admin, "authority-resolver", "resolver-model")
+
+    resolver_assignment =
+      Providers.create_ai_usage_role_assignment!(resolver_provider.id, :resolver, 10,
+        actor: admin
+      )
+
+    reviewer_provider = ai_provider!(admin, "authority-reviewer", "reviewer-model")
+
+    reviewer_assignment =
+      Providers.create_ai_usage_role_assignment!(reviewer_provider.id, :reviewer, 10,
+        actor: admin
+      )
+
+    %{
+      admin: admin,
+      operator: operator,
+      provider: provider,
+      target: target,
+      method: method,
+      resolver_provider: resolver_provider,
+      resolver_assignment: resolver_assignment,
+      reviewer_provider: reviewer_provider,
+      reviewer_assignment: reviewer_assignment
+    }
   end
 
   test "Readonly records a recommendation and pauses without Approval or effect", context do
@@ -204,8 +230,136 @@ defmodule Opsonde.ProposalAuthorityTest do
            }
 
     assert length(Cases.list_approvals!(actor: context.admin)) == 1
+    assert review_jobs(auto_proposal.id) == 1
     assert Cases.get_resolution_run!(auto_run.id, authorize?: false).effect_count == 0
     refute_receive {:review, _, _}
+  end
+
+  test "Auto accepts one isolated assigned Reviewer decision and usage", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-approved", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    response = %AI.ReviewDecision{
+      verdict: :approved,
+      reason: "The exact effect follows the cited evidence",
+      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+    }
+
+    invocation = %{
+      test_pid: self(),
+      respond: fn request ->
+        key = Opsonde.Cases.Budget.key("proposal:reviewer_assignment", proposal.id)
+        event = Cases.case_event_by_idempotency!(incident.id, key, authorize?: false)
+        assert event.data["provider_id"] == context.reviewer_provider.id
+        assert event.data["assignment_id"] == context.reviewer_assignment.id
+        assert request.session_id == "reviewer:#{proposal.id}"
+        assert request.resolver_session_id == "resolver:#{run.id}"
+        refute request.session_id == request.resolver_session_id
+        assert request.proposal.tool_id == proposal.tool_id
+        assert Enum.map(request.cited_evidence, & &1.id) == proposal.evidence_ids
+        {:ok, response}
+      end
+    }
+
+    assert :ok = ReviewDelivery.run(reviewing.id, ai_invocation: invocation)
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+
+    [decision] = Cases.list_review_decisions!(actor: context.admin)
+    assert decision.outcome == :decision
+    assert decision.verdict == :approved
+    assert decision.selection_source == :assignment
+    assert decision.provider_id == context.reviewer_provider.id
+    assert decision.proposal_digest == proposal.proposal_digest
+    assert decision.session_id != decision.resolver_session_id
+
+    authorized = Cases.get_proposal!(proposal.id, authorize?: false)
+    assert authorized.status == :authorized
+    assert [approval] = Cases.list_approvals!(actor: context.admin)
+    assert approval.source == :reviewer
+    assert approval.proposal_digest == proposal.proposal_digest
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "dispatch_operation"
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{respond: fn _ -> flunk("accepted review called AI twice") end}
+             )
+
+    refute_receive {:review, _, _}
+    refute_receive {:effect, _, _}
+  end
+
+  test "Auto uses isolated Resolver fallback and hands rejection to a human", context do
+    configure_mode!(:auto, context.admin)
+
+    Providers.update_ai_usage_role_assignment!(
+      context.reviewer_assignment,
+      context.reviewer_assignment.revision,
+      %{enabled: false},
+      actor: context.admin
+    )
+
+    {incident, run, proposal} = proposal!("review-fallback", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   refute request.session_id == request.resolver_session_id
+
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :rejected,
+                      reason: "A human should assess the disruption",
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "resolver-model"}, _request}
+    [decision] = Cases.list_review_decisions!(actor: context.admin)
+    assert decision.selection_source == :resolver_fallback
+    assert decision.provider_id == context.resolver_provider.id
+
+    waiting = Cases.get_proposal!(proposal.id, authorize?: false)
+    assert waiting.status == :awaiting_human
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "decide_proposal"
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 4
+    refute_receive {:effect, _, _}
+  end
+
+  test "Reviewer failure is durable human fallback without usage or effect", context do
+    configure_mode!(:auto, context.admin)
+    {_incident, run, proposal} = proposal!("review-timeout", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> {:error, :timeout, "review deadline exceeded"} end
+               }
+             )
+
+    assert_receive {:review, _, _}
+    [decision] = Cases.list_review_decisions!(actor: context.admin)
+    assert decision.outcome == :delivery_failed
+    assert decision.verdict == :needs_human
+    assert decision.category == "timeout"
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :awaiting_human
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.list_approvals!(actor: context.admin) == []
+    refute_receive {:effect, _, _}
   end
 
   test "stale Target context invalidates Ask approval and cannot be overridden", context do
@@ -349,10 +503,10 @@ defmodule Opsonde.ProposalAuthorityTest do
           "outcome" => "decision",
           "intent" => intent,
           "resolver" => %{
-            "provider_id" => Ash.UUID.generate(),
-            "provider_revision" => 1,
-            "assignment_id" => Ash.UUID.generate(),
-            "assignment_revision" => 1
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
           },
           "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
         },
@@ -430,6 +584,30 @@ defmodule Opsonde.ProposalAuthorityTest do
       current.max_no_progress_turns,
       "test #{mode} Proposal routing",
       actor: admin
+    )
+  end
+
+  defp ai_provider!(admin, name, model) do
+    Providers.create_provider!(
+      name,
+      :ai,
+      "fixture-ai",
+      %{"model" => model},
+      %{"api_key" => "#{name}-secret"},
+      actor: admin
+    )
+    |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+    |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+  end
+
+  defp review_jobs(proposal_id) do
+    Opsonde.Repo.aggregate(
+      from(job in Oban.Job,
+        where:
+          job.worker == ^Oban.Worker.to_string(ReviewWorker) and
+            fragment("?->>'proposal_id'", job.args) == ^proposal_id
+      ),
+      :count
     )
   end
 end
