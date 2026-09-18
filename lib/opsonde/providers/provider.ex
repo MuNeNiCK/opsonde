@@ -31,6 +31,31 @@ defmodule Opsonde.Providers.Provider do
   actions do
     defaults [:read]
 
+    read :for_invocation do
+      get? true
+
+      argument :id, :uuid, allow_nil?: false
+
+      argument :expected_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1]
+
+      argument :expected_role, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:ai, :signal, :target, :inventory, :notification]]
+
+      filter expr(
+               id == ^arg(:id) and
+                 revision == ^arg(:expected_revision) and
+                 role == ^arg(:expected_role) and
+                 enabled == true and
+                 check_status == :passed and
+                 checked_revision == revision
+             )
+
+      prepare build(load: [:credentials])
+    end
+
     create :create do
       primary? true
       accept [:name, :role, :adapter_type, :configuration, :credentials]
@@ -144,7 +169,11 @@ defmodule Opsonde.Providers.Provider do
       forbid_if always()
     end
 
-    policy action_type(:read) do
+    policy action(:for_invocation) do
+      forbid_if always()
+    end
+
+    policy action(:read) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

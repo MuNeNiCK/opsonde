@@ -189,6 +189,60 @@ defmodule Opsonde.ProvidersTest do
     assert is_nil(current.checked_revision)
   end
 
+  test "all role actions share one Ash invocation gate", context do
+    provider = create_provider!(context.admin, "reachable")
+
+    assert {:error, _error} =
+             Providers.load_provider_for_invocation(
+               provider.id,
+               1,
+               :target,
+               authorize?: false
+             )
+
+    checked = Providers.check_provider!(provider.id, 1, %{}, actor: context.admin)
+    enabled = Providers.enable_provider!(checked, 1, actor: context.admin)
+
+    eligible =
+      Providers.load_provider_for_invocation!(
+        enabled.id,
+        1,
+        :target,
+        authorize?: false
+      )
+
+    assert eligible.id == enabled.id
+    assert eligible.credentials == %{"token" => @token}
+
+    for {revision, role} <- [{2, :target}, {1, :inventory}] do
+      assert {:error, _error} =
+               Providers.load_provider_for_invocation(
+                 enabled.id,
+                 revision,
+                 role,
+                 authorize?: false
+               )
+    end
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             Providers.load_provider_for_invocation(
+               enabled.id,
+               1,
+               :target,
+               actor: context.admin
+             )
+
+    disabled = Providers.disable_provider!(enabled, 1, actor: context.admin)
+
+    assert {:error, _error} =
+             Providers.load_provider_for_invocation(
+               disabled.id,
+               1,
+               :target,
+               authorize?: false
+             )
+  end
+
   defp create_provider!(admin, endpoint, name \\ "primary") do
     Providers.create_provider!(
       name,

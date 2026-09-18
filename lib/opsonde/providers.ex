@@ -7,6 +7,10 @@ defmodule Opsonde.Providers do
       define :list_providers, action: :read
       define :get_provider, action: :read, get_by: [:id]
 
+      define :load_provider_for_invocation,
+        action: :for_invocation,
+        args: [:id, :expected_revision, :expected_role]
+
       define :create_provider,
         action: :create,
         args: [:name, :role, :adapter_type, :configuration, :credentials]
