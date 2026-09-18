@@ -5,7 +5,8 @@ config :opsonde,
   provider_adapters: [
     Opsonde.ProviderAdapterFixture,
     Opsonde.SignalAdapterFixture,
-    Opsonde.InventoryAdapterFixture
+    Opsonde.InventoryAdapterFixture,
+    Opsonde.NotificationAdapterFixture
   ]
 
 config :opsonde, Opsonde.Providers.Vault,

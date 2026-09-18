@@ -140,6 +140,20 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Inventory
     end
 
+    action :notification_deliver, :struct do
+      constraints instance_of: Opsonde.Providers.Notification.Result
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Notification.Request]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run Opsonde.Providers.Provider.Actions.Notification
+    end
+
     action :target_observe, :struct do
       constraints instance_of: Opsonde.Providers.Target.Observation
       transaction? false
@@ -271,6 +285,11 @@ defmodule Opsonde.Providers.Provider do
     end
 
     policy action(:inventory_snapshot) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
+    end
+
+    policy action(:notification_deliver) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end

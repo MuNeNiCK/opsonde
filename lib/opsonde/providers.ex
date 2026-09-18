@@ -42,6 +42,10 @@ defmodule Opsonde.Providers do
         action: :inventory_snapshot,
         args: [:provider_id, :request, :invocation]
 
+      define :notification_deliver,
+        action: :notification_deliver,
+        args: [:provider_id, :request, :invocation]
+
       define :record_provider_check,
         action: :record_check,
         args: [:expected_revision, :check_status, :check_category, :check_message]
