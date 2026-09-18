@@ -191,6 +191,13 @@ defmodule Opsonde.Providers.AITest do
              resolve!(context, request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
+
+    manual_request = %{request | alert_state: :not_applicable}
+
+    assert %AI.ResolverDecision{intent: ^handoff} =
+             resolve!(context, manual_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
+             end)
   end
 
   test "Resolver searches and selects only a bounded offered Target before tools are exposed",
@@ -327,6 +334,10 @@ defmodule Opsonde.Providers.AITest do
              resolve(context, atom_capability, unreachable_response())
 
     assert ai_error(vocabulary_error).category == :invalid_input
+
+    atom_kind = %{request | evidence: [%{evidence() | kind: :signal}]}
+    assert {:error, kind_error} = resolve(context, atom_kind, unreachable_response())
+    assert ai_error(kind_error).category == :invalid_input
   end
 
   test "Reviewer receives an isolated proposal-only request", context do
@@ -502,7 +513,7 @@ defmodule Opsonde.Providers.AITest do
       alert_state: :firing,
       disclosure: %AI.Disclosure{
         allowed_target_ids: ["target-1", "target-2"],
-        allowed_evidence_kinds: [:signal, :observation],
+        allowed_evidence_kinds: ["signal", "observation"],
         max_items: 20,
         max_bytes: 20_000
       },
@@ -517,7 +528,7 @@ defmodule Opsonde.Providers.AITest do
           id: "relation-1",
           source_target_id: "target-1",
           target_target_id: "target-2",
-          kind: :runs_on
+          kind: "runs_on"
         }
       ],
       observation_tools: [
@@ -581,7 +592,7 @@ defmodule Opsonde.Providers.AITest do
   defp evidence do
     %AI.Evidence{
       id: "evidence-1",
-      kind: :signal,
+      kind: "signal",
       target_id: "target-1",
       content: %{alert: "high load"}
     }
@@ -592,7 +603,7 @@ defmodule Opsonde.Providers.AITest do
       id: "observation-1",
       tool_id: "inspect-system",
       target_id: "target-1",
-      kind: :observation,
+      kind: "observation",
       status: :ok,
       content: %{service: "healthy"}
     }

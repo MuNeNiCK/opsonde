@@ -45,7 +45,8 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_resolver_request?(request) do
     positive?(request.provider_revision) and nonempty?(request.session_id) and
       nonempty?(request.case_id) and positive?(request.turn) and nonempty?(request.objective) and
-      request.alert_state in [:firing, :recovered] and valid_budget?(request.budget) and
+      request.alert_state in [:firing, :recovered, :not_applicable] and
+      valid_budget?(request.budget) and
       valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
       valid_resolver_items?(request)
   end
@@ -93,7 +94,7 @@ defmodule Opsonde.Providers.AI.Validator do
       Enum.all?(disclosure.allowed_target_ids, &nonempty?/1) and
       unique?(disclosure.allowed_target_ids) and
       is_list(disclosure.allowed_evidence_kinds) and
-      Enum.all?(disclosure.allowed_evidence_kinds, &is_atom/1)
+      Enum.all?(disclosure.allowed_evidence_kinds, &bounded_kind?/1)
   end
 
   defp valid_disclosure?(_disclosure), do: false
@@ -136,7 +137,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_evidence?(%AI.Evidence{id: id, kind: kind, target_id: target_id}),
-    do: nonempty?(id) and is_atom(kind) and (is_nil(target_id) or nonempty?(target_id))
+    do: nonempty?(id) and bounded_kind?(kind) and (is_nil(target_id) or nonempty?(target_id))
 
   defp valid_evidence?(_evidence), do: false
 
@@ -150,14 +151,14 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_observation_result?(%AI.ObservationResult{} = result),
     do:
       nonempty?(result.id) and nonempty?(result.tool_id) and nonempty?(result.target_id) and
-        is_atom(result.kind) and is_atom(result.status)
+        bounded_kind?(result.kind) and is_atom(result.status)
 
   defp valid_observation_result?(_result), do: false
 
   defp valid_relation?(%AI.TargetRelation{} = relation),
     do:
       nonempty?(relation.id) and nonempty?(relation.source_target_id) and
-        nonempty?(relation.target_target_id) and is_atom(relation.kind) and
+        nonempty?(relation.target_target_id) and bounded_kind?(relation.kind) and
         is_map(relation.attributes)
 
   defp valid_relation?(_relation), do: false
@@ -441,6 +442,8 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp bounded_string?(value, max_bytes),
     do: nonempty?(value) and byte_size(value) <= max_bytes
+
+  defp bounded_kind?(value), do: bounded_string?(value, 120)
 
   defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
 end
