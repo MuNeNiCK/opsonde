@@ -1,9 +1,9 @@
 defmodule Opsonde.ResolverDeliveryTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Cases.{Budget, ResolverDelivery, ResolverWorker}
-  alias Opsonde.Providers.AI
+  alias Opsonde.Providers.{AI, Target}
 
   @password "correct horse battery staple"
   @api_key "resolver-provider-secret"
@@ -199,6 +199,114 @@ defmodule Opsonde.ResolverDeliveryTest do
     refute_receive {:resolve, _, _}
   end
 
+  test "accepted observation and Proposal retain exact offered tool snapshots", context do
+    {target, method, capabilities} = target_context!(context.admin)
+
+    observation_turn = selected_turn!("observation-snapshot", context.operator, target)
+
+    assert :ok =
+             ResolverDelivery.run(observation_turn.id,
+               target_invocation: target_invocation(capabilities),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [tool] = request.observation_tools
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.ObservationChoice{
+                        tool_id: tool.id,
+                        parameters: %{"path" => "/var/log/messages"},
+                        reason: "Inspect the current error source"
+                      },
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 3}
+                    }}
+                 end
+               }
+             )
+
+    observation_intent = Cases.get_turn!(observation_turn.id, authorize?: false).result["intent"]
+    assert observation_intent["type"] == "observation_choice"
+    assert observation_intent["tool"]["target_id"] == target.id
+    assert observation_intent["tool"]["target_revision"] == target.revision
+    assert observation_intent["tool"]["access_method_id"] == method.id
+    assert observation_intent["tool"]["access_method_revision"] == method.revision
+    assert observation_intent["tool"]["capability"] == "observe.system"
+    assert observation_intent["tool"]["operation"] == "system.inspect"
+
+    proposal_case =
+      Cases.open_case!(
+        :manual,
+        "test",
+        "proposal-snapshot",
+        "Case proposal-snapshot",
+        :warning,
+        :not_applicable,
+        %{},
+        target.id,
+        actor: context.operator
+      )
+
+    proposal_run = Cases.active_resolution_run!(proposal_case.id, authorize?: false)
+
+    evidence =
+      Cases.append_evidence!(
+        proposal_case.id,
+        proposal_run.id,
+        nil,
+        "proposal-snapshot-evidence",
+        "observation",
+        "fixture",
+        "observation-1",
+        %{"target_id" => target.id, "service" => "unhealthy"},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    proposal_turn = start_turn!(proposal_case, proposal_run, "proposal-snapshot")
+
+    assert :ok =
+             ResolverDelivery.run(proposal_turn.id,
+               target_invocation: target_invocation(capabilities),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [observation_tool] = request.observation_tools
+                   [proposal_tool] = request.proposal_tools
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Proposal{
+                        tool_id: proposal_tool.id,
+                        target_id: proposal_tool.target_id,
+                        target_revision: proposal_tool.target_revision,
+                        access_method_id: proposal_tool.access_method_id,
+                        access_method_revision: proposal_tool.access_method_revision,
+                        capability: proposal_tool.capability,
+                        operation: proposal_tool.operation,
+                        parameters: %{"service" => "api"},
+                        reason: "Restart the unhealthy service",
+                        evidence_ids: [evidence.id],
+                        expected_result: %{"service" => "running"},
+                        verification_intent: %AI.VerificationIntent{
+                          tool_id: observation_tool.id,
+                          parameters: %{"path" => "/var/log/messages"},
+                          expected_result: %{"errors" => "absent"}
+                        }
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 4}
+                    }}
+                 end
+               }
+             )
+
+    proposal_intent = Cases.get_turn!(proposal_turn.id, authorize?: false).result["intent"]
+    assert proposal_intent["type"] == "proposal"
+    assert proposal_intent["verification_tool"]["id"] =~ "observation:"
+    assert proposal_intent["verification_tool"]["access_method_id"] == method.id
+    assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
+  end
+
   defp turn!(source_ref, actor) do
     incident =
       Cases.open_case!(
@@ -227,5 +335,95 @@ defmodule Opsonde.ResolverDeliveryTest do
       )
 
     {incident, run, started.value}
+  end
+
+  defp selected_turn!(source_ref, actor, target) do
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        source_ref,
+        "Case #{source_ref}",
+        :warning,
+        :not_applicable,
+        %{},
+        target.id,
+        actor: actor
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    start_turn!(incident, run, source_ref)
+  end
+
+  defp start_turn!(incident, run, key) do
+    Cases.start_turn!(
+      incident.id,
+      run.id,
+      "turn-#{key}",
+      %{"objective" => "Resolve the incident"},
+      %{"action" => "continue"},
+      "Review Resolver limits",
+      authorize?: false
+    ).value
+  end
+
+  defp target_context!(admin) do
+    provider =
+      Providers.create_provider!(
+        "snapshot-target-provider",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "snapshot-target-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    target =
+      Targets.create_target!("snapshot-linux", "host", "linux", %{}, nil, actor: admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "snapshot-ssh",
+        "linux",
+        "ssh",
+        "ssh://snapshot",
+        provider.revision,
+        10,
+        ["observe.system", "effect.service"],
+        actor: admin
+      )
+
+    capabilities = %Target.Capabilities{
+      observations: [
+        %Target.Operation{
+          capability: "observe.system",
+          operation: "system.inspect",
+          description: "Inspect system state",
+          input_schema: %{"type" => "object"}
+        }
+      ],
+      effects: [
+        %Target.Operation{
+          capability: "effect.service",
+          operation: "service.restart",
+          description: "Restart one service",
+          input_schema: %{"type" => "object"}
+        }
+      ]
+    }
+
+    {target, method, capabilities}
+  end
+
+  defp target_invocation(capabilities) do
+    %{
+      test_pid: self(),
+      respond: fn -> {:ok, capabilities} end,
+      cancelled?: fn -> false end
+    }
   end
 end

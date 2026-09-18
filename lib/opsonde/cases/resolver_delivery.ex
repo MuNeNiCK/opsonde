@@ -26,8 +26,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
          ai_invocation <- invocation(turn.case_id, Keyword.get(opts, :ai_invocation, %{})),
          {:ok, decision} <-
            Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false),
-         :ok <- valid_result_size(decision, selection),
-         {:ok, _result} <- accept(turn, selection, decision) do
+         {:ok, result} <- result(decision, selection, request),
+         :ok <- valid_result_size(result),
+         {:ok, _result} <- accept(turn, decision, result) do
       :ok
     else
       {:error, error} -> handle_failure(turn, error)
@@ -158,8 +159,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp accept(turn, selection, decision) do
-    result = result(decision, selection)
+  defp accept(turn, decision, result) do
     usage_units = decision.usage.input_tokens + decision.usage.output_tokens
     progress_kind = progress_kind(decision.intent)
 
@@ -213,27 +213,66 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp result(decision, selection) do
-    %{
-      "outcome" => "decision",
-      "intent" => intent(decision.intent),
-      "usage" => %{
-        "input_tokens" => decision.usage.input_tokens,
-        "output_tokens" => decision.usage.output_tokens
-      },
-      "resolver" => %{
-        "provider_id" => selection.provider_id,
-        "provider_revision" => selection.provider_revision,
-        "assignment_id" => selection.assignment_id,
-        "assignment_revision" => selection.assignment_revision
-      }
-    }
+  defp result(decision, selection, request) do
+    with {:ok, intent} <- intent(decision.intent, request) do
+      {:ok,
+       %{
+         "outcome" => "decision",
+         "intent" => intent,
+         "usage" => %{
+           "input_tokens" => decision.usage.input_tokens,
+           "output_tokens" => decision.usage.output_tokens
+         },
+         "resolver" => %{
+           "provider_id" => selection.provider_id,
+           "provider_revision" => selection.provider_revision,
+           "assignment_id" => selection.assignment_id,
+           "assignment_revision" => selection.assignment_revision
+         }
+       }}
+    end
   end
 
-  defp intent(%module{} = value) do
-    value
-    |> json_value()
-    |> Map.put("type", module |> Module.split() |> List.last() |> Macro.underscore())
+  defp intent(%AI.ObservationChoice{} = value, request) do
+    with {:ok, tool} <- observation_tool(request, value.tool_id) do
+      {:ok, value |> typed_intent() |> Map.put("tool", tool_snapshot(tool))}
+    end
+  end
+
+  defp intent(%AI.Proposal{} = value, request) do
+    with {:ok, tool} <- observation_tool(request, value.verification_intent.tool_id) do
+      {:ok, value |> typed_intent() |> Map.put("verification_tool", tool_snapshot(tool))}
+    end
+  end
+
+  defp intent(%_{} = value, _request), do: {:ok, typed_intent(value)}
+
+  defp typed_intent(%module{} = value),
+    do:
+      value
+      |> json_value()
+      |> Map.put("type", module |> Module.split() |> List.last() |> Macro.underscore())
+
+  defp observation_tool(request, tool_id) do
+    case Enum.find(request.observation_tools, &(&1.id == tool_id)) do
+      %AI.ObservationTool{} = tool ->
+        {:ok, tool}
+
+      _missing ->
+        {:error, ai_error(:invalid_output, "AI observation tool snapshot is unavailable")}
+    end
+  end
+
+  defp tool_snapshot(tool) do
+    %{
+      "id" => tool.id,
+      "target_id" => tool.target_id,
+      "target_revision" => tool.target_revision,
+      "access_method_id" => tool.access_method_id,
+      "access_method_revision" => tool.access_method_revision,
+      "capability" => tool.capability,
+      "operation" => tool.operation
+    }
   end
 
   defp json_value(%_{} = value), do: value |> Map.from_struct() |> json_value()
@@ -250,8 +289,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp progress_kind(%AI.Handoff{}), do: :human_input
   defp progress_kind(_intent), do: :hypothesis
 
-  defp valid_result_size(decision, selection) do
-    case Jason.encode(result(decision, selection)) do
+  defp valid_result_size(result) do
+    case Jason.encode(result) do
       {:ok, encoded} when byte_size(encoded) <= @max_result_bytes -> :ok
       _invalid -> {:error, ai_error(:invalid_output, "AI Resolver result is too large")}
     end
