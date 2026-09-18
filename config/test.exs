@@ -6,6 +6,7 @@ config :opsonde,
   provider_adapters: [
     Opsonde.AI.ReqLLM,
     Opsonde.Targets.Generic.SSH,
+    Opsonde.Targets.Linux.SSH,
     Opsonde.ProviderAdapterFixture,
     Opsonde.SignalAdapterFixture,
     Opsonde.InventoryAdapterFixture,
