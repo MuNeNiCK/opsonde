@@ -1,5 +1,8 @@
 defmodule Opsonde.ProviderAdapterFixture do
   @behaviour Opsonde.Providers.Adapter
+  @behaviour Opsonde.Providers.Target
+
+  alias Opsonde.Providers.Target
 
   @impl true
   def type, do: "fixture-target"
@@ -32,4 +35,36 @@ defmodule Opsonde.ProviderAdapterFixture do
   end
 
   def check(_state, _input), do: {:error, :capability, "unsupported fixture endpoint"}
+
+  @impl Opsonde.Providers.Target
+  def capabilities(state, invocation) do
+    notify(invocation, {:capabilities, state})
+    respond(invocation)
+  end
+
+  @impl Opsonde.Providers.Target
+  def observe(state, request, invocation) do
+    notify(invocation, {:observe, state, request})
+    respond(invocation)
+  end
+
+  @impl Opsonde.Providers.Target
+  def effect(state, request, invocation) do
+    notify(invocation, {:effect, state, request})
+    respond(invocation)
+  end
+
+  @impl Opsonde.Providers.Target
+  def verify(state, request, invocation) do
+    notify(invocation, {:verify, state, request})
+    respond(invocation)
+  end
+
+  defp notify(%{test_pid: pid}, message), do: send(pid, message)
+  defp notify(_invocation, _message), do: :ok
+
+  defp respond(%{respond: respond}) when is_function(respond, 0), do: respond.()
+
+  defp respond(_invocation),
+    do: {:ok, %Target.Capabilities{observations: [], effects: []}}
 end

@@ -94,6 +94,62 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Check
     end
 
+    action :target_capabilities, :struct do
+      constraints instance_of: Opsonde.Providers.Target.Capabilities
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :expected_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :capabilities}
+    end
+
+    action :target_observe, :struct do
+      constraints instance_of: Opsonde.Providers.Target.Observation
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Target.ObservationRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :observe}
+    end
+
+    action :target_effect, :struct do
+      constraints instance_of: Opsonde.Providers.Target.EffectResult
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Target.EffectRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :effect}
+    end
+
+    action :target_verify, :struct do
+      constraints instance_of: Opsonde.Providers.Target.Verification
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Target.VerificationRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :verify}
+    end
+
     update :record_check do
       accept []
 
@@ -171,6 +227,11 @@ defmodule Opsonde.Providers.Provider do
 
     policy action(:for_invocation) do
       forbid_if always()
+    end
+
+    policy action([:target_capabilities, :target_observe, :target_effect, :target_verify]) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
     end
 
     policy action(:read) do

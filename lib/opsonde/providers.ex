@@ -18,6 +18,22 @@ defmodule Opsonde.Providers do
       define :update_provider, action: :update, args: [:expected_revision]
       define :check_provider, action: :check, args: [:id, :expected_revision, :input]
 
+      define :target_capabilities,
+        action: :target_capabilities,
+        args: [:provider_id, :expected_revision, :invocation]
+
+      define :target_observe,
+        action: :target_observe,
+        args: [:provider_id, :request, :invocation]
+
+      define :target_effect,
+        action: :target_effect,
+        args: [:provider_id, :request, :invocation]
+
+      define :target_verify,
+        action: :target_verify,
+        args: [:provider_id, :request, :invocation]
+
       define :record_provider_check,
         action: :record_check,
         args: [:expected_revision, :check_status, :check_category, :check_message]
