@@ -152,6 +152,37 @@ defmodule Opsonde.Providers.InventoryTest do
     refute_receive {:page, _, _, "2"}
   end
 
+  test "scope and page payloads are bounded", context do
+    oversized_scope = %Inventory.Request{
+      provider_revision: context.provider.revision,
+      scope: %{"payload" => String.duplicate("x", 65_537)}
+    }
+
+    assert {:error, request_error} =
+             Providers.inventory_snapshot(
+               context.provider.id,
+               oversized_scope,
+               %{test_pid: self(), respond: fn _cursor -> flunk("invalid scope was fetched") end},
+               actor: context.admin
+             )
+
+    assert inventory_error(request_error).message == "Inventory request is invalid"
+    refute_receive {:page, _, _, _}
+
+    oversized_page =
+      snapshot!(context, request(context.provider.revision), fn nil ->
+        {:ok,
+         %Inventory.Page{
+           records: Enum.map(1..1_001, &record("server-#{&1}")),
+           source_version: "v1"
+         }}
+      end)
+
+    assert oversized_page.status == :partial
+    assert oversized_page.records == []
+    assert {:failed, "Invalid inventory page"} = oversized_page.error
+  end
+
   defp snapshot!(context, request, respond) do
     Providers.inventory_snapshot!(
       context.provider.id,
@@ -173,4 +204,14 @@ defmodule Opsonde.Providers.InventoryTest do
       attributes: Map.put_new(attributes, :name, external_id)
     }
   end
+
+  defp inventory_error(%{errors: errors}) do
+    Enum.find_value(errors, fn
+      %Inventory.Error{} = error -> error
+      nested when is_map(nested) -> inventory_error(nested)
+      _other -> nil
+    end)
+  end
+
+  defp inventory_error(_error), do: nil
 end

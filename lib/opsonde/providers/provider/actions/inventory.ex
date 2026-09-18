@@ -6,6 +6,11 @@ defmodule Opsonde.Providers.Provider.Actions.Inventory do
 
   @failures [:retryable, :failed, :cancelled]
   @max_pages 100
+  @max_scope_fields 100
+  @max_scope_bytes 65_536
+  @max_page_records 1_000
+  @max_page_bytes 1_048_576
+  @max_identity_bytes 1_024
 
   @impl true
   def run(input, _opts, _context) do
@@ -45,8 +50,14 @@ defmodule Opsonde.Providers.Provider.Actions.Inventory do
          max_pages: pages
        })
        when is_integer(revision) and revision > 0 and is_map(scope) and is_integer(pages) and
-              pages > 0 and pages <= @max_pages,
-       do: :ok
+              pages > 0 and pages <= @max_pages do
+    if map_size(scope) <= @max_scope_fields and
+         :erlang.external_size(scope) <= @max_scope_bytes do
+      :ok
+    else
+      {:error, inventory_error(:failed, "Inventory request is invalid")}
+    end
+  end
 
   defp validate_request(_request),
     do: {:error, inventory_error(:failed, "Inventory request is invalid")}
@@ -195,8 +206,13 @@ defmodule Opsonde.Providers.Provider.Actions.Inventory do
          next_cursor: cursor
        })
        when is_list(records) and is_binary(source_version) and byte_size(source_version) > 0 and
+              byte_size(source_version) <= @max_identity_bytes and
               (is_nil(cursor) or (is_binary(cursor) and byte_size(cursor) > 0)),
-       do: Enum.all?(records, &valid_record?/1)
+       do:
+         length(records) <= @max_page_records and
+           :erlang.external_size(records) <= @max_page_bytes and
+           (is_nil(cursor) or byte_size(cursor) <= @max_identity_bytes) and
+           Enum.all?(records, &valid_record?/1)
 
   defp valid_page?(_page), do: false
 
@@ -208,7 +224,9 @@ defmodule Opsonde.Providers.Provider.Actions.Inventory do
        }),
        do:
          is_binary(external_id) and byte_size(external_id) > 0 and is_atom(kind) and
-           is_binary(source_ref) and byte_size(source_ref) > 0 and is_map(attributes)
+           byte_size(external_id) <= @max_identity_bytes and is_binary(source_ref) and
+           byte_size(source_ref) > 0 and byte_size(source_ref) <= @max_identity_bytes and
+           is_map(attributes)
 
   defp valid_record?(_record), do: false
 
