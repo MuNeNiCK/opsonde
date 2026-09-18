@@ -75,7 +75,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   @impl Opsonde.Providers.AI
   def resolve(state, %AI.ResolverRequest{} = request, invocation) do
-    output = ReqLLM.Output.object(resolver_schema(), name: "opsonde_resolver_decision")
+    output = ReqLLM.Output.object(resolver_schema(request), name: "opsonde_resolver_decision")
 
     with {:ok, response} <-
            invoke(
@@ -229,13 +229,10 @@ defmodule Opsonde.AI.ReqLLM do
         "registered Targets and tools. Never execute a tool. Never invent an identifier. " <>
         "Base the intent only on supplied evidence and preserve uncertainty. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
-        "the user payload. Encode the " <>
-        "selected intent arguments as a JSON object string in arguments_json. The argument " <>
-        "shapes are: target_search {query}; target_selection {target_id,evidence_ids}; " <>
-        "observation {tool_id,selectors,parameters}; target_traversal " <>
-        "{relationship_id,evidence_ids}; proposal " <>
-        "{tool_id,selectors,parameters,evidence_ids,expected_result,verification}; " <>
-        "recovery {evidence_ids}; handoff {required_input}.",
+        "the user payload. Keep reason concise and at most 500 UTF-8 bytes. Return exactly " <>
+        "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
+        "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
+        "in the user payload.",
       Jason.encode!(payload)
     )
   end
@@ -265,20 +262,11 @@ defmodule Opsonde.AI.ReqLLM do
     ])
   end
 
-  defp resolver_intent(
-         %{"type" => type, "reason" => reason, "arguments_json" => arguments_json},
-         request
-       )
-       when is_binary(type) and is_binary(reason) and is_binary(arguments_json) do
-    with {:ok, arguments} <- Jason.decode(arguments_json),
-         true <- is_map(arguments) do
-      arguments
-      |> Map.put("type", type)
-      |> Map.put("reason", reason)
-      |> intent(request)
-    else
-      _error -> invalid_output()
-    end
+  defp resolver_intent(%{"reason" => reason, "intent" => intent}, request)
+       when is_binary(reason) and is_map(intent) do
+    intent
+    |> Map.put("reason", reason)
+    |> intent(request)
   end
 
   defp resolver_intent(_value, _request), do: invalid_output()
@@ -308,11 +296,12 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp intent(%{"type" => "observation"} = value, request) do
-    with {:ok, tool_id} <- string(value, "tool_id"),
+  defp intent(%{"type" => "observation", "tool_input" => tool_input} = value, request)
+       when is_map(tool_input) do
+    with {:ok, tool_id} <- string(tool_input, "tool_id"),
          %AI.ObservationTool{} <- Enum.find(request.observation_tools, &(&1.id == tool_id)),
-         {:ok, selectors} <- map(value, "selectors"),
-         {:ok, parameters} <- map(value, "parameters"),
+         {:ok, selectors} <- map(tool_input, "selectors"),
+         {:ok, parameters} <- map(tool_input, "parameters"),
          {:ok, reason} <- string(value, "reason") do
       {:ok,
        %AI.ObservationChoice{
@@ -347,14 +336,15 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp intent(%{"type" => "proposal"} = value, request) do
-    with {:ok, tool_id} <- string(value, "tool_id"),
+  defp intent(%{"type" => "proposal", "action" => action} = value, request)
+       when is_map(action) do
+    with {:ok, tool_id} <- string(action, "tool_id"),
          %AI.ProposalTool{} = tool <- Enum.find(request.proposal_tools, &(&1.id == tool_id)),
-         {:ok, selectors} <- map(value, "selectors"),
-         {:ok, parameters} <- map(value, "parameters"),
+         {:ok, selectors} <- map(action, "selectors"),
+         {:ok, parameters} <- map(action, "parameters"),
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
-         {:ok, expected_result} <- map(value, "expected_result"),
+         {:ok, expected_result} <- decoded_map(value, "expected_result_json"),
          {:ok, verification} <- verification_intent(value["verification"], request) do
       {:ok,
        %AI.Proposal{
@@ -398,7 +388,7 @@ defmodule Opsonde.AI.ReqLLM do
          %_{id: ^tool_id} <- verification_tool(request, tool_id),
          {:ok, selectors} <- map(value, "selectors"),
          {:ok, parameters} <- map(value, "parameters"),
-         {:ok, expected_result} <- map(value, "expected_result") do
+         {:ok, expected_result} <- decoded_map(value, "expected_result_json") do
       {:ok,
        %AI.VerificationIntent{
          tool_id: tool_id,
@@ -460,25 +450,172 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp resolver_schema do
+  defp resolver_schema(request) do
+    variants =
+      [
+        target_search_schema(request),
+        target_selection_schema(request),
+        observation_schema(request),
+        target_traversal_schema(request),
+        proposal_schema(request),
+        recovery_schema(request),
+        handoff_schema()
+      ]
+      |> Enum.reject(&is_nil/1)
+
     object_schema(
       %{
-        "type" =>
-          enum_schema(
-            ~w(target_search target_selection observation target_traversal proposal recovery handoff)
-          ),
-        "reason" => string_schema(),
-        "arguments_json" => string_schema()
+        "reason" => bounded_string_schema(500),
+        "intent" => %{"anyOf" => variants}
       },
-      ~w(type reason arguments_json)
+      ~w(reason intent)
     )
   end
+
+  defp target_search_schema(%{budget: %{remaining_target_requests: remaining}})
+       when remaining > 0,
+       do: intent_schema("target_search", %{"query" => bounded_string_schema(200)})
+
+  defp target_search_schema(_request), do: nil
+
+  defp target_selection_schema(request) do
+    target_ids = Enum.map(request.target_candidates, & &1.id)
+    evidence_ids = available_evidence_ids(request)
+
+    if target_ids != [] and evidence_ids != [] do
+      intent_schema("target_selection", %{
+        "target_id" => enum_schema(target_ids),
+        "evidence_ids" => identifier_array_schema(evidence_ids)
+      })
+    end
+  end
+
+  defp observation_schema(%{budget: %{remaining_target_requests: remaining}} = request)
+       when remaining > 0 do
+    case tool_input_variants(request.observation_tools) do
+      [] -> nil
+      variants -> intent_schema("observation", %{"tool_input" => %{"anyOf" => variants}})
+    end
+  end
+
+  defp observation_schema(_request), do: nil
+
+  defp target_traversal_schema(%{budget: %{remaining_related_targets: remaining}} = request)
+       when remaining > 0 do
+    relationship_ids = Enum.map(request.target_relations, & &1.id)
+    evidence_ids = available_evidence_ids(request)
+
+    if relationship_ids != [] and evidence_ids != [] do
+      intent_schema("target_traversal", %{
+        "relationship_id" => enum_schema(relationship_ids),
+        "evidence_ids" => identifier_array_schema(evidence_ids)
+      })
+    end
+  end
+
+  defp target_traversal_schema(_request), do: nil
+
+  defp proposal_schema(%{budget: %{remaining_effects: remaining}} = request) when remaining > 0 do
+    action_variants = tool_input_variants(request.proposal_tools)
+
+    verification_variants =
+      tool_input_variants(
+        request.observation_tools ++ request.proposal_tools,
+        %{"expected_result_json" => json_object_string_schema()}
+      )
+
+    evidence_ids = available_evidence_ids(request)
+
+    if action_variants != [] and verification_variants != [] and evidence_ids != [] do
+      intent_schema("proposal", %{
+        "action" => %{"anyOf" => action_variants},
+        "evidence_ids" => identifier_array_schema(evidence_ids),
+        "expected_result_json" => json_object_string_schema(),
+        "verification" => %{"anyOf" => verification_variants}
+      })
+    end
+  end
+
+  defp proposal_schema(_request), do: nil
+
+  defp recovery_schema(%{alert_state: state} = request)
+       when state in [:recovered, :not_applicable] do
+    case available_evidence_ids(request) do
+      [] ->
+        nil
+
+      evidence_ids ->
+        intent_schema("recovery", %{
+          "evidence_ids" => identifier_array_schema(evidence_ids)
+        })
+    end
+  end
+
+  defp recovery_schema(_request), do: nil
+
+  defp handoff_schema,
+    do: intent_schema("handoff", %{"required_input" => bounded_string_schema(1_000)})
+
+  defp intent_schema(type, properties),
+    do:
+      object_schema(
+        Map.put(properties, "type", enum_schema([type])),
+        ["type" | Map.keys(properties)]
+      )
+
+  defp tool_input_variants(tools, extra_properties \\ %{}) do
+    Enum.flat_map(tools, fn tool ->
+      case tool.input_schema do
+        %{
+          "type" => "object",
+          "properties" => properties,
+          "required" => required
+        } = schema
+        when is_map(properties) and is_list(required) ->
+          properties =
+            properties
+            |> Map.merge(extra_properties)
+            |> Map.put("tool_id", enum_schema([tool.id]))
+
+          required = ["tool_id" | required ++ Map.keys(extra_properties)] |> Enum.uniq()
+
+          [
+            schema
+            |> Map.put("properties", properties)
+            |> Map.put("required", required)
+            |> Map.put("additionalProperties", false)
+            |> Map.put("description", tool.description)
+          ]
+
+        _schema ->
+          []
+      end
+    end)
+  end
+
+  defp available_evidence_ids(request),
+    do: Enum.map(request.evidence ++ request.observation_results, & &1.id)
+
+  defp identifier_array_schema(values),
+    do: %{
+      "type" => "array",
+      "items" => enum_schema(values),
+      "minItems" => 1,
+      "uniqueItems" => true
+    }
+
+  defp json_object_string_schema,
+    do: %{
+      "type" => "string",
+      "minLength" => 2,
+      "description" => "A JSON-encoded object"
+    }
 
   defp reviewer_schema do
     object_schema(
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
-        "reason" => string_schema()
+        "reason" => bounded_string_schema(1_000)
       },
       ~w(verdict reason)
     )
@@ -493,6 +630,7 @@ defmodule Opsonde.AI.ReqLLM do
     }
 
   defp string_schema, do: %{"type" => "string", "minLength" => 1}
+  defp bounded_string_schema(maximum), do: Map.put(string_schema(), "maxLength", maximum)
   defp enum_schema(values), do: %{"type" => "string", "enum" => values}
 
   defp provider(configuration) do
@@ -583,6 +721,16 @@ defmodule Opsonde.AI.ReqLLM do
     case Map.get(value, key) do
       item when is_map(item) -> {:ok, item}
       _item -> invalid_output()
+    end
+  end
+
+  defp decoded_map(value, key) do
+    with {:ok, encoded} <- string(value, key),
+         {:ok, decoded} <- Jason.decode(encoded),
+         true <- is_map(decoded) do
+      {:ok, decoded}
+    else
+      _error -> invalid_output()
     end
   end
 

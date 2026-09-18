@@ -151,14 +151,38 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     defp check_decision(_body, mode), do: mode
 
-    defp wire_decision(%{"type" => type, "reason" => reason} = decision) do
+    defp wire_decision(%{"type" => "proposal", "reason" => reason} = decision) do
+      verification = decision["verification"]
+
       %{
-        "type" => type,
         "reason" => reason,
-        "arguments_json" =>
-          decision
-          |> Map.drop(["type", "reason"])
-          |> Jason.encode!()
+        "intent" => %{
+          "type" => "proposal",
+          "action" => Map.take(decision, ~w(tool_id selectors parameters)),
+          "evidence_ids" => decision["evidence_ids"],
+          "expected_result_json" => Jason.encode!(decision["expected_result"]),
+          "verification" =>
+            verification
+            |> Map.take(~w(tool_id selectors parameters))
+            |> Map.put("expected_result_json", Jason.encode!(verification["expected_result"]))
+        }
+      }
+    end
+
+    defp wire_decision(%{"type" => "observation", "reason" => reason} = decision) do
+      %{
+        "reason" => reason,
+        "intent" => %{
+          "type" => "observation",
+          "tool_input" => Map.take(decision, ~w(tool_id selectors parameters))
+        }
+      }
+    end
+
+    defp wire_decision(%{"type" => _type, "reason" => reason} = decision) do
+      %{
+        "reason" => reason,
+        "intent" => Map.drop(decision, ["reason"])
       }
     end
 
@@ -209,11 +233,25 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.all?(requests, &String.contains?(&1.body, "report_language"))
     assert Enum.all?(requests, &String.contains?(&1.body, "human-facing reason"))
 
-    [openai_request | _rest] = requests
-    openai_body = Jason.decode!(openai_request.body)
-    schema = get_in(openai_body, ["tools", Access.at(0), "function", "parameters"])
-    assert schema["additionalProperties"] == false
-    assert MapSet.new(schema["required"]) == MapSet.new(Map.keys(schema["properties"]))
+    assert Enum.all?(requests, &String.contains?(&1.body, "one intent allowed"))
+    assert Enum.all?(requests, &String.contains?(&1.body, "expected_result_json"))
+
+    for request <- requests do
+      schema = output_schema(request)
+      assert schema["additionalProperties"] == false
+      assert MapSet.new(schema["required"]) == MapSet.new(Map.keys(schema["properties"]))
+      assert schema["properties"]["reason"]["type"] == "string"
+
+      if Map.has_key?(schema["properties"]["reason"], "maxLength") do
+        assert schema["properties"]["reason"]["maxLength"] == 500
+      end
+
+      refute Map.has_key?(schema["properties"], "arguments_json")
+
+      assert Enum.any?(schema["properties"]["intent"]["anyOf"], fn variant ->
+               get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
+             end)
+    end
   end
 
   test "streamed and buffered responses produce the same decision", context do
@@ -249,6 +287,19 @@ defmodule Opsonde.AI.ReqLLMTest do
       resolver_request()
       | selected_target_id: "target-1",
         selected_target_revision: 4,
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: ["target-1"],
+            allowed_evidence_kinds: ["observation"]
+        },
+        evidence: [
+          %AI.Evidence{
+            id: "evidence-1",
+            kind: "observation",
+            target_id: "target-1",
+            content: %{"status" => "stopped"}
+          }
+        ],
         observation_tools: [observation_tool()],
         proposal_tools: [proposal_tool()]
     }
@@ -262,7 +313,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "evidence_ids" => ["evidence-1"],
       "expected_result" => %{"status" => "running"},
       "verification" => %{
-        "tool_id" => "proposal-tool",
+        "tool_id" => "observe-tool",
         "selectors" => %{"service" => "api"},
         "parameters" => %{},
         "expected_result" => %{"status" => "running"}
@@ -282,11 +333,52 @@ defmodule Opsonde.AI.ReqLLMTest do
                 access_method_revision: 3,
                 capability: "effect.command",
                 operation: "service.restart",
-                verification_intent: %AI.VerificationIntent{tool_id: "proposal-tool"}
+                verification_intent: %AI.VerificationIntent{tool_id: "observe-tool"}
               }
             }} = Adapter.resolve(state, request, %{})
 
+    [provider_request] = requests(context.agent)
+    schema = output_schema(provider_request)
+
+    proposal_variant =
+      Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
+        get_in(variant, ["properties", "type", "enum"]) == ["proposal"]
+      end)
+
+    [action_schema] = get_in(proposal_variant, ["properties", "action", "anyOf"])
+    assert get_in(action_schema, ["properties", "tool_id", "enum"]) == ["proposal-tool"]
+
+    assert action_schema["properties"]["selectors"] ==
+             tool_input_schema()["properties"]["selectors"]
+
+    assert action_schema["properties"]["parameters"] ==
+             tool_input_schema(
+               %{
+                 "grace_seconds" => %{
+                   "type" => "integer",
+                   "minimum" => 0,
+                   "maximum" => 30
+                 }
+               },
+               ["grace_seconds"]
+             )["properties"]["parameters"]
+
+    verification_schemas =
+      get_in(proposal_variant, ["properties", "verification", "anyOf"])
+
+    assert Enum.any?(verification_schemas, fn variant ->
+             get_in(variant, ["properties", "tool_id", "enum"]) == ["observe-tool"] and
+               Map.has_key?(variant["properties"], "expected_result_json")
+           end)
+
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+
+    set_mode(context.agent, {:decision, Map.delete(decision, "tool_id")})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+
+    malformed = %{decision | "expected_result" => "not-an-object"}
+    set_mode(context.agent, {:decision, malformed})
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
   end
 
@@ -462,7 +554,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       capability: "observe.command",
       operation: "service.inspect",
       description: "Inspect one service",
-      input_schema: %{}
+      input_schema: tool_input_schema()
     }
   end
 
@@ -478,7 +570,13 @@ defmodule Opsonde.AI.ReqLLMTest do
       capability: "effect.command",
       operation: "service.restart",
       description: "Restart one service",
-      input_schema: %{}
+      input_schema:
+        tool_input_schema(
+          %{
+            "grace_seconds" => %{"type" => "integer", "minimum" => 0, "maximum" => 30}
+          },
+          ["grace_seconds"]
+        )
     }
   end
 
@@ -503,6 +601,49 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   defp handoff,
     do: %{"type" => "handoff", "reason" => "probe", "required_input" => "human"}
+
+  defp tool_input_schema(parameter_properties \\ %{}, parameter_required \\ []) do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{
+          "type" => "object",
+          "properties" => %{"service" => %{"type" => "string", "minLength" => 1}},
+          "required" => ["service"],
+          "additionalProperties" => false
+        },
+        "parameters" => %{
+          "type" => "object",
+          "properties" => parameter_properties,
+          "required" => parameter_required,
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
+  end
+
+  defp output_schema(request) do
+    body = Jason.decode!(request.body)
+
+    cond do
+      schema = get_in(body, ["response_format", "json_schema", "schema"]) ->
+        schema
+
+      schema = get_in(body, ["tools", Access.at(0), "function", "parameters"]) ->
+        schema
+
+      schema = get_in(body, ["tools", Access.at(0), "input_schema"]) ->
+        schema
+
+      schema = get_in(body, ["output_format", "schema"]) ->
+        schema
+
+      true ->
+        flunk("structured output schema missing from request: #{inspect(body)}")
+    end
+  end
 
   defp set_mode(agent, mode),
     do: Agent.update(agent, &%{&1 | mode: mode, requests: []})
