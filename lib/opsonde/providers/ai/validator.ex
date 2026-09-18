@@ -282,7 +282,8 @@ defmodule Opsonde.Providers.AI.Validator do
     tool = Enum.find(request.observation_tools, &(&1.id == choice.tool_id))
 
     if request.budget.remaining_target_requests > 0 and not is_nil(tool) and
-         valid_tool_input?(choice.parameters, tool.input_schema) and nonempty?(choice.reason) do
+         valid_tool_input?(choice.selectors, choice.parameters, tool.input_schema) and
+         nonempty?(choice.reason) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI observation choice is invalid")}
@@ -323,7 +324,7 @@ defmodule Opsonde.Providers.AI.Validator do
     case Enum.find(request.proposal_tools, &(&1.id == proposal.tool_id)) do
       %AI.ProposalTool{} = tool ->
         if request.budget.remaining_effects > 0 and
-             valid_tool_input?(proposal.parameters, tool.input_schema) and
+             valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
              exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
              valid_verification_intent?(proposal.verification_intent, request.observation_tools) and
              nonempty?(proposal.reason) and nonempty_list?(proposal.evidence_ids) and
@@ -363,7 +364,8 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(proposal.target_revision) and nonempty?(proposal.access_method_id) and
       positive?(proposal.access_method_revision) and nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and nonempty?(proposal.reason) and
-      nonempty_list?(proposal.evidence_ids) and unique?(proposal.evidence_ids) and
+      is_map(proposal.selectors) and nonempty_list?(proposal.evidence_ids) and
+      unique?(proposal.evidence_ids) and
       Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) and
       is_map(proposal.expected_result) and
       valid_verification_intent?(proposal.verification_intent)
@@ -415,7 +417,7 @@ defmodule Opsonde.Providers.AI.Validator do
     case Enum.find(observation_tools, &(&1.id == intent.tool_id)) do
       %AI.ObservationTool{} = tool ->
         valid_verification_intent?(intent) and
-          valid_tool_input?(intent.parameters, tool.input_schema)
+          valid_tool_input?(intent.selectors, intent.parameters, tool.input_schema)
 
       _tool ->
         false
@@ -425,7 +427,9 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_verification_intent?(_intent, _observation_tools), do: false
 
   defp valid_verification_intent?(%AI.VerificationIntent{} = intent),
-    do: nonempty?(intent.tool_id) and is_map(intent.parameters) and is_map(intent.expected_result)
+    do:
+      nonempty?(intent.tool_id) and is_map(intent.selectors) and is_map(intent.parameters) and
+        is_map(intent.expected_result)
 
   defp valid_verification_intent?(_intent), do: false
 
@@ -435,16 +439,22 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_input_schema?(_schema), do: false
 
-  defp valid_tool_input?(parameters, schema) when is_map(parameters) do
+  defp valid_tool_input?(selectors, parameters, schema)
+       when is_map(selectors) and is_map(parameters) do
     with {:ok, root} <- JSV.build(schema, warnings: :silent),
-         {:ok, _validated} <- JSV.validate(parameters, root, cast: false) do
+         {:ok, _validated} <-
+           JSV.validate(
+             %{"selectors" => selectors, "parameters" => parameters},
+             root,
+             cast: false
+           ) do
       true
     else
       _invalid -> false
     end
   end
 
-  defp valid_tool_input?(_parameters, _schema), do: false
+  defp valid_tool_input?(_selectors, _parameters, _schema), do: false
 
   defp plain_value(%_{} = value), do: value |> Map.from_struct() |> plain_value()
 

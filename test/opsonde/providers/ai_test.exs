@@ -151,6 +151,7 @@ defmodule Opsonde.Providers.AITest do
 
     observation = %AI.ObservationChoice{
       tool_id: "inspect-system",
+      selectors: %{},
       parameters: %{},
       reason: "Collect current system state"
     }
@@ -278,8 +279,16 @@ defmodule Opsonde.Providers.AITest do
   test "Resolver tool inputs must satisfy the exact offered JSON Schema", context do
     schema = %{
       "type" => "object",
-      "properties" => %{"service" => %{"type" => "string", "minLength" => 1}},
-      "required" => ["service"],
+      "properties" => %{
+        "selectors" => %{
+          "type" => "object",
+          "properties" => %{"service" => %{"type" => "string", "minLength" => 1}},
+          "required" => ["service"],
+          "additionalProperties" => false
+        },
+        "parameters" => %{"type" => "object", "maxProperties" => 0}
+      },
+      "required" => ["selectors", "parameters"],
       "additionalProperties" => false
     }
 
@@ -295,7 +304,8 @@ defmodule Opsonde.Providers.AITest do
 
     valid_observation = %AI.ObservationChoice{
       tool_id: observation_tool.id,
-      parameters: %{"service" => "api"},
+      selectors: %{"service" => "api"},
+      parameters: %{},
       reason: "Inspect the named service"
     }
 
@@ -304,7 +314,7 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: valid_observation, usage: usage()}}
              end)
 
-    invalid_observation = %{valid_observation | parameters: %{"service" => 42}}
+    invalid_observation = %{valid_observation | selectors: %{"service" => 42}}
 
     assert {:error, invalid_observation_error} =
              resolve(context, request, fn _request ->
@@ -315,10 +325,12 @@ defmodule Opsonde.Providers.AITest do
 
     invalid_proposal = %{
       proposal()
-      | parameters: %{},
+      | selectors: %{},
+        parameters: %{},
         verification_intent: %AI.VerificationIntent{
           tool_id: observation_tool.id,
-          parameters: %{"service" => "api"},
+          selectors: %{"service" => "api"},
+          parameters: %{},
           expected_result: %{"service" => "running"}
         }
     }
@@ -332,10 +344,12 @@ defmodule Opsonde.Providers.AITest do
 
     invalid_verification = %{
       proposal()
-      | parameters: %{"service" => "api"},
+      | selectors: %{"service" => "api"},
+        parameters: %{},
         verification_intent: %AI.VerificationIntent{
           tool_id: observation_tool.id,
-          parameters: %{"service" => 42},
+          selectors: %{"service" => 42},
+          parameters: %{},
           expected_result: %{"service" => "running"}
         }
     }
@@ -719,12 +733,14 @@ defmodule Opsonde.Providers.AITest do
       access_method_revision: 1,
       capability: "effect.command",
       operation: "service.restart",
+      selectors: %{service: "api"},
       parameters: %{service: "api"},
       reason: "Restart the unhealthy service",
       evidence_ids: ["evidence-1"],
       expected_result: %{service: "running"},
       verification_intent: %AI.VerificationIntent{
         tool_id: "inspect-system",
+        selectors: %{service: "api"},
         parameters: %{service: "api"},
         expected_result: %{service: "running"}
       }

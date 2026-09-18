@@ -90,7 +90,7 @@ defmodule Opsonde.Providers.AI do
 
   defmodule ObservationChoice do
     @moduledoc false
-    @enforce_keys [:tool_id, :parameters, :reason]
+    @enforce_keys [:tool_id, :selectors, :parameters, :reason]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -116,7 +116,7 @@ defmodule Opsonde.Providers.AI do
 
   defmodule VerificationIntent do
     @moduledoc false
-    @enforce_keys [:tool_id, :parameters, :expected_result]
+    @enforce_keys [:tool_id, :selectors, :parameters, :expected_result]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -132,6 +132,7 @@ defmodule Opsonde.Providers.AI do
       :access_method_revision,
       :capability,
       :operation,
+      :selectors,
       :parameters,
       :reason,
       :evidence_ids,

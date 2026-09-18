@@ -216,6 +216,7 @@ defmodule Opsonde.ResolverDeliveryTest do
                     %AI.ResolverDecision{
                       intent: %AI.ObservationChoice{
                         tool_id: tool.id,
+                        selectors: %{"path" => "/var/log/messages"},
                         parameters: %{"path" => "/var/log/messages"},
                         reason: "Inspect the current error source"
                       },
@@ -227,6 +228,7 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     observation_intent = Cases.get_turn!(observation_turn.id, authorize?: false).result["intent"]
     assert observation_intent["type"] == "observation_choice"
+    assert observation_intent["selectors"] == %{"path" => "/var/log/messages"}
     assert observation_intent["tool"]["target_id"] == target.id
     assert observation_intent["tool"]["target_revision"] == target.revision
     assert observation_intent["tool"]["access_method_id"] == method.id
@@ -284,12 +286,14 @@ defmodule Opsonde.ResolverDeliveryTest do
                         access_method_revision: proposal_tool.access_method_revision,
                         capability: proposal_tool.capability,
                         operation: proposal_tool.operation,
+                        selectors: %{"service" => "api"},
                         parameters: %{"service" => "api"},
                         reason: "Restart the unhealthy service",
                         evidence_ids: [evidence.id],
                         expected_result: %{"service" => "running"},
                         verification_intent: %AI.VerificationIntent{
                           tool_id: observation_tool.id,
+                          selectors: %{"path" => "/var/log/messages"},
                           parameters: %{"path" => "/var/log/messages"},
                           expected_result: %{"errors" => "absent"}
                         }
@@ -302,6 +306,12 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     proposal_intent = Cases.get_turn!(proposal_turn.id, authorize?: false).result["intent"]
     assert proposal_intent["type"] == "proposal"
+    assert proposal_intent["selectors"] == %{"service" => "api"}
+
+    assert proposal_intent["verification_intent"]["selectors"] == %{
+             "path" => "/var/log/messages"
+           }
+
     assert proposal_intent["verification_tool"]["id"] =~ "observation:"
     assert proposal_intent["verification_tool"]["access_method_id"] == method.id
     assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
