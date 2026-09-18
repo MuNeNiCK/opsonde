@@ -30,6 +30,27 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
+  defmodule TargetCandidate do
+    @moduledoc false
+    @enforce_keys [:id, :revision, :name, :kind, :platform, :facts]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule TargetSearch do
+    @moduledoc false
+    @enforce_keys [:query, :reason]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule TargetSelection do
+    @moduledoc false
+    @enforce_keys [:target_id, :target_revision, :evidence_ids, :reason]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
   defmodule ObservationResult do
     @moduledoc false
     @enforce_keys [:id, :tool_id, :target_id, :kind, :status, :content]
@@ -159,13 +180,14 @@ defmodule Opsonde.Providers.AI do
       :disclosure,
       :budget,
       :evidence,
+      :target_candidates,
       :observation_results,
       :target_relations,
       :observation_tools,
       :proposal_tools
     ]
 
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [selected_target_id: nil, selected_target_revision: nil]
     @type t :: %__MODULE__{}
   end
 

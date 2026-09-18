@@ -193,6 +193,81 @@ defmodule Opsonde.Providers.AITest do
              end)
   end
 
+  test "Resolver searches and selects only a bounded offered Target before tools are exposed",
+       context do
+    request = preselection_request(context.provider.revision)
+
+    search = %AI.TargetSearch{
+      query: "linux-01 disk error",
+      reason: "Find the registered Target named by the alert facts"
+    }
+
+    assert %AI.ResolverDecision{intent: ^search} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: search, usage: usage()}}
+             end)
+
+    candidate = %AI.TargetCandidate{
+      id: "target-1",
+      revision: 3,
+      name: "linux-01",
+      kind: "host",
+      platform: "linux",
+      facts: %{"environment" => "production"}
+    }
+
+    candidate_request = %{request | turn: 2, target_candidates: [candidate]}
+
+    selection = %AI.TargetSelection{
+      target_id: candidate.id,
+      target_revision: candidate.revision,
+      evidence_ids: ["evidence-1"],
+      reason: "The registered name and environment match the firing alert"
+    }
+
+    assert %AI.ResolverDecision{intent: ^selection} =
+             resolve!(context, candidate_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: selection, usage: usage()}}
+             end)
+
+    for invalid <- [
+          %{selection | target_id: "invented-target"},
+          %{selection | target_revision: candidate.revision + 1}
+        ] do
+      assert {:error, error} =
+               resolve(context, candidate_request, fn _request ->
+                 {:ok, %AI.ResolverDecision{intent: invalid, usage: usage()}}
+               end)
+
+      assert ai_error(error).category == :invalid_output
+    end
+
+    [tool] = resolver_request(context.provider.revision).observation_tools
+    premature_tools = %{request | observation_tools: [tool]}
+
+    assert {:error, premature_error} =
+             resolve(context, premature_tools, unreachable_response())
+
+    assert ai_error(premature_error).category == :invalid_input
+
+    selected_request = resolver_request(context.provider.revision)
+
+    assert %AI.ResolverDecision{intent: ^search} =
+             resolve!(context, selected_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: search, usage: usage()}}
+             end)
+
+    undisclosed_candidate = %{
+      candidate_request
+      | disclosure: %{request.disclosure | allowed_target_ids: []}
+    }
+
+    assert {:error, disclosure_error} =
+             resolve(context, undisclosed_candidate, unreachable_response())
+
+    assert ai_error(disclosure_error).category == :disclosure_limit
+  end
+
   test "Resolver rejects invented effects and recovery without fresh recovered evidence",
        context do
     request = resolver_request(context.provider.revision)
@@ -433,6 +508,9 @@ defmodule Opsonde.Providers.AITest do
       },
       budget: budget(),
       evidence: [evidence()],
+      target_candidates: [],
+      selected_target_id: "target-1",
+      selected_target_revision: 1,
       observation_results: [],
       target_relations: [
         %AI.TargetRelation{
@@ -468,6 +546,21 @@ defmodule Opsonde.Providers.AITest do
           input_schema: %{}
         }
       ]
+    }
+  end
+
+  defp preselection_request(provider_revision) do
+    request = resolver_request(provider_revision)
+
+    %{
+      request
+      | selected_target_id: nil,
+        selected_target_revision: nil,
+        target_candidates: [],
+        target_relations: [],
+        observation_tools: [],
+        proposal_tools: [],
+        evidence: [%{evidence() | target_id: nil}]
     }
   end
 

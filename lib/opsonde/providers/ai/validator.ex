@@ -46,7 +46,8 @@ defmodule Opsonde.Providers.AI.Validator do
     positive?(request.provider_revision) and nonempty?(request.session_id) and
       nonempty?(request.case_id) and positive?(request.turn) and nonempty?(request.objective) and
       request.alert_state in [:firing, :recovered] and valid_budget?(request.budget) and
-      valid_disclosure?(request.disclosure) and valid_resolver_items?(request)
+      valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
+      valid_resolver_items?(request)
   end
 
   defp valid_review_request?(%AI.ReviewRequest{cited_evidence: cited_evidence} = request)
@@ -101,6 +102,7 @@ defmodule Opsonde.Providers.AI.Validator do
     if Enum.all?(
          [
            request.evidence,
+           request.target_candidates,
            request.observation_results,
            request.target_relations,
            request.observation_tools,
@@ -110,6 +112,7 @@ defmodule Opsonde.Providers.AI.Validator do
        ) do
       valid? =
         Enum.all?(request.evidence, &valid_evidence?/1) and
+          Enum.all?(request.target_candidates, &valid_candidate?/1) and
           Enum.all?(request.observation_results, &valid_observation_result?/1) and
           Enum.all?(request.target_relations, &valid_relation?/1) and
           Enum.all?(request.observation_tools, &valid_tool?/1) and
@@ -117,11 +120,13 @@ defmodule Opsonde.Providers.AI.Validator do
 
       if valid? do
         evidence_ids = Enum.map(request.evidence, & &1.id)
+        candidate_ids = Enum.map(request.target_candidates, & &1.id)
         result_ids = Enum.map(request.observation_results, & &1.id)
         relation_ids = Enum.map(request.target_relations, & &1.id)
         tool_ids = Enum.map(request.observation_tools ++ request.proposal_tools, & &1.id)
 
-        unique?(evidence_ids ++ result_ids ++ relation_ids) and unique?(tool_ids)
+        unique?(evidence_ids ++ result_ids ++ relation_ids) and unique?(candidate_ids) and
+          unique?(tool_ids) and valid_preselection_tools?(request)
       else
         false
       end
@@ -134,6 +139,13 @@ defmodule Opsonde.Providers.AI.Validator do
     do: nonempty?(id) and is_atom(kind) and (is_nil(target_id) or nonempty?(target_id))
 
   defp valid_evidence?(_evidence), do: false
+
+  defp valid_candidate?(%AI.TargetCandidate{} = candidate),
+    do:
+      nonempty?(candidate.id) and positive?(candidate.revision) and nonempty?(candidate.name) and
+        nonempty?(candidate.kind) and nonempty?(candidate.platform) and is_map(candidate.facts)
+
+  defp valid_candidate?(_candidate), do: false
 
   defp valid_observation_result?(%AI.ObservationResult{} = result),
     do:
@@ -163,6 +175,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp disclosed?(request) do
     items =
       request.evidence ++
+        request.target_candidates ++
         request.observation_results ++
         request.target_relations ++
         request.observation_tools ++ request.proposal_tools
@@ -171,11 +184,16 @@ defmodule Opsonde.Providers.AI.Validator do
 
     length(items) <= disclosure.max_items and
       evidence_allowed?(request.evidence, disclosure) and
+      candidates_allowed?(request.target_candidates, disclosure) and
       results_allowed?(request.observation_results, disclosure) and
       relations_allowed?(request.target_relations, disclosure) and
       tools_allowed?(request.observation_tools, request.proposal_tools, disclosure) and
       encoded_size(%{objective: request.objective, alert_state: request.alert_state}, items) <=
         disclosure.max_bytes
+  end
+
+  defp candidates_allowed?(candidates, disclosure) do
+    Enum.all?(candidates, &(&1.id in disclosure.allowed_target_ids))
   end
 
   defp evidence_allowed?(evidence, disclosure) do
@@ -265,6 +283,34 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
+  defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
+    if request.budget.remaining_target_requests > 0 and bounded_string?(search.query, 200) and
+         nonempty?(search.reason) do
+      :ok
+    else
+      {:error, ai_error(:invalid_output, "AI Target search is invalid")}
+    end
+  end
+
+  defp validate_resolver_intent(%AI.TargetSelection{} = selection, request) do
+    evidence_ids = available_evidence_ids(request)
+
+    candidate =
+      Enum.find(request.target_candidates, fn candidate ->
+        candidate.id == selection.target_id and
+          candidate.revision == selection.target_revision
+      end)
+
+    if not is_nil(candidate) and nonempty?(selection.reason) and
+         nonempty_list?(selection.evidence_ids) and
+         unique?(selection.evidence_ids) and
+         Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) do
+      :ok
+    else
+      {:error, ai_error(:invalid_output, "AI Target selection is invalid")}
+    end
+  end
+
   defp validate_resolver_intent(%AI.Proposal{} = proposal, request) do
     evidence_ids = available_evidence_ids(request)
 
@@ -338,6 +384,19 @@ defmodule Opsonde.Providers.AI.Validator do
       nonempty?(tool.capability) and nonempty?(tool.operation)
   end
 
+  defp valid_selected_target?(request) do
+    (is_nil(request.selected_target_id) and is_nil(request.selected_target_revision)) or
+      (nonempty?(request.selected_target_id) and positive?(request.selected_target_revision) and
+         request.selected_target_id in request.disclosure.allowed_target_ids)
+  end
+
+  defp valid_preselection_tools?(%{selected_target_id: nil} = request) do
+    request.observation_tools == [] and request.proposal_tools == [] and
+      request.target_relations == []
+  end
+
+  defp valid_preselection_tools?(_request), do: true
+
   defp exact_proposal?(proposal, tool) do
     proposal.target_id == tool.target_id and proposal.target_revision == tool.target_revision and
       proposal.access_method_id == tool.access_method_id and
@@ -379,6 +438,9 @@ defmodule Opsonde.Providers.AI.Validator do
   defp positive?(value), do: is_integer(value) and value > 0
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
   defp nonempty_list?(value), do: is_list(value) and value != []
+
+  defp bounded_string?(value, max_bytes),
+    do: nonempty?(value) and byte_size(value) <= max_bytes
 
   defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
 end
