@@ -130,6 +130,37 @@ defmodule Opsonde.Providers.TargetTest do
     refute_receive {:observe, _, _}
   end
 
+  test "request retry and payload bounds stop before dispatch", context do
+    excessive_retries = observation_request(context.provider.revision, 6)
+
+    assert {:error, retry_error} =
+             Providers.target_observe(
+               context.provider.id,
+               excessive_retries,
+               invocation(flunk_response()),
+               actor: context.admin
+             )
+
+    assert target_error(retry_error).message == "Invalid observation request"
+    refute_receive {:observe, _, _}
+
+    oversized_effect = %{
+      effect_request(context.provider.revision, "operation-oversized")
+      | parameters: %{"payload" => String.duplicate("x", 65_537)}
+    }
+
+    assert {:error, effect_error} =
+             Providers.target_effect(
+               context.provider.id,
+               oversized_effect,
+               invocation(flunk_response()),
+               actor: context.admin
+             )
+
+    assert target_error(effect_error).message == "Invalid effect request"
+    refute_receive {:effect, _, _}
+  end
+
   test "effects dispatch once and preserve applied, unknown, partial and failed results",
        context do
     for status <- [:applied, :unknown, :partial, :failed] do
@@ -206,6 +237,37 @@ defmodule Opsonde.Providers.TargetTest do
 
     assert target_error(raised).message == "credential [REDACTED] failed"
     refute inspect(raised) =~ @token
+  end
+
+  test "adapter observation and verification facts are bounded", context do
+    oversized = %{"payload" => String.duplicate("x", 65_537)}
+    observation_request = observation_request(context.provider.revision, 1)
+
+    assert {:error, observation_error} =
+             Providers.target_observe(
+               context.provider.id,
+               observation_request,
+               invocation(%Target.Observation{facts: oversized, observed_at: DateTime.utc_now()}),
+               actor: context.admin
+             )
+
+    assert target_error(observation_error).message == "Invalid observation result"
+
+    verification_request = verification_request(context.provider.revision)
+
+    assert {:error, verification_error} =
+             Providers.target_verify(
+               context.provider.id,
+               verification_request,
+               invocation(%Target.Verification{
+                 status: :verified,
+                 observed_at: DateTime.utc_now(),
+                 facts: oversized
+               }),
+               actor: context.admin
+             )
+
+    assert target_error(verification_error).message == "Invalid verification result"
   end
 
   defp observation_request(provider_revision, max_attempts) do
