@@ -1,4 +1,11 @@
 import Config
+
+config :opsonde, Opsonde.Providers.Vault,
+  ciphers: [
+    default:
+      {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: :binary.copy(<<1>>, 32), iv_length: 12}
+  ]
+
 config :ash, policies: [show_policy_breakdowns?: true]
 
 # Configure your database

@@ -1,5 +1,13 @@
 import Config
 config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
+config :opsonde, provider_adapters: [Opsonde.ProviderAdapterFixture]
+
+config :opsonde, Opsonde.Providers.Vault,
+  ciphers: [
+    default:
+      {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: :binary.copy(<<2>>, 32), iv_length: 12}
+  ]
+
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Configure your database

@@ -1,0 +1,25 @@
+defmodule Opsonde.Providers do
+  use Ash.Domain,
+    otp_app: :opsonde
+
+  resources do
+    resource Opsonde.Providers.Provider do
+      define :list_providers, action: :read
+      define :get_provider, action: :read, get_by: [:id]
+
+      define :create_provider,
+        action: :create,
+        args: [:name, :role, :adapter_type, :configuration, :credentials]
+
+      define :update_provider, action: :update, args: [:expected_revision]
+      define :check_provider, action: :check, args: [:id, :expected_revision, :input]
+
+      define :record_provider_check,
+        action: :record_check,
+        args: [:expected_revision, :check_status, :check_category, :check_message]
+
+      define :enable_provider, action: :enable, args: [:expected_revision]
+      define :disable_provider, action: :disable, args: [:expected_revision]
+    end
+  end
+end

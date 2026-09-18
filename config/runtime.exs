@@ -24,6 +24,21 @@ config :opsonde, OpsondeWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :prod and not Burrito.Util.running_standalone?() do
+  encoded_credentials_key =
+    System.get_env("OPSONDE_CREDENTIALS_KEY") ||
+      raise("Missing environment variable `OPSONDE_CREDENTIALS_KEY`!")
+
+  credentials_key =
+    case Base.decode64(encoded_credentials_key) do
+      {:ok, key} when byte_size(key) == 32 -> key
+      _other -> raise "OPSONDE_CREDENTIALS_KEY must be a Base64-encoded 32-byte key"
+    end
+
+  config :opsonde, Opsonde.Providers.Vault,
+    ciphers: [
+      default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: credentials_key, iv_length: 12}
+    ]
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
