@@ -4,7 +4,7 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
   alias Opsonde.Providers
   alias Opsonde.Providers.{AI, Redactor, Registry}
 
-  @adapter_failures [:failed, :rate_limited, :cancelled]
+  @adapter_failures [:authentication, :unreachable, :timeout, :failed, :rate_limited, :cancelled]
 
   @impl true
   def run(input, _opts, _context) do

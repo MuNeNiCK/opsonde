@@ -96,7 +96,10 @@ defmodule Opsonde.Providers.AI do
   end
 
   @type invocation :: map()
-  @type adapter_error :: {:error, :failed | :rate_limited | :cancelled, String.t()}
+  @type adapter_error ::
+          {:error,
+           :authentication | :unreachable | :timeout | :failed | :rate_limited | :cancelled,
+           String.t()}
 
   @callback decide(state :: term(), Request.t(), invocation()) ::
               {:ok, Decision.t()} | adapter_error()

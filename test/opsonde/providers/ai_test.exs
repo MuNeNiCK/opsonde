@@ -144,6 +144,21 @@ defmodule Opsonde.Providers.AITest do
     assert ai_error(exhausted).category == :budget_exhausted
   end
 
+  test "connection failures remain typed and redact adapter messages", context do
+    request = request(context.provider.revision)
+
+    for category <- [:authentication, :unreachable, :timeout, :rate_limited, :failed] do
+      assert {:error, error} =
+               decide(context, request, fn _request ->
+                 {:error, category, "credential #{@api_key} failed"}
+               end)
+
+      assert ai_error(error).category == category
+      assert ai_error(error).message == "credential [REDACTED] failed"
+      refute inspect(error) =~ @api_key
+    end
+  end
+
   test "cancellation, exhausted budget and disclosure bounds stop before dispatch", context do
     request = request(context.provider.revision)
 
