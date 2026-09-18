@@ -223,10 +223,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       positive_integer?(request.target_revision) and
       nonempty_binary?(request.access_method_id) and
       positive_integer?(request.access_method_revision) and
+      valid_connection?(request.connection) and
       nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
       nonempty_binary?(request.authorization_digest) and bounded_map?(request.selectors) and
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end
+
+  defp valid_connection?(%Target.Connection{endpoint: endpoint}),
+    do: bounded_binary?(endpoint, 1_024)
+
+  defp valid_connection?(_connection), do: false
 
   defp valid_operations?(operations) do
     Enum.all?(operations, &valid_operation?/1) and

@@ -131,6 +131,7 @@ defmodule Opsonde.TargetPolicyTest do
     assert dispatched.selectors == request.selectors
     assert dispatched.parameters == request.parameters
     assert dispatched.authorization_digest == clearance.digest
+    assert dispatched.connection.endpoint == other_method.endpoint
 
     verification_request =
       request(other, other_method, :verification, :auto,
@@ -157,6 +158,7 @@ defmodule Opsonde.TargetPolicyTest do
     assert_receive {:verify, _state, verify_request}
     assert verify_request.access_method_id == other_method.id
     assert verify_request.operation == "filesystem.verify"
+    assert verify_request.connection.endpoint == other_method.endpoint
 
     assert {:error, %Ash.Error.Forbidden{}} =
              Providers.target_observe(
@@ -236,8 +238,9 @@ defmodule Opsonde.TargetPolicyTest do
                authorize?: false
              )
 
-    assert_receive {:effect, _state, %{access_method_id: id}}
+    assert_receive {:effect, _state, %{access_method_id: id} = dispatched_effect}
     assert id == netconf.id
+    assert dispatched_effect.connection.endpoint == netconf.endpoint
 
     create_policy!(
       context,

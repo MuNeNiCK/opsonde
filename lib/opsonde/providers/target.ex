@@ -21,6 +21,13 @@ defmodule Opsonde.Providers.Target do
     @type t :: %__MODULE__{observations: [Operation.t()], effects: [Operation.t()]}
   end
 
+  defmodule Connection do
+    @moduledoc false
+    @enforce_keys [:endpoint]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{endpoint: String.t()}
+  end
+
   defmodule ObservationRequest do
     @moduledoc false
 
@@ -30,6 +37,7 @@ defmodule Opsonde.Providers.Target do
       :target_revision,
       :access_method_id,
       :access_method_revision,
+      :connection,
       :capability,
       :operation,
       :authorization_digest
@@ -55,6 +63,7 @@ defmodule Opsonde.Providers.Target do
       :target_revision,
       :access_method_id,
       :access_method_revision,
+      :connection,
       :capability,
       :operation,
       :authorization_digest,
@@ -82,6 +91,7 @@ defmodule Opsonde.Providers.Target do
       :target_revision,
       :access_method_id,
       :access_method_revision,
+      :connection,
       :capability,
       :operation,
       :authorization_digest,

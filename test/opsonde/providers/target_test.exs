@@ -202,6 +202,23 @@ defmodule Opsonde.Providers.TargetTest do
   end
 
   test "request retry and payload bounds stop before dispatch", context do
+    invalid_connection = %{
+      observation_request(context.provider.revision, 1)
+      | connection: %Target.Connection{endpoint: ""}
+    }
+
+    assert {:error, connection_error} =
+             Providers.target_observe(
+               context.provider.id,
+               invalid_connection,
+               invocation(flunk_response()),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert target_error(connection_error).message == "Invalid observation request"
+    refute_receive {:observe, _, _}
+
     invalid_vocabulary = %{
       observation_request(context.provider.revision, 1)
       | capability: :system,
@@ -416,6 +433,7 @@ defmodule Opsonde.Providers.TargetTest do
       target_revision: 4,
       access_method_id: "access-method-1",
       access_method_revision: 2,
+      connection: %Target.Connection{endpoint: "ssh://192.0.2.10:22"},
       capability: "observe.command",
       operation: "system.inspect",
       authorization_digest: "authorization-digest",
@@ -430,6 +448,7 @@ defmodule Opsonde.Providers.TargetTest do
       target_revision: 4,
       access_method_id: "access-method-1",
       access_method_revision: 2,
+      connection: %Target.Connection{endpoint: "ssh://192.0.2.10:22"},
       capability: "effect.command",
       operation: "service.restart",
       authorization_digest: "authorization-digest",
@@ -445,6 +464,7 @@ defmodule Opsonde.Providers.TargetTest do
       target_revision: 4,
       access_method_id: "access-method-1",
       access_method_revision: 2,
+      connection: %Target.Connection{endpoint: "ssh://192.0.2.10:22"},
       capability: "observe.command",
       operation: "service.inspect",
       authorization_digest: "authorization-digest",
