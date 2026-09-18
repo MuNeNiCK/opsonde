@@ -80,7 +80,9 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
     is_list(request.evidence) and Enum.all?(request.evidence, &valid_evidence?/1) and
       is_list(request.observation_results) and
       Enum.all?(request.observation_results, &valid_observation_result?/1) and
-      is_list(request.tools) and Enum.all?(request.tools, &valid_tool?/1)
+      is_list(request.tools) and Enum.all?(request.tools, &valid_tool?/1) and
+      is_list(request.proposal_tools) and
+      Enum.all?(request.proposal_tools, &valid_proposal_tool?/1)
   end
 
   defp valid_evidence?(%AI.Evidence{id: id, kind: kind, target_id: target_id}),
@@ -102,14 +104,23 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
 
   defp valid_tool?(_tool), do: false
 
+  defp valid_proposal_tool?(%AI.ProposalTool{} = tool),
+    do:
+      nonempty?(tool.id) and nonempty?(tool.target_id) and is_atom(tool.capability) and
+        is_binary(tool.description) and is_map(tool.input_schema)
+
+  defp valid_proposal_tool?(_tool), do: false
+
   defp disclosed?(request) do
-    items = request.evidence ++ request.observation_results ++ request.tools
+    items =
+      request.evidence ++ request.observation_results ++ request.tools ++ request.proposal_tools
+
     disclosure = request.disclosure
 
     length(items) <= disclosure.max_items and
       evidence_allowed?(request.evidence, disclosure) and
       results_allowed?(request.observation_results, disclosure) and
-      tools_allowed?(request.tools, disclosure) and
+      tools_allowed?(request.tools, request.proposal_tools, disclosure) and
       encoded_size(request.objective, items) <= disclosure.max_bytes
   end
 
@@ -127,7 +138,8 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
     end)
   end
 
-  defp tools_allowed?(tools, disclosure) do
+  defp tools_allowed?(observation_tools, proposal_tools, disclosure) do
+    tools = observation_tools ++ proposal_tools
     ids = Enum.map(tools, & &1.id)
 
     length(ids) == MapSet.size(MapSet.new(ids)) and
@@ -226,13 +238,19 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
   defp valid_proposals?(proposals, request) when is_list(proposals) do
     Enum.all?(proposals, fn
       %AI.Proposal{
+        tool_id: tool_id,
         target_id: target_id,
         capability: capability,
         parameters: parameters,
         reason: reason
       } ->
-        target_id in request.disclosure.allowed_target_ids and is_atom(capability) and
-          is_map(parameters) and nonempty?(reason)
+        case Enum.find(request.proposal_tools, &(&1.id == tool_id)) do
+          %AI.ProposalTool{target_id: ^target_id, capability: ^capability} ->
+            is_map(parameters) and nonempty?(reason)
+
+          _tool ->
+            false
+        end
 
       _invalid ->
         false

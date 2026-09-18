@@ -81,6 +81,7 @@ defmodule Opsonde.Providers.AITest do
            ],
            proposals: [
              %AI.Proposal{
+               tool_id: "restart-service",
                target_id: "target-1",
                capability: :restart_service,
                parameters: %{service: "api"},
@@ -115,6 +116,25 @@ defmodule Opsonde.Providers.AITest do
     assert ai_error(error).category == :invalid_output
 
     assert {:error, error} = decide(context, request, fn _request -> {:ok, %{}} end)
+    assert ai_error(error).category == :invalid_output
+
+    invented_proposal = fn _request ->
+      {:ok,
+       %AI.Decision{
+         usage: usage(),
+         proposals: [
+           %AI.Proposal{
+             tool_id: "invented-tool",
+             target_id: "target-1",
+             capability: :restart_service,
+             parameters: %{},
+             reason: "invented"
+           }
+         ]
+       }}
+    end
+
+    assert {:error, error} = decide(context, request, invented_proposal)
     assert ai_error(error).category == :invalid_output
   end
 
@@ -234,6 +254,15 @@ defmodule Opsonde.Providers.AITest do
           target_id: "target-1",
           capability: :disk,
           description: "Inspect disk state",
+          input_schema: %{}
+        }
+      ],
+      proposal_tools: [
+        %AI.ProposalTool{
+          id: "restart-service",
+          target_id: "target-1",
+          capability: :restart_service,
+          description: "Restart one service",
           input_schema: %{}
         }
       ]

@@ -43,6 +43,13 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
+  defmodule ProposalTool do
+    @moduledoc false
+    @enforce_keys [:id, :target_id, :capability, :description, :input_schema]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
   defmodule Finding do
     @moduledoc false
     @enforce_keys [:summary, :confidence, :evidence_ids]
@@ -52,7 +59,7 @@ defmodule Opsonde.Providers.AI do
 
   defmodule Proposal do
     @moduledoc false
-    @enforce_keys [:target_id, :capability, :parameters, :reason]
+    @enforce_keys [:tool_id, :target_id, :capability, :parameters, :reason]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -81,7 +88,8 @@ defmodule Opsonde.Providers.AI do
       :budget,
       :evidence,
       :observation_results,
-      :tools
+      :tools,
+      :proposal_tools
     ]
 
     defstruct @enforce_keys
