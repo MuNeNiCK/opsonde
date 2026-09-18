@@ -19,6 +19,18 @@ defmodule Opsonde.Cases.Evidence do
   actions do
     defaults [:read]
 
+    read :projection_window do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      filter expr(case_id == ^arg(:case_id) and resolution_run_id == ^arg(:resolution_run_id))
+
+      prepare build(
+                sort: [observed_at: :desc, inserted_at: :desc, id: :desc],
+                limit: 100
+              )
+    end
+
     read :by_idempotency do
       get? true
       argument :case_id, :uuid, allow_nil?: false
@@ -76,7 +88,7 @@ defmodule Opsonde.Cases.Evidence do
   end
 
   policies do
-    policy action([:by_idempotency, :create_record, :append]) do
+    policy action([:projection_window, :by_idempotency, :create_record, :append]) do
       forbid_if always()
     end
 

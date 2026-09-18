@@ -181,12 +181,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_proposal_tool?(_tool), do: false
 
   defp disclosed?(request) do
-    items =
-      request.evidence ++
-        request.target_candidates ++
-        request.observation_results ++
-        request.target_relations ++
-        request.observation_tools ++ request.proposal_tools
+    items = AI.resolver_disclosure_items(request)
 
     disclosure = request.disclosure
 
@@ -196,8 +191,7 @@ defmodule Opsonde.Providers.AI.Validator do
       results_allowed?(request.observation_results, disclosure) and
       relations_allowed?(request.target_relations, disclosure) and
       tools_allowed?(request.observation_tools, request.proposal_tools, disclosure) and
-      encoded_size(%{objective: request.objective, alert_state: request.alert_state}, items) <=
-        disclosure.max_bytes
+      AI.resolver_disclosure_size(request) <= disclosure.max_bytes
   end
 
   defp candidates_allowed?(candidates, disclosure) do

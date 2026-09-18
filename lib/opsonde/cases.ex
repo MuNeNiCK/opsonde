@@ -187,6 +187,10 @@ defmodule Opsonde.Cases do
       define :list_evidence, action: :read
       define :get_evidence, action: :read, get_by: [:id]
 
+      define :resolver_evidence_window,
+        action: :projection_window,
+        args: [:case_id, :resolution_run_id]
+
       define :evidence_by_idempotency,
         action: :by_idempotency,
         args: [:case_id, :idempotency_key]

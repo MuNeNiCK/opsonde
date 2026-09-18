@@ -236,6 +236,33 @@ defmodule Opsonde.Providers.AI do
     def message(error), do: error.message
   end
 
+  def resolver_disclosure_items(%ResolverRequest{} = request) do
+    request.evidence ++
+      request.target_candidates ++
+      request.observation_results ++
+      request.target_relations ++ request.observation_tools ++ request.proposal_tools
+  end
+
+  def resolver_disclosure_size(%ResolverRequest{} = request) do
+    encoded = %{
+      context: %{objective: request.objective, alert_state: request.alert_state},
+      items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
+    }
+
+    case Jason.encode(encoded) do
+      {:ok, value} -> byte_size(value)
+      {:error, _error} -> :infinity
+    end
+  end
+
+  defp plain_value(%_{} = value), do: value |> Map.from_struct() |> plain_value()
+
+  defp plain_value(value) when is_map(value),
+    do: Map.new(value, fn {key, nested} -> {key, plain_value(nested)} end)
+
+  defp plain_value(value) when is_list(value), do: Enum.map(value, &plain_value/1)
+  defp plain_value(value), do: value
+
   @type invocation :: map()
   @type adapter_error ::
           {:error,

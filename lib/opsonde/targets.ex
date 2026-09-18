@@ -38,6 +38,10 @@ defmodule Opsonde.Targets do
     resource Opsonde.Targets.AccessMethod do
       define :list_access_methods, action: :read
 
+      define :available_access_methods_for_target,
+        action: :available_for_target,
+        args: [:target_id]
+
       define :create_access_method,
         action: :create,
         args: [

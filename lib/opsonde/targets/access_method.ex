@@ -18,6 +18,20 @@ defmodule Opsonde.Targets.AccessMethod do
   actions do
     defaults [:read]
 
+    read :available_for_target do
+      argument :target_id, :uuid, allow_nil?: false
+
+      filter expr(
+               target_id == ^arg(:target_id) and active == true and target.active == true and
+                 provider.kind == :target and provider.enabled == true and
+                 provider.check_status == :passed and
+                 provider.checked_revision == provider.revision and
+                 provider_revision == provider.revision
+             )
+
+      prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc], limit: 100)
+    end
+
     read :available do
       argument :target_id, :uuid, allow_nil?: false
 
@@ -110,7 +124,7 @@ defmodule Opsonde.Targets.AccessMethod do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:available, :for_use]) do
+    policy action([:available_for_target, :available, :for_use]) do
       forbid_if always()
     end
 
