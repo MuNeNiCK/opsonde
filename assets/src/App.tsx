@@ -24,6 +24,12 @@ const SetupPage = lazy(() =>
 const TargetPage = lazy(() =>
   import("@/target-page").then((module) => ({ default: module.TargetPage })),
 );
+const AuditPage = lazy(() =>
+  import("@/audit-page").then((module) => ({ default: module.AuditPage })),
+);
+const ReportPage = lazy(() =>
+  import("@/report-page").then((module) => ({ default: module.ReportPage })),
+);
 
 function AuthenticationGate({ children }: { children: ReactNode }) {
   const { account, loading } = useAuthentication();
@@ -199,8 +205,8 @@ function AppRoutes() {
           <Route path="cases/:caseId" element={<CaseDetailPage />} />
           <Route path="targets" element={<TargetPage />} />
           <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
-          <Route path="audits" element={<FoundationPage title="pages.audits" />} />
-          <Route path="reports" element={<FoundationPage title="pages.reports" />} />
+          <Route path="audits" element={<AuditPage />} />
+          <Route path="reports" element={<ReportPage />} />
           <Route path="settings" element={<SetupPage />} />
           <Route path="*" element={<FoundationPage title="pages.notFound" />} />
         </Route>
