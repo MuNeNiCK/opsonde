@@ -1,0 +1,62 @@
+name: opsonde
+
+services:
+  database:
+    image: postgres:18.6-bookworm
+    environment:
+      POSTGRES_DB: opsonde
+      POSTGRES_USER: opsonde
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsonde -d opsonde"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - database:/var/lib/postgresql
+
+  migrate:
+    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.0}
+    build:
+      context: .
+      args:
+        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.0}
+    command: ["eval", "Opsonde.Release.migrate()"]
+    environment:
+      DATABASE_HOST: database
+      DATABASE_NAME: opsonde
+      DATABASE_USER: opsonde
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      OPSONDE_CREDENTIALS_KEY: ${OPSONDE_CREDENTIALS_KEY:?Set OPSONDE_CREDENTIALS_KEY}
+      OPSONDE_TOKEN_SIGNING_SECRET: ${OPSONDE_TOKEN_SIGNING_SECRET:?Set OPSONDE_TOKEN_SIGNING_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?Set SECRET_KEY_BASE}
+      PHX_HOST: ${PHX_HOST:-localhost}
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.0}
+    build:
+      context: .
+      args:
+        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.0}
+    environment:
+      DATABASE_HOST: database
+      DATABASE_NAME: opsonde
+      DATABASE_USER: opsonde
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      OPSONDE_CREDENTIALS_KEY: ${OPSONDE_CREDENTIALS_KEY:?Set OPSONDE_CREDENTIALS_KEY}
+      OPSONDE_TOKEN_SIGNING_SECRET: ${OPSONDE_TOKEN_SIGNING_SECRET:?Set OPSONDE_TOKEN_SIGNING_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?Set SECRET_KEY_BASE}
+      PHX_HOST: ${PHX_HOST:-localhost}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${OPSONDE_PORT:-4000}:4000"
+    restart: unless-stopped
+
+volumes:
+  database:

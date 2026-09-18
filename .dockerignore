@@ -1,0 +1,12 @@
+.beads
+.git
+.github
+_build
+deps
+burrito_out
+assets/node_modules
+priv/static
+test
+.env
+AGENTS.md
+erl_crash.dump

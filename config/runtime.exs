@@ -39,22 +39,30 @@ if config_env() == :prod and not Burrito.Util.running_standalone?() do
       default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: credentials_key, iv_length: 12}
     ]
 
-  database_url =
-    System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
-      """
+  database_options =
+    case System.get_env("DATABASE_URL") do
+      nil ->
+        [
+          hostname: System.fetch_env!("DATABASE_HOST"),
+          port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
+          database: System.fetch_env!("DATABASE_NAME"),
+          username: System.fetch_env!("DATABASE_USER"),
+          password: System.fetch_env!("DATABASE_PASSWORD")
+        ]
+
+      database_url ->
+        [url: database_url]
+    end
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-  config :opsonde, Opsonde.Repo,
-    # ssl: true,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    # For machines with several cores, consider starting multiple pools of `pool_size`
-    # pool_count: 4,
-    socket_options: maybe_ipv6
+  config :opsonde,
+         Opsonde.Repo,
+         database_options ++
+           [
+             pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+             socket_options: maybe_ipv6
+           ]
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

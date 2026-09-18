@@ -26,6 +26,7 @@ erl_crash.dump
 /priv/static/assets/
 /priv/static/index.html
 /burrito_out/
+/.env
 
 # Ignore package tarball (built via "mix hex.build").
 opsonde-*.tar
