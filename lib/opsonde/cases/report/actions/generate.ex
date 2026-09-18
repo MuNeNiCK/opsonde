@@ -75,9 +75,14 @@ defmodule Opsonde.Cases.Report.Actions.Generate do
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
     |> case do
-      {:ok, %Case{} = incident} -> {:ok, incident}
-      {:ok, nil} -> {:error, "Case is unavailable"}
-      {:error, error} -> {:error, error}
+      {:ok, %Case{} = incident} ->
+        {:ok, incident}
+
+      {:ok, nil} ->
+        {:error, Ash.Error.Query.NotFound.exception(resource: Case, primary_key: %{id: id})}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -88,10 +93,15 @@ defmodule Opsonde.Cases.Report.Actions.Generate do
   end
 
   defp reportable?(%Case{revision: revision}, expected) when revision != expected,
-    do: {:error, "Case revision changed"}
+    do: {:error, Ash.Error.Changes.StaleRecord.exception(resource: Case, field: :revision)}
 
   defp reportable?(%Case{status: :running}, _expected),
-    do: {:error, "Running Case cannot be reported"}
+    do:
+      {:error,
+       Ash.Error.Changes.InvalidAttribute.exception(
+         field: :status,
+         message: "running Case cannot be reported"
+       )}
 
   defp reportable?(%Case{status: status}, _expected)
        when status in [:resolved, :needs_attention, :cancelled],

@@ -1,0 +1,23 @@
+defmodule OpsondeWeb.API.V1.SignalReceiptController do
+  use OpsondeWeb, :controller
+
+  action_fallback OpsondeWeb.API.FallbackController
+
+  alias Opsonde.Cases
+  alias OpsondeWeb.API.{Pagination, Response}
+  alias OpsondeWeb.API.V1.OutcomeJSON
+
+  def index(conn, params) do
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, receipts} <-
+           Cases.page_signal_receipts(page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, receipts, &OutcomeJSON.receipt/1)
+    end
+  end
+
+  def show(conn, %{"id" => id}) do
+    with {:ok, receipt} <- Cases.get_signal_receipt(id, actor: conn.assigns.current_user) do
+      Response.data(conn, OutcomeJSON.receipt(receipt))
+    end
+  end
+end

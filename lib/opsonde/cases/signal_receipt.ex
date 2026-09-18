@@ -18,6 +18,11 @@ defmodule Opsonde.Cases.SignalReceipt do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [received_at: :desc, id: :desc])
+    end
+
     read :by_source_identity do
       get? true
       argument :provider_id, :uuid, allow_nil?: false
@@ -69,7 +74,7 @@ defmodule Opsonde.Cases.SignalReceipt do
       authorize_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

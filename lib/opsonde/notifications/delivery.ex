@@ -19,6 +19,11 @@ defmodule Opsonde.Notifications.Delivery do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [enqueued_at: :desc, id: :desc])
+    end
+
     read :by_idempotency do
       get? true
       argument :idempotency_key, :string, allow_nil?: false, constraints: [min_length: 1]
@@ -107,7 +112,7 @@ defmodule Opsonde.Notifications.Delivery do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

@@ -36,6 +36,11 @@ defmodule Opsonde.Cases.AuditRun do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [scheduled_for: :desc, id: :desc])
+    end
+
     read :for_occurrence do
       argument :audit_schedule_id, :uuid, allow_nil?: false
       argument :scheduled_for, :utc_datetime_usec, allow_nil?: false
@@ -97,7 +102,7 @@ defmodule Opsonde.Cases.AuditRun do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

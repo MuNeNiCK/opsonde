@@ -17,6 +17,11 @@ defmodule Opsonde.Cases.Report do
   actions do
     defaults [:read]
 
+    read :page do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [generated_at: :desc, id: :desc])
+    end
+
     read :by_case_revision do
       get? true
       argument :case_id, :uuid, allow_nil?: false
@@ -58,7 +63,7 @@ defmodule Opsonde.Cases.Report do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action(:read) do
+    policy action([:read, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

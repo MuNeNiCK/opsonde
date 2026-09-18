@@ -92,19 +92,35 @@ defmodule OpsondeWeb.Router do
     post "/proposals/:id/decision", ProposalController, :decide
     get "/operations/:id", OperationController, :show
     get "/verification-attempts/:id", OperationController, :show_verification
+
+    get "/signal-receipts", SignalReceiptController, :index
+    get "/signal-receipts/:id", SignalReceiptController, :show
+
+    get "/audit-schedules", AuditController, :schedules
+    post "/audit-schedules", AuditController, :schedule
+    get "/audit-schedules/:id", AuditController, :show_schedule
+    post "/audit-schedules/:id/deactivate", AuditController, :deactivate
+    get "/audit-runs", AuditController, :runs
+    get "/audit-runs/:id", AuditController, :show_run
+
+    get "/reports", ReportController, :index
+    get "/reports/:id", ReportController, :show
+    post "/cases/:case_id/reports", ReportController, :generate
+
+    get "/deliveries", DeliveryController, :index
+    post "/deliveries", DeliveryController, :create
+    get "/deliveries/:id", DeliveryController, :show
   end
 
   scope "/api/v1", OpsondeWeb do
     pipe_through :api
 
-    match :*, "/*path", APIErrorController, :not_found
-  end
-
-  scope "/api", OpsondeWeb do
-    pipe_through :api
-
     post "/signals/alertmanager/:provider_id", SignalWebhookController, :alertmanager
     post "/signals/zabbix/:provider_id", SignalWebhookController, :zabbix
+  end
+
+  scope "/api/v1", OpsondeWeb do
+    pipe_through :api
 
     match :*, "/*path", APIErrorController, :not_found
   end

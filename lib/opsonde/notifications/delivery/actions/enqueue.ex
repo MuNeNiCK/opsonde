@@ -48,9 +48,9 @@ defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
   end
 
   defp create(arguments) do
-    with {:ok, report} <- lock(Report, arguments.report_id, "Report is unavailable"),
+    with {:ok, report} <- lock(Report, arguments.report_id),
          :ok <- exact_report(report, arguments.report_revision),
-         {:ok, provider} <- lock(Provider, arguments.provider_id, "Provider is unavailable"),
+         {:ok, provider} <- lock(Provider, arguments.provider_id),
          :ok <- eligible_provider(provider, arguments.provider_revision),
          {:ok, delivery} <-
            Notifications.create_delivery_record(
@@ -80,20 +80,30 @@ defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
          delivery.provider_revision == arguments.provider_revision do
       {:ok, delivery}
     else
-      {:error, "Idempotency key was already used with different delivery input"}
+      stale(Delivery, :idempotency_key)
     end
   end
 
   defp exact_report(%Report{revision: revision}, revision), do: :ok
-  defp exact_report(_report, _revision), do: {:error, "Report revision changed"}
+
+  defp exact_report(_report, _revision),
+    do: stale(Report, :revision)
 
   defp eligible_provider(provider, expected_revision) do
-    if provider.revision == expected_revision and provider.kind == :notification and
-         provider.enabled and provider.check_status == :passed and
-         provider.checked_revision == provider.revision do
-      :ok
-    else
-      {:error, "Notification Provider is not enabled at the requested revision"}
+    cond do
+      provider.revision != expected_revision ->
+        stale(Provider, :revision)
+
+      provider.kind == :notification and provider.enabled and provider.check_status == :passed and
+          provider.checked_revision == provider.revision ->
+        :ok
+
+      true ->
+        {:error,
+         Ash.Error.Changes.InvalidAttribute.exception(
+           field: :provider_id,
+           message: "Notification Provider is not enabled"
+         )}
     end
   end
 
@@ -104,16 +114,23 @@ defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
     )
   end
 
-  defp lock(resource, id, message) do
+  defp lock(resource, id) do
     resource
     |> Ash.Query.for_read(:read)
     |> Ash.Query.filter(id: id)
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
     |> case do
-      {:ok, nil} -> {:error, message}
-      result -> result
+      {:ok, nil} ->
+        {:error, Ash.Error.Query.NotFound.exception(resource: resource, primary_key: %{id: id})}
+
+      result ->
+        result
     end
+  end
+
+  defp stale(resource, field) do
+    {:error, Ash.Error.Changes.StaleRecord.exception(resource: resource, field: field)}
   end
 
   defp enqueue(id) do

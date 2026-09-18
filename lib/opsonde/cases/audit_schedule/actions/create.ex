@@ -12,16 +12,25 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Create do
     arguments = normalize(input.arguments)
     now = DateTime.utc_now()
 
-    with :ok <- validate_scope(arguments),
-         {:ok, next_run_at} <-
-           Scheduling.next_run(arguments.cron_expression, arguments.timezone, now) do
-      Ash.transact([AuditSchedule, ManagementBoundary, Target], fn ->
-        with :ok <- validate_scope_records(arguments),
-             {:ok, schedule} <- create_record(arguments, next_run_at),
-             {:ok, _job} <- enqueue(schedule) do
-          schedule
-        end
-      end)
+    result =
+      with :ok <- validate_scope(arguments),
+           {:ok, next_run_at} <-
+             Scheduling.next_run(arguments.cron_expression, arguments.timezone, now) do
+        Ash.transact([AuditSchedule, ManagementBoundary, Target], fn ->
+          with :ok <- validate_scope_records(arguments),
+               {:ok, schedule} <- create_record(arguments, next_run_at),
+               {:ok, _job} <- enqueue(schedule) do
+            schedule
+          end
+        end)
+      end
+
+    case result do
+      {:error, message} when is_binary(message) ->
+        {:error, Ash.Error.Changes.InvalidAttribute.exception(field: :schedule, message: message)}
+
+      other ->
+        other
     end
   end
 

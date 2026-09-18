@@ -22,7 +22,10 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     conn =
       context.conn
       |> authorized()
-      |> post_json("/api/signals/alertmanager/#{context.alertmanager.id}", alertmanager_payload())
+      |> post_json(
+        "/api/v1/signals/alertmanager/#{context.alertmanager.id}",
+        alertmanager_payload()
+      )
 
     assert %{"receipt_id" => receipt_id} = json_response(conn, 202)
     assert is_binary(receipt_id)
@@ -53,7 +56,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
   end
 
   test "an exact Alertmanager retry returns accepted without duplicating persistence", context do
-    path = "/api/signals/alertmanager/#{context.alertmanager.id}"
+    path = "/api/v1/signals/alertmanager/#{context.alertmanager.id}"
     payload = alertmanager_payload()
 
     first = context.conn |> authorized() |> post_json(path, payload)
@@ -68,7 +71,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     conn =
       context.conn
       |> put_req_header("authorization", "Bearer wrong-secret-value")
-      |> post_json("/api/signals/alertmanager/#{context.alertmanager.id}", %{"invalid" => true})
+      |> post_json("/api/v1/signals/alertmanager/#{context.alertmanager.id}", %{"invalid" => true})
 
     assert json_response(conn, 401) == %{
              "errors" => %{"detail" => "Webhook authentication failed"}
@@ -83,7 +86,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     conn =
       context.conn
       |> authorized()
-      |> post_json("/api/signals/alertmanager/#{context.alertmanager.id}", payload)
+      |> post_json("/api/v1/signals/alertmanager/#{context.alertmanager.id}", payload)
 
     assert json_response(conn, 422) == %{
              "errors" => %{"detail" => "Alertmanager timestamp is invalid"}
@@ -97,7 +100,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       context.conn
       |> authorized()
       |> put_req_header("content-type", "application/json")
-      |> post("/api/signals/alertmanager/#{context.alertmanager.id}", "{invalid")
+      |> post("/api/v1/signals/alertmanager/#{context.alertmanager.id}", "{invalid")
     end
 
     assert Cases.list_signal_receipts!(actor: context.admin) == []
@@ -105,7 +108,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
   test "Zabbix problem and recovery retain one source event identity and host reference",
        context do
-    path = "/api/signals/zabbix/#{context.zabbix.id}"
+    path = "/api/v1/signals/zabbix/#{context.zabbix.id}"
 
     firing =
       context.conn
@@ -144,7 +147,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     conn =
       context.conn
       |> authorized()
-      |> post_json("/api/signals/zabbix/#{context.zabbix.id}", payload)
+      |> post_json("/api/v1/signals/zabbix/#{context.zabbix.id}", payload)
 
     assert response(conn, 202)
     [event] = Cases.list_signal_events!(actor: context.admin)
@@ -157,7 +160,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       context.conn
       |> authorized()
       |> post_json(
-        "/api/signals/zabbix/#{context.alertmanager.id}",
+        "/api/v1/signals/zabbix/#{context.alertmanager.id}",
         zabbix_payload("1", "1726650000")
       )
 

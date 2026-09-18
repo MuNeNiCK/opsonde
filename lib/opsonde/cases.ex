@@ -318,6 +318,8 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.SignalReceipt do
       define :list_signal_receipts, action: :read
+      define :page_signal_receipts, action: :page
+      define :get_signal_receipt, action: :read, get_by: [:id]
 
       define :signal_receipt_by_source_identity,
         action: :by_source_identity,
@@ -353,6 +355,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Report do
       define :list_reports, action: :read
+      define :page_reports, action: :page
       define :get_report, action: :read, get_by: [:id]
 
       define :report_by_case_revision,
@@ -365,6 +368,8 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.AuditSchedule do
       define :list_audit_schedules, action: :read
+      define :page_audit_schedules, action: :page
+      define :get_audit_schedule, action: :read, get_by: [:id]
       define :create_audit_schedule_record, action: :create_record
       define :advance_audit_schedule_record, action: :advance_record, args: [:expected_revision]
       define :deactivate_audit_schedule, action: :deactivate, args: [:expected_revision]
@@ -388,6 +393,8 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.AuditRun do
       define :list_audit_runs, action: :read
+      define :page_audit_runs, action: :page
+      define :get_audit_run, action: :read, get_by: [:id]
 
       define :audit_runs_for_occurrence,
         action: :for_occurrence,
