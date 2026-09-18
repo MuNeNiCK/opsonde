@@ -1,6 +1,10 @@
 defmodule Opsonde.Providers.AI do
   @moduledoc false
 
+  @resolver_disclosure_limits %{max_items: 100, max_bytes: 65_536}
+
+  def resolver_disclosure_limits, do: @resolver_disclosure_limits
+
   defmodule Disclosure do
     @moduledoc false
     @enforce_keys [:allowed_target_ids, :allowed_evidence_kinds, :max_items, :max_bytes]

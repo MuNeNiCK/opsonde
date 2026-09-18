@@ -394,6 +394,22 @@ defmodule Opsonde.Providers.AITest do
     assert {:error, disclosure_error} = resolve(context, undisclosed, unreachable_response())
     assert ai_error(disclosure_error).category == :disclosure_limit
 
+    limits = AI.resolver_disclosure_limits()
+
+    for disclosure <- [
+          %{request.disclosure | max_items: limits.max_items + 1},
+          %{request.disclosure | max_bytes: limits.max_bytes + 1},
+          %{
+            request.disclosure
+            | allowed_target_ids: Enum.map(1..(limits.max_items + 1), &"target-#{&1}")
+          }
+        ] do
+      assert {:error, invalid_limit} =
+               resolve(context, %{request | disclosure: disclosure}, unreachable_response())
+
+      assert ai_error(invalid_limit).category == :invalid_input
+    end
+
     Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
     assert {:error, _stale_error} = resolve(context, request, unreachable_response())
     refute_receive {:resolve, _, _}

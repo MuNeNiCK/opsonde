@@ -88,13 +88,20 @@ defmodule Opsonde.Providers.AI.Validator do
   defp exhausted?(budget), do: budget.remaining_turns == 0 or budget.remaining_tokens == 0
 
   defp valid_disclosure?(%AI.Disclosure{} = disclosure) do
+    limits = AI.resolver_disclosure_limits()
+
     is_integer(disclosure.max_items) and disclosure.max_items >= 0 and
+      disclosure.max_items <= limits.max_items and
       is_integer(disclosure.max_bytes) and disclosure.max_bytes >= 0 and
+      disclosure.max_bytes <= limits.max_bytes and
       is_list(disclosure.allowed_target_ids) and
-      Enum.all?(disclosure.allowed_target_ids, &nonempty?/1) and
+      length(disclosure.allowed_target_ids) <= limits.max_items and
+      Enum.all?(disclosure.allowed_target_ids, &bounded_identifier?/1) and
       unique?(disclosure.allowed_target_ids) and
       is_list(disclosure.allowed_evidence_kinds) and
-      Enum.all?(disclosure.allowed_evidence_kinds, &bounded_kind?/1)
+      length(disclosure.allowed_evidence_kinds) <= limits.max_items and
+      Enum.all?(disclosure.allowed_evidence_kinds, &bounded_kind?/1) and
+      encoded_size(%{}, [disclosure]) <= limits.max_bytes
   end
 
   defp valid_disclosure?(_disclosure), do: false
@@ -444,6 +451,7 @@ defmodule Opsonde.Providers.AI.Validator do
     do: nonempty?(value) and byte_size(value) <= max_bytes
 
   defp bounded_kind?(value), do: bounded_string?(value, 120)
+  defp bounded_identifier?(value), do: bounded_string?(value, 500)
 
   defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
 end
