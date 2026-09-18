@@ -10,7 +10,7 @@ import Config
 config :opsonde, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [resolver: 10],
+  queues: [resolver: 10, operations: 10],
   lifeline: [rescue_after: {2, :hours}],
   pruner: [max_age: {1, :day}],
   repo: Opsonde.Repo

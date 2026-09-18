@@ -1,0 +1,204 @@
+defmodule Opsonde.Cases.OperationDelivery do
+  @moduledoc false
+
+  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Cases.{Operation, OperationClaim}
+  alias Opsonde.Providers.Target, as: ProviderTarget
+  alias Opsonde.Targets.{PolicyRequest, RequestClearance}
+
+  @terminal [:applied, :failed, :partial, :unknown]
+
+  def run(operation_id, opts \\ []) do
+    case Cases.claim_operation_dispatch(operation_id, authorize?: false) do
+      {:ok, %OperationClaim{state: :claimed, operation: operation}} ->
+        dispatch(operation, opts)
+
+      {:ok, %OperationClaim{state: :terminal, operation: operation}} ->
+        handoff(operation)
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp dispatch(operation, opts) do
+    with {:ok, actor} <- current_actor(operation),
+         {:ok, %RequestClearance{} = clearance} <-
+           Targets.clear_target_request(request(operation), actor: actor),
+         :ok <- exact_clearance(clearance, operation) do
+      invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
+
+      outcome =
+        case Targets.dispatch_target_effect(clearance, invocation,
+               actor: actor,
+               authorize?: false
+             ) do
+          {:ok, %ProviderTarget.EffectResult{} = result} -> normalize(result)
+          {:error, _error} -> unknown("dispatch_error", "Target dispatch result is unknown")
+        end
+
+      persist_and_handoff(operation, outcome)
+    else
+      {:error, _error} ->
+        persist_and_handoff(operation, %{
+          status: :failed,
+          category: "authorization_invalidated",
+          reference: nil,
+          details: %{"message" => "Operation authorization changed before dispatch"}
+        })
+    end
+  end
+
+  defp persist_and_handoff(operation, outcome) do
+    with {:ok, terminal} <-
+           Cases.record_operation_outcome(
+             operation,
+             operation.revision,
+             %{
+               status: outcome.status,
+               outcome_category: outcome.category,
+               reference: outcome.reference,
+               result_details: outcome.details,
+               completed_at: DateTime.utc_now()
+             },
+             authorize?: false
+           ) do
+      handoff(terminal)
+    end
+  end
+
+  defp normalize(%ProviderTarget.EffectResult{} = result) do
+    %{
+      status: result.status,
+      category: "target_#{result.status}",
+      reference: result.reference,
+      details: result.details
+    }
+  end
+
+  defp unknown(category, message) do
+    %{status: :unknown, category: category, reference: nil, details: %{"message" => message}}
+  end
+
+  defp handoff(%Operation{status: status} = operation) when status in @terminal do
+    case Cases.get_case(operation.case_id, authorize?: false) do
+      {:ok, %{status: :running, cancel_requested: false}} -> handoff_running(operation)
+      {:ok, _stopped} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp handoff(_operation), do: {:error, "Operation has no terminal outcome"}
+
+  defp handoff_running(operation) do
+    with {:ok, _evidence} <-
+           Cases.append_evidence(
+             operation.case_id,
+             operation.resolution_run_id,
+             nil,
+             "operation:outcome:#{operation.id}",
+             "operation_outcome",
+             "operation",
+             operation.id,
+             evidence_content(operation),
+             operation.completed_at,
+             authorize?: false
+           ),
+         {:ok, incident} <- Cases.get_case(operation.case_id, authorize?: false),
+         :ok <- available_pending(incident.pending_intent, operation),
+         {:ok, _case} <-
+           Cases.update_case_record(
+             incident,
+             incident.revision,
+             %{
+               pending_intent: %{
+                 "action" => "verify_operation",
+                 "operation_id" => operation.id,
+                 "proposal_id" => operation.proposal_id
+               },
+               stop_reason: nil,
+               required_human_input: nil
+             },
+             authorize?: false
+           ) do
+      :ok
+    end
+  end
+
+  defp evidence_content(operation) do
+    %{
+      "status" => to_string(operation.status),
+      "category" => operation.outcome_category,
+      "reference" => operation.reference,
+      "details" => operation.result_details,
+      "target_id" => operation.target_id,
+      "access_method_id" => operation.access_method_id
+    }
+  end
+
+  defp available_pending(%{"action" => "verify_operation", "operation_id" => id}, %{id: id}),
+    do: :ok
+
+  defp available_pending(%{"action" => "dispatch_operation", "operation_id" => id}, %{id: id}),
+    do: :ok
+
+  defp available_pending(pending, _operation) when map_size(pending) == 0, do: :ok
+  defp available_pending(_pending, _operation), do: {:error, "Case has another pending action"}
+
+  defp current_actor(operation) do
+    case Accounts.get_user(operation.actor_id, authorize?: false) do
+      {:ok, %{role: role, role_version: version} = actor}
+      when role in [:admin, :operator] and version == operation.actor_role_version ->
+        {:ok, actor}
+
+      _unavailable ->
+        {:error, "Operation actor authority changed"}
+    end
+  end
+
+  defp request(operation) do
+    %PolicyRequest{
+      kind: :effect,
+      authority_mode: operation.authority_mode,
+      target_id: operation.target_id,
+      target_revision: operation.target_revision,
+      access_method_id: operation.access_method_id,
+      access_method_revision: operation.access_method_revision,
+      capability: operation.capability,
+      operation: operation.operation,
+      selectors: operation.selectors,
+      parameters: operation.parameters,
+      operation_id: operation.id,
+      idempotency_key: operation.idempotency_key,
+      max_attempts: 1
+    }
+  end
+
+  defp exact_clearance(clearance, operation) do
+    digest = Base.encode16(clearance.digest, case: :lower)
+
+    if clearance.provider_id == operation.provider_id and
+         clearance.provider_revision == operation.provider_revision and
+         digest == operation.authorization_digest,
+       do: :ok,
+       else: {:error, "Operation clearance changed"}
+  end
+
+  defp invocation(case_id, supplied) do
+    supplied_cancelled = Map.get(supplied, :cancelled?)
+
+    Map.put(supplied, :cancelled?, fn ->
+      cancelled?(supplied_cancelled) or case_stopped?(case_id)
+    end)
+  end
+
+  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
+  defp cancelled?(_callback), do: false
+
+  defp case_stopped?(case_id) do
+    case Cases.get_case(case_id, authorize?: false) do
+      {:ok, %{status: :running, cancel_requested: false}} -> false
+      _stopped -> true
+    end
+  end
+end

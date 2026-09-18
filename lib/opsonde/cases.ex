@@ -257,5 +257,17 @@ defmodule Opsonde.Cases do
       define :review_decision_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_review_decision_record, action: :create_record
     end
+
+    resource Opsonde.Cases.Operation do
+      define :list_operations, action: :read
+      define :get_operation, action: :read, get_by: [:id]
+      define :operation_by_proposal, action: :by_proposal, args: [:proposal_id]
+      define :create_operation_record, action: :create_record
+      define :mark_operation_dispatching, action: :mark_dispatching, args: [:expected_revision]
+      define :record_operation_outcome, action: :record_outcome, args: [:expected_revision]
+      define :record_operation_no_send, action: :record_no_send, args: [:expected_revision]
+      define :accept_operation, action: :accept, args: [:proposal_id]
+      define :claim_operation_dispatch, action: :claim_dispatch, args: [:id]
+    end
   end
 end
