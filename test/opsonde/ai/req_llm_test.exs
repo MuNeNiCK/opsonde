@@ -326,7 +326,8 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.build(%{base | "provider" => "unknown"}, %{"api_key" => "secret"})
   end
 
-  test "Provider lifecycle and public AI actions invoke the registered adapter", context do
+  test "hosted Provider lifecycles and public AI actions invoke the registered adapter",
+       context do
     admin =
       Accounts.bootstrap!(
         "req-llm-admin@example.com",
@@ -335,34 +336,41 @@ defmodule Opsonde.AI.ReqLLMTest do
         authorize?: true
       )
 
-    provider =
-      Providers.create_provider!(
-        "production-ai",
-        :ai,
-        Adapter.type(),
-        %{
-          "provider" => "openai",
-          "model" => "test-model",
-          "endpoint" => context.endpoint <> "/v1"
-        },
-        %{"api_key" => "provider-secret"},
-        actor: admin
-      )
+    for {provider_name, endpoint} <- [
+          {"openai", context.endpoint <> "/v1"},
+          {"anthropic", context.endpoint}
+        ] do
+      set_mode(context.agent, {:decision, handoff()})
 
-    provider = Providers.check_provider!(provider.id, 1, %{}, actor: admin)
+      provider =
+        Providers.create_provider!(
+          "#{provider_name}-ai",
+          :ai,
+          Adapter.type(),
+          %{
+            "provider" => provider_name,
+            "model" => "test-model",
+            "endpoint" => endpoint
+          },
+          %{"api_key" => "provider-secret"},
+          actor: admin
+        )
 
-    assert provider.check_status == :passed,
-           inspect({provider.check_category, provider.check_message})
+      provider = Providers.check_provider!(provider.id, 1, %{}, actor: admin)
 
-    provider = Providers.enable_provider!(provider, 1, actor: admin)
+      assert provider.check_status == :passed,
+             inspect({provider_name, provider.check_category, provider.check_message})
 
-    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "probe"}}} =
-             Providers.ai_resolve(provider.id, resolver_request(), %{}, actor: admin)
+      provider = Providers.enable_provider!(provider, 1, actor: admin)
 
-    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+      assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "probe"}}} =
+               Providers.ai_resolve(provider.id, resolver_request(), %{}, actor: admin)
 
-    assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
-             Providers.ai_review(provider.id, review_request(), %{}, actor: admin)
+      set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+
+      assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
+               Providers.ai_review(provider.id, review_request(), %{}, actor: admin)
+    end
   end
 
   defp state!(provider, endpoint, credentials, extra_configuration \\ %{}) do
