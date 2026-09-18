@@ -60,7 +60,7 @@ defmodule Opsonde.AI.ReqLLM do
              "Return the single value ready."
            ),
            output,
-           min(state.max_tokens, 16),
+           min(state.max_tokens, 128),
            fn -> false end
          ) do
       {:ok, response} ->
