@@ -1,11 +1,24 @@
 defmodule Opsonde.Providers.Target do
   @moduledoc false
 
+  defmodule Operation do
+    @moduledoc false
+    @enforce_keys [:capability, :operation, :description, :input_schema]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            capability: String.t(),
+            operation: String.t(),
+            description: String.t(),
+            input_schema: map()
+          }
+  end
+
   defmodule Capabilities do
     @moduledoc false
     @enforce_keys [:observations, :effects]
     defstruct [:observations, :effects]
-    @type t :: %__MODULE__{observations: [String.t()], effects: [String.t()]}
+    @type t :: %__MODULE__{observations: [Operation.t()], effects: [Operation.t()]}
   end
 
   defmodule ObservationRequest do

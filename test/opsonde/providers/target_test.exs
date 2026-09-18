@@ -34,8 +34,8 @@ defmodule Opsonde.Providers.TargetTest do
 
   test "capabilities use the Ash interface, current gate and kind policy", context do
     capabilities = %Target.Capabilities{
-      observations: ["observe.system"],
-      effects: ["effect.restart_service"]
+      observations: [operation("observe.system", "system.inspect", "Inspect system state")],
+      effects: [operation("effect.service", "service.restart", "Restart one service")]
     }
 
     assert ^capabilities =
@@ -55,6 +55,70 @@ defmodule Opsonde.Providers.TargetTest do
                invocation(capabilities),
                actor: context.viewer
              )
+  end
+
+  test "capabilities reject malformed or duplicate operations and redact credentials", context do
+    duplicate = operation("observe.system", "system.inspect", "Inspect system state")
+
+    for capabilities <- [
+          %Target.Capabilities{observations: [duplicate, duplicate], effects: []},
+          %Target.Capabilities{
+            observations: [
+              %Target.Operation{
+                capability: "",
+                operation: "system.inspect",
+                description: "Inspect system state",
+                input_schema: %{}
+              }
+            ],
+            effects: []
+          },
+          %Target.Capabilities{
+            observations: [
+              operation(
+                "observe.system",
+                "system.inspect",
+                "Inspect system state",
+                %{"payload" => String.duplicate("x", 65_537)}
+              )
+            ],
+            effects: []
+          }
+        ] do
+      assert {:error, error} =
+               Providers.target_capabilities(
+                 context.provider.id,
+                 context.provider.revision,
+                 invocation(capabilities),
+                 actor: context.operator
+               )
+
+      assert target_error(error).message == "Invalid capabilities result"
+    end
+
+    secret_bearing = %Target.Capabilities{
+      observations: [
+        operation(
+          "observe.system",
+          "system.inspect",
+          "Inspect using #{@token}",
+          %{"properties" => %{"credential" => %{"const" => @token}}}
+        )
+      ],
+      effects: []
+    }
+
+    assert %Target.Capabilities{observations: [redacted]} =
+             Providers.target_capabilities!(
+               context.provider.id,
+               context.provider.revision,
+               invocation(secret_bearing),
+               actor: context.operator
+             )
+
+    assert redacted.description == "Inspect using [REDACTED]"
+    assert redacted.input_schema["properties"]["credential"]["const"] == "[REDACTED]"
+    refute inspect(redacted) =~ @token
   end
 
   test "observations retry bounded read failures and redact results", context do
@@ -354,6 +418,15 @@ defmodule Opsonde.Providers.TargetTest do
   defp invocation(response), do: %{test_pid: self(), respond: fn -> response end}
 
   defp flunk_response, do: fn -> flunk("stale invocation reached adapter") end
+
+  defp operation(capability, operation, description, input_schema \\ %{}) do
+    %Target.Operation{
+      capability: capability,
+      operation: operation,
+      description: description,
+      input_schema: input_schema
+    }
+  end
 
   defp target_error(%{errors: errors}) do
     Enum.find_value(errors, fn

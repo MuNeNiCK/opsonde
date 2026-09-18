@@ -113,8 +113,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
          credentials
        )
        when is_list(observations) and is_list(effects) do
-    if bounded_string_list?(observations) and bounded_string_list?(effects) do
-      {:ok, Redactor.value(value, credentials)}
+    redacted = Redactor.value(value, credentials)
+
+    if valid_capabilities?(value) and valid_capabilities?(redacted) do
+      {:ok, redacted}
     else
       {:error, target_error(:failed, "Invalid capabilities result")}
     end
@@ -122,6 +124,11 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp normalize_capabilities(result, credentials),
     do: normalize_error(result, @read_failures, "Invalid capabilities result", credentials)
+
+  defp valid_capabilities?(%Target.Capabilities{observations: observations, effects: effects}) do
+    valid_operations?(observations) and valid_operations?(effects) and
+      bounded_list?(observations ++ effects)
+  end
 
   defp normalize_observation(
          {:ok,
@@ -219,8 +226,26 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end
 
-  defp bounded_string_list?(items),
-    do: bounded_list?(items) and Enum.all?(items, &nonempty_binary?/1)
+  defp valid_operations?(operations) do
+    Enum.all?(operations, &valid_operation?/1) and
+      Enum.uniq_by(operations, &{&1.capability, &1.operation}) == operations
+  end
+
+  defp valid_operation?(%Target.Operation{} = operation) do
+    bounded_binary?(operation.capability, 120) and
+      bounded_binary?(operation.operation, 120) and
+      bounded_binary?(operation.description, 500) and
+      bounded_map?(operation.input_schema) and json_encodable?(operation.input_schema)
+  end
+
+  defp valid_operation?(_operation), do: false
+
+  defp json_encodable?(value), do: match?({:ok, _encoded}, Jason.encode(value))
+
+  defp bounded_binary?(value, maximum) when is_binary(value),
+    do: byte_size(value) in 1..maximum
+
+  defp bounded_binary?(_value, _maximum), do: false
 
   defp bounded_list?(items) when is_list(items) and length(items) <= @max_payload_items,
     do: :erlang.external_size(items) <= @max_payload_bytes
