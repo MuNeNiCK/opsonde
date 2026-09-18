@@ -54,6 +54,19 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
     setAccount(data.account);
   }, []);
 
+  const bootstrap = useCallback(
+    async (email: string, password: string, confirmation: string) => {
+      await apiRequest("/accounts/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({
+          account: { email, password, password_confirmation: confirmation },
+        }),
+      });
+      await signIn(email, password);
+    },
+    [signIn],
+  );
+
   const signOut = useCallback(async () => {
     try {
       await apiRequest<void>("/session", { method: "DELETE" });
@@ -64,8 +77,8 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ account, loading, signIn, signOut }),
-    [account, loading, signIn, signOut],
+    () => ({ account, loading, bootstrap, signIn, signOut }),
+    [account, bootstrap, loading, signIn, signOut],
   );
 
   return <AuthenticationContext.Provider value={value}>{children}</AuthenticationContext.Provider>;

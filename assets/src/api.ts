@@ -5,6 +5,9 @@ type ErrorBody = {
   error?: { code?: string; message?: string; request_id?: string };
 };
 
+export type DataResponse<T> = { data: T };
+export type PageResponse<T> = { data: T[]; page: { next: string | null } };
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -54,4 +57,19 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}) {
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+export async function apiCollection<T>(path: string) {
+  const records: T[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const separator = path.includes("?") ? "&" : "?";
+    const suffix = cursor ? `&after=${encodeURIComponent(cursor)}` : "";
+    const response: PageResponse<T> = await apiRequest(`${path}${separator}limit=100${suffix}`);
+    records.push(...response.data);
+    cursor = response.page.next;
+  } while (cursor);
+
+  return records;
 }

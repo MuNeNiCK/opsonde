@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { SetupPage } from "@/setup-page";
 
 function AuthenticationGate({ children }: { children: ReactNode }) {
   const { account, loading } = useAuthentication();
@@ -39,11 +40,12 @@ function AuthenticationGate({ children }: { children: ReactNode }) {
 }
 
 function LoginPage() {
-  const { account, signIn } = useAuthentication();
+  const { account, bootstrap, signIn } = useAuthentication();
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [firstUse, setFirstUse] = useState(false);
   const returnPath = (location.state as { from?: string } | null)?.from ?? "/cases";
 
   if (account) return <Navigate to={returnPath} replace />;
@@ -55,15 +57,24 @@ function LoginPage() {
     const form = new FormData(event.currentTarget);
     const email = form.get("email");
     const password = form.get("password");
+    const confirmation = form.get("password_confirmation");
 
-    if (typeof email !== "string" || typeof password !== "string") {
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      (firstUse && typeof confirmation !== "string")
+    ) {
       setFailed(true);
       setSubmitting(false);
       return;
     }
 
     try {
-      await signIn(email, password);
+      if (firstUse) {
+        await bootstrap(email, password, confirmation as string);
+      } else {
+        await signIn(email, password);
+      }
     } catch {
       setFailed(true);
     } finally {
@@ -85,15 +96,19 @@ function LoginPage() {
         </div>
         <Card>
           <CardHeader>
-            <CardTitle>{t("login.title")}</CardTitle>
-            <CardDescription>{t("login.description")}</CardDescription>
+            <CardTitle>{t(firstUse ? "login.bootstrapTitle" : "login.title")}</CardTitle>
+            <CardDescription>
+              {t(firstUse ? "login.bootstrapDescription" : "login.description")}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={submit}>
               {failed && (
                 <Alert variant="destructive">
                   <AlertCircle />
-                  <AlertDescription>{t("login.failed")}</AlertDescription>
+                  <AlertDescription>
+                    {t(firstUse ? "login.bootstrapFailed" : "login.failed")}
+                  </AlertDescription>
                 </Alert>
               )}
               <div className="space-y-2">
@@ -110,9 +125,32 @@ function LoginPage() {
                   required
                 />
               </div>
+              {firstUse && (
+                <div className="space-y-2">
+                  <Label htmlFor="password_confirmation">{t("login.confirmPassword")}</Label>
+                  <Input
+                    id="password_confirmation"
+                    name="password_confirmation"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+              )}
               <Button className="w-full" type="submit" disabled={submitting}>
                 {submitting && <Spinner />}
-                {t("login.submit")}
+                {t(firstUse ? "login.bootstrapSubmit" : "login.submit")}
+              </Button>
+              <Button
+                className="w-full"
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setFailed(false);
+                  setFirstUse((value) => !value);
+                }}
+              >
+                {t(firstUse ? "login.useExisting" : "login.firstUse")}
               </Button>
             </form>
           </CardContent>
@@ -158,10 +196,10 @@ function AppRoutes() {
         <Route path="cases" element={<FoundationPage title="pages.cases" />} />
         <Route path="cases/:caseId" element={<CasePage />} />
         <Route path="targets" element={<FoundationPage title="pages.targets" />} />
-        <Route path="providers" element={<FoundationPage title="pages.providers" />} />
+        <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
         <Route path="audits" element={<FoundationPage title="pages.audits" />} />
         <Route path="reports" element={<FoundationPage title="pages.reports" />} />
-        <Route path="settings" element={<FoundationPage title="pages.settings" />} />
+        <Route path="settings" element={<SetupPage />} />
         <Route path="*" element={<FoundationPage title="pages.notFound" />} />
       </Route>
     </Routes>

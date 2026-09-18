@@ -1,12 +1,4 @@
-import {
-  BookOpenCheck,
-  Boxes,
-  Bot,
-  FileText,
-  RadioTower,
-  Settings,
-  ShieldCheck,
-} from "lucide-react";
+import { BookOpenCheck, Boxes, FileText, RadioTower, Settings, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth-context";
@@ -49,8 +41,7 @@ const navigation = [
     label: "navigation.configuration",
     items: [
       ["/targets", "navigation.targets", Boxes],
-      ["/providers", "navigation.providers", Bot],
-      ["/settings", "navigation.settings", Settings],
+      ["/settings", "navigation.setup", Settings],
     ],
   },
 ] as const;

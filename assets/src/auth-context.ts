@@ -10,6 +10,7 @@ export type Account = {
 export type Authentication = {
   account: Account | null;
   loading: boolean;
+  bootstrap: (email: string, password: string, confirmation: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
