@@ -202,6 +202,7 @@ defmodule Opsonde.Providers.AI do
       :turn,
       :objective,
       :alert_state,
+      :report_language,
       :disclosure,
       :budget,
       :evidence,
@@ -266,7 +267,11 @@ defmodule Opsonde.Providers.AI do
 
   def resolver_disclosure_size(%ResolverRequest{} = request) do
     encoded = %{
-      context: %{objective: request.objective, alert_state: request.alert_state},
+      context: %{
+        objective: request.objective,
+        alert_state: request.alert_state,
+        report_language: request.report_language
+      },
       items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
     }
 

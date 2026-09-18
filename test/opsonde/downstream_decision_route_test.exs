@@ -214,6 +214,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
         alert_state,
         %{},
         nil,
+        :en,
         actor: actor
       )
 

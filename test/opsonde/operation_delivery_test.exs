@@ -701,6 +701,7 @@ defmodule Opsonde.OperationDeliveryTest do
         alert_state,
         %{},
         context.target.id,
+        :en,
         actor: context.operator
       )
 

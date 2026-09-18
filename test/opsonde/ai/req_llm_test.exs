@@ -206,6 +206,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     refute Enum.any?(requests, &String.contains?(&1.body, "openai-secret"))
     refute Enum.any?(requests, &String.contains?(&1.body, "anthropic-secret"))
+    assert Enum.all?(requests, &String.contains?(&1.body, "report_language"))
+    assert Enum.all?(requests, &String.contains?(&1.body, "human-facing reason"))
 
     [openai_request | _rest] = requests
     openai_body = Jason.decode!(openai_request.body)
@@ -392,6 +394,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       turn: 1,
       objective: "Restore service health",
       alert_state: :firing,
+      report_language: :en,
       disclosure: disclosure(),
       budget: budget(),
       evidence: [],

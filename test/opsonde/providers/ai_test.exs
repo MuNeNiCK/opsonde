@@ -529,6 +529,14 @@ defmodule Opsonde.Providers.AITest do
     assert {:error, disclosure_error} = resolve(context, undisclosed, unreachable_response())
     assert ai_error(disclosure_error).category == :disclosure_limit
 
+    unsupported_language = %{request | report_language: :fr}
+
+    assert {:error, language_error} =
+             resolve(context, unsupported_language, unreachable_response())
+
+    assert ai_error(language_error).category == :invalid_input
+    refute_receive {:resolve, _, ^unsupported_language}
+
     limits = AI.resolver_disclosure_limits()
 
     for disclosure <- [
@@ -681,6 +689,7 @@ defmodule Opsonde.Providers.AITest do
       turn: 1,
       objective: "Restore service health",
       alert_state: :firing,
+      report_language: :en,
       disclosure: %AI.Disclosure{
         allowed_target_ids: ["target-1", "target-2"],
         allowed_evidence_kinds: ["signal", "observation"],

@@ -201,6 +201,7 @@ defmodule Opsonde.ObservationRouteTest do
         :not_applicable,
         %{},
         context.target.id,
+        :en,
         actor: context.operator
       )
 

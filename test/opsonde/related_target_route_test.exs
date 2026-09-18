@@ -245,6 +245,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         :not_applicable,
         %{"symptom" => "I/O errors are increasing"},
         context.linux.id,
+        :en,
         actor: context.operator
       )
 

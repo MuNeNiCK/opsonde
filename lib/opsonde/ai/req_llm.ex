@@ -212,6 +212,7 @@ defmodule Opsonde.AI.ReqLLM do
       "turn" => request.turn,
       "objective" => request.objective,
       "alert_state" => to_string(request.alert_state),
+      "report_language" => to_string(request.report_language),
       "budget" => plain(request.budget),
       "evidence" => plain(request.evidence),
       "target_candidates" => plain(request.target_candidates),
@@ -226,7 +227,9 @@ defmodule Opsonde.AI.ReqLLM do
     context(
       "You are the Opsonde Resolver. Select exactly one next intent from the supplied " <>
         "registered Targets and tools. Never execute a tool. Never invent an identifier. " <>
-        "Base the intent only on supplied evidence and preserve uncertainty. Encode the " <>
+        "Base the intent only on supplied evidence and preserve uncertainty. Write the " <>
+        "human-facing reason and required_input fields in the report_language supplied in " <>
+        "the user payload. Encode the " <>
         "selected intent arguments as a JSON object string in arguments_json. The argument " <>
         "shapes are: target_search {query}; target_selection {target_id,evidence_ids}; " <>
         "observation {tool_id,selectors,parameters}; target_traversal " <>

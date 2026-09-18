@@ -44,7 +44,8 @@ defmodule Opsonde.Cases do
           :severity,
           :alert_state,
           :initial_context,
-          :initial_target_id
+          :initial_target_id,
+          :report_language
         ]
 
       define :claim_case, action: :claim, args: [:id, :expected_revision]

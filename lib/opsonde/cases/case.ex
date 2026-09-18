@@ -58,6 +58,7 @@ defmodule Opsonde.Cases.Case do
         :title,
         :severity,
         :alert_state,
+        :report_language,
         :status,
         :initial_context,
         :authority_setting_id,
@@ -132,6 +133,10 @@ defmodule Opsonde.Cases.Case do
       argument :alert_state, :atom,
         allow_nil?: false,
         constraints: [one_of: [:firing, :not_applicable]]
+
+      argument :report_language, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:en, :ja]]
 
       argument :initial_context, :map, allow_nil?: false, default: %{}
       argument :initial_target_id, :uuid
@@ -398,6 +403,13 @@ defmodule Opsonde.Cases.Case do
       allow_nil? false
       public? true
       constraints one_of: [:firing, :recovered, :not_applicable]
+    end
+
+    attribute :report_language, :atom do
+      allow_nil? false
+      public? true
+      default :en
+      constraints one_of: [:en, :ja]
     end
 
     attribute :status, :atom do

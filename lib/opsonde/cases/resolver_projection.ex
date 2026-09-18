@@ -265,6 +265,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       turn: turn.ordinal,
       objective: objective(incident, turn),
       alert_state: incident.alert_state,
+      report_language: incident.report_language,
       disclosure: %AI.Disclosure{
         allowed_target_ids: selected_target_ids(target),
         allowed_evidence_kinds: [],

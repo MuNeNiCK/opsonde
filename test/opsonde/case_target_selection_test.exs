@@ -134,6 +134,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         :not_applicable,
         %{},
         context.linux.id,
+        :en,
         actor: context.operator
       )
 
@@ -157,6 +158,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         :not_applicable,
         %{},
         context.linux.id,
+        :en,
         actor: context.operator
       )
 
@@ -271,6 +273,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         :not_applicable,
         %{},
         nil,
+        :en,
         actor: actor
       )
 

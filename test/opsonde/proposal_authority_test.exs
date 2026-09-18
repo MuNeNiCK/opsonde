@@ -463,6 +463,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         :not_applicable,
         %{},
         context.target.id,
+        :en,
         actor: context.operator
       )
 

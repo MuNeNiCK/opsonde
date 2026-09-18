@@ -89,6 +89,7 @@ defmodule Opsonde.CaseLifecycleTest do
             :firing,
             %{"host" => "linux-01"},
             nil,
+            :en,
             authorize?: false
           )
         end)
@@ -146,6 +147,7 @@ defmodule Opsonde.CaseLifecycleTest do
         :not_applicable,
         %{},
         nil,
+        :en,
         actor: context.operator
       )
     end
@@ -234,7 +236,10 @@ defmodule Opsonde.CaseLifecycleTest do
 
   test "attention and concurrent resume preserve history and create one new generation",
        context do
-    incident = open_case!(:manual, "cli", "manual-resume", :not_applicable, context.operator)
+    incident =
+      open_case!(:manual, "cli", "manual-resume", :not_applicable, context.operator, nil, :ja)
+
+    assert incident.report_language == :ja
     first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
     attention =
@@ -295,6 +300,7 @@ defmodule Opsonde.CaseLifecycleTest do
     assert reloaded.revision == 3
     assert reloaded.authority_setting_revision == incident.authority_setting_revision
     assert reloaded.authority_mode == incident.authority_mode
+    assert reloaded.report_language == :ja
 
     runs = Cases.list_resolution_runs!(actor: context.viewer) |> Enum.sort_by(& &1.generation)
     assert Enum.map(runs, & &1.generation) == [1, 2]
@@ -320,6 +326,7 @@ defmodule Opsonde.CaseLifecycleTest do
                :not_applicable,
                %{},
                nil,
+               :en,
                actor: context.viewer
              )
 
@@ -378,7 +385,15 @@ defmodule Opsonde.CaseLifecycleTest do
     assert length(Cases.list_resolution_runs!(actor: context.viewer)) == 1
   end
 
-  defp open_case!(kind, source, source_ref, alert_state, actor, target_id \\ nil) do
+  defp open_case!(
+         kind,
+         source,
+         source_ref,
+         alert_state,
+         actor,
+         target_id \\ nil,
+         report_language \\ :en
+       ) do
     Cases.open_case!(
       kind,
       source,
@@ -388,6 +403,7 @@ defmodule Opsonde.CaseLifecycleTest do
       alert_state,
       %{"source_ref" => source_ref},
       target_id,
+      report_language,
       actor: actor,
       authorize?: not is_nil(actor)
     )

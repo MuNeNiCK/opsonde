@@ -214,6 +214,7 @@ defmodule Opsonde.Cases.SignalIngress do
             :firing,
             initial_context(event),
             target && target.id,
+            :en,
             authorize?: false
           )
 

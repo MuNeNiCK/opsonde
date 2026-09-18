@@ -46,6 +46,7 @@ defmodule Opsonde.Providers.AI.Validator do
     positive?(request.provider_revision) and nonempty?(request.session_id) and
       nonempty?(request.case_id) and positive?(request.turn) and nonempty?(request.objective) and
       request.alert_state in [:firing, :recovered, :not_applicable] and
+      request.report_language in [:en, :ja] and
       valid_budget?(request.budget) and
       valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
       valid_resolver_items?(request)

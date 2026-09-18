@@ -411,6 +411,7 @@ defmodule Opsonde.CaseHistoryTest do
         :not_applicable,
         %{},
         nil,
+        :en,
         actor: actor
       )
 

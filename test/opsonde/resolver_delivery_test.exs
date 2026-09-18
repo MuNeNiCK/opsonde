@@ -253,6 +253,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         :not_applicable,
         %{},
         target.id,
+        :en,
         actor: context.operator
       )
 
@@ -367,6 +368,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         :not_applicable,
         %{},
         linux.id,
+        :en,
         actor: context.operator
       )
 
@@ -455,6 +457,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         :not_applicable,
         %{},
         nil,
+        :en,
         actor: actor
       )
 
@@ -485,6 +488,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         :not_applicable,
         %{},
         target.id,
+        :en,
         actor: actor
       )
 

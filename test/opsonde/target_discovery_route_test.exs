@@ -188,6 +188,7 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
       :not_applicable,
       %{},
       nil,
+      :en,
       actor: actor
     )
   end
