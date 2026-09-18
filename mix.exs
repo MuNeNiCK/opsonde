@@ -59,6 +59,8 @@ defmodule Opsonde.MixProject do
   defp deps do
     [
       {:req_llm, "~> 1.24"},
+      {:k8s, "~> 2.8"},
+      {:yaml_elixir, "~> 2.12"},
       {:jsv, "~> 0.23"},
       {:oban, "~> 2.0"},
       {:cloak, "~> 1.0"},

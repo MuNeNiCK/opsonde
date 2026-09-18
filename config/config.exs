@@ -71,6 +71,7 @@ config :opsonde,
   provider_adapters: [
     Opsonde.AI.ReqLLM,
     Opsonde.Targets.Generic.SSH,
+    Opsonde.Targets.Kubernetes.API,
     Opsonde.Targets.Linux.SSH
   ]
 
