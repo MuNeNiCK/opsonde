@@ -252,6 +252,28 @@ defmodule Opsonde.Providers.TargetTest do
     refute_receive {:effect, _, _}
   end
 
+  test "non-JSON Target results are rejected at the Provider boundary", context do
+    request = observation_request(context.provider.revision, 1)
+
+    invalid = %Target.Observation{
+      facts: %{"process" => self()},
+      observed_at: DateTime.utc_now(),
+      evidence: [{:raw, "tuple"}]
+    }
+
+    assert {:error, error} =
+             Providers.target_observe(
+               context.provider.id,
+               request,
+               invocation(invalid),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert target_error(error).message == "Invalid observation result"
+    assert_receive {:observe, %{token: @token}, ^request}
+  end
+
   test "effects dispatch once and preserve applied, unknown, partial and failed results",
        context do
     for status <- [:applied, :unknown, :partial, :failed] do

@@ -127,7 +127,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp valid_capabilities?(%Target.Capabilities{observations: observations, effects: effects}) do
     valid_operations?(observations) and valid_operations?(effects) and
-      bounded_list?(observations ++ effects)
+      bounded_term_list?(observations ++ effects)
   end
 
   defp normalize_observation(
@@ -248,12 +248,17 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp bounded_binary?(_value, _maximum), do: false
 
   defp bounded_list?(items) when is_list(items) and length(items) <= @max_payload_items,
-    do: :erlang.external_size(items) <= @max_payload_bytes
+    do: :erlang.external_size(items) <= @max_payload_bytes and json_encodable?(items)
 
   defp bounded_list?(_items), do: false
 
+  defp bounded_term_list?(items) when is_list(items) and length(items) <= @max_payload_items,
+    do: :erlang.external_size(items) <= @max_payload_bytes
+
+  defp bounded_term_list?(_items), do: false
+
   defp bounded_map?(map) when is_map(map) and map_size(map) <= @max_payload_items,
-    do: :erlang.external_size(map) <= @max_payload_bytes
+    do: :erlang.external_size(map) <= @max_payload_bytes and json_encodable?(map)
 
   defp bounded_map?(_map), do: false
 
