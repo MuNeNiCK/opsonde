@@ -1,0 +1,339 @@
+defmodule Opsonde.Cases.ResolverDelivery do
+  @moduledoc false
+
+  alias Opsonde.{Cases, Providers}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, ResolutionRun, ResolverProjection, Turn}
+  alias Opsonde.Providers.AI
+
+  @max_result_bytes 65_536
+
+  @spec run(String.t(), keyword()) :: :ok | {:cancel, String.t()} | {:error, term()}
+  def run(turn_id, opts \\ []) do
+    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
+      if turn.status == :completed do
+        :ok
+      else
+        deliver(turn, opts)
+      end
+    end
+  end
+
+  defp deliver(turn, opts) do
+    with {:ok, selection} <- assigned_selection(turn),
+         {:ok, selection} <- current_selection(selection),
+         target_invocation <- invocation(turn.case_id, Keyword.get(opts, :target_invocation, %{})),
+         {:ok, request} <- ResolverProjection.build(turn.id, selection, target_invocation),
+         ai_invocation <- invocation(turn.case_id, Keyword.get(opts, :ai_invocation, %{})),
+         {:ok, decision} <-
+           Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false),
+         :ok <- valid_result_size(decision, selection),
+         {:ok, _result} <- accept(turn, selection, decision) do
+      :ok
+    else
+      {:error, error} -> handle_failure(turn, error)
+    end
+  end
+
+  defp assigned_selection(turn) do
+    key = assignment_key(turn.id)
+
+    case Cases.case_event_by_idempotency(turn.case_id, key,
+           authorize?: false,
+           not_found_error?: false
+         ) do
+      {:ok, %CaseEvent{} = event} ->
+        selection_from_event(event, turn)
+
+      {:ok, nil} ->
+        create_assignment(turn, key)
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp create_assignment(turn, key) do
+    with {:ok, %AI.Selection{role: :resolver} = selection} <-
+           Providers.select_resolver_ai(authorize?: false),
+         {:ok, _event} <- create_assignment_event(turn, key, selection) do
+      {:ok, selection}
+    else
+      {:error, _error} = error ->
+        case Cases.case_event_by_idempotency(turn.case_id, key,
+               authorize?: false,
+               not_found_error?: false
+             ) do
+          {:ok, %CaseEvent{} = event} -> selection_from_event(event, turn)
+          _missing -> error
+        end
+    end
+  end
+
+  defp create_assignment_event(turn, key, selection) do
+    Cases.create_case_event_record(
+      %{
+        case_id: turn.case_id,
+        resolution_run_id: turn.resolution_run_id,
+        event_type: "resolver_assigned",
+        idempotency_key: key,
+        data: %{
+          "turn_id" => turn.id,
+          "provider_id" => selection.provider_id,
+          "provider_revision" => selection.provider_revision,
+          "assignment_id" => selection.assignment_id,
+          "assignment_revision" => selection.assignment_revision,
+          "source" => to_string(selection.source)
+        }
+      },
+      authorize?: false
+    )
+  end
+
+  defp selection_from_event(
+         %CaseEvent{
+           resolution_run_id: run_id,
+           data: %{
+             "turn_id" => turn_id,
+             "provider_id" => provider_id,
+             "provider_revision" => provider_revision,
+             "assignment_id" => assignment_id,
+             "assignment_revision" => assignment_revision,
+             "source" => "assignment"
+           }
+         },
+         turn
+       )
+       when run_id == turn.resolution_run_id and turn_id == turn.id and is_binary(provider_id) and
+              is_integer(provider_revision) and provider_revision > 0 and is_binary(assignment_id) and
+              is_integer(assignment_revision) and assignment_revision > 0 do
+    {:ok,
+     %AI.Selection{
+       role: :resolver,
+       provider_id: provider_id,
+       provider_revision: provider_revision,
+       source: :assignment,
+       assignment_id: assignment_id,
+       assignment_revision: assignment_revision
+     }}
+  end
+
+  defp selection_from_event(_event, _turn),
+    do: {:error, ai_error(:invalid_input, "Persisted Resolver assignment is invalid")}
+
+  defp current_selection(selection) do
+    with {:ok, assignment} <-
+           Providers.load_resolver_ai_usage_role_assignment(
+             selection.assignment_id,
+             selection.assignment_revision,
+             selection.provider_revision,
+             authorize?: false
+           ),
+         true <-
+           assignment.provider_id == selection.provider_id ||
+             {:error, ai_error(:unavailable, "Resolver AI assignment changed")} do
+      {:ok, selection}
+    else
+      {:error, %AI.Error{} = error} -> {:error, error}
+      {:error, _error} -> {:error, ai_error(:unavailable, "Resolver AI is unavailable")}
+    end
+  end
+
+  defp invocation(case_id, supplied) do
+    supplied_cancelled = Map.get(supplied, :cancelled?)
+
+    Map.put(supplied, :cancelled?, fn ->
+      cancelled?(supplied_cancelled) or case_cancelled?(case_id)
+    end)
+  end
+
+  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
+  defp cancelled?(_callback), do: false
+
+  defp case_cancelled?(case_id) do
+    case Cases.get_case(case_id, authorize?: false) do
+      {:ok, %{cancel_requested: true}} -> true
+      {:ok, %{status: status}} when status != :running -> true
+      {:ok, _incident} -> false
+      {:error, _error} -> true
+    end
+  end
+
+  defp accept(turn, selection, decision) do
+    result = result(decision, selection)
+    usage_units = decision.usage.input_tokens + decision.usage.output_tokens
+    progress_kind = progress_kind(decision.intent)
+
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with {:ok, usage_result} <- charge_usage(turn, usage_units),
+           true <-
+             usage_result.status in [:charged, :duplicate] ||
+               {:error, "AI usage limit exhausted"},
+           {:ok, completion} <-
+             Cases.complete_turn(
+               turn.id,
+               turn.revision,
+               result,
+               progress_kind,
+               %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+               "Review the Resolver decision",
+               authorize?: false
+             ) do
+        completion
+      end
+    end)
+    |> accepted_or_existing(turn.id)
+  end
+
+  defp charge_usage(turn, 0) do
+    with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
+         {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
+      {:ok, %Cases.BudgetResult{status: :charged, case: incident, run: run, value: run}}
+    end
+  end
+
+  defp charge_usage(turn, usage_units) do
+    Cases.charge_resolution_run(
+      turn.case_id,
+      turn.resolution_run_id,
+      :ai_usage,
+      usage_units,
+      "resolver-result:#{turn.id}",
+      %{"action" => "review_ai_usage", "turn_id" => turn.id},
+      "Increase the AI usage limit or review the Case",
+      authorize?: false
+    )
+  end
+
+  defp accepted_or_existing({:ok, result}, _turn_id), do: {:ok, result}
+
+  defp accepted_or_existing({:error, error}, turn_id) do
+    case Cases.get_turn(turn_id, authorize?: false) do
+      {:ok, %{status: :completed} = turn} -> {:ok, turn}
+      _unfinished -> {:error, error}
+    end
+  end
+
+  defp result(decision, selection) do
+    %{
+      "outcome" => "decision",
+      "intent" => intent(decision.intent),
+      "usage" => %{
+        "input_tokens" => decision.usage.input_tokens,
+        "output_tokens" => decision.usage.output_tokens
+      },
+      "resolver" => %{
+        "provider_id" => selection.provider_id,
+        "provider_revision" => selection.provider_revision,
+        "assignment_id" => selection.assignment_id,
+        "assignment_revision" => selection.assignment_revision
+      }
+    }
+  end
+
+  defp intent(%module{} = value) do
+    value
+    |> json_value()
+    |> Map.put("type", module |> Module.split() |> List.last() |> Macro.underscore())
+  end
+
+  defp json_value(%_{} = value), do: value |> Map.from_struct() |> json_value()
+
+  defp json_value(value) when is_map(value),
+    do: Map.new(value, fn {key, nested} -> {to_string(key), json_value(nested)} end)
+
+  defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value) when is_atom(value), do: to_string(value)
+  defp json_value(value), do: value
+
+  defp progress_kind(%AI.Proposal{}), do: :proposal
+  defp progress_kind(%AI.RecoveryConclusion{}), do: :source_change
+  defp progress_kind(%AI.Handoff{}), do: :human_input
+  defp progress_kind(_intent), do: :hypothesis
+
+  defp valid_result_size(decision, selection) do
+    case Jason.encode(result(decision, selection)) do
+      {:ok, encoded} when byte_size(encoded) <= @max_result_bytes -> :ok
+      _invalid -> {:error, ai_error(:invalid_output, "AI Resolver result is too large")}
+    end
+  end
+
+  defp handle_failure(turn, error) do
+    cond do
+      case_cancelled?(turn.case_id) ->
+        {:cancel, "Case resolution was cancelled"}
+
+      turn_completed?(turn.id) ->
+        :ok
+
+      true ->
+        {category, message} = failure(error)
+
+        case persist_failure(turn, category, message) do
+          {:ok, _incident} ->
+            :ok
+
+          {:error, persistence_error} ->
+            if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
+        end
+    end
+  end
+
+  defp persist_failure(turn, category, message) do
+    reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
+    intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
+
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with {:ok, completed} <-
+             Cases.complete_turn(
+               turn.id,
+               turn.revision,
+               %{
+                 "outcome" => "delivery_failed",
+                 "category" => category,
+                 "message" => String.slice(message, 0, 1_000)
+               },
+               :human_input,
+               intent,
+               "Review the Resolver delivery failure",
+               authorize?: false
+             ),
+           {:ok, incident} <-
+             Cases.require_case_attention(
+               turn.case_id,
+               completed.case.revision,
+               turn.resolution_run_id,
+               completed.run.revision,
+               "resolver-failure:#{turn.id}",
+               reason,
+               intent,
+               "Review the Resolver delivery failure",
+               authorize?: false
+             ) do
+        incident
+      end
+    end)
+  end
+
+  defp failure(error) do
+    case find_error(error) do
+      %AI.Error{category: category, message: message} -> {to_string(category), message}
+      %{message: message} when is_binary(message) -> {"failed", message}
+      message when is_binary(message) -> {"failed", message}
+      _error -> {"failed", "Resolver delivery failed"}
+    end
+  end
+
+  defp find_error(%AI.Error{} = error), do: error
+
+  defp find_error(%{errors: errors}) when is_list(errors),
+    do: Enum.find_value(errors, &find_error/1)
+
+  defp find_error(error), do: error
+
+  defp turn_completed?(turn_id) do
+    match?({:ok, %{status: :completed}}, Cases.get_turn(turn_id, authorize?: false))
+  end
+
+  defp assignment_key(turn_id), do: Budget.key("turn:resolver_assignment", turn_id)
+  defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
+end

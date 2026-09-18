@@ -53,11 +53,7 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
 
   defp enqueue(turn_id) do
     %{"turn_id" => turn_id}
-    |> Oban.Job.new(
-      worker: Opsonde.Cases.ResolverWorker,
-      queue: :resolver,
-      unique: [period: :infinity, fields: [:worker, :queue, :args], states: :all]
-    )
+    |> Opsonde.Cases.ResolverWorker.new()
     |> Oban.insert()
   end
 end
