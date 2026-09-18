@@ -28,7 +28,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSearch do
       },
       operation: fn incident, run ->
         with {:ok, %SearchResult{} = result} <-
-               Targets.search_targets(query, arguments.max_results, actor: context.actor),
+               Targets.search_targets(query, arguments.max_results, authorize?: false),
              {:ok, evidence} <-
                Cases.create_evidence_record(
                  %{

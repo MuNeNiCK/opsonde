@@ -285,6 +285,13 @@ defmodule Opsonde.Cases.Case do
 
       run Opsonde.Cases.Case.Actions.TargetSelection
     end
+
+    action :route_target_discovery, :struct do
+      constraints instance_of: Opsonde.Cases.BudgetResult
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.TargetDiscoveryRoute
+    end
   end
 
   policies do
@@ -302,7 +309,13 @@ defmodule Opsonde.Cases.Case do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:by_trigger, :create_record, :update_record, :require_attention]) do
+    policy action([
+             :by_trigger,
+             :create_record,
+             :update_record,
+             :require_attention,
+             :route_target_discovery
+           ]) do
       forbid_if always()
     end
 

@@ -112,6 +112,10 @@ defmodule Opsonde.Cases do
           :reason,
           :idempotency_key
         ]
+
+      define :route_target_discovery,
+        action: :route_target_discovery,
+        args: [:turn_id]
     end
 
     resource Opsonde.Cases.ResolutionRun do
