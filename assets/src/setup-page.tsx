@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { OIDCSetup } from "@/oidc-setup";
 import { ProviderSetup } from "@/provider-setup";
 import type { AIUsageRoleAssignment, AuthoritySetting, Provider } from "@/setup-types";
 
@@ -148,6 +149,7 @@ export function SetupPage() {
         onRefresh={refresh}
         onError={setError}
       />
+      <OIDCSetup canManage={canManage} onError={setError} />
       <AuthoritySetup
         key={snapshot.authority.setting_revision}
         setting={snapshot.authority}

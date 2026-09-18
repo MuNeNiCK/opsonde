@@ -58,11 +58,12 @@ function AuthenticationGate({ children }: { children: ReactNode }) {
 }
 
 function LoginPage() {
-  const { account, bootstrap, signIn } = useAuthentication();
+  const { account, bootstrap, oidcEnabled, signIn, signInWithOIDC } = useAuthentication();
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [oidcFailed, setOIDCFailed] = useState(false);
   const [firstUse, setFirstUse] = useState(false);
   const returnPath = (location.state as { from?: string } | null)?.from ?? "/cases";
 
@@ -72,6 +73,7 @@ function LoginPage() {
     event.preventDefault();
     setSubmitting(true);
     setFailed(false);
+    setOIDCFailed(false);
     const form = new FormData(event.currentTarget);
     const email = form.get("email");
     const password = form.get("password");
@@ -100,6 +102,19 @@ function LoginPage() {
     }
   }
 
+  async function oidcSignIn() {
+    setSubmitting(true);
+    setFailed(false);
+    setOIDCFailed(false);
+    try {
+      await signInWithOIDC();
+    } catch {
+      setOIDCFailed(true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <main className="grid min-h-svh place-items-center bg-muted/40 p-4">
       <div className="w-full max-w-sm space-y-4">
@@ -121,11 +136,17 @@ function LoginPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={submit}>
-              {failed && (
+              {(failed || oidcFailed) && (
                 <Alert variant="destructive">
                   <AlertCircle />
                   <AlertDescription>
-                    {t(firstUse ? "login.bootstrapFailed" : "login.failed")}
+                    {t(
+                      oidcFailed
+                        ? "login.oidcFailed"
+                        : firstUse
+                          ? "login.bootstrapFailed"
+                          : "login.failed",
+                    )}
                   </AlertDescription>
                 </Alert>
               )}
@@ -159,12 +180,24 @@ function LoginPage() {
                 {submitting && <Spinner />}
                 {t(firstUse ? "login.bootstrapSubmit" : "login.submit")}
               </Button>
+              {!firstUse && oidcEnabled && (
+                <Button
+                  className="w-full"
+                  type="button"
+                  variant="outline"
+                  disabled={submitting}
+                  onClick={() => void oidcSignIn()}
+                >
+                  {t("login.oidcSubmit")}
+                </Button>
+              )}
               <Button
                 className="w-full"
                 type="button"
                 variant="ghost"
                 onClick={() => {
                   setFailed(false);
+                  setOIDCFailed(false);
                   setFirstUse((value) => !value);
                 }}
               >

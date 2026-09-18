@@ -29,6 +29,8 @@ const resources = {
         useExisting: "Use an existing account",
         bootstrapFailed:
           "The administrator could not be created. Check the values or sign in if setup is complete.",
+        oidcSubmit: "Sign in with OIDC",
+        oidcFailed: "OIDC authentication failed or was cancelled.",
       },
       navigation: {
         operations: "Operations",
@@ -94,6 +96,24 @@ const resources = {
         priority: "Priority",
         assign: "Assign role",
         noRoles: "No AI role is assigned.",
+        oidcTitle: "OIDC authentication",
+        oidcDescription:
+          "Optionally connect one identity provider and link it explicitly to existing Opsonde accounts.",
+        oidcConnection: "Identity provider",
+        oidcSecretDescription:
+          "The client secret is write-only. Enter it whenever this configuration is saved.",
+        oidcCallback: "Redirect URI",
+        oidcCallbackDescription: "Register this exact URI with the identity provider.",
+        oidcIssuer: "Issuer URL",
+        oidcClientId: "Client ID",
+        oidcClientSecret: "Client secret",
+        oidcEnabled: "Allow OIDC authentication",
+        saveOIDC: "Save OIDC connection",
+        linkOIDCTitle: "Linked identity",
+        linkOIDCDescription:
+          "Authenticate with the identity provider to link its subject to this account.",
+        linkOIDC: "Link OIDC identity",
+        oidcLinked: "The OIDC identity is linked.",
         authorityTitle: "Authority and limits",
         authorityDescription: "These values are captured when a new Case starts.",
         modeTitle: "Authority mode",
@@ -446,6 +466,8 @@ const resources = {
         useExisting: "既存アカウントを使用",
         bootstrapFailed:
           "管理者を作成できませんでした。入力値を確認するか、設定済みの場合はログインしてください。",
+        oidcSubmit: "OIDCでログイン",
+        oidcFailed: "OIDC認証に失敗したか、キャンセルされました。",
       },
       navigation: {
         operations: "運用",
@@ -510,6 +532,23 @@ const resources = {
         priority: "優先度",
         assign: "役割を割り当て",
         noRoles: "AI役割は未設定です。",
+        oidcTitle: "OIDC認証",
+        oidcDescription:
+          "任意で1つのIDプロバイダーを接続し、既存のOpsondeアカウントへ明示的にリンクします。",
+        oidcConnection: "IDプロバイダー",
+        oidcSecretDescription:
+          "クライアントシークレットは書き込み専用です。設定を保存するたびに入力してください。",
+        oidcCallback: "リダイレクトURI",
+        oidcCallbackDescription: "このURIをIDプロバイダーへ正確に登録してください。",
+        oidcIssuer: "Issuer URL",
+        oidcClientId: "Client ID",
+        oidcClientSecret: "Client secret",
+        oidcEnabled: "OIDC認証を許可",
+        saveOIDC: "OIDC接続を保存",
+        linkOIDCTitle: "リンク済みID",
+        linkOIDCDescription: "IDプロバイダーで認証し、そのSubjectをこのアカウントへリンクします。",
+        linkOIDC: "OIDC IDをリンク",
+        oidcLinked: "OIDC IDをリンクしました。",
         authorityTitle: "権限と制限",
         authorityDescription: "新しいケースの開始時に、これらの値が固定されます。",
         modeTitle: "権限モード",

@@ -9,6 +9,8 @@ import Config
 
 config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
 
+config :opsonde, :oidc_redirect_base_url, "http://localhost:4000/auth"
+
 config :opsonde, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,

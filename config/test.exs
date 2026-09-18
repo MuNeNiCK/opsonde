@@ -22,7 +22,7 @@ config :opsonde,
     Opsonde.AIAdapterFixture
   ]
 
-config :opsonde, Opsonde.Providers.Vault,
+config :opsonde, Opsonde.Vault,
   ciphers: [
     default:
       {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: :binary.copy(<<2>>, 32), iv_length: 12}

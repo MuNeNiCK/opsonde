@@ -10,8 +10,11 @@ export type Account = {
 export type Authentication = {
   account: Account | null;
   loading: boolean;
+  oidcEnabled: boolean;
   bootstrap: (email: string, password: string, confirmation: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithOIDC: () => Promise<void>;
+  linkOIDC: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 

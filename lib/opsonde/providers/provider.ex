@@ -7,7 +7,7 @@ defmodule Opsonde.Providers.Provider do
     data_layer: AshPostgres.DataLayer
 
   cloak do
-    vault(Opsonde.Providers.Vault)
+    vault(Opsonde.Vault)
     attributes([:credentials])
   end
 

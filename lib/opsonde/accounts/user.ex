@@ -28,6 +28,19 @@ defmodule Opsonde.Accounts.User do
         registration_enabled? false
         sign_in_tokens_enabled? false
       end
+
+      oidc :oidc do
+        base_url Opsonde.Secrets
+        client_id Opsonde.Secrets
+        client_secret Opsonde.Secrets
+        redirect_uri Opsonde.Secrets
+        identity_resource Opsonde.Accounts.UserIdentity
+        registration_enabled? false
+        trust_email_verified? true
+        code_verifier true
+        nonce true
+        authorization_params scope: "profile email"
+      end
     end
   end
 
@@ -68,6 +81,17 @@ defmodule Opsonde.Accounts.User do
       metadata :token, :string do
         allow_nil? false
       end
+    end
+
+    read :sign_in_with_oidc do
+      description "Sign in or explicitly link an account using the configured OIDC issuer."
+      get? true
+
+      argument :user_info, :map, allow_nil?: false
+      argument :oauth_tokens, :map, allow_nil?: false, sensitive?: true
+
+      prepare Opsonde.Accounts.User.Preparations.ResolveOIDC
+      prepare AshAuthentication.Strategy.OAuth2.SignInPreparation
     end
 
     create :bootstrap do
@@ -120,6 +144,11 @@ defmodule Opsonde.Accounts.User do
       change set_attribute(:role, arg(:role))
       change atomic_update(:role_version, expr(role_version + 1))
       change Opsonde.Accounts.User.Changes.RevokeTokens
+    end
+
+    action :issue_session, :string do
+      argument :user_id, :uuid, allow_nil?: false
+      run Opsonde.Accounts.User.Actions.IssueSession
     end
   end
 

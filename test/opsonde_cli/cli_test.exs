@@ -71,6 +71,42 @@ defmodule OpsondeCLI.CLITest do
     refute shown =~ "session-token"
   end
 
+  test "stores the ordinary product session returned by OIDC browser login", context do
+    browser_login = fn client, timeout, open_browser, listen ->
+      assert client.server == "https://opsonde.example"
+      assert timeout == 42_000
+      assert is_function(open_browser, 1)
+      assert is_function(listen, 2)
+
+      {:ok, "oidc-product-session", %{"id" => "account-oidc", "role" => "operator"}}
+    end
+
+    output =
+      capture_io(fn ->
+        assert CLI.run(
+                 [
+                   "auth",
+                   "login",
+                   "--oidc",
+                   "--server",
+                   "https://opsonde.example",
+                   "--timeout",
+                   "42"
+                 ],
+                 runtime(context) ++ [browser_login: browser_login]
+               ) == 0
+      end)
+
+    assert output =~ "account-oidc"
+    refute output =~ "oidc-product-session"
+
+    assert {:ok,
+            %{
+              "server" => "https://opsonde.example",
+              "token" => "oidc-product-session"
+            }} = Config.load(context.config_path)
+  end
+
   test "changing the server clears its session without changing an existing parent mode",
        context do
     parent = Path.dirname(context.config_path)

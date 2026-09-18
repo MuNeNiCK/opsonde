@@ -5,6 +5,12 @@ defmodule OpsondeWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :oidc_browser do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug OpsondeWeb.OIDCContext
+  end
+
   pipeline :authenticated_api do
     plug OpsondeWeb.API.Auth
   end
@@ -14,6 +20,9 @@ defmodule OpsondeWeb.Router do
 
     post "/accounts/bootstrap", AccountController, :bootstrap
     post "/sessions", SessionController, :create
+    get "/oidc", OIDCController, :status
+    post "/oidc/cli/requests", OIDCController, :create_cli_request
+    post "/oidc/cli/requests/:id/exchange", OIDCController, :exchange_cli_request
   end
 
   scope "/api/v1", OpsondeWeb.API.V1 do
@@ -24,6 +33,9 @@ defmodule OpsondeWeb.Router do
     get "/accounts", AccountController, :index
     post "/accounts", AccountController, :create
     patch "/accounts/:id/role", AccountController, :update_role
+    get "/oidc/provider", OIDCController, :show_provider
+    put "/oidc/provider", OIDCController, :configure_provider
+    post "/oidc/link-requests", OIDCController, :create_link_request
 
     get "/providers", ProviderController, :index
     post "/providers", ProviderController, :create
@@ -129,6 +141,13 @@ defmodule OpsondeWeb.Router do
     pipe_through :api
 
     match :*, "/*path", APIErrorController, :not_found
+  end
+
+  scope "/auth", OpsondeWeb do
+    pipe_through :oidc_browser
+
+    get "/oidc/start/:id", OIDCStartController, :start
+    forward "/", OIDCAuthPlug
   end
 
   scope "/", OpsondeWeb do

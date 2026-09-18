@@ -1,6 +1,6 @@
 import Config
 
-config :opsonde, Opsonde.Providers.Vault,
+config :opsonde, Opsonde.Vault,
   ciphers: [
     default:
       {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: :binary.copy(<<1>>, 32), iv_length: 12}

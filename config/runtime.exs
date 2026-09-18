@@ -23,6 +23,19 @@ end
 config :opsonde, OpsondeWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+if public_url = System.get_env("OPSONDE_PUBLIC_URL") do
+  public_url = String.trim_trailing(public_url, "/")
+  uri = URI.parse(public_url)
+
+  unless uri.scheme in ["http", "https"] and is_binary(uri.host) and
+           uri.path in [nil, ""] and is_nil(uri.userinfo) and is_nil(uri.query) and
+           is_nil(uri.fragment) do
+    raise "OPSONDE_PUBLIC_URL must be an HTTP(S) origin without credentials, path, query, or fragment"
+  end
+
+  config :opsonde, :oidc_redirect_base_url, public_url <> "/auth"
+end
+
 if config_env() == :prod and not Burrito.Util.running_standalone?() do
   encoded_credentials_key =
     System.get_env("OPSONDE_CREDENTIALS_KEY") ||
@@ -34,7 +47,7 @@ if config_env() == :prod and not Burrito.Util.running_standalone?() do
       _other -> raise "OPSONDE_CREDENTIALS_KEY must be a Base64-encoded 32-byte key"
     end
 
-  config :opsonde, Opsonde.Providers.Vault,
+  config :opsonde, Opsonde.Vault,
     ciphers: [
       default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: credentials_key, iv_length: 12}
     ]

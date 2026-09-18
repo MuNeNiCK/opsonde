@@ -9,11 +9,17 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
   @required_routes [
     {:post, "/api/v1/accounts/bootstrap"},
     {:post, "/api/v1/sessions"},
+    {:get, "/api/v1/oidc"},
+    {:post, "/api/v1/oidc/cli/requests"},
+    {:post, "/api/v1/oidc/cli/requests/:id/exchange"},
     {:get, "/api/v1/session"},
     {:delete, "/api/v1/session"},
     {:get, "/api/v1/accounts"},
     {:post, "/api/v1/accounts"},
     {:patch, "/api/v1/accounts/:id/role"},
+    {:get, "/api/v1/oidc/provider"},
+    {:put, "/api/v1/oidc/provider"},
+    {:post, "/api/v1/oidc/link-requests"},
     {:get, "/api/v1/providers"},
     {:post, "/api/v1/providers"},
     {:get, "/api/v1/providers/:id"},
@@ -211,7 +217,10 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
         route.plug not in [OpsondeWeb.APIErrorController, OpsondeWeb.SignalWebhookController] and
         {route.verb, route.path} not in [
           {:post, "/api/v1/accounts/bootstrap"},
-          {:post, "/api/v1/sessions"}
+          {:post, "/api/v1/sessions"},
+          {:get, "/api/v1/oidc"},
+          {:post, "/api/v1/oidc/cli/requests"},
+          {:post, "/api/v1/oidc/cli/requests/:id/exchange"}
         ]
     end)
   end

@@ -8,6 +8,8 @@ defmodule OpsondeWeb.Endpoint do
     store: :cookie,
     key: "_opsonde_key",
     signing_salt: "JUM2k9HF",
+    encryption_salt: "gY8ONzqL",
+    max_age: 600,
     same_site: "Lax"
   ]
 
