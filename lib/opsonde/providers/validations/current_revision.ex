@@ -1,4 +1,4 @@
-defmodule Opsonde.Providers.Provider.Validations.CurrentRevision do
+defmodule Opsonde.Providers.Validations.CurrentRevision do
   use Ash.Resource.Validation
 
   import Ash.Expr

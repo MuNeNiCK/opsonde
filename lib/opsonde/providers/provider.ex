@@ -70,7 +70,7 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate Opsonde.Providers.Provider.Validations.CurrentRevision
+      validate Opsonde.Providers.Validations.CurrentRevision
       change set_attribute(:enabled, false)
       change set_attribute(:checked_revision, nil)
       change set_attribute(:check_status, nil)
@@ -154,18 +154,32 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Notification
     end
 
-    action :ai_decide, :struct do
-      constraints instance_of: Opsonde.Providers.AI.Decision
+    action :ai_resolve, :struct do
+      constraints instance_of: Opsonde.Providers.AI.ResolverDecision
       transaction? false
 
       argument :provider_id, :uuid, allow_nil?: false
 
       argument :request, :struct,
         allow_nil?: false,
-        constraints: [instance_of: Opsonde.Providers.AI.Request]
+        constraints: [instance_of: Opsonde.Providers.AI.ResolverRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
-      run Opsonde.Providers.Provider.Actions.AI
+      run {Opsonde.Providers.Provider.Actions.AI, operation: :resolve}
+    end
+
+    action :ai_review, :struct do
+      constraints instance_of: Opsonde.Providers.AI.ReviewDecision
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.AI.ReviewRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.AI, operation: :review}
     end
 
     action :target_observe, :struct do
@@ -234,7 +248,7 @@ defmodule Opsonde.Providers.Provider do
 
       argument :check_message, :string
 
-      validate Opsonde.Providers.Provider.Validations.CurrentRevision
+      validate Opsonde.Providers.Validations.CurrentRevision
       change set_attribute(:checked_revision, arg(:expected_revision))
       change set_attribute(:check_status, arg(:check_status))
       change set_attribute(:check_category, arg(:check_category))
@@ -260,7 +274,7 @@ defmodule Opsonde.Providers.Provider do
       validate compare(:checked_revision, is_equal: {:ref, :revision}),
         message: "does not have a current check"
 
-      validate Opsonde.Providers.Provider.Validations.CurrentRevision
+      validate Opsonde.Providers.Validations.CurrentRevision
       change set_attribute(:enabled, true)
     end
 
@@ -271,7 +285,7 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate Opsonde.Providers.Provider.Validations.CurrentRevision
+      validate Opsonde.Providers.Validations.CurrentRevision
       change set_attribute(:enabled, false)
     end
   end
@@ -308,7 +322,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action(:ai_decide) do
+    policy action([:ai_resolve, :ai_review]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end

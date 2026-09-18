@@ -11,165 +11,314 @@ defmodule Opsonde.Providers.AITest do
   setup do
     admin = Accounts.bootstrap!("ai-admin@example.com", @password, @password, authorize?: true)
 
-    provider =
-      Providers.create_provider!(
-        "ai-provider",
-        :ai,
-        "fixture-ai",
-        %{"model" => "test-model"},
-        %{"api_key" => @api_key},
-        actor: admin
-      )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
-      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+    operator =
+      Accounts.create_user!("ai-operator@example.com", @password, :operator, actor: admin)
 
-    %{admin: admin, provider: provider}
+    provider = create_ai_provider!(admin, "ai-provider", "test-model")
+
+    %{admin: admin, operator: operator, provider: provider}
   end
 
-  test "prior observations can change one available next choice", context do
-    request = request(context.provider.revision)
+  test "one AI provider carries resolver and reviewer roles without connection duplication",
+       context do
+    resolver = assign!(context.admin, context.provider, :resolver, 20)
+    reviewer = assign!(context.admin, context.provider, :reviewer, 10)
 
-    respond = fn request ->
-      tool_id = if request.observation_results == [], do: "inspect-system", else: "inspect-disk"
+    assert resolver.provider_id == reviewer.provider_id
+    assert resolver.role == :resolver
+    assert reviewer.role == :reviewer
 
-      {:ok,
-       %AI.Decision{
-         usage: usage(),
-         next_observation: %AI.ObservationChoice{
-           tool_id: tool_id,
-           parameters: %{},
-           reason: "next fact"
-         }
-       }}
+    for assignment <- Providers.list_ai_usage_role_assignments!(actor: context.admin) do
+      fields = Map.from_struct(assignment)
+      refute Map.has_key?(fields, :configuration)
+      refute Map.has_key?(fields, :credentials)
     end
 
-    first = decide!(context, request, respond)
-    assert first.next_observation.tool_id == "inspect-system"
-    assert_receive {:decision, %{model: "test-model", api_key: @api_key}, ^request}
+    assert {:error, _error} =
+             Providers.create_ai_usage_role_assignment(
+               context.provider.id,
+               :resolver,
+               30,
+               actor: context.admin
+             )
 
-    with_observation = %{
-      request
-      | observation_results: [
-          %AI.ObservationResult{
-            tool_id: "inspect-system",
-            target_id: "target-1",
-            kind: :observation,
-            status: :ok,
-            content: %{load: 0.9}
-          }
-        ]
+    target_provider =
+      Providers.create_provider!(
+        "not-ai",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "target-token"},
+        actor: context.admin
+      )
+
+    assert {:error, wrong_kind} =
+             Providers.create_ai_usage_role_assignment(
+               target_provider.id,
+               :reviewer,
+               10,
+               actor: context.admin
+             )
+
+    assert Exception.message(wrong_kind) =~ "must reference an AI provider"
+  end
+
+  test "selection uses priority and reviewer fallback reuses the exact resolver provider",
+       context do
+    resolver_assignment = assign!(context.admin, context.provider, :resolver, 50)
+    reviewer_provider = create_ai_provider!(context.admin, "reviewer-provider", "review-model")
+    reviewer_assignment = assign!(context.admin, reviewer_provider, :reviewer, 10)
+    backup_reviewer = create_ai_provider!(context.admin, "backup-reviewer", "backup-model")
+    backup_assignment = assign!(context.admin, backup_reviewer, :reviewer, 20)
+
+    assert %AI.Selection{
+             role: :resolver,
+             provider_id: resolver_id,
+             provider_revision: resolver_revision,
+             source: :assignment,
+             assignment_id: resolver_assignment_id,
+             assignment_revision: resolver_assignment_revision
+           } = Providers.select_resolver_ai!(actor: context.operator)
+
+    assert resolver_id == context.provider.id
+    assert resolver_revision == context.provider.revision
+    assert resolver_assignment_id == resolver_assignment.id
+
+    assert %AI.Selection{
+             role: :reviewer,
+             provider_id: reviewer_id,
+             source: :assignment,
+             assignment_id: reviewer_assignment_id
+           } =
+             Providers.select_reviewer_ai!(
+               resolver_assignment_id,
+               resolver_assignment_revision,
+               resolver_revision,
+               actor: context.operator
+             )
+
+    assert reviewer_id == reviewer_provider.id
+    assert reviewer_assignment_id == reviewer_assignment.id
+
+    Providers.update_ai_usage_role_assignment!(
+      reviewer_assignment,
+      reviewer_assignment.revision,
+      %{enabled: false},
+      actor: context.admin
+    )
+
+    Providers.update_ai_usage_role_assignment!(
+      backup_assignment,
+      backup_assignment.revision,
+      %{enabled: false},
+      actor: context.admin
+    )
+
+    assert %AI.Selection{
+             role: :reviewer,
+             provider_id: ^resolver_id,
+             provider_revision: ^resolver_revision,
+             source: :resolver_fallback,
+             assignment_id: ^resolver_assignment_id,
+             assignment_revision: ^resolver_assignment_revision
+           } =
+             Providers.select_reviewer_ai!(
+               resolver_assignment_id,
+               resolver_assignment_revision,
+               resolver_revision,
+               actor: context.operator
+             )
+
+    Providers.update_ai_usage_role_assignment!(
+      resolver_assignment,
+      resolver_assignment.revision,
+      %{priority: 40},
+      actor: context.admin
+    )
+
+    assert {:error, _stale_resolver} =
+             Providers.select_reviewer_ai(
+               resolver_assignment_id,
+               resolver_assignment_revision,
+               resolver_revision,
+               actor: context.operator
+             )
+  end
+
+  test "Resolver returns exactly one observation, proposal, recovery or handoff intent",
+       context do
+    request = resolver_request(context.provider.revision)
+
+    observation = %AI.ObservationChoice{
+      tool_id: "inspect-system",
+      parameters: %{},
+      reason: "Collect current system state"
     }
 
-    second = decide!(context, with_observation, respond)
-    assert second.next_observation.tool_id == "inspect-disk"
+    assert %AI.ResolverDecision{intent: ^observation} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: observation, usage: usage()}}
+             end)
+
+    assert_receive {:resolve, %{model: "test-model", api_key: @api_key}, ^request}
+
+    proposal = proposal()
+    later_request = %{request | turn: 2, observation_results: [observation_result()]}
+
+    assert %AI.ResolverDecision{intent: ^proposal} =
+             resolve!(context, later_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: proposal, usage: usage()}}
+             end)
+
+    recovered_request = %{later_request | turn: 3, alert_state: :recovered}
+
+    recovery = %AI.RecoveryConclusion{
+      reason: "The alert recovered after fresh verification",
+      evidence_ids: ["observation-1"]
+    }
+
+    assert %AI.ResolverDecision{intent: ^recovery} =
+             resolve!(context, recovered_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
+             end)
+
+    handoff = %AI.Handoff{
+      reason: "A physical inspection is required",
+      required_input: "Confirm the drive fault LED"
+    }
+
+    assert %AI.ResolverDecision{intent: ^handoff} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
+             end)
   end
 
-  test "structured conclusions preserve bounds and redact credential echoes", context do
-    request = request(context.provider.revision)
+  test "Resolver rejects invented effects and recovery without fresh recovered evidence",
+       context do
+    request = resolver_request(context.provider.revision)
+    invented = %{proposal() | tool_id: "invented-effect"}
 
-    decision =
-      decide!(context, request, fn _request ->
-        {:ok,
-         %AI.Decision{
-           usage: usage(),
-           findings: [
-             %AI.Finding{
-               summary: "leak #{@api_key}",
-               confidence: 0.8,
-               evidence_ids: ["evidence-1"]
-             }
-           ],
-           proposals: [
-             %AI.Proposal{
-               tool_id: "restart-service",
-               target_id: "target-1",
-               capability: :restart_service,
-               parameters: %{service: "api"},
-               reason: "recover service"
-             }
-           ]
-         }}
-      end)
+    assert {:error, proposal_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invented, usage: usage()}}
+             end)
 
-    assert hd(decision.findings).summary == "leak [REDACTED]"
-    assert decision.usage == usage()
-    refute inspect(request) =~ @api_key
-    refute inspect(decision) =~ @api_key
+    assert ai_error(proposal_error).category == :invalid_output
+
+    recovery = %AI.RecoveryConclusion{
+      reason: "Assume recovered",
+      evidence_ids: ["evidence-1"]
+    }
+
+    assert {:error, recovery_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
+             end)
+
+    assert ai_error(recovery_error).category == :invalid_output
+
+    malformed_request = %{request | evidence: [%{}]}
+    assert {:error, malformed} = resolve(context, malformed_request, unreachable_response())
+    assert ai_error(malformed).category == :invalid_input
   end
 
-  test "malformed and unavailable choices are rejected", context do
-    request = request(context.provider.revision)
+  test "Reviewer receives an isolated proposal-only request", context do
+    request = review_request(context.provider.revision)
 
-    invalid_choice = fn _request ->
-      {:ok,
-       %AI.Decision{
-         usage: usage(),
-         next_observation: %AI.ObservationChoice{
-           tool_id: "missing-tool",
-           parameters: %{},
-           reason: "invalid"
-         }
-       }}
-    end
+    assert %AI.ReviewDecision{verdict: :approved} =
+             review!(context, request, fn received ->
+               fields = Map.from_struct(received)
+               refute Map.has_key?(fields, :observation_tools)
+               refute Map.has_key?(fields, :proposal_tools)
+               refute Map.has_key?(fields, :observation_results)
 
-    assert {:error, error} = decide(context, request, invalid_choice)
-    assert ai_error(error).category == :invalid_output
-
-    assert {:error, error} = decide(context, request, fn _request -> {:ok, %{}} end)
-    assert ai_error(error).category == :invalid_output
-
-    invented_proposal = fn _request ->
-      {:ok,
-       %AI.Decision{
-         usage: usage(),
-         proposals: [
-           %AI.Proposal{
-             tool_id: "invented-tool",
-             target_id: "target-1",
-             capability: :restart_service,
-             parameters: %{},
-             reason: "invented"
-           }
-         ]
-       }}
-    end
-
-    assert {:error, error} = decide(context, request, invented_proposal)
-    assert ai_error(error).category == :invalid_output
-  end
-
-  test "token usage is nonnegative and cannot exceed the remaining budget", context do
-    request = request(context.provider.revision)
-
-    assert {:error, invalid} =
-             decide(context, request, fn _request ->
                {:ok,
-                %AI.Decision{
-                  usage: %AI.Usage{input_tokens: -1, output_tokens: 1},
-                  findings: []
+                %AI.ReviewDecision{
+                  verdict: :approved,
+                  reason: "Proposal matches the cited evidence and policy",
+                  usage: usage()
                 }}
              end)
 
-    assert ai_error(invalid).category == :invalid_output
+    assert_receive {:review, %{model: "test-model", api_key: @api_key}, ^request}
 
-    assert {:error, exhausted} =
-             decide(context, request, fn _request ->
+    same_session = %{request | session_id: request.resolver_session_id}
+
+    assert {:error, isolated_error} = review(context, same_session, unreachable_response())
+    assert ai_error(isolated_error).category == :invalid_input
+    refute_receive {:review, _, ^same_session}
+
+    assert {:error, malformed_output} =
+             review(context, request, fn _request -> {:ok, %{verdict: :approved}} end)
+
+    assert ai_error(malformed_output).category == :invalid_output
+  end
+
+  test "budgets, disclosure, cancellation and stale providers stop before model dispatch",
+       context do
+    request = resolver_request(context.provider.revision)
+
+    assert {:error, cancelled} =
+             Providers.ai_resolve(
+               context.provider.id,
+               request,
+               %{cancelled?: fn -> true end},
+               actor: context.admin
+             )
+
+    assert ai_error(cancelled).category == :cancelled
+
+    exhausted = %{request | budget: %{request.budget | remaining_turns: 0}}
+    assert {:error, exhausted_error} = resolve(context, exhausted, unreachable_response())
+    assert ai_error(exhausted_error).category == :budget_exhausted
+
+    undisclosed = %{request | disclosure: %{request.disclosure | max_bytes: 1}}
+    assert {:error, disclosure_error} = resolve(context, undisclosed, unreachable_response())
+    assert ai_error(disclosure_error).category == :disclosure_limit
+
+    Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
+    assert {:error, _stale_error} = resolve(context, request, unreachable_response())
+    refute_receive {:resolve, _, _}
+  end
+
+  test "token usage and provider failures stay typed and redact secrets", context do
+    request = resolver_request(context.provider.revision)
+    intent = %AI.Handoff{reason: "Need human input", required_input: "Inspect hardware"}
+
+    assert {:error, invalid_usage} =
+             resolve(context, request, fn _request ->
                {:ok,
-                %AI.Decision{
-                  usage: %AI.Usage{input_tokens: 1_500, output_tokens: 501},
-                  findings: []
+                %AI.ResolverDecision{
+                  intent: intent,
+                  usage: %AI.Usage{input_tokens: -1, output_tokens: 1}
                 }}
              end)
 
-    assert ai_error(exhausted).category == :budget_exhausted
-  end
+    assert ai_error(invalid_usage).category == :invalid_output
 
-  test "connection failures remain typed and redact adapter messages", context do
-    request = request(context.provider.revision)
+    assert {:error, exceeded} =
+             resolve(context, request, fn _request ->
+               {:ok,
+                %AI.ResolverDecision{
+                  intent: intent,
+                  usage: %AI.Usage{input_tokens: 1_500, output_tokens: 501}
+                }}
+             end)
+
+    assert ai_error(exceeded).category == :budget_exhausted
+
+    secret_intent = %{intent | reason: "credential #{@api_key} requires inspection"}
+
+    assert %AI.ResolverDecision{intent: %AI.Handoff{reason: redacted_reason}} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: secret_intent, usage: usage()}}
+             end)
+
+    assert redacted_reason == "credential [REDACTED] requires inspection"
 
     for category <- [:authentication, :unreachable, :timeout, :rate_limited, :failed] do
       assert {:error, error} =
-               decide(context, request, fn _request ->
+               resolve(context, request, fn _request ->
                  {:error, category, "credential #{@api_key} failed"}
                end)
 
@@ -179,81 +328,94 @@ defmodule Opsonde.Providers.AITest do
     end
   end
 
-  test "cancellation, exhausted budget and disclosure bounds stop before dispatch", context do
-    request = request(context.provider.revision)
-
-    assert {:error, cancelled} =
-             Providers.ai_decide(
-               context.provider.id,
-               request,
-               %{cancelled?: fn -> true end},
-               actor: context.admin
-             )
-
-    assert ai_error(cancelled).category == :cancelled
-
-    exhausted = %{request | budget: %AI.Budget{remaining_turns: 0, remaining_tokens: 100}}
-    assert {:error, error} = decide(context, exhausted, unreachable_response())
-    assert ai_error(error).category == :budget_exhausted
-
-    bounded = %{request | disclosure: %{request.disclosure | max_bytes: 1}}
-    assert {:error, error} = decide(context, bounded, unreachable_response())
-    assert ai_error(error).category == :disclosure_limit
-
-    refute_receive {:decision, _, _}
-  end
-
-  defp decide(context, request, respond) do
-    Providers.ai_decide(
-      context.provider.id,
-      request,
-      %{test_pid: self(), respond: respond},
-      actor: context.admin
-    )
-  end
-
-  defp decide!(context, request, respond) do
-    Providers.ai_decide!(
-      context.provider.id,
-      request,
-      %{test_pid: self(), respond: respond},
-      actor: context.admin
-    )
-  end
-
-  defp request(provider_revision) do
-    %AI.Request{
-      provider_revision: provider_revision,
-      objective: "Restore service health",
-      disclosure: %AI.Disclosure{
-        allowed_target_ids: ["target-1"],
-        allowed_evidence_kinds: [:signal, :observation],
-        max_items: 10,
-        max_bytes: 10_000
+  defp create_ai_provider!(admin, name, model) do
+    Providers.create_provider!(
+      name,
+      :ai,
+      "fixture-ai",
+      %{
+        "model" => model,
+        "timeout_ms" => 30_000,
+        "max_output_tokens" => 2_000
       },
-      budget: %AI.Budget{remaining_turns: 4, remaining_tokens: 2_000},
-      evidence: [
-        %AI.Evidence{
-          id: "evidence-1",
-          kind: :signal,
-          target_id: "target-1",
-          content: %{alert: "high load"}
+      %{"api_key" => @api_key},
+      actor: admin
+    )
+    |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+    |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+  end
+
+  defp assign!(admin, provider, role, priority) do
+    Providers.create_ai_usage_role_assignment!(provider.id, role, priority, actor: admin)
+  end
+
+  defp resolve(context, request, respond) do
+    Providers.ai_resolve(
+      context.provider.id,
+      request,
+      %{test_pid: self(), respond: respond},
+      actor: context.admin
+    )
+  end
+
+  defp resolve!(context, request, respond) do
+    Providers.ai_resolve!(
+      context.provider.id,
+      request,
+      %{test_pid: self(), respond: respond},
+      actor: context.admin
+    )
+  end
+
+  defp review(context, request, respond) do
+    Providers.ai_review(
+      context.provider.id,
+      request,
+      %{test_pid: self(), respond: respond},
+      actor: context.admin
+    )
+  end
+
+  defp review!(context, request, respond) do
+    Providers.ai_review!(
+      context.provider.id,
+      request,
+      %{test_pid: self(), respond: respond},
+      actor: context.admin
+    )
+  end
+
+  defp resolver_request(provider_revision) do
+    %AI.ResolverRequest{
+      provider_revision: provider_revision,
+      session_id: "resolver-session-1",
+      case_id: "case-1",
+      turn: 1,
+      objective: "Restore service health",
+      alert_state: :firing,
+      disclosure: %AI.Disclosure{
+        allowed_target_ids: ["target-1", "target-2"],
+        allowed_evidence_kinds: [:signal, :observation],
+        max_items: 20,
+        max_bytes: 20_000
+      },
+      budget: budget(),
+      evidence: [evidence()],
+      observation_results: [],
+      target_relations: [
+        %AI.TargetRelation{
+          id: "relation-1",
+          source_target_id: "target-1",
+          target_target_id: "target-2",
+          kind: :runs_on
         }
       ],
-      observation_results: [],
-      tools: [
+      observation_tools: [
         %AI.ObservationTool{
           id: "inspect-system",
           target_id: "target-1",
           capability: :system,
           description: "Inspect system state",
-          input_schema: %{}
-        },
-        %AI.ObservationTool{
-          id: "inspect-disk",
-          target_id: "target-1",
-          capability: :disk,
-          description: "Inspect disk state",
           input_schema: %{}
         }
       ],
@@ -269,10 +431,67 @@ defmodule Opsonde.Providers.AITest do
     }
   end
 
+  defp review_request(provider_revision) do
+    %AI.ReviewRequest{
+      provider_revision: provider_revision,
+      session_id: "reviewer-session-1",
+      resolver_session_id: "resolver-session-1",
+      case_id: "case-1",
+      objective: "Restore service health",
+      policy_summary: "Target policy permits this exact restart request",
+      proposal: proposal(),
+      cited_evidence: [evidence()],
+      budget: budget()
+    }
+  end
+
+  defp evidence do
+    %AI.Evidence{
+      id: "evidence-1",
+      kind: :signal,
+      target_id: "target-1",
+      content: %{alert: "high load"}
+    }
+  end
+
+  defp observation_result do
+    %AI.ObservationResult{
+      id: "observation-1",
+      tool_id: "inspect-system",
+      target_id: "target-1",
+      kind: :observation,
+      status: :ok,
+      content: %{service: "healthy"}
+    }
+  end
+
+  defp proposal do
+    %AI.Proposal{
+      tool_id: "restart-service",
+      target_id: "target-1",
+      capability: :restart_service,
+      parameters: %{service: "api"},
+      reason: "Restart the unhealthy service",
+      evidence_ids: ["evidence-1"],
+      expected_result: %{service: "running"},
+      verification_intent: %{capability: :service_state, expected: "running"}
+    }
+  end
+
+  defp budget do
+    %AI.Budget{
+      remaining_turns: 4,
+      remaining_tokens: 2_000,
+      remaining_target_requests: 5,
+      remaining_effects: 2,
+      remaining_related_targets: 3
+    }
+  end
+
   defp usage, do: %AI.Usage{input_tokens: 100, output_tokens: 50}
 
   defp unreachable_response,
-    do: fn _request -> flunk("bounded request reached AI adapter") end
+    do: fn _request -> flunk("invalid request reached AI adapter") end
 
   defp ai_error(%{errors: errors}) do
     Enum.find_value(errors, fn

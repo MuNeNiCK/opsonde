@@ -46,8 +46,12 @@ defmodule Opsonde.Providers do
         action: :notification_deliver,
         args: [:provider_id, :request, :invocation]
 
-      define :ai_decide,
-        action: :ai_decide,
+      define :ai_resolve,
+        action: :ai_resolve,
+        args: [:provider_id, :request, :invocation]
+
+      define :ai_review,
+        action: :ai_review,
         args: [:provider_id, :request, :invocation]
 
       define :record_provider_check,
@@ -56,6 +60,36 @@ defmodule Opsonde.Providers do
 
       define :enable_provider, action: :enable, args: [:expected_revision]
       define :disable_provider, action: :disable, args: [:expected_revision]
+    end
+
+    resource Opsonde.Providers.AIUsageRoleAssignment do
+      define :list_ai_usage_role_assignments, action: :read
+
+      define :eligible_ai_usage_role_assignments,
+        action: :eligible,
+        args: [:role]
+
+      define :load_resolver_ai_usage_role_assignment,
+        action: :resolver_fallback,
+        args: [:id, :expected_assignment_revision, :expected_provider_revision]
+
+      define :create_ai_usage_role_assignment,
+        action: :create,
+        args: [:provider_id, :role, :priority]
+
+      define :update_ai_usage_role_assignment,
+        action: :update,
+        args: [:expected_revision]
+
+      define :select_resolver_ai, action: :select_resolver
+
+      define :select_reviewer_ai,
+        action: :select_reviewer,
+        args: [
+          :resolver_assignment_id,
+          :resolver_assignment_revision,
+          :resolver_provider_revision
+        ]
     end
   end
 end

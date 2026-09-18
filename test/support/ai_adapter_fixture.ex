@@ -19,8 +19,14 @@ defmodule Opsonde.AIAdapterFixture do
   def check(_state, _input), do: :ok
 
   @impl Opsonde.Providers.AI
-  def decide(state, request, invocation) do
-    send(invocation.test_pid, {:decision, state, request})
+  def resolve(state, request, invocation) do
+    send(invocation.test_pid, {:resolve, state, request})
+    invocation.respond.(request)
+  end
+
+  @impl Opsonde.Providers.AI
+  def review(state, request, invocation) do
+    send(invocation.test_pid, {:review, state, request})
     invocation.respond.(request)
   end
 end

@@ -10,7 +10,15 @@ defmodule Opsonde.Providers.AI do
 
   defmodule Budget do
     @moduledoc false
-    @enforce_keys [:remaining_turns, :remaining_tokens]
+
+    @enforce_keys [
+      :remaining_turns,
+      :remaining_tokens,
+      :remaining_target_requests,
+      :remaining_effects,
+      :remaining_related_targets
+    ]
+
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -24,8 +32,15 @@ defmodule Opsonde.Providers.AI do
 
   defmodule ObservationResult do
     @moduledoc false
-    @enforce_keys [:tool_id, :target_id, :kind, :status, :content]
+    @enforce_keys [:id, :tool_id, :target_id, :kind, :status, :content]
     defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule TargetRelation do
+    @moduledoc false
+    @enforce_keys [:id, :source_target_id, :target_target_id, :kind]
+    defstruct @enforce_keys ++ [attributes: %{}]
     @type t :: %__MODULE__{}
   end
 
@@ -50,16 +65,34 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
-  defmodule Finding do
+  defmodule Proposal do
     @moduledoc false
-    @enforce_keys [:summary, :confidence, :evidence_ids]
+
+    @enforce_keys [
+      :tool_id,
+      :target_id,
+      :capability,
+      :parameters,
+      :reason,
+      :evidence_ids,
+      :expected_result,
+      :verification_intent
+    ]
+
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
 
-  defmodule Proposal do
+  defmodule RecoveryConclusion do
     @moduledoc false
-    @enforce_keys [:tool_id, :target_id, :capability, :parameters, :reason]
+    @enforce_keys [:reason, :evidence_ids]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule Handoff do
+    @moduledoc false
+    @enforce_keys [:reason, :required_input]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -71,28 +104,66 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
-  defmodule Decision do
+  defmodule ResolverDecision do
     @moduledoc false
-    @enforce_keys [:usage]
-    defstruct @enforce_keys ++ [next_observation: nil, findings: [], proposals: []]
+    @enforce_keys [:intent, :usage]
+    defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
 
-  defmodule Request do
+  defmodule ResolverRequest do
     @moduledoc false
 
     @enforce_keys [
       :provider_revision,
+      :session_id,
+      :case_id,
+      :turn,
       :objective,
+      :alert_state,
       :disclosure,
       :budget,
       :evidence,
       :observation_results,
-      :tools,
+      :target_relations,
+      :observation_tools,
       :proposal_tools
     ]
 
     defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule ReviewRequest do
+    @moduledoc false
+
+    @enforce_keys [
+      :provider_revision,
+      :session_id,
+      :resolver_session_id,
+      :case_id,
+      :objective,
+      :policy_summary,
+      :proposal,
+      :cited_evidence,
+      :budget
+    ]
+
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule ReviewDecision do
+    @moduledoc false
+    @enforce_keys [:verdict, :reason, :usage]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule Selection do
+    @moduledoc false
+    @enforce_keys [:role, :provider_id, :provider_revision, :source]
+    defstruct @enforce_keys ++ [assignment_id: nil, assignment_revision: nil]
     @type t :: %__MODULE__{}
   end
 
@@ -110,6 +181,8 @@ defmodule Opsonde.Providers.AI do
            :authentication | :unreachable | :timeout | :failed | :rate_limited | :cancelled,
            String.t()}
 
-  @callback decide(state :: term(), Request.t(), invocation()) ::
-              {:ok, Decision.t()} | adapter_error()
+  @callback resolve(state :: term(), ResolverRequest.t(), invocation()) ::
+              {:ok, ResolverDecision.t()} | adapter_error()
+  @callback review(state :: term(), ReviewRequest.t(), invocation()) ::
+              {:ok, ReviewDecision.t()} | adapter_error()
 end
