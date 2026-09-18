@@ -58,6 +58,7 @@ defmodule Opsonde.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:req_llm, "~> 1.24"},
       {:jsv, "~> 0.23"},
       {:oban, "~> 2.0"},
       {:cloak, "~> 1.0"},

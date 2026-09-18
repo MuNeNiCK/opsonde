@@ -1,0 +1,501 @@
+defmodule Opsonde.AI.ReqLLMTest do
+  use Opsonde.DataCase, async: false
+
+  alias Opsonde.Accounts
+  alias Opsonde.AI.ReqLLM, as: Adapter
+  alias Opsonde.Providers
+  alias Opsonde.Providers.AI
+
+  defmodule ProviderStub do
+    import Plug.Conn
+
+    def init(agent), do: agent
+
+    def call(conn, agent) do
+      {:ok, body, conn} = read_body(conn)
+
+      request = %{
+        path: conn.request_path,
+        headers: conn.req_headers,
+        body: body
+      }
+
+      mode =
+        Agent.get_and_update(agent, fn state ->
+          {state.mode, %{state | requests: [request | state.requests]}}
+        end)
+
+      respond(conn, request, check_decision(request.body, mode))
+    end
+
+    defp respond(conn, _request, {:sleep, milliseconds}) do
+      Process.sleep(milliseconds)
+      json(conn, openai_response(handoff()))
+    end
+
+    defp respond(conn, request, {:decision, decision}) do
+      decision = wire_decision(decision)
+
+      cond do
+        request.path == "/v1/messages" -> json(conn, anthropic_response(decision))
+        authorization?(request.headers) -> json(conn, openai_response(decision))
+        true -> json(conn, openai_text_response(decision))
+      end
+    end
+
+    defp respond(conn, _request, {:stream, decision}) do
+      decision = wire_decision(decision)
+
+      first = %{
+        "id" => "chatcmpl-test",
+        "object" => "chat.completion.chunk",
+        "created" => 1,
+        "model" => "test-model",
+        "choices" => [
+          %{
+            "index" => 0,
+            "delta" => %{"role" => "assistant", "content" => Jason.encode!(decision)},
+            "finish_reason" => nil
+          }
+        ]
+      }
+
+      last = %{
+        "id" => "chatcmpl-test",
+        "object" => "chat.completion.chunk",
+        "created" => 1,
+        "model" => "test-model",
+        "choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => "stop"}],
+        "usage" => %{"prompt_tokens" => 7, "completion_tokens" => 5, "total_tokens" => 12}
+      }
+
+      body =
+        "data: #{Jason.encode!(first)}\n\n" <>
+          "data: #{Jason.encode!(last)}\n\n" <>
+          "data: [DONE]\n\n"
+
+      conn
+      |> put_resp_content_type("text/event-stream")
+      |> send_resp(200, body)
+    end
+
+    defp json(conn, body) do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, Jason.encode!(body))
+    end
+
+    defp openai_response(decision) do
+      base_response(
+        %{
+          "role" => "assistant",
+          "content" => nil,
+          "tool_calls" => [
+            %{
+              "id" => "call-test",
+              "type" => "function",
+              "function" => %{
+                "name" => "structured_output",
+                "arguments" => Jason.encode!(decision)
+              }
+            }
+          ]
+        },
+        "tool_calls"
+      )
+    end
+
+    defp openai_text_response(decision) do
+      base_response(%{"role" => "assistant", "content" => Jason.encode!(decision)}, "stop")
+    end
+
+    defp base_response(message, finish_reason) do
+      %{
+        "id" => "chatcmpl-test",
+        "object" => "chat.completion",
+        "created" => 1,
+        "model" => "test-model",
+        "choices" => [
+          %{"index" => 0, "message" => message, "finish_reason" => finish_reason}
+        ],
+        "usage" => %{"prompt_tokens" => 7, "completion_tokens" => 5, "total_tokens" => 12}
+      }
+    end
+
+    defp anthropic_response(decision) do
+      %{
+        "id" => "msg-test",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "test-model",
+        "stop_reason" => "tool_use",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "tool-test",
+            "name" => "structured_output",
+            "input" => decision
+          }
+        ],
+        "usage" => %{"input_tokens" => 7, "output_tokens" => 5}
+      }
+    end
+
+    defp authorization?(headers), do: List.keymember?(headers, "authorization", 0)
+
+    defp check_decision(body, {:decision, _decision} = mode) do
+      if String.contains?(body, "Return the single value ready"),
+        do: {:decision, %{"value" => "ready"}},
+        else: mode
+    end
+
+    defp check_decision(_body, mode), do: mode
+
+    defp wire_decision(%{"type" => type, "reason" => reason} = decision) do
+      %{
+        "type" => type,
+        "reason" => reason,
+        "arguments_json" =>
+          decision
+          |> Map.drop(["type", "reason"])
+          |> Jason.encode!()
+      }
+    end
+
+    defp wire_decision(decision), do: decision
+
+    defp handoff, do: %{"type" => "handoff", "reason" => "probe", "required_input" => "human"}
+  end
+
+  setup do
+    agent = start_supervised!({Agent, fn -> %{mode: {:decision, handoff()}, requests: []} end})
+
+    server =
+      start_supervised!({Bandit, plug: {ProviderStub, agent}, port: 0, startup_log: false})
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+    %{agent: agent, endpoint: "http://127.0.0.1:#{port}"}
+  end
+
+  test "one adapter handles OpenAI, Anthropic, and Ollama without putting credentials in prompts",
+       context do
+    providers = [
+      {"openai", context.endpoint <> "/v1", %{"api_key" => "openai-secret"}},
+      {"anthropic", context.endpoint, %{"api_key" => "anthropic-secret"}},
+      {"ollama", context.endpoint <> "/v1", %{}}
+    ]
+
+    for {provider, endpoint, credentials} <- providers do
+      state = state!(provider, endpoint, credentials)
+
+      assert {:ok,
+              %AI.ResolverDecision{
+                intent: %AI.Handoff{reason: "probe", required_input: "human"},
+                usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+              }} = Adapter.resolve(state, resolver_request(), %{})
+    end
+
+    requests = requests(context.agent)
+
+    assert Enum.map(requests, & &1.path) == [
+             "/v1/chat/completions",
+             "/v1/messages",
+             "/v1/chat/completions"
+           ]
+
+    refute Enum.any?(requests, &String.contains?(&1.body, "openai-secret"))
+    refute Enum.any?(requests, &String.contains?(&1.body, "anthropic-secret"))
+
+    [openai_request | _rest] = requests
+    openai_body = Jason.decode!(openai_request.body)
+    schema = get_in(openai_body, ["tools", Access.at(0), "function", "parameters"])
+    assert schema["additionalProperties"] == false
+    assert MapSet.new(schema["required"]) == MapSet.new(Map.keys(schema["properties"]))
+  end
+
+  test "streamed and buffered responses produce the same decision", context do
+    buffered = state!("ollama", context.endpoint <> "/v1", %{})
+    streamed = state!("ollama", context.endpoint <> "/v1", %{}, %{"stream" => true})
+
+    assert {:ok, buffered_decision} = Adapter.resolve(buffered, resolver_request(), %{})
+    set_mode(context.agent, {:stream, handoff()})
+    assert {:ok, streamed_decision} = Adapter.resolve(streamed, resolver_request(), %{})
+    assert streamed_decision == buffered_decision
+  end
+
+  test "review uses an isolated prompt without resolver sessions or Target tools", context do
+    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+    state = state!("ollama", context.endpoint <> "/v1", %{})
+
+    assert {:ok,
+            %AI.ReviewDecision{
+              verdict: :approved,
+              reason: "bounded",
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} = Adapter.review(state, review_request(), %{})
+
+    [request] = requests(context.agent)
+    assert request.body =~ "proposal-tool"
+    refute request.body =~ "resolver-private-session"
+    refute request.body =~ "observation_tools"
+    refute request.body =~ "proposal_tools"
+  end
+
+  test "tool choices are rebound to the exact registered Target and Access Method", context do
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 4,
+        observation_tools: [observation_tool()],
+        proposal_tools: [proposal_tool()]
+    }
+
+    decision = %{
+      "type" => "proposal",
+      "reason" => "Restore availability",
+      "tool_id" => "proposal-tool",
+      "selectors" => %{"service" => "api"},
+      "parameters" => %{"grace_seconds" => 5},
+      "evidence_ids" => ["evidence-1"],
+      "expected_result" => %{"status" => "running"},
+      "verification" => %{
+        "tool_id" => "observe-tool",
+        "selectors" => %{"service" => "api"},
+        "parameters" => %{},
+        "expected_result" => %{"status" => "running"}
+      }
+    }
+
+    set_mode(context.agent, {:decision, decision})
+    state = state!("ollama", context.endpoint <> "/v1", %{})
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Proposal{
+                tool_id: "proposal-tool",
+                target_id: "target-1",
+                target_revision: 4,
+                access_method_id: "access-1",
+                access_method_revision: 3,
+                capability: "effect.command",
+                operation: "service.restart",
+                verification_intent: %AI.VerificationIntent{tool_id: "observe-tool"}
+              }
+            }} = Adapter.resolve(state, request, %{})
+
+    set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+  end
+
+  test "malformed output, deadline, and caller cancellation stay typed", context do
+    state = state!("ollama", context.endpoint <> "/v1", %{}, %{"timeout_ms" => 100})
+
+    set_mode(context.agent, {:decision, %{"unexpected" => true}})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {:sleep, 500})
+    assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    cancellation =
+      start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
+
+    set_mode(context.agent, {:sleep, 500})
+
+    cancelled? = fn ->
+      Agent.get_and_update(cancellation, fn count -> {count >= 1, count + 1} end)
+    end
+
+    assert {:error, :cancelled, _message} =
+             Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
+  end
+
+  test "configuration rejects unknown fields and invalid provider credentials", context do
+    base = %{
+      "provider" => "ollama",
+      "model" => "test-model",
+      "endpoint" => context.endpoint <> "/v1"
+    }
+
+    assert {:error, :invalid_configuration} = Adapter.build(Map.put(base, "typo", true), %{})
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(%{base | "provider" => "openai"}, %{})
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(%{base | "provider" => "unknown"}, %{"api_key" => "secret"})
+  end
+
+  test "Provider lifecycle and public AI actions invoke the registered adapter", context do
+    admin =
+      Accounts.bootstrap!(
+        "req-llm-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    provider =
+      Providers.create_provider!(
+        "production-ai",
+        :ai,
+        Adapter.type(),
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => context.endpoint <> "/v1"
+        },
+        %{"api_key" => "provider-secret"},
+        actor: admin
+      )
+
+    provider = Providers.check_provider!(provider.id, 1, %{}, actor: admin)
+
+    assert provider.check_status == :passed,
+           inspect({provider.check_category, provider.check_message})
+
+    provider = Providers.enable_provider!(provider, 1, actor: admin)
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "probe"}}} =
+             Providers.ai_resolve(provider.id, resolver_request(), %{}, actor: admin)
+
+    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
+             Providers.ai_review(provider.id, review_request(), %{}, actor: admin)
+  end
+
+  defp state!(provider, endpoint, credentials, extra_configuration \\ %{}) do
+    configuration =
+      Map.merge(
+        %{"provider" => provider, "model" => "test-model", "endpoint" => endpoint},
+        extra_configuration
+      )
+
+    assert {:ok, state} = Adapter.build(configuration, credentials)
+    state
+  end
+
+  defp resolver_request do
+    %AI.ResolverRequest{
+      provider_revision: 1,
+      session_id: "resolver-session",
+      case_id: "case-1",
+      turn: 1,
+      objective: "Restore service health",
+      alert_state: :firing,
+      disclosure: disclosure(),
+      budget: budget(),
+      evidence: [],
+      target_candidates: [],
+      observation_results: [],
+      target_relations: [],
+      observation_tools: [],
+      proposal_tools: []
+    }
+  end
+
+  defp review_request do
+    %AI.ReviewRequest{
+      provider_revision: 1,
+      session_id: "review-session",
+      resolver_session_id: "resolver-private-session",
+      case_id: "case-1",
+      objective: "Restore service health",
+      policy_summary: "No destructive action",
+      proposal: proposal(),
+      cited_evidence: [
+        %AI.Evidence{
+          id: "evidence-1",
+          kind: "observation",
+          target_id: "target-1",
+          content: %{"status" => "stopped"}
+        }
+      ],
+      budget: budget()
+    }
+  end
+
+  defp proposal do
+    %AI.Proposal{
+      tool_id: "proposal-tool",
+      target_id: "target-1",
+      target_revision: 1,
+      access_method_id: "access-1",
+      access_method_revision: 1,
+      capability: "effect.command",
+      operation: "service.restart",
+      selectors: %{"service" => "api"},
+      parameters: %{},
+      reason: "Restore availability",
+      evidence_ids: ["evidence-1"],
+      expected_result: %{"status" => "running"},
+      verification_intent: %AI.VerificationIntent{
+        tool_id: "observe-tool",
+        selectors: %{"service" => "api"},
+        parameters: %{},
+        expected_result: %{"status" => "running"}
+      }
+    }
+  end
+
+  defp observation_tool do
+    %AI.ObservationTool{
+      id: "observe-tool",
+      target_id: "target-1",
+      target_revision: 4,
+      access_method_id: "access-1",
+      access_method_revision: 3,
+      provider_id: "target-provider",
+      provider_revision: 2,
+      capability: "observe.command",
+      operation: "service.inspect",
+      description: "Inspect one service",
+      input_schema: %{}
+    }
+  end
+
+  defp proposal_tool do
+    %AI.ProposalTool{
+      id: "proposal-tool",
+      target_id: "target-1",
+      target_revision: 4,
+      access_method_id: "access-1",
+      access_method_revision: 3,
+      provider_id: "target-provider",
+      provider_revision: 2,
+      capability: "effect.command",
+      operation: "service.restart",
+      description: "Restart one service",
+      input_schema: %{}
+    }
+  end
+
+  defp disclosure do
+    %AI.Disclosure{
+      allowed_target_ids: [],
+      allowed_evidence_kinds: [],
+      max_items: 20,
+      max_bytes: 20_000
+    }
+  end
+
+  defp budget do
+    %AI.Budget{
+      remaining_turns: 3,
+      remaining_tokens: 2_000,
+      remaining_target_requests: 3,
+      remaining_effects: 1,
+      remaining_related_targets: 2
+    }
+  end
+
+  defp handoff,
+    do: %{"type" => "handoff", "reason" => "probe", "required_input" => "human"}
+
+  defp set_mode(agent, mode),
+    do: Agent.update(agent, &%{&1 | mode: mode, requests: []})
+
+  defp requests(agent),
+    do: Agent.get(agent, &Enum.reverse(&1.requests))
+end

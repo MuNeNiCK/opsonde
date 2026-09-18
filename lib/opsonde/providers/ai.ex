@@ -287,8 +287,13 @@ defmodule Opsonde.Providers.AI do
   @type invocation :: map()
   @type adapter_error ::
           {:error,
-           :authentication | :unreachable | :timeout | :failed | :rate_limited | :cancelled,
-           String.t()}
+           :authentication
+           | :unreachable
+           | :timeout
+           | :failed
+           | :rate_limited
+           | :cancelled
+           | :invalid_output, String.t()}
 
   @callback resolve(state :: term(), ResolverRequest.t(), invocation()) ::
               {:ok, ResolverDecision.t()} | adapter_error()
