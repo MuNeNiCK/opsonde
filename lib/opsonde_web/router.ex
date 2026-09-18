@@ -24,6 +24,18 @@ defmodule OpsondeWeb.Router do
     get "/accounts", AccountController, :index
     post "/accounts", AccountController, :create
     patch "/accounts/:id/role", AccountController, :update_role
+
+    get "/providers", ProviderController, :index
+    post "/providers", ProviderController, :create
+    get "/providers/:id", ProviderController, :show
+    patch "/providers/:id", ProviderController, :update
+    post "/providers/:id/check", ProviderController, :check
+    post "/providers/:id/enable", ProviderController, :enable
+    post "/providers/:id/disable", ProviderController, :disable
+
+    get "/ai-usage-role-assignments", AIUsageRoleAssignmentController, :index
+    post "/ai-usage-role-assignments", AIUsageRoleAssignmentController, :create
+    patch "/ai-usage-role-assignments/:id", AIUsageRoleAssignmentController, :update
   end
 
   scope "/api/v1", OpsondeWeb do

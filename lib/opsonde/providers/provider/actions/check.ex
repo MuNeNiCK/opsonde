@@ -2,7 +2,7 @@ defmodule Opsonde.Providers.Provider.Actions.Check do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Providers
-  alias Opsonde.Providers.{Redactor, Registry}
+  alias Opsonde.Providers.{Provider, Redactor, Registry}
 
   @impl true
   def run(input, _opts, context) do
@@ -21,7 +21,10 @@ defmodule Opsonde.Providers.Provider.Actions.Check do
   end
 
   defp ensure_revision(%{revision: revision}, revision), do: :ok
-  defp ensure_revision(_provider, _expected_revision), do: {:error, "Provider revision changed"}
+
+  defp ensure_revision(_provider, _expected_revision) do
+    {:error, Ash.Error.Changes.StaleRecord.exception(resource: Provider, field: :revision)}
+  end
 
   defp check_result(provider, input) do
     case Registry.fetch(provider.adapter_type) do
