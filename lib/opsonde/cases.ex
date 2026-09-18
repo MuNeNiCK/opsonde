@@ -116,6 +116,10 @@ defmodule Opsonde.Cases do
       define :route_target_discovery,
         action: :route_target_discovery,
         args: [:turn_id]
+
+      define :route_observation,
+        action: :route_observation,
+        args: [:turn_id, :invocation]
     end
 
     resource Opsonde.Cases.ResolutionRun do
