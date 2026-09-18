@@ -1,7 +1,7 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react";
 import { AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "@/app-shell";
 import { AuthenticationProvider } from "@/auth";
 import { useAuthentication } from "@/auth-context";
@@ -11,8 +11,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { SetupPage } from "@/setup-page";
-import { TargetPage } from "@/target-page";
+
+const CaseListPage = lazy(() =>
+  import("@/case-list-page").then((module) => ({ default: module.CaseListPage })),
+);
+const CaseDetailPage = lazy(() =>
+  import("@/case-detail-page").then((module) => ({ default: module.CaseDetailPage })),
+);
+const SetupPage = lazy(() =>
+  import("@/setup-page").then((module) => ({ default: module.SetupPage })),
+);
+const TargetPage = lazy(() =>
+  import("@/target-page").then((module) => ({ default: module.TargetPage })),
+);
 
 function AuthenticationGate({ children }: { children: ReactNode }) {
   const { account, loading } = useAuthentication();
@@ -171,39 +182,40 @@ function FoundationPage({ title }: { title: string }) {
   );
 }
 
-function CasePage() {
-  const { caseId } = useParams();
-  const { t } = useTranslation();
+function AppRoutes() {
   return (
-    <main className="p-6 lg:p-8">
-      <h1 className="text-2xl font-semibold tracking-tight">{t("pages.case")}</h1>
-      <p className="mt-2 font-mono text-sm text-muted-foreground">{caseId}</p>
-    </main>
+    <Suspense fallback={<PageSpinner />}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          element={
+            <AuthenticationGate>
+              <AppShell />
+            </AuthenticationGate>
+          }
+        >
+          <Route index element={<Navigate to="/cases" replace />} />
+          <Route path="cases" element={<CaseListPage />} />
+          <Route path="cases/:caseId" element={<CaseDetailPage />} />
+          <Route path="targets" element={<TargetPage />} />
+          <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
+          <Route path="audits" element={<FoundationPage title="pages.audits" />} />
+          <Route path="reports" element={<FoundationPage title="pages.reports" />} />
+          <Route path="settings" element={<SetupPage />} />
+          <Route path="*" element={<FoundationPage title="pages.notFound" />} />
+        </Route>
+      </Routes>
+    </Suspense>
   );
 }
 
-function AppRoutes() {
+function PageSpinner() {
+  const { t } = useTranslation();
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        element={
-          <AuthenticationGate>
-            <AppShell />
-          </AuthenticationGate>
-        }
-      >
-        <Route index element={<Navigate to="/cases" replace />} />
-        <Route path="cases" element={<FoundationPage title="pages.cases" />} />
-        <Route path="cases/:caseId" element={<CasePage />} />
-        <Route path="targets" element={<TargetPage />} />
-        <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
-        <Route path="audits" element={<FoundationPage title="pages.audits" />} />
-        <Route path="reports" element={<FoundationPage title="pages.reports" />} />
-        <Route path="settings" element={<SetupPage />} />
-        <Route path="*" element={<FoundationPage title="pages.notFound" />} />
-      </Route>
-    </Routes>
+    <div className="flex min-h-svh items-center justify-center gap-2 text-muted-foreground">
+      <Spinner />
+      <span className="sr-only">{t("common.loading")}</span>
+    </div>
   );
 }
 
