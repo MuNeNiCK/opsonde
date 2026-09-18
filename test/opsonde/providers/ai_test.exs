@@ -275,6 +275,91 @@ defmodule Opsonde.Providers.AITest do
     assert ai_error(disclosure_error).category == :disclosure_limit
   end
 
+  test "Resolver tool inputs must satisfy the exact offered JSON Schema", context do
+    schema = %{
+      "type" => "object",
+      "properties" => %{"service" => %{"type" => "string", "minLength" => 1}},
+      "required" => ["service"],
+      "additionalProperties" => false
+    }
+
+    request = resolver_request(context.provider.revision)
+    [observation_tool] = request.observation_tools
+    [proposal_tool] = request.proposal_tools
+
+    request = %{
+      request
+      | observation_tools: [%{observation_tool | input_schema: schema}],
+        proposal_tools: [%{proposal_tool | input_schema: schema}]
+    }
+
+    valid_observation = %AI.ObservationChoice{
+      tool_id: observation_tool.id,
+      parameters: %{"service" => "api"},
+      reason: "Inspect the named service"
+    }
+
+    assert %AI.ResolverDecision{intent: ^valid_observation} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: valid_observation, usage: usage()}}
+             end)
+
+    invalid_observation = %{valid_observation | parameters: %{"service" => 42}}
+
+    assert {:error, invalid_observation_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invalid_observation, usage: usage()}}
+             end)
+
+    assert ai_error(invalid_observation_error).category == :invalid_output
+
+    invalid_proposal = %{
+      proposal()
+      | parameters: %{},
+        verification_intent: %AI.VerificationIntent{
+          tool_id: observation_tool.id,
+          parameters: %{"service" => "api"},
+          expected_result: %{"service" => "running"}
+        }
+    }
+
+    assert {:error, invalid_proposal_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invalid_proposal, usage: usage()}}
+             end)
+
+    assert ai_error(invalid_proposal_error).category == :invalid_output
+
+    invalid_verification = %{
+      proposal()
+      | parameters: %{"service" => "api"},
+        verification_intent: %AI.VerificationIntent{
+          tool_id: observation_tool.id,
+          parameters: %{"service" => 42},
+          expected_result: %{"service" => "running"}
+        }
+    }
+
+    assert {:error, invalid_verification_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: invalid_verification, usage: usage()}}
+             end)
+
+    assert ai_error(invalid_verification_error).category == :invalid_output
+
+    invalid_schema_request = %{
+      request
+      | observation_tools: [
+          %{observation_tool | input_schema: %{"type" => "unsupported-json-type"}}
+        ]
+    }
+
+    assert {:error, invalid_schema_error} =
+             resolve(context, invalid_schema_request, unreachable_response())
+
+    assert ai_error(invalid_schema_error).category == :invalid_input
+  end
+
   test "Resolver rejects invented effects and recovery without fresh recovered evidence",
        context do
     request = resolver_request(context.provider.revision)
