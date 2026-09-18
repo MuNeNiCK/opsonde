@@ -22,7 +22,8 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
-         :ok <- evaluate(context.policies, request) do
+         :ok <- evaluate(context.policies, request),
+         :ok <- validate_authority(request) do
       {:ok, build_clearance(current_actor, request, context)}
     end
   end
@@ -36,6 +37,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
          :ok <- evaluate(context.policies, request),
+         :ok <- validate_authority(request),
          :ok <- current_policy_set(context.policies, clearance.policy_revisions),
          :ok <- current_provider(context.access_method, clearance) do
       invoke(operation, current_actor, context.access_method, clearance, arguments.invocation)
@@ -280,6 +282,11 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
         :ok
     end
   end
+
+  defp validate_authority(%PolicyRequest{kind: :effect, authority_mode: :readonly}),
+    do: {:error, policy_error(:forbidden, "Readonly authority cannot execute Target effects")}
+
+  defp validate_authority(%PolicyRequest{}), do: :ok
 
   defp current_actor(%{id: actor_id}) do
     case Accounts.get_user(actor_id, authorize?: false) do

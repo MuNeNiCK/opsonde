@@ -415,6 +415,28 @@ defmodule Opsonde.TargetPolicyTest do
     refute_receive {:observe, _, _}
   end
 
+  test "readonly permits observations but rejects effects before dispatch", context do
+    observation =
+      request(context.linux, context.ssh, :observation, :readonly,
+        capability: "observe.command",
+        operation: "system.inspect"
+      )
+
+    assert %RequestClearance{} =
+             Targets.clear_target_request!(observation, actor: context.operator)
+
+    effect =
+      request(context.linux, context.ssh, :effect, :readonly,
+        capability: "effect.command",
+        operation: "command.execute",
+        parameters: %{"command" => "systemctl restart service"}
+      )
+
+    assert {:error, error} = Targets.clear_target_request(effect, actor: context.operator)
+    assert policy_error(error).category == :forbidden
+    refute_receive {:effect, _, _}
+  end
+
   defp request(target, method, kind, mode, opts) do
     struct!(PolicyRequest,
       kind: kind,
