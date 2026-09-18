@@ -1,0 +1,50 @@
+## Japanese translations for Opsonde reports.
+msgid ""
+msgstr ""
+"Language: ja\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Approvals"
+msgstr "承認"
+
+msgid "Cancelled"
+msgstr "キャンセル済み"
+
+msgid "Needs attention"
+msgstr "対応が必要"
+
+msgid "Operations"
+msgstr "実行操作"
+
+msgid "Proposals"
+msgstr "操作提案"
+
+msgid "Raw evidence"
+msgstr "原文の証拠"
+
+msgid "Resolution runs"
+msgstr "解決試行"
+
+msgid "Resolved"
+msgstr "解決済み"
+
+msgid "Resolver decisions"
+msgstr "Resolverの判断"
+
+msgid "Reviews"
+msgstr "レビュー"
+
+msgid "Summary"
+msgstr "概要"
+
+msgid "Target path"
+msgstr "対象の調査経路"
+
+msgid "Timeline"
+msgstr "時系列"
+
+msgid "Unresolved items"
+msgstr "未解決事項"
+
+msgid "Verifications"
+msgstr "検証"

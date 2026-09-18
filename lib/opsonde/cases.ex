@@ -339,5 +339,17 @@ defmodule Opsonde.Cases do
       define :create_signal_correlation_record, action: :create_record
       define :update_signal_correlation_record, action: :update_record, args: [:expected_revision]
     end
+
+    resource Opsonde.Cases.Report do
+      define :list_reports, action: :read
+      define :get_report, action: :read, get_by: [:id]
+
+      define :report_by_case_revision,
+        action: :by_case_revision,
+        args: [:case_id, :case_revision]
+
+      define :create_report_record, action: :create_record
+      define :generate_report, action: :generate, args: [:case_id, :expected_case_revision]
+    end
   end
 end

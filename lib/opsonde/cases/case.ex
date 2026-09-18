@@ -539,6 +539,7 @@ defmodule Opsonde.Cases.Case do
 
     has_many :resolution_runs, Opsonde.Cases.ResolutionRun
     has_many :events, Opsonde.Cases.CaseEvent
+    has_many :reports, Opsonde.Cases.Report
   end
 
   identities do

@@ -39,7 +39,7 @@ defmodule OpsondeWeb do
     quote do
       use Phoenix.Controller, formats: [:html, :json]
 
-      use Gettext, backend: OpsondeWeb.Gettext
+      use Gettext, backend: Opsonde.Gettext
 
       import Plug.Conn
 
