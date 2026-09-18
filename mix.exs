@@ -77,6 +77,7 @@ defmodule Opsonde.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
+      {:nimble_csv, "~> 1.3"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:burrito, "== 1.5.0"}

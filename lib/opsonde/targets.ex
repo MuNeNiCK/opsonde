@@ -25,6 +25,7 @@ defmodule Opsonde.Targets do
 
     resource Opsonde.Targets.ExternalIdentity do
       define :list_external_identities, action: :read
+      define :external_identities_for_source, action: :for_source, args: [:source]
 
       define :create_external_identity,
         action: :create,
@@ -113,6 +114,38 @@ defmodule Opsonde.Targets do
       define :dispatch_target_verification,
         action: :dispatch_verification,
         args: [:clearance, :invocation]
+    end
+
+    resource Opsonde.Targets.InventoryImport do
+      define :list_inventory_imports, action: :read
+      define :get_inventory_import, action: :read, get_by: [:id]
+      define :create_inventory_import_preview, action: :create_preview
+
+      define :mark_inventory_import_applied,
+        action: :mark_applied,
+        args: [:expected_revision]
+
+      define :preview_manual_inventory,
+        action: :preview_manual,
+        args: [:source, :csv]
+
+      define :preview_provider_inventory,
+        action: :preview_inventory,
+        args: [:source, :provider_id, :request, :invocation]
+
+      define :apply_inventory_import,
+        action: :apply,
+        args: [:id, :expected_revision, :expected_digest]
+    end
+
+    resource Opsonde.Targets.InventoryImportRow do
+      define :list_inventory_import_rows, action: :read
+
+      define :inventory_import_rows,
+        action: :for_import,
+        args: [:inventory_import_id]
+
+      define :create_inventory_import_row, action: :create
     end
   end
 end

@@ -29,6 +29,15 @@ defmodule Opsonde.Targets.ExternalIdentity do
       prepare build(sort: [inserted_at: :asc, id: :asc])
     end
 
+    read :for_source do
+      argument :source, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 120]
+
+      filter expr(source == ^arg(:source) and active == true and target.active == true)
+      prepare build(load: [:target], sort: [kind: :asc, value: :asc])
+    end
+
     create :create do
       primary? true
       accept [:target_id, :source, :kind, :value]
@@ -61,7 +70,7 @@ defmodule Opsonde.Targets.ExternalIdentity do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action(:search_index) do
+    policy action([:search_index, :for_source]) do
       forbid_if always()
     end
 
