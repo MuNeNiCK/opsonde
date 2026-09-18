@@ -300,6 +300,13 @@ defmodule Opsonde.Cases.Case do
       argument :invocation, :map, allow_nil?: false, default: %{}
       run Opsonde.Cases.Case.Actions.ObservationRoute
     end
+
+    action :route_downstream_decision, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.DownstreamDecisionRoute
+    end
   end
 
   policies do
@@ -323,7 +330,8 @@ defmodule Opsonde.Cases.Case do
              :update_record,
              :require_attention,
              :route_target_discovery,
-             :route_observation
+             :route_observation,
+             :route_downstream_decision
            ]) do
       forbid_if always()
     end
