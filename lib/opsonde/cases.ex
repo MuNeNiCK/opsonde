@@ -223,5 +223,17 @@ defmodule Opsonde.Cases do
           :observed_at
         ]
     end
+
+    resource Opsonde.Cases.Proposal do
+      define :list_proposals, action: :read
+      define :get_proposal, action: :read, get_by: [:id]
+
+      define :proposal_by_source_turn,
+        action: :by_source_turn,
+        args: [:source_turn_id]
+
+      define :create_proposal_record, action: :create_record
+      define :materialize_proposal, action: :materialize, args: [:turn_id]
+    end
   end
 end

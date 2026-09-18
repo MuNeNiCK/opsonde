@@ -4,12 +4,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
 
   @impl true
   def run(input, _opts, _context) do
     with {:ok, source_turn} <- Cases.get_turn(input.arguments.turn_id, authorize?: false) do
-      Ash.transact([Case, ResolutionRun, Turn, Evidence, CaseEvent], fn ->
+      Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, CaseEvent], fn ->
         with {:ok, incident} <- lock_case(source_turn.case_id),
              {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
              {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
@@ -48,14 +48,24 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp route(turn, intent, incident, run) do
-    action =
-      case intent["type"] do
-        "proposal" -> "authorize_proposal"
-        "recovery_conclusion" -> "evaluate_recovery"
-      end
+  defp route(turn, %{"type" => "proposal"} = intent, incident, run) do
+    with {:ok, proposal} <- Cases.materialize_proposal(turn.id, authorize?: false) do
+      pending = %{
+        "action" => "route_proposal",
+        "proposal_id" => proposal.id,
+        "source_turn_id" => turn.id
+      }
 
-    pending = pending_intent(action, turn)
+      persist_or_replay(turn, intent, incident, run, pending)
+    end
+  end
+
+  defp route(turn, intent, incident, run) do
+    pending = pending_intent("evaluate_recovery", turn)
+    persist_or_replay(turn, intent, incident, run, pending)
+  end
+
+  defp persist_or_replay(turn, intent, incident, run, pending) do
     key = route_key(turn)
 
     with {:ok, event} <- existing_event(incident.id, key) do
@@ -128,12 +138,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp downstream_intent(_turn),
     do: {:error, "Completed Turn does not contain a downstream Resolver decision"}
 
-  defp validate_intent(%{"type" => "proposal"} = intent, incident, run) do
-    with :ok <- valid_proposal(intent),
-         :ok <- valid_evidence(intent["evidence_ids"], incident.id, run.id) do
-      :ok
-    end
-  end
+  defp validate_intent(%{"type" => "proposal"}, _incident, _run), do: :ok
 
   defp validate_intent(
          %{
@@ -166,67 +171,6 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp validate_intent(_intent, _incident, _run),
     do: {:error, "Downstream Resolver decision is malformed"}
 
-  defp valid_proposal(intent) do
-    effect_tool = nested_map(intent["tool"])
-    verification = nested_map(intent["verification_intent"])
-    tool = nested_map(intent["verification_tool"])
-
-    valid? =
-      Enum.all?(
-        [
-          intent["tool_id"],
-          intent["target_id"],
-          intent["access_method_id"],
-          intent["capability"],
-          intent["operation"],
-          effect_tool["id"],
-          effect_tool["target_id"],
-          effect_tool["access_method_id"],
-          effect_tool["provider_id"],
-          effect_tool["capability"],
-          effect_tool["operation"],
-          verification["tool_id"],
-          tool["id"],
-          tool["target_id"],
-          tool["access_method_id"],
-          tool["provider_id"],
-          tool["capability"],
-          tool["operation"]
-        ],
-        &nonempty?/1
-      ) and
-        intent["tool_id"] == effect_tool["id"] and
-        intent["target_id"] == effect_tool["target_id"] and
-        intent["target_revision"] == effect_tool["target_revision"] and
-        intent["access_method_id"] == effect_tool["access_method_id"] and
-        intent["access_method_revision"] == effect_tool["access_method_revision"] and
-        intent["capability"] == effect_tool["capability"] and
-        intent["operation"] == effect_tool["operation"] and
-        verification["tool_id"] == tool["id"] and
-        positive?(intent["target_revision"]) and
-        positive?(intent["access_method_revision"]) and
-        positive?(effect_tool["provider_revision"]) and
-        positive?(tool["target_revision"]) and
-        positive?(tool["access_method_revision"]) and
-        positive?(tool["provider_revision"]) and
-        bounded?(intent["reason"], 500) and
-        Enum.all?(
-          [
-            intent["selectors"],
-            intent["parameters"],
-            intent["expected_result"],
-            verification["selectors"],
-            verification["parameters"],
-            verification["expected_result"]
-          ],
-          &is_map/1
-        )
-
-    if valid?,
-      do: unique_ids(intent["evidence_ids"]),
-      else: {:error, "Downstream Resolver Proposal is malformed"}
-  end
-
   defp valid_evidence(ids, case_id, run_id) do
     with :ok <- unique_ids(ids) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
@@ -248,12 +192,6 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   end
 
   defp unique_ids(_ids), do: {:error, "Resolver decision Evidence identities are invalid"}
-
-  defp nested_map(value) when is_map(value), do: value
-  defp nested_map(_value), do: %{}
-  defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
-  defp positive?(value), do: is_integer(value) and value > 0
-  defp bounded?(value, max_bytes), do: nonempty?(value) and byte_size(value) <= max_bytes
 
   defp lock_case(id) do
     Case

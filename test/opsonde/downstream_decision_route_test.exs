@@ -1,7 +1,7 @@
 defmodule Opsonde.DownstreamDecisionRouteTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Cases.Budget
 
   @password "correct horse battery staple"
@@ -13,13 +13,41 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     operator =
       Accounts.create_user!("downstream-operator@example.com", @password, :operator, actor: admin)
 
-    %{admin: admin, operator: operator}
+    provider =
+      Providers.create_provider!(
+        "downstream-target-provider",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "downstream-target-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    target = Targets.create_target!("downstream-linux", "host", "linux", %{}, nil, actor: admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "downstream-ssh",
+        "linux",
+        "ssh",
+        "ssh://downstream-linux",
+        provider.revision,
+        10,
+        ["effect.service", "observe.service"],
+        actor: admin
+      )
+
+    %{admin: admin, operator: operator, provider: provider, target: target, method: method}
   end
 
   test "Proposal keeps one exact source Turn for the authority owner", context do
     {incident, run} = open_case!("proposal", context.operator)
     evidence = evidence!(incident, run, "proposal")
-    intent = proposal_intent(evidence.id)
+    intent = proposal_intent(evidence.id, context)
     turn = completed_turn!(incident, run, "proposal", intent, :proposal)
 
     assert {:ok, routed} =
@@ -27,8 +55,11 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
     assert routed.status == :running
 
+    [proposal] = Cases.list_proposals!(actor: context.admin)
+
     assert routed.pending_intent == %{
-             "action" => "authorize_proposal",
+             "action" => "route_proposal",
+             "proposal_id" => proposal.id,
              "source_turn_id" => turn.id
            }
 
@@ -141,7 +172,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
     malformed =
       evidence.id
-      |> proposal_intent()
+      |> proposal_intent(context)
       |> Map.delete("verification_tool")
 
     malformed_turn =
@@ -160,7 +191,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
         conflict_case,
         conflict_run,
         "conflict",
-        proposal_intent(conflict_evidence.id),
+        proposal_intent(conflict_evidence.id, context),
         :proposal
       )
 
@@ -229,6 +260,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       %{
         "outcome" => "decision",
         "intent" => intent,
+        "resolver" => resolver_identity(),
         "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
       },
       progress_kind,
@@ -238,22 +270,19 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     ).value
   end
 
-  defp proposal_intent(evidence_id) do
+  defp proposal_intent(evidence_id, context) do
     verification_tool_id = "observation-tool"
-    target_id = Ash.UUID.generate()
-    access_method_id = Ash.UUID.generate()
-    provider_id = Ash.UUID.generate()
-    verification_target_id = Ash.UUID.generate()
-    verification_method_id = Ash.UUID.generate()
-    verification_provider_id = Ash.UUID.generate()
+    target_id = context.target.id
+    access_method_id = context.method.id
+    provider_id = context.provider.id
 
     %{
       "type" => "proposal",
       "tool_id" => "effect-tool",
       "target_id" => target_id,
-      "target_revision" => 3,
+      "target_revision" => context.target.revision,
       "access_method_id" => access_method_id,
-      "access_method_revision" => 2,
+      "access_method_revision" => context.method.revision,
       "capability" => "effect.service",
       "operation" => "service.restart",
       "selectors" => %{"service" => "api"},
@@ -264,11 +293,11 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       "tool" => %{
         "id" => "effect-tool",
         "target_id" => target_id,
-        "target_revision" => 3,
+        "target_revision" => context.target.revision,
         "access_method_id" => access_method_id,
-        "access_method_revision" => 2,
+        "access_method_revision" => context.method.revision,
         "provider_id" => provider_id,
-        "provider_revision" => 6,
+        "provider_revision" => context.provider.revision,
         "capability" => "effect.service",
         "operation" => "service.restart"
       },
@@ -280,15 +309,24 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       },
       "verification_tool" => %{
         "id" => verification_tool_id,
-        "target_id" => verification_target_id,
-        "target_revision" => 4,
-        "access_method_id" => verification_method_id,
-        "access_method_revision" => 5,
-        "provider_id" => verification_provider_id,
-        "provider_revision" => 7,
+        "target_id" => target_id,
+        "target_revision" => context.target.revision,
+        "access_method_id" => access_method_id,
+        "access_method_revision" => context.method.revision,
+        "provider_id" => provider_id,
+        "provider_revision" => context.provider.revision,
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }
+    }
+  end
+
+  defp resolver_identity do
+    %{
+      "provider_id" => Ash.UUID.generate(),
+      "provider_revision" => 1,
+      "assignment_id" => Ash.UUID.generate(),
+      "assignment_revision" => 1
     }
   end
 end

@@ -1,7 +1,7 @@
 defmodule Opsonde.DecisionRouteWorkerTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Cases.DecisionRouteWorker
 
   @password "correct horse battery staple"
@@ -12,7 +12,35 @@ defmodule Opsonde.DecisionRouteWorkerTest do
     operator =
       Accounts.create_user!("route-operator@example.com", @password, :operator, actor: admin)
 
-    %{admin: admin, operator: operator}
+    provider =
+      Providers.create_provider!(
+        "route-target-provider",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "route-target-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    target = Targets.create_target!("route-effect-linux", "host", "linux", %{}, nil, actor: admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "route-ssh",
+        "linux",
+        "ssh",
+        "ssh://route-effect-linux",
+        provider.revision,
+        10,
+        ["effect.service", "observe.service"],
+        actor: admin
+      )
+
+    %{admin: admin, operator: operator, provider: provider, target: target, method: method}
   end
 
   test "persisted Target discovery is routed once across duplicate delivery", context do
@@ -46,15 +74,20 @@ defmodule Opsonde.DecisionRouteWorkerTest do
   test "persisted Proposal reaches the authority pending state without an effect", context do
     {incident, run} = open_case!("proposal", context.operator)
     evidence = evidence!(incident, run, "proposal")
-    turn = completed_turn!(incident, run, "proposal", proposal_intent(evidence.id), :proposal)
+
+    turn =
+      completed_turn!(incident, run, "proposal", proposal_intent(evidence.id, context), :proposal)
 
     assert :ok =
              DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
 
     routed = Cases.get_case!(incident.id, authorize?: false)
 
+    [proposal] = Cases.list_proposals!(actor: context.admin)
+
     assert routed.pending_intent == %{
-             "action" => "authorize_proposal",
+             "action" => "route_proposal",
+             "proposal_id" => proposal.id,
              "source_turn_id" => turn.id
            }
 
@@ -126,6 +159,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       %{
         "outcome" => "decision",
         "intent" => intent,
+        "resolver" => resolver_identity(),
         "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
       },
       progress_kind,
@@ -150,10 +184,10 @@ defmodule Opsonde.DecisionRouteWorkerTest do
     )
   end
 
-  defp proposal_intent(evidence_id) do
-    target_id = Ash.UUID.generate()
-    access_method_id = Ash.UUID.generate()
-    provider_id = Ash.UUID.generate()
+  defp proposal_intent(evidence_id, context) do
+    target_id = context.target.id
+    access_method_id = context.method.id
+    provider_id = context.provider.id
 
     %{
       "type" => "proposal",
@@ -188,15 +222,24 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       },
       "verification_tool" => %{
         "id" => "observation-tool",
-        "target_id" => Ash.UUID.generate(),
+        "target_id" => target_id,
         "target_revision" => 1,
-        "access_method_id" => Ash.UUID.generate(),
+        "access_method_id" => access_method_id,
         "access_method_revision" => 1,
-        "provider_id" => Ash.UUID.generate(),
-        "provider_revision" => 1,
+        "provider_id" => provider_id,
+        "provider_revision" => context.provider.revision,
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }
+    }
+  end
+
+  defp resolver_identity do
+    %{
+      "provider_id" => Ash.UUID.generate(),
+      "provider_revision" => 1,
+      "assignment_id" => Ash.UUID.generate(),
+      "assignment_revision" => 1
     }
   end
 end
