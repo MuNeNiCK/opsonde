@@ -15,6 +15,22 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
     }
   end
 
+  def signal_event(event) do
+    %{
+      id: event.id,
+      signal_receipt_id: event.signal_receipt_id,
+      event_key: event.event_key,
+      state: event.state,
+      source_sequence: event.source_sequence,
+      occurred_at: event.occurred_at,
+      target_ref: event.target_ref,
+      case_id: event.case_id,
+      target_id: event.target_id,
+      inserted_at: event.inserted_at,
+      updated_at: event.updated_at
+    }
+  end
+
   def audit_schedule(schedule) do
     %{
       id: schedule.id,

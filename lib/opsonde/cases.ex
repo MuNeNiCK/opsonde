@@ -339,6 +339,10 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.SignalEvent do
       define :list_signal_events, action: :read
 
+      define :page_signal_events_for_receipt,
+        action: :page_for_receipt,
+        args: [:signal_receipt_id]
+
       define :signal_event_by_receipt,
         action: :by_receipt_event,
         args: [:signal_receipt_id, :event_key]

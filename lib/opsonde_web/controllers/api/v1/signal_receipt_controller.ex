@@ -20,4 +20,15 @@ defmodule OpsondeWeb.API.V1.SignalReceiptController do
       Response.data(conn, OutcomeJSON.receipt(receipt))
     end
   end
+
+  def events(conn, %{"id" => id} = params) do
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, events} <-
+           Cases.page_signal_events_for_receipt(id,
+             page: page,
+             actor: conn.assigns.current_user
+           ) do
+      Response.page(conn, events, &OutcomeJSON.signal_event/1)
+    end
+  end
 end

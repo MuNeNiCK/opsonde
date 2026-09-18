@@ -79,6 +79,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:post, "/api/v1/signals/zabbix/:provider_id"},
     {:get, "/api/v1/signal-receipts"},
     {:get, "/api/v1/signal-receipts/:id"},
+    {:get, "/api/v1/signal-receipts/:id/events"},
     {:get, "/api/v1/audit-schedules"},
     {:post, "/api/v1/audit-schedules"},
     {:get, "/api/v1/audit-schedules/:id"},

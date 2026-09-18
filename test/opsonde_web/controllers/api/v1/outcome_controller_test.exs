@@ -54,6 +54,49 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         authorize?: false
       )
 
+    incident =
+      Cases.open_case!(
+        :signal,
+        "zabbix",
+        "zabbix-event-9001",
+        "Linux disk I/O errors",
+        :warning,
+        :firing,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    correlation =
+      Cases.create_signal_correlation_record!(
+        %{
+          provider_id: provider.id,
+          source: "zabbix",
+          event_key: "zabbix-event-9001",
+          current_state: :firing,
+          revision: 1
+        },
+        authorize?: false
+      )
+
+    signal_event =
+      Cases.create_signal_event_record!(
+        %{
+          signal_receipt_id: receipt.id,
+          signal_correlation_id: correlation.id,
+          event_key: "zabbix-event-9001",
+          state: :firing,
+          source_sequence: "9001",
+          occurred_at: receipt.received_at,
+          target_ref: %{"kind" => "host_id", "value" => "10601"},
+          attributes: %{"private" => "raw-event-detail"},
+          metadata: %{"private" => "raw-event-metadata"},
+          case_id: incident.id
+        },
+        authorize?: false
+      )
+
     list = get_json("/api/v1/signal-receipts?limit=1", context.viewer_token)
 
     assert %{
@@ -75,6 +118,28 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert %{"data" => %{"id" => ^id}} =
              get_json("/api/v1/signal-receipts/#{id}", context.operator_token)
              |> json_response(200)
+
+    event_response =
+      get_json("/api/v1/signal-receipts/#{id}/events", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "id" => event_id,
+                 "signal_receipt_id" => ^id,
+                 "event_key" => "zabbix-event-9001",
+                 "state" => "firing",
+                 "case_id" => case_id,
+                 "target_ref" => %{"kind" => "host_id", "value" => "10601"}
+               }
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(event_response, 200)
+
+    assert event_id == signal_event.id
+    assert case_id == incident.id
+    refute event_response.resp_body =~ "raw-event-detail"
+    refute event_response.resp_body =~ "raw-event-metadata"
   end
 
   test "Audit schedule API exposes persisted queued, running and skipped outcomes", context do

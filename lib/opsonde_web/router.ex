@@ -100,6 +100,7 @@ defmodule OpsondeWeb.Router do
 
     get "/signal-receipts", SignalReceiptController, :index
     get "/signal-receipts/:id", SignalReceiptController, :show
+    get "/signal-receipts/:id/events", SignalReceiptController, :events
 
     get "/audit-schedules", AuditController, :schedules
     post "/audit-schedules", AuditController, :schedule

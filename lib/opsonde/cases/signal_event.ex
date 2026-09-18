@@ -20,6 +20,13 @@ defmodule Opsonde.Cases.SignalEvent do
   actions do
     defaults [:read]
 
+    read :page_for_receipt do
+      argument :signal_receipt_id, :uuid, allow_nil?: false
+      filter expr(signal_receipt_id == ^arg(:signal_receipt_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(sort: [occurred_at: :asc, inserted_at: :asc, id: :asc])
+    end
+
     read :by_receipt_event do
       get? true
       argument :signal_receipt_id, :uuid, allow_nil?: false
@@ -59,7 +66,7 @@ defmodule Opsonde.Cases.SignalEvent do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_for_receipt]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
