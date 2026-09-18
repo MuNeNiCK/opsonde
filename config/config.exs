@@ -70,6 +70,7 @@ config :opsonde,
   ash_domains: [Opsonde.Cases, Opsonde.Targets, Opsonde.Providers, Opsonde.Accounts],
   provider_adapters: [
     Opsonde.AI.ReqLLM,
+    Opsonde.Inventories.NetBox.API,
     Opsonde.Signals.Alertmanager.Webhook,
     Opsonde.Signals.Zabbix.Webhook,
     Opsonde.Targets.Generic.SSH,
