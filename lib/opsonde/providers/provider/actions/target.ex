@@ -74,7 +74,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   end
 
   defp invoke(:effect, adapter, state, arguments, invocation, credentials) do
-    safe_call(fn -> adapter.effect(state, arguments.request, invocation) end, credentials)
+    safe_effect_call(fn -> adapter.effect(state, arguments.request, invocation) end, credentials)
     |> normalize_effect(credentials)
   end
 
@@ -177,6 +177,20 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     error -> {:error, :failed, Redactor.message(Exception.message(error), credentials)}
   catch
     _kind, _reason -> {:error, :failed, "Target provider failed"}
+  end
+
+  defp safe_effect_call(callback, credentials) do
+    callback.()
+  rescue
+    error ->
+      {:ok,
+       %Target.EffectResult{
+         status: :unknown,
+         details: %{error: Redactor.message(Exception.message(error), credentials)}
+       }}
+  catch
+    _kind, _reason ->
+      {:ok, %Target.EffectResult{status: :unknown, details: %{error: "Target provider failed"}}}
   end
 
   defp target_error(category, message),

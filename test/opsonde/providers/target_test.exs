@@ -158,6 +158,20 @@ defmodule Opsonde.Providers.TargetTest do
     assert target_error(error).category == :failed
     assert_receive {:effect, %{token: @token}, ^request}
     refute_receive {:effect, _, _}
+
+    raised_request = effect_request(context.provider.revision, "operation-lost-response")
+
+    assert %Target.EffectResult{status: :unknown, details: %{error: message}} =
+             Providers.target_effect!(
+               context.provider.id,
+               raised_request,
+               %{test_pid: self(), respond: fn -> raise "lost #{@token}" end},
+               actor: context.admin
+             )
+
+    assert message == "lost [REDACTED]"
+    assert_receive {:effect, %{token: @token}, ^raised_request}
+    refute_receive {:effect, _, _}
   end
 
   test "verification is independent and malformed or raised adapter results are rejected",
