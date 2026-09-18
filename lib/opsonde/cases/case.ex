@@ -12,7 +12,17 @@ defmodule Opsonde.Cases.Case do
     custom_indexes do
       index [:authority_setting_id]
       index [:initial_target_id]
+      index [:selected_target_id]
       index [:current_owner_id]
+    end
+
+    check_constraints do
+      check_constraint [:selected_target_id, :selected_target_revision],
+                       "cases_selected_target_pair",
+                       check:
+                         "(selected_target_id IS NULL AND selected_target_revision IS NULL) OR " <>
+                           "(selected_target_id IS NOT NULL AND selected_target_revision IS NOT NULL)",
+                       message: "must be set together"
     end
   end
 
@@ -56,6 +66,8 @@ defmodule Opsonde.Cases.Case do
         :stop_reason,
         :required_human_input,
         :initial_target_id,
+        :selected_target_id,
+        :selected_target_revision,
         :current_owner_id
       ]
 
@@ -72,7 +84,9 @@ defmodule Opsonde.Cases.Case do
         :source_recovered_at,
         :stop_reason,
         :pending_intent,
-        :required_human_input
+        :required_human_input,
+        :selected_target_id,
+        :selected_target_revision
       ]
 
       require_atomic? false
@@ -218,6 +232,59 @@ defmodule Opsonde.Cases.Case do
 
       run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :resume}
     end
+
+    action :search_targets, :struct do
+      constraints instance_of: Opsonde.Cases.BudgetResult
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      argument :idempotency_key, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      argument :query, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 200]
+
+      argument :max_results, :integer,
+        allow_nil?: false,
+        default: 20,
+        constraints: [min: 1, max: 50]
+
+      argument :pending_intent, :map, allow_nil?: false
+
+      argument :required_human_input, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      run Opsonde.Cases.Case.Actions.TargetSearch
+    end
+
+    action :select_target, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      argument :evidence_ids, {:array, :uuid},
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 100]
+
+      argument :target_id, :uuid, allow_nil?: false
+      argument :target_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :reason, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      argument :idempotency_key, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      run Opsonde.Cases.Case.Actions.TargetSelection
+    end
   end
 
   policies do
@@ -227,7 +294,9 @@ defmodule Opsonde.Cases.Case do
              :handoff,
              :request_cancellation,
              :record_source_recovery,
-             :resume
+             :resume,
+             :search_targets,
+             :select_target
            ]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
@@ -382,6 +451,11 @@ defmodule Opsonde.Cases.Case do
       constraints min: 1
     end
 
+    attribute :selected_target_revision, :integer do
+      public? true
+      constraints min: 1
+    end
+
     timestamps()
   end
 
@@ -392,6 +466,10 @@ defmodule Opsonde.Cases.Case do
     end
 
     belongs_to :initial_target, Opsonde.Targets.Target do
+      public? true
+    end
+
+    belongs_to :selected_target, Opsonde.Targets.Target do
       public? true
     end
 

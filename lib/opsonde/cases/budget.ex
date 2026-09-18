@@ -56,11 +56,17 @@ defmodule Opsonde.Cases.Budget do
     if event.data["attempted_kind"] in [nil, expected_kind] and
          event.data["kind"] in [nil, expected_kind] and
          event.data["attempted_amount"] in [nil, opts[:amount]] and
-         event.data["amount"] in [nil, opts[:amount]] do
+         event.data["amount"] in [nil, opts[:amount]] and replay_data_matches?(event, opts) do
       :ok
     else
       {:error, "Idempotency key was already used with different budget input"}
     end
+  end
+
+  defp replay_data_matches?(event, opts) do
+    opts
+    |> Keyword.get(:event_data, %{})
+    |> Enum.all?(fn {key, value} -> event.data[key] == value end)
   end
 
   defp consume_new(incident, run, opts) do
@@ -120,14 +126,14 @@ defmodule Opsonde.Cases.Budget do
              opts[:actor],
              "limit_exhausted",
              opts[:ledger_key],
-             %{
+             Map.merge(Keyword.get(opts, :event_data, %{}), %{
                "limit" => to_string(limit),
                "reason" => reason,
                "attempted_kind" => to_string(opts[:kind]),
                "attempted_amount" => opts[:amount],
                "pending_intent" => opts[:pending_intent],
                "required_human_input" => opts[:required_human_input]
-             }
+             })
            ) do
       %BudgetResult{
         status: :exhausted,

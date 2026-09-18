@@ -10,22 +10,23 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     arguments = input.arguments
 
     with :ok <- validate_trigger(arguments.trigger_kind, arguments.alert_state),
-         :ok <- validate_initial_target(arguments.initial_target_id),
          {:ok, existing} <- existing_case(arguments) do
       if existing do
         {:ok, existing}
       else
-        create_case(arguments, context.actor)
+        with {:ok, initial_target} <- load_initial_target(arguments.initial_target_id) do
+          create_case(arguments, initial_target, context.actor)
+        end
       end
     end
   end
 
-  defp create_case(arguments, actor) do
+  defp create_case(arguments, initial_target, actor) do
     result =
       Ash.transact([AuthoritySetting, Case, ResolutionRun, CaseEvent], fn ->
         with {:ok, setting} <- locked_current_setting(),
              now <- DateTime.utc_now(),
-             {:ok, incident} <- create_case_record(arguments, setting, actor),
+             {:ok, incident} <- create_case_record(arguments, initial_target, setting, actor),
              {:ok, run} <- create_run(incident, setting, now),
              {:ok, _event} <- create_opened_event(incident, run, actor, arguments) do
           incident
@@ -69,7 +70,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     end
   end
 
-  defp create_case_record(arguments, setting, actor) do
+  defp create_case_record(arguments, initial_target, setting, actor) do
     {status, pending_intent, stop_reason, required_human_input} =
       initial_state(arguments, setting)
 
@@ -97,6 +98,8 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       stop_reason: stop_reason,
       required_human_input: required_human_input,
       initial_target_id: arguments.initial_target_id,
+      selected_target_id: initial_target && initial_target.id,
+      selected_target_revision: initial_target && initial_target.revision,
       current_owner_id: actor_id(actor)
     }
 
@@ -148,7 +151,9 @@ defmodule Opsonde.Cases.Case.Actions.Open do
           "source" => arguments.source,
           "source_ref" => arguments.source_ref,
           "authority_setting_revision" => incident.authority_setting_revision,
-          "run_generation" => run.generation
+          "run_generation" => run.generation,
+          "selected_target_id" => incident.selected_target_id,
+          "selected_target_revision" => incident.selected_target_revision
         }
       },
       authorize?: false
@@ -159,11 +164,11 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   defp validate_trigger(kind, :not_applicable) when kind in [:manual, :audit], do: :ok
   defp validate_trigger(_kind, _state), do: {:error, "Trigger kind and alert state do not match"}
 
-  defp validate_initial_target(nil), do: :ok
+  defp load_initial_target(nil), do: {:ok, nil}
 
-  defp validate_initial_target(id) do
+  defp load_initial_target(id) do
     case Targets.get_target(id, authorize?: false) do
-      {:ok, %{active: true}} -> :ok
+      {:ok, %{active: true} = target} -> {:ok, target}
       {:ok, _target} -> {:error, "Initial Target is inactive"}
       {:error, _error} -> {:error, "Initial Target is unavailable"}
     end

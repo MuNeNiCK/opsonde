@@ -87,6 +87,31 @@ defmodule Opsonde.Cases do
           :max_no_progress_turns,
           :reason
         ]
+
+      define :search_case_targets,
+        action: :search_targets,
+        args: [
+          :id,
+          :resolution_run_id,
+          :idempotency_key,
+          :query,
+          :max_results,
+          :pending_intent,
+          :required_human_input
+        ]
+
+      define :select_case_target,
+        action: :select_target,
+        args: [
+          :id,
+          :expected_revision,
+          :resolution_run_id,
+          :evidence_ids,
+          :target_id,
+          :target_revision,
+          :reason,
+          :idempotency_key
+        ]
     end
 
     resource Opsonde.Cases.ResolutionRun do
@@ -160,6 +185,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Evidence do
       define :list_evidence, action: :read
+      define :get_evidence, action: :read, get_by: [:id]
 
       define :evidence_by_idempotency,
         action: :by_idempotency,
