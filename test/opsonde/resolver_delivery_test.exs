@@ -1,8 +1,10 @@
 defmodule Opsonde.ResolverDeliveryTest do
   use Opsonde.DataCase, async: false
 
+  import Ecto.Query
+
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{Budget, ResolverDelivery, ResolverWorker}
+  alias Opsonde.Cases.{Budget, DecisionRouteWorker, ResolverDelivery, ResolverWorker}
   alias Opsonde.Providers.{AI, Target}
 
   @password "correct horse battery staple"
@@ -86,6 +88,8 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.result["outcome"] == "decision"
     assert completed.result["intent"]["type"] == "target_search"
     assert completed.result["usage"] == %{"input_tokens" => 7, "output_tokens" => 5}
+    assert [%Oban.Job{args: %{"turn_id" => turn_id}}] = route_jobs(turn.id)
+    assert turn_id == turn.id
 
     charged = Cases.get_resolution_run!(run.id, authorize?: false)
     assert charged.ai_usage_units == 12
@@ -181,6 +185,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.result == %{"outcome" => "already_accepted"}
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert route_jobs(turn.id) == []
   end
 
   test "cancelled Case stops before AI dispatch", context do
@@ -435,5 +440,14 @@ defmodule Opsonde.ResolverDeliveryTest do
       respond: fn -> {:ok, capabilities} end,
       cancelled?: fn -> false end
     }
+  end
+
+  defp route_jobs(turn_id) do
+    from(job in Oban.Job,
+      where:
+        job.worker == ^Oban.Worker.to_string(DecisionRouteWorker) and
+          fragment("?->>'turn_id'", job.args) == ^turn_id
+    )
+    |> Opsonde.Repo.all()
   end
 end

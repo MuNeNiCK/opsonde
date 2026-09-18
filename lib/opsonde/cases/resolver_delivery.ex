@@ -177,7 +177,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
                %{"action" => "route_resolver_decision", "turn_id" => turn.id},
                "Review the Resolver decision",
                authorize?: false
-             ) do
+             ),
+           {:ok, _job} <- enqueue_route(turn.id) do
         completion
       end
     end)
@@ -202,6 +203,12 @@ defmodule Opsonde.Cases.ResolverDelivery do
       "Increase the AI usage limit or review the Case",
       authorize?: false
     )
+  end
+
+  defp enqueue_route(turn_id) do
+    %{"turn_id" => turn_id}
+    |> Opsonde.Cases.DecisionRouteWorker.new()
+    |> Oban.insert()
   end
 
   defp accepted_or_existing({:ok, result}, _turn_id), do: {:ok, result}

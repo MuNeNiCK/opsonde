@@ -1,0 +1,185 @@
+defmodule Opsonde.DecisionRouteWorkerTest do
+  use Opsonde.DataCase, async: false
+
+  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Cases.DecisionRouteWorker
+
+  @password "correct horse battery staple"
+
+  setup do
+    admin = Accounts.bootstrap!("route-admin@example.com", @password, @password, authorize?: true)
+
+    operator =
+      Accounts.create_user!("route-operator@example.com", @password, :operator, actor: admin)
+
+    %{admin: admin, operator: operator}
+  end
+
+  test "persisted Target discovery is routed once across duplicate delivery", context do
+    target =
+      Targets.create_target!("route-linux", "host", "linux", %{}, nil, actor: context.admin)
+
+    {incident, run} = open_case!("target-search", context.operator)
+
+    turn =
+      completed_turn!(incident, run, "target-search", %{
+        "type" => "target_search",
+        "query" => "route-linux",
+        "reason" => "Find the registered affected host"
+      })
+
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+
+    assert [evidence] =
+             Cases.list_evidence!(actor: context.admin)
+             |> Enum.filter(&(&1.case_id == incident.id))
+
+    assert evidence.kind == "target_candidates"
+    assert Enum.any?(evidence.content["targets"], &(&1["id"] == target.id))
+
+    assert Enum.count(Cases.list_turns!(actor: context.admin), &(&1.case_id == incident.id)) == 2
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
+  end
+
+  test "persisted Proposal reaches the authority pending state without an effect", context do
+    {incident, run} = open_case!("proposal", context.operator)
+    evidence = evidence!(incident, run, "proposal")
+    turn = completed_turn!(incident, run, "proposal", proposal_intent(evidence.id), :proposal)
+
+    assert :ok =
+             DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    routed = Cases.get_case!(incident.id, authorize?: false)
+
+    assert routed.pending_intent == %{
+             "action" => "authorize_proposal",
+             "source_turn_id" => turn.id
+           }
+
+    assert routed.status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
+  end
+
+  test "malformed persisted decision becomes explicit attention without Target calls", context do
+    {incident, run} = open_case!("malformed", context.operator)
+
+    turn =
+      completed_turn!(incident, run, "malformed", %{
+        "type" => "unrecognized_intent",
+        "request" => %{"operation" => "must-not-run"}
+      })
+
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+
+    attention = Cases.get_case!(incident.id, authorize?: false)
+    assert attention.status == :needs_attention
+    assert attention.stop_reason == "Resolver decision routing failed"
+
+    assert attention.pending_intent == %{
+             "action" => "review_resolver_route",
+             "source_turn_id" => turn.id
+           }
+
+    paused = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert paused.status == :needs_attention
+    assert paused.target_request_count == 0
+    assert paused.effect_count == 0
+    assert Cases.list_evidence!(actor: context.admin) == []
+  end
+
+  defp open_case!(source_ref, actor) do
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        source_ref,
+        "Case #{source_ref}",
+        :warning,
+        :not_applicable,
+        %{},
+        nil,
+        actor: actor
+      )
+
+    {incident, Cases.active_resolution_run!(incident.id, authorize?: false)}
+  end
+
+  defp completed_turn!(incident, run, suffix, intent, progress_kind \\ :hypothesis) do
+    started =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "decision-route-#{suffix}",
+        %{"objective" => "Resolve the incident"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      )
+
+    Cases.complete_turn!(
+      started.value.id,
+      started.value.revision,
+      %{
+        "outcome" => "decision",
+        "intent" => intent,
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      },
+      progress_kind,
+      %{"action" => "route_resolver_decision", "turn_id" => started.value.id},
+      "Review the Resolver decision",
+      authorize?: false
+    ).value
+  end
+
+  defp evidence!(incident, run, suffix) do
+    Cases.append_evidence!(
+      incident.id,
+      run.id,
+      nil,
+      "route-evidence-#{suffix}",
+      "observation",
+      "fixture",
+      "observation-#{suffix}",
+      %{"service" => "unhealthy"},
+      DateTime.utc_now(),
+      authorize?: false
+    )
+  end
+
+  defp proposal_intent(evidence_id) do
+    %{
+      "type" => "proposal",
+      "tool_id" => "effect-tool",
+      "target_id" => Ash.UUID.generate(),
+      "target_revision" => 1,
+      "access_method_id" => Ash.UUID.generate(),
+      "access_method_revision" => 1,
+      "capability" => "effect.service",
+      "operation" => "service.restart",
+      "selectors" => %{"service" => "api"},
+      "parameters" => %{"service" => "api"},
+      "reason" => "Restart the failed service",
+      "evidence_ids" => [evidence_id],
+      "expected_result" => %{"service" => "running"},
+      "verification_intent" => %{
+        "tool_id" => "observation-tool",
+        "selectors" => %{"service" => "api"},
+        "parameters" => %{"service" => "api"},
+        "expected_result" => %{"service" => "running"}
+      },
+      "verification_tool" => %{
+        "id" => "observation-tool",
+        "target_id" => Ash.UUID.generate(),
+        "target_revision" => 1,
+        "access_method_id" => Ash.UUID.generate(),
+        "access_method_revision" => 1,
+        "capability" => "observe.service",
+        "operation" => "service.inspect"
+      }
+    }
+  end
+end
