@@ -45,29 +45,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   end
 
   defp fetch_target_adapter(adapter_type) do
-    with {:ok, adapter} <- Registry.fetch(adapter_type),
-         true <- target_adapter?(adapter) do
-      {:ok, adapter}
-    else
-      _other -> {:error, target_error(:failed, "Target adapter is unavailable")}
+    case Registry.fetch(adapter_type, Target) do
+      {:ok, adapter} -> {:ok, adapter}
+      {:error, _reason} -> {:error, target_error(:failed, "Target adapter is unavailable")}
     end
-  end
-
-  defp target_adapter?(adapter) do
-    Code.ensure_loaded?(adapter) and
-      Target in behaviours(adapter) and
-      Enum.all?([:capabilities, :observe, :effect, :verify], fn callback ->
-        function_exported?(adapter, callback, callback_arity(callback))
-      end)
-  end
-
-  defp callback_arity(:capabilities), do: 2
-  defp callback_arity(_callback), do: 3
-
-  defp behaviours(adapter) do
-    adapter.module_info(:attributes)
-    |> Keyword.get_values(:behaviour)
-    |> List.flatten()
   end
 
   defp build_state(adapter, provider) do

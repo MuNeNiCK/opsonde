@@ -16,6 +16,16 @@ defmodule Opsonde.Providers.Registry do
 
   def fetch(_type), do: {:error, :unknown_adapter}
 
+  def fetch(type, behaviour) when is_atom(behaviour) do
+    with {:ok, adapter} <- fetch(type),
+         true <- implements?(adapter, behaviour) do
+      {:ok, adapter}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :unsupported_role}
+    end
+  end
+
   def role(adapter), do: adapter.role()
 
   def build(adapter, configuration, credentials)
@@ -67,5 +77,13 @@ defmodule Opsonde.Providers.Registry do
     adapter.module_info(:attributes)
     |> Keyword.get_values(:behaviour)
     |> List.flatten()
+  end
+
+  defp implements?(adapter, behaviour) do
+    Code.ensure_loaded?(behaviour) and
+      behaviour in behaviours(adapter) and
+      Enum.all?(behaviour.behaviour_info(:callbacks), fn {callback, arity} ->
+        function_exported?(adapter, callback, arity)
+      end)
   end
 end

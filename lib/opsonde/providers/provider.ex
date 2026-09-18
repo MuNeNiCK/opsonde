@@ -108,6 +108,24 @@ defmodule Opsonde.Providers.Provider do
       run {Opsonde.Providers.Provider.Actions.Target, operation: :capabilities}
     end
 
+    action :signal_ingest, :struct do
+      constraints instance_of: Opsonde.Providers.Signal.Event
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :expected_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1]
+
+      argument :envelope, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Signal.Envelope]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run Opsonde.Providers.Provider.Actions.Signal
+    end
+
     action :target_observe, :struct do
       constraints instance_of: Opsonde.Providers.Target.Observation
       transaction? false
@@ -232,6 +250,10 @@ defmodule Opsonde.Providers.Provider do
     policy action([:target_capabilities, :target_observe, :target_effect, :target_verify]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
+    end
+
+    policy action(:signal_ingest) do
+      authorize_if always()
     end
 
     policy action(:read) do
