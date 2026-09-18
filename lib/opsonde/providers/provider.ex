@@ -70,7 +70,7 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate Opsonde.Providers.Validations.CurrentRevision
+      validate Opsonde.Validations.CurrentRevision
       change set_attribute(:enabled, false)
       change set_attribute(:checked_revision, nil)
       change set_attribute(:check_status, nil)
@@ -248,7 +248,7 @@ defmodule Opsonde.Providers.Provider do
 
       argument :check_message, :string
 
-      validate Opsonde.Providers.Validations.CurrentRevision
+      validate Opsonde.Validations.CurrentRevision
       change set_attribute(:checked_revision, arg(:expected_revision))
       change set_attribute(:check_status, arg(:check_status))
       change set_attribute(:check_category, arg(:check_category))
@@ -274,7 +274,7 @@ defmodule Opsonde.Providers.Provider do
       validate compare(:checked_revision, is_equal: {:ref, :revision}),
         message: "does not have a current check"
 
-      validate Opsonde.Providers.Validations.CurrentRevision
+      validate Opsonde.Validations.CurrentRevision
       change set_attribute(:enabled, true)
     end
 
@@ -285,7 +285,7 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate Opsonde.Providers.Validations.CurrentRevision
+      validate Opsonde.Validations.CurrentRevision
       change set_attribute(:enabled, false)
     end
   end

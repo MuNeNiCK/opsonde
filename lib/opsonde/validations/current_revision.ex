@@ -1,4 +1,4 @@
-defmodule Opsonde.Providers.Validations.CurrentRevision do
+defmodule Opsonde.Validations.CurrentRevision do
   use Ash.Resource.Validation
 
   import Ash.Expr
@@ -6,9 +6,7 @@ defmodule Opsonde.Providers.Validations.CurrentRevision do
   alias Ash.Error.Changes.InvalidAttribute
 
   @impl true
-  def init(opts) do
-    {:ok, opts}
-  end
+  def init(opts), do: {:ok, opts}
 
   @impl true
   def validate(changeset, _opts, _context) do

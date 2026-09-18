@@ -65,7 +65,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate Opsonde.Providers.Validations.CurrentRevision
+      validate Opsonde.Validations.CurrentRevision
       change optimistic_lock(:revision)
     end
 

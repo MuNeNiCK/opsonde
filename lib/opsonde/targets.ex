@@ -1,0 +1,81 @@
+defmodule Opsonde.Targets do
+  use Ash.Domain,
+    otp_app: :opsonde
+
+  resources do
+    resource Opsonde.Targets.ManagementBoundary do
+      define :list_management_boundaries, action: :read
+      define :create_management_boundary, action: :create, args: [:name, :kind, :facts]
+      define :update_management_boundary, action: :update, args: [:expected_revision]
+      define :deactivate_management_boundary, action: :deactivate, args: [:expected_revision]
+    end
+
+    resource Opsonde.Targets.Target do
+      define :list_targets, action: :read
+      define :get_target, action: :read, get_by: [:id]
+
+      define :create_target,
+        action: :create,
+        args: [:name, :kind, :platform, :facts, :management_boundary_id]
+
+      define :update_target, action: :update, args: [:expected_revision]
+      define :deactivate_target, action: :deactivate, args: [:expected_revision]
+      define :search_targets, action: :search, args: [:query, :max_results]
+    end
+
+    resource Opsonde.Targets.ExternalIdentity do
+      define :list_external_identities, action: :read
+
+      define :create_external_identity,
+        action: :create,
+        args: [:target_id, :source, :kind, :value]
+
+      define :update_external_identity, action: :update, args: [:expected_revision]
+      define :deactivate_external_identity, action: :deactivate, args: [:expected_revision]
+    end
+
+    resource Opsonde.Targets.AccessMethod do
+      define :list_access_methods, action: :read
+
+      define :create_access_method,
+        action: :create,
+        args: [
+          :target_id,
+          :provider_id,
+          :name,
+          :platform,
+          :method,
+          :endpoint,
+          :provider_revision,
+          :priority,
+          :capabilities
+        ]
+
+      define :update_access_method, action: :update, args: [:expected_revision]
+      define :deactivate_access_method, action: :deactivate, args: [:expected_revision]
+
+      define :available_access_methods,
+        action: :available,
+        args: [:target_id, :capability]
+
+      define :load_access_method_for_use,
+        action: :for_use,
+        args: [:id, :expected_revision, :capability]
+    end
+
+    resource Opsonde.Targets.Relationship do
+      define :list_relationships, action: :read
+
+      define :create_relationship,
+        action: :create,
+        args: [:source_target_id, :destination_target_id, :kind, :facts, :valid_until]
+
+      define :update_relationship, action: :update, args: [:expected_revision]
+      define :deactivate_relationship, action: :deactivate, args: [:expected_revision]
+
+      define :load_relationship_for_traversal,
+        action: :for_traversal,
+        args: [:id, :expected_revision]
+    end
+  end
+end
