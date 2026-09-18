@@ -272,6 +272,24 @@ defmodule Opsonde.Providers.TargetTest do
 
     assert target_error(error).message == "Invalid observation result"
     assert_receive {:observe, %{token: @token}, ^request}
+
+    oversized_combination = %Target.Observation{
+      facts: %{"first" => String.duplicate("x", 40_000)},
+      observed_at: DateTime.utc_now(),
+      evidence: [String.duplicate("y", 40_000)]
+    }
+
+    assert {:error, size_error} =
+             Providers.target_observe(
+               context.provider.id,
+               request,
+               invocation(oversized_combination),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert target_error(size_error).message == "Invalid observation result"
+    assert_receive {:observe, %{token: @token}, ^request}
   end
 
   test "effects dispatch once and preserve applied, unknown, partial and failed results",

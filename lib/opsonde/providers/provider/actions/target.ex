@@ -136,9 +136,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
          credentials
        )
        when is_map(facts) and is_list(evidence) do
-    if bounded_map?(facts) and bounded_list?(evidence),
-      do: {:ok, Redactor.value(value, credentials)},
-      else: {:error, target_error(:failed, "Invalid observation result")}
+    if bounded_map?(facts) and bounded_list?(evidence) and
+         bounded_map?(%{"facts" => facts, "evidence" => evidence}),
+       do: {:ok, Redactor.value(value, credentials)},
+       else: {:error, target_error(:failed, "Invalid observation result")}
   end
 
   defp normalize_observation(result, credentials),
@@ -168,9 +169,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
          credentials
        )
        when status in @verification_statuses and is_map(facts) and is_list(evidence) do
-    if bounded_map?(facts) and bounded_list?(evidence),
-      do: {:ok, Redactor.value(value, credentials)},
-      else: {:error, target_error(:failed, "Invalid verification result")}
+    if bounded_map?(facts) and bounded_list?(evidence) and
+         bounded_map?(%{"facts" => facts, "evidence" => evidence}),
+       do: {:ok, Redactor.value(value, credentials)},
+       else: {:error, target_error(:failed, "Invalid verification result")}
   end
 
   defp normalize_verification(result, credentials),
