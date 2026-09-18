@@ -280,7 +280,6 @@ defmodule Opsonde.ResolverDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
-                   [observation_tool] = request.observation_tools
                    [proposal_tool] = request.proposal_tools
 
                    {:ok,
@@ -299,10 +298,10 @@ defmodule Opsonde.ResolverDeliveryTest do
                         evidence_ids: [evidence.id],
                         expected_result: %{"service" => "running"},
                         verification_intent: %AI.VerificationIntent{
-                          tool_id: observation_tool.id,
-                          selectors: %{"path" => "/var/log/messages"},
-                          parameters: %{"path" => "/var/log/messages"},
-                          expected_result: %{"errors" => "absent"}
+                          tool_id: proposal_tool.id,
+                          selectors: %{"service" => "api"},
+                          parameters: %{"service" => "api", "verify_only" => true},
+                          expected_result: %{"service" => "running"}
                         }
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 4}
@@ -318,14 +317,14 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert proposal_intent["tool"]["provider_revision"] == method.provider_revision
 
     assert proposal_intent["verification_intent"]["selectors"] == %{
-             "path" => "/var/log/messages"
+             "service" => "api"
            }
 
-    assert proposal_intent["verification_tool"]["id"] =~ "observation:"
+    assert proposal_intent["verification_tool"]["id"] =~ "proposal:"
     assert proposal_intent["verification_tool"]["access_method_id"] == method.id
     assert proposal_intent["verification_tool"]["provider_id"] == method.provider_id
     assert proposal_intent["verification_tool"]["provider_revision"] == method.provider_revision
-    assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
+    assert proposal_intent["verification_tool"]["operation"] == "service.restart"
   end
 
   test "accepted relationship snapshot reaches the durable related Target route", context do

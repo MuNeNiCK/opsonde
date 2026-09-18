@@ -392,7 +392,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp verification_intent(value, request) when is_map(value) do
     with {:ok, tool_id} <- string(value, "tool_id"),
-         %AI.ObservationTool{} <- Enum.find(request.observation_tools, &(&1.id == tool_id)),
+         %_{id: ^tool_id} <- verification_tool(request, tool_id),
          {:ok, selectors} <- map(value, "selectors"),
          {:ok, parameters} <- map(value, "parameters"),
          {:ok, expected_result} <- map(value, "expected_result") do
@@ -409,6 +409,9 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp verification_intent(_value, _request), do: invalid_output()
+
+  defp verification_tool(request, tool_id),
+    do: Enum.find(request.observation_tools ++ request.proposal_tools, &(&1.id == tool_id))
 
   defp traversal_target(relationship, selected_target_id) do
     cond do

@@ -260,7 +260,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "evidence_ids" => ["evidence-1"],
       "expected_result" => %{"status" => "running"},
       "verification" => %{
-        "tool_id" => "observe-tool",
+        "tool_id" => "proposal-tool",
         "selectors" => %{"service" => "api"},
         "parameters" => %{},
         "expected_result" => %{"status" => "running"}
@@ -280,7 +280,7 @@ defmodule Opsonde.AI.ReqLLMTest do
                 access_method_revision: 3,
                 capability: "effect.command",
                 operation: "service.restart",
-                verification_intent: %AI.VerificationIntent{tool_id: "observe-tool"}
+                verification_intent: %AI.VerificationIntent{tool_id: "proposal-tool"}
               }
             }} = Adapter.resolve(state, request, %{})
 

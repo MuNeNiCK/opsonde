@@ -349,7 +349,10 @@ defmodule Opsonde.Providers.AI.Validator do
         if request.budget.remaining_effects > 0 and
              valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
              exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
-             valid_verification_intent?(proposal.verification_intent, request.observation_tools) and
+             valid_verification_intent?(
+               proposal.verification_intent,
+               request.observation_tools ++ request.proposal_tools
+             ) and
              bounded_string?(proposal.reason, 500) and
              nonempty_list?(proposal.evidence_ids) and
              unique?(proposal.evidence_ids) and
@@ -457,9 +460,9 @@ defmodule Opsonde.Providers.AI.Validator do
       proposal.capability == tool.capability and proposal.operation == tool.operation
   end
 
-  defp valid_verification_intent?(%AI.VerificationIntent{} = intent, observation_tools) do
-    case Enum.find(observation_tools, &(&1.id == intent.tool_id)) do
-      %AI.ObservationTool{} = tool ->
+  defp valid_verification_intent?(%AI.VerificationIntent{} = intent, tools) do
+    case Enum.find(tools, &(&1.id == intent.tool_id)) do
+      %tool_module{} = tool when tool_module in [AI.ObservationTool, AI.ProposalTool] ->
         valid_verification_intent?(intent) and
           valid_tool_input?(intent.selectors, intent.parameters, tool.input_schema)
 
@@ -468,7 +471,7 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
-  defp valid_verification_intent?(_intent, _observation_tools), do: false
+  defp valid_verification_intent?(_intent, _tools), do: false
 
   defp valid_verification_intent?(%AI.VerificationIntent{} = intent),
     do:

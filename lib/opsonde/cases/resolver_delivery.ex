@@ -249,7 +249,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp intent(%AI.Proposal{} = value, request) do
     with {:ok, effect_tool} <- proposal_tool(request, value.tool_id),
          {:ok, verification_tool} <-
-           observation_tool(request, value.verification_intent.tool_id) do
+           verification_tool(request, value.verification_intent.tool_id) do
       {:ok,
        value
        |> typed_intent()
@@ -292,6 +292,13 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
       _missing ->
         {:error, ai_error(:invalid_output, "AI Proposal tool snapshot is unavailable")}
+    end
+  end
+
+  defp verification_tool(request, tool_id) do
+    case observation_tool(request, tool_id) do
+      {:ok, tool} -> {:ok, tool}
+      {:error, _missing} -> proposal_tool(request, tool_id)
     end
   end
 

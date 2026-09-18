@@ -319,6 +319,23 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: valid_observation, usage: usage()}}
              end)
 
+    self_verifying_proposal = %{
+      proposal()
+      | selectors: %{"service" => "api"},
+        parameters: %{},
+        verification_intent: %AI.VerificationIntent{
+          tool_id: proposal_tool.id,
+          selectors: %{"service" => "api"},
+          parameters: %{},
+          expected_result: %{"service" => "running"}
+        }
+    }
+
+    assert %AI.ResolverDecision{intent: ^self_verifying_proposal} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: self_verifying_proposal, usage: usage()}}
+             end)
+
     invalid_observation = %{valid_observation | selectors: %{"service" => 42}}
 
     assert {:error, invalid_observation_error} =
