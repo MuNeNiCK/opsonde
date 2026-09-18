@@ -181,6 +181,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Turn do
       define :list_turns, action: :read
+      define :page_case_turns, action: :page_for_case, args: [:case_id]
       define :get_turn, action: :read, get_by: [:id]
 
       define :turn_by_idempotency,
@@ -219,6 +220,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Evidence do
       define :list_evidence, action: :read
+      define :page_case_evidence, action: :page_for_case, args: [:case_id]
       define :get_evidence, action: :read, get_by: [:id]
 
       define :resolver_evidence_window,
@@ -271,12 +273,14 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Approval do
       define :list_approvals, action: :read
+      define :page_case_approvals, action: :page_for_case, args: [:case_id]
       define :approval_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_approval_record, action: :create_record
     end
 
     resource Opsonde.Cases.ReviewDecision do
       define :list_review_decisions, action: :read
+      define :page_case_review_decisions, action: :page_for_case, args: [:case_id]
       define :review_decision_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_review_decision_record, action: :create_record
     end

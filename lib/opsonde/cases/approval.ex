@@ -19,6 +19,13 @@ defmodule Opsonde.Cases.Approval do
   actions do
     defaults [:read]
 
+    read :page_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(sort: [decided_at: :asc, id: :asc])
+    end
+
     read :by_proposal do
       get? true
       argument :proposal_id, :uuid, allow_nil?: false
@@ -49,7 +56,7 @@ defmodule Opsonde.Cases.Approval do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

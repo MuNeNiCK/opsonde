@@ -101,6 +101,80 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
     }
   end
 
+  def turn(turn) do
+    %{
+      id: turn.id,
+      case_id: turn.case_id,
+      resolution_run_id: turn.resolution_run_id,
+      ordinal: turn.ordinal,
+      status: turn.status,
+      intent: turn.intent,
+      outcome: turn.result["outcome"],
+      decision: turn.result["intent"],
+      failure_category: turn.result["category"],
+      failure_message: turn.result["message"],
+      progress_kind: turn.progress_kind,
+      started_at: turn.started_at,
+      completed_at: turn.completed_at,
+      revision: turn.revision,
+      inserted_at: turn.inserted_at,
+      updated_at: turn.updated_at
+    }
+  end
+
+  def evidence(evidence) do
+    %{
+      id: evidence.id,
+      case_id: evidence.case_id,
+      resolution_run_id: evidence.resolution_run_id,
+      turn_id: evidence.turn_id,
+      kind: evidence.kind,
+      source: evidence.source,
+      source_ref: evidence.source_ref,
+      content: evidence.content,
+      observed_at: evidence.observed_at,
+      inserted_at: evidence.inserted_at,
+      updated_at: evidence.updated_at
+    }
+  end
+
+  def approval(approval) do
+    %{
+      id: approval.id,
+      proposal_id: approval.proposal_id,
+      case_id: approval.case_id,
+      resolution_run_id: approval.resolution_run_id,
+      actor_id: approval.actor_id,
+      decision: approval.decision,
+      source: approval.source,
+      proposal_revision: approval.proposal_revision,
+      case_generation: approval.case_generation,
+      reason: approval.reason,
+      decided_at: approval.decided_at,
+      inserted_at: approval.inserted_at
+    }
+  end
+
+  def review_decision(decision) do
+    %{
+      id: decision.id,
+      proposal_id: decision.proposal_id,
+      case_id: decision.case_id,
+      resolution_run_id: decision.resolution_run_id,
+      provider_id: decision.provider_id,
+      outcome: decision.outcome,
+      verdict: decision.verdict,
+      category: decision.category,
+      reason: decision.reason,
+      selection_source: decision.selection_source,
+      provider_revision: decision.provider_revision,
+      input_tokens: decision.input_tokens,
+      output_tokens: decision.output_tokens,
+      decided_at: decision.decided_at,
+      inserted_at: decision.inserted_at
+    }
+  end
+
   def proposal(proposal) do
     %{
       id: proposal.id,

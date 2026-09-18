@@ -2,6 +2,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.Cases.ReviewDelivery
+  alias Opsonde.Providers.AI
 
   @password "correct horse battery staple"
 
@@ -271,6 +273,63 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert length(Cases.list_approvals!(actor: context.admin)) == 1
     assert Cases.list_operations!(actor: context.admin) == []
 
+    turns = get_json("/api/v1/cases/#{incident.id}/turns", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "ordinal" => 1,
+                 "status" => "completed",
+                 "outcome" => "decision",
+                 "decision" => %{"type" => "proposal"},
+                 "progress_kind" => "proposal"
+               }
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(turns, 200)
+
+    evidence = get_json("/api/v1/cases/#{incident.id}/evidence", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "kind" => "observation",
+                 "source" => "fixture",
+                 "source_ref" => "observation-1",
+                 "content" => %{"service" => "unhealthy"}
+               }
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(evidence, 200)
+
+    approvals = get_json("/api/v1/cases/#{incident.id}/approvals", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "proposal_id" => proposal_id,
+                 "decision" => "approved",
+                 "source" => "human",
+                 "reason" => "the evidence supports this exact restart"
+               }
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(approvals, 200)
+
+    assert proposal_id == proposal.id
+
+    assert %{"data" => [], "page" => %{"next" => nil}} =
+             get_json("/api/v1/cases/#{incident.id}/review-decisions", context.viewer_token)
+             |> json_response(200)
+
+    for response <- [turns, evidence, approvals] do
+      refute response.resp_body =~ "idempotency_key"
+      refute response.resp_body =~ "resolver-secret"
+      refute response.resp_body =~ "provider-secret"
+      refute response.resp_body =~ "clearance_digest"
+      refute response.resp_body =~ "session_id"
+    end
+
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
     operation_response = get_json("/api/v1/operations/#{operation.id}", context.viewer_token)
 
@@ -317,6 +376,94 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       refute response.resp_body =~ "idempotency_key"
       refute response.resp_body =~ "provider-secret"
     end
+  end
+
+  test "auto Reviewer decisions and their exact approval are reconnectable without AI sessions",
+       context do
+    configure_mode!(:auto, context.admin)
+    setup = proposal_setup!(context)
+    {incident, reviewing} = awaiting_proposal!(setup, context.operator)
+
+    assert reviewing.status == :reviewing
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :approved,
+                      reason: "The cited evidence supports this exact change",
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{api_key: "reviewer-secret"}, _request}
+
+    response =
+      get_json("/api/v1/cases/#{incident.id}/review-decisions", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "proposal_id" => proposal_id,
+                 "outcome" => "decision",
+                 "verdict" => "approved",
+                 "selection_source" => "assignment",
+                 "provider_id" => reviewer_id,
+                 "input_tokens" => 3,
+                 "output_tokens" => 2
+               }
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(response, 200)
+
+    assert proposal_id == reviewing.id
+    assert reviewer_id == setup.reviewer.id
+
+    assert %{"data" => [%{"proposal_id" => ^proposal_id, "source" => "reviewer"}]} =
+             get_json("/api/v1/cases/#{incident.id}/approvals", context.viewer_token)
+             |> json_response(200)
+
+    refute response.resp_body =~ "session_id"
+    refute response.resp_body =~ "resolver_session_id"
+    refute response.resp_body =~ "assignment_id"
+    refute response.resp_body =~ "proposal_digest"
+    refute response.resp_body =~ "reviewer-secret"
+  end
+
+  test "unexpected AI failures cannot reach the reconnect contract", context do
+    configure_mode!(:auto, context.admin)
+    setup = proposal_setup!(context)
+    {incident, reviewing} = awaiting_proposal!(setup, context.operator)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> raise "credential internal-review-secret" end
+               }
+             )
+
+    response =
+      get_json("/api/v1/cases/#{incident.id}/review-decisions", context.viewer_token)
+
+    assert %{
+             "data" => [
+               %{
+                 "outcome" => "delivery_failed",
+                 "verdict" => "needs_human",
+                 "category" => "failed",
+                 "reason" => "Reviewer delivery failed"
+               }
+             ]
+           } = json_response(response, 200)
+
+    refute response.resp_body =~ "internal-review-secret"
+    refute response.resp_body =~ "RuntimeError"
   end
 
   defp resume_input(incident, run, expected_run_revision) do
@@ -381,12 +528,29 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assignment =
       Providers.create_ai_usage_role_assignment!(resolver.id, :resolver, 10, actor: context.admin)
 
+    reviewer =
+      Providers.create_provider!(
+        "workflow-reviewer",
+        :ai,
+        "fixture-ai",
+        %{"model" => "reviewer-model"},
+        %{"api_key" => "reviewer-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    reviewer_assignment =
+      Providers.create_ai_usage_role_assignment!(reviewer.id, :reviewer, 10, actor: context.admin)
+
     %{
       provider: provider,
       target: target,
       method: method,
       resolver: resolver,
-      assignment: assignment
+      assignment: assignment,
+      reviewer: reviewer,
+      reviewer_assignment: reviewer_assignment
     }
   end
 

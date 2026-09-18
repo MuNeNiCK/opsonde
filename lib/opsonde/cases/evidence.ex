@@ -19,6 +19,13 @@ defmodule Opsonde.Cases.Evidence do
   actions do
     defaults [:read]
 
+    read :page_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(sort: [observed_at: :asc, inserted_at: :asc, id: :asc])
+    end
+
     read :projection_window do
       argument :case_id, :uuid, allow_nil?: false
       argument :resolution_run_id, :uuid, allow_nil?: false
@@ -92,7 +99,7 @@ defmodule Opsonde.Cases.Evidence do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

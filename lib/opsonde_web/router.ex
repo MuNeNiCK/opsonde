@@ -83,6 +83,10 @@ defmodule OpsondeWeb.Router do
     post "/cases", CaseController, :create
     get "/cases/:id", CaseController, :show
     get "/cases/:id/timeline", CaseController, :timeline
+    get "/cases/:id/turns", CaseController, :turns
+    get "/cases/:id/evidence", CaseController, :evidence
+    get "/cases/:id/approvals", CaseController, :approvals
+    get "/cases/:id/review-decisions", CaseController, :review_decisions
     post "/cases/:id/claim", CaseController, :claim
     post "/cases/:id/handoff", CaseController, :handoff
     post "/cases/:id/cancel", CaseController, :cancel

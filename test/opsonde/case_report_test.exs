@@ -109,11 +109,17 @@ defmodule Opsonde.CaseReportTest do
     assert report.content["raw_evidence"] |> hd() |> Map.fetch!("id") == evidence.id
     assert length(report.content["resolver_turns"]) == 2
 
-    assert get_in(report.content, ["resolver_turns", Access.at(1), "result", "intent", "reason"]) ==
+    assert get_in(report.content, ["resolver_turns", Access.at(1), "decision", "reason"]) ==
              "複合要因のため物理状態を確認できません"
 
     assert report.content["unresolved"]["required_human_input"] ==
              "ディスクLEDを確認してください"
+
+    serialized = Jason.encode!(report.content)
+    refute serialized =~ "pending_intent"
+    refute serialized =~ "idempotency_key"
+    refute serialized =~ "resolver_identity"
+    refute serialized =~ "session_id"
 
     retried = Cases.generate_report!(terminal.id, terminal.revision, actor: context.operator)
     assert retried.id == report.id

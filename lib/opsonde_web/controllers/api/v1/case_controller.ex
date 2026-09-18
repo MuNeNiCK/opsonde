@@ -48,6 +48,27 @@ defmodule OpsondeWeb.API.V1.CaseController do
     end
   end
 
+  def turns(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_turns(id, &1), &WorkflowJSON.turn/1)
+  end
+
+  def evidence(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_evidence(id, &1), &WorkflowJSON.evidence/1)
+  end
+
+  def approvals(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_approvals(id, &1), &WorkflowJSON.approval/1)
+  end
+
+  def review_decisions(conn, %{"id" => id} = params) do
+    page_case_records(
+      conn,
+      params,
+      &Cases.page_case_review_decisions(id, &1),
+      &WorkflowJSON.review_decision/1
+    )
+  end
+
   def claim(conn, %{"id" => id, "case" => %{"expected_revision" => revision}}) do
     with {:ok, incident} <- Cases.claim_case(id, revision, actor: conn.assigns.current_user) do
       Response.data(conn, WorkflowJSON.case_record(incident))
@@ -111,4 +132,11 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def resume(_conn, _params), do: {:error, :bad_request}
+
+  defp page_case_records(conn, params, read, serializer) do
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, records} <- read.(page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, records, serializer)
+    end
+  end
 end

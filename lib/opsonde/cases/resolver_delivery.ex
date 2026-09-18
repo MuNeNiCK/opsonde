@@ -418,12 +418,20 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp failure(error) do
     case find_error(error) do
-      %AI.Error{category: category, message: message} -> {to_string(category), message}
-      %{message: message} when is_binary(message) -> {"failed", message}
-      message when is_binary(message) -> {"failed", message}
+      %AI.Error{category: category} -> {to_string(category), public_failure(category)}
       _error -> {"failed", "Resolver delivery failed"}
     end
   end
+
+  defp public_failure(:authentication), do: "Resolver authentication failed"
+  defp public_failure(:unreachable), do: "Resolver AI is unreachable"
+  defp public_failure(:timeout), do: "Resolver AI timed out"
+  defp public_failure(:rate_limited), do: "Resolver AI rate limit was exceeded"
+  defp public_failure(:cancelled), do: "Resolver decision was cancelled"
+  defp public_failure(:invalid_input), do: "Resolver input is invalid"
+  defp public_failure(:invalid_output), do: "Resolver output is invalid"
+  defp public_failure(:unavailable), do: "Resolver AI is unavailable"
+  defp public_failure(_category), do: "Resolver delivery failed"
 
   defp find_error(%AI.Error{} = error), do: error
 

@@ -317,12 +317,20 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
   defp failure(error) do
     case find_error(error) do
-      %AI.Error{category: category, message: message} -> {to_string(category), message}
-      %{message: message} when is_binary(message) -> {"failed", message}
-      message when is_binary(message) -> {"failed", message}
+      %AI.Error{category: category} -> {to_string(category), public_failure(category)}
       _error -> {"failed", "Reviewer delivery failed"}
     end
   end
+
+  defp public_failure(:authentication), do: "Reviewer authentication failed"
+  defp public_failure(:unreachable), do: "Reviewer AI is unreachable"
+  defp public_failure(:timeout), do: "Reviewer AI timed out"
+  defp public_failure(:rate_limited), do: "Reviewer AI rate limit was exceeded"
+  defp public_failure(:cancelled), do: "Reviewer decision was cancelled"
+  defp public_failure(:invalid_input), do: "Reviewer input is invalid"
+  defp public_failure(:invalid_output), do: "Reviewer output is invalid"
+  defp public_failure(:unavailable), do: "Reviewer AI is unavailable"
+  defp public_failure(_category), do: "Reviewer delivery failed"
 
   defp find_error(%AI.Error{} = error), do: error
 

@@ -22,7 +22,6 @@ defmodule Opsonde.Cases.Report.Content do
     :authority_setting_revision,
     :cancel_requested,
     :stop_reason,
-    :pending_intent,
     :required_human_input,
     :source_recovered_at,
     :inserted_at,
@@ -49,7 +48,7 @@ defmodule Opsonde.Cases.Report.Content do
     :revision
   ]
 
-  @event_fields [:id, :resolution_run_id, :actor_id, :event_type, :data, :inserted_at]
+  @event_fields [:id, :resolution_run_id, :actor_id, :event_type, :inserted_at]
 
   @turn_fields [
     :id,
@@ -57,7 +56,6 @@ defmodule Opsonde.Cases.Report.Content do
     :ordinal,
     :status,
     :intent,
-    :result,
     :progress_kind,
     :started_at,
     :completed_at,
@@ -205,9 +203,9 @@ defmodule Opsonde.Cases.Report.Content do
       "case" => plain(incident, @case_fields),
       "timeline" => plain(records.events, @event_fields),
       "target_path" =>
-        events |> Enum.filter(&(&1.event_type in @target_events)) |> plain(@event_fields),
+        events |> Enum.filter(&(&1.event_type in @target_events)) |> Enum.map(&target_event/1),
       "resolution_runs" => plain(records.runs, @run_fields),
-      "resolver_turns" => plain(records.turns, @turn_fields),
+      "resolver_turns" => Enum.map(records.turns, &turn/1),
       "raw_evidence" => plain(records.evidence, @evidence_fields),
       "proposals" => plain(records.proposals, @proposal_fields),
       "reviews" => plain(records.reviews, @review_fields),
@@ -216,8 +214,7 @@ defmodule Opsonde.Cases.Report.Content do
       "verifications" => plain(records.verifications, @verification_fields),
       "unresolved" => %{
         "stop_reason" => incident.stop_reason,
-        "required_human_input" => incident.required_human_input,
-        "pending_intent" => plain(incident.pending_intent)
+        "required_human_input" => incident.required_human_input
       }
     }
   end
@@ -256,6 +253,38 @@ defmodule Opsonde.Cases.Report.Content do
         :cancelled -> dgettext("reports", "Cancelled")
       end
     end)
+  end
+
+  defp turn(turn) do
+    result = turn.result || %{}
+
+    turn
+    |> plain(@turn_fields)
+    |> Map.merge(%{
+      "outcome" => result["outcome"],
+      "decision" => plain(result["intent"]),
+      "usage" => plain(result["usage"]),
+      "failure_category" => result["category"],
+      "failure_message" => result["message"]
+    })
+  end
+
+  defp target_event(event) do
+    fields =
+      case event.event_type do
+        "case_opened" ->
+          ~w(selected_target_id selected_target_revision)
+
+        "case_target_selected" ->
+          ~w(evidence_ids target_id target_revision prior_target_id prior_target_revision reason)
+
+        "related_target_traversed" ->
+          ~w(source_turn_id relationship_id relationship_revision source_target_id source_target_revision destination_target_id destination_target_revision next_target_id next_target_revision evidence_ids reason)
+      end
+
+    event
+    |> plain(@event_fields)
+    |> Map.put("details", event.data |> Map.take(fields) |> plain())
   end
 
   defp plain(records, fields) when is_list(records),
