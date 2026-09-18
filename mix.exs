@@ -12,6 +12,7 @@ defmodule Opsonde.MixProject do
       releases: releases(),
       aliases: aliases(),
       deps: deps(),
+      usage_rules: usage_rules(),
       listeners: [Phoenix.CodeReloader],
       consolidate_protocols: Mix.env() != :dev
     ]
@@ -37,11 +38,27 @@ defmodule Opsonde.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp usage_rules do
+    [
+      skills: [
+        location: ".agents/skills",
+        build: [
+          "ash-framework": [
+            description:
+              "Load before changing Ash.Domain, Ash.Resource, Ash actions, policies, changes, validations, AshPostgres persistence, AshAuthentication, or AshPhoenix integration, and before running Ash generators.",
+            usage_rules: [:ash, ~r/^ash_/]
+          ]
+        ]
+      ]
+    ]
+  end
+
   # Specifies your project dependencies.
   #
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},
       {:ash_postgres, "~> 2.0"},
