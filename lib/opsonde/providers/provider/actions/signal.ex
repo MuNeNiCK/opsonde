@@ -7,6 +7,8 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
   @failures [:authentication, :invalid_input, :failed]
   @max_body_bytes 1_048_576
   @max_headers 100
+  @max_fact_fields 100
+  @max_fact_bytes 65_536
 
   @impl true
   def run(input, _opts, _context) do
@@ -79,12 +81,19 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
          receipt_id: receipt_id,
          source: source,
          event_key: event_key,
+         source_sequence: source_sequence,
+         source_time: source_time,
          metadata: metadata
        })
        when is_binary(receipt_id) and byte_size(receipt_id) > 0 and is_binary(source) and
               byte_size(source) > 0 and is_binary(event_key) and byte_size(event_key) > 0 and
-              is_map(metadata),
-       do: :ok
+              (is_nil(source_sequence) or is_integer(source_sequence) or
+                 (is_binary(source_sequence) and byte_size(source_sequence) > 0)) and
+              (is_nil(source_time) or is_struct(source_time, DateTime)) do
+    if bounded_facts?(metadata),
+      do: :ok,
+      else: {:error, signal_error(:invalid_input, "Authenticated receipt facts are too large")}
+  end
 
   defp validate_receipt(_receipt),
     do: {:error, signal_error(:invalid_input, "Invalid authenticated receipt")}
@@ -96,6 +105,7 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
            state: state,
            occurred_at: %DateTime{},
            source_sequence: sequence,
+           target_ref: target_ref,
            attributes: attributes,
            metadata: metadata
          },
@@ -105,8 +115,14 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
            source_sequence: sequence
          }
        )
-       when state in [:firing, :recovered] and is_map(attributes) and is_map(metadata),
-       do: :ok
+       when state in [:firing, :recovered] do
+    if bounded_facts?(attributes) and bounded_facts?(metadata) and
+         (is_nil(target_ref) or bounded_facts?(target_ref)) do
+      :ok
+    else
+      {:error, signal_error(:invalid_input, "Normalized event facts are too large")}
+    end
+  end
 
   defp validate_event(_event, _receipt),
     do: {:error, signal_error(:invalid_input, "Invalid normalized event")}
@@ -119,6 +135,11 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
 
   defp normalize_adapter_result(_result, _credentials),
     do: {:error, signal_error(:invalid_input, "Invalid signal adapter result")}
+
+  defp bounded_facts?(facts) when is_map(facts) and map_size(facts) <= @max_fact_fields,
+    do: :erlang.external_size(facts) <= @max_fact_bytes
+
+  defp bounded_facts?(_facts), do: false
 
   defp safe_call(callback, credentials) do
     callback.()

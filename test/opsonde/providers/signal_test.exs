@@ -146,6 +146,46 @@ defmodule Opsonde.Providers.SignalTest do
     assert event.attributes == %{detail: "credential=[REDACTED]"}
   end
 
+  test "receipt and normalized source facts are bounded", context do
+    envelope = envelope("bounded-facts")
+    valid = valid_invocation(:firing, 1, nil)
+    too_many_facts = Map.new(1..101, &{"fact-#{&1}", &1})
+
+    oversized_receipt = %{
+      valid
+      | authenticate: fn adapter_state, _envelope ->
+          {:ok,
+           %Signal.AuthenticatedReceipt{
+             receipt_id: "receipt",
+             source: adapter_state.source,
+             event_key: "alert-1",
+             metadata: too_many_facts
+           }}
+        end
+    }
+
+    assert {:error, receipt_error} = ingest(context.provider, envelope, oversized_receipt)
+    assert signal_error(receipt_error).message == "Authenticated receipt facts are too large"
+
+    oversized_event = %{
+      valid
+      | normalize: fn _adapter_state, _envelope, receipt ->
+          {:ok,
+           %Signal.Event{
+             receipt_id: receipt.receipt_id,
+             event_key: receipt.event_key,
+             state: :firing,
+             occurred_at: DateTime.utc_now(),
+             source_sequence: receipt.source_sequence,
+             attributes: %{"payload" => String.duplicate("x", 65_537)}
+           }}
+        end
+    }
+
+    assert {:error, event_error} = ingest(context.provider, envelope, oversized_event)
+    assert signal_error(event_error).message == "Normalized event facts are too large"
+  end
+
   defp ingest(provider, envelope, invocation) do
     Providers.signal_ingest(provider.id, provider.revision, envelope, invocation)
   end
