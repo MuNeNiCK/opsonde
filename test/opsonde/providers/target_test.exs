@@ -83,7 +83,8 @@ defmodule Opsonde.Providers.TargetTest do
     assert %Target.Observation{} =
              observed =
              Providers.target_observe!(context.provider.id, request, invocation,
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert observed.facts == %{output: "[REDACTED]"}
@@ -101,7 +102,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                timeout_request,
                invocation({:error, :timeout, "read deadline exceeded"}),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(error).category == :timeout
@@ -114,7 +116,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                cancelled_request,
                %{cancelled?: fn -> true end, test_pid: self()},
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(error).category == :cancelled
@@ -127,7 +130,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                stale_request,
                invocation(flunk_response()),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     refute_receive {:observe, _, _}
@@ -145,7 +149,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                invalid_vocabulary,
                invocation(flunk_response()),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(vocabulary_error).message == "Invalid observation request"
@@ -158,7 +163,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                excessive_retries,
                invocation(flunk_response()),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(retry_error).message == "Invalid observation request"
@@ -174,7 +180,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                oversized_effect,
                invocation(flunk_response()),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(effect_error).message == "Invalid effect request"
@@ -189,7 +196,8 @@ defmodule Opsonde.Providers.TargetTest do
 
       assert ^result =
                Providers.target_effect!(context.provider.id, request, invocation(result),
-                 actor: context.operator
+                 actor: context.operator,
+                 authorize?: false
                )
 
       assert_receive {:effect, %{token: @token}, ^request}
@@ -203,7 +211,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                request,
                invocation({:error, :retryable, "unsafe retry"}),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(error).category == :failed
@@ -217,7 +226,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                raised_request,
                %{test_pid: self(), respond: fn -> raise "lost #{@token}" end},
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert message == "lost [REDACTED]"
@@ -232,7 +242,8 @@ defmodule Opsonde.Providers.TargetTest do
 
     assert ^verification =
              Providers.target_verify!(context.provider.id, request, invocation(verification),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert_receive {:verify, %{token: @token}, ^request}
@@ -242,7 +253,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                request,
                invocation(%{status: :verified}),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(malformed).message == "Invalid verification result"
@@ -252,7 +264,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                request,
                %{respond: fn -> raise "credential #{@token} failed" end},
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(raised).message == "credential [REDACTED] failed"
@@ -268,7 +281,8 @@ defmodule Opsonde.Providers.TargetTest do
                context.provider.id,
                observation_request,
                invocation(%Target.Observation{facts: oversized, observed_at: DateTime.utc_now()}),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(observation_error).message == "Invalid observation result"
@@ -284,7 +298,8 @@ defmodule Opsonde.Providers.TargetTest do
                  observed_at: DateTime.utc_now(),
                  facts: oversized
                }),
-               actor: context.admin
+               actor: context.admin,
+               authorize?: false
              )
 
     assert target_error(verification_error).message == "Invalid verification result"

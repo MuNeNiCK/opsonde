@@ -147,6 +147,7 @@ defmodule Opsonde.Targets.Target do
 
     has_many :external_identities, Opsonde.Targets.ExternalIdentity
     has_many :access_methods, Opsonde.Targets.AccessMethod
+    has_many :target_policies, Opsonde.Targets.TargetPolicy
 
     has_many :outgoing_relationships, Opsonde.Targets.Relationship do
       destination_attribute :source_target_id

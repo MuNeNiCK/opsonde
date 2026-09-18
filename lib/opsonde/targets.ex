@@ -77,5 +77,42 @@ defmodule Opsonde.Targets do
         action: :for_traversal,
         args: [:id, :expected_revision]
     end
+
+    resource Opsonde.Targets.TargetPolicy do
+      define :list_target_policies, action: :read
+
+      define :active_target_policies,
+        action: :active_for_target,
+        args: [:target_id]
+
+      define :create_target_policy,
+        action: :create,
+        args: [
+          :target_id,
+          :name,
+          :request_kinds,
+          :capabilities,
+          :operations,
+          :selector_match,
+          :parameter_match,
+          :reason
+        ]
+
+      define :update_target_policy, action: :update, args: [:expected_revision]
+      define :deactivate_target_policy, action: :deactivate, args: [:expected_revision]
+      define :clear_target_request, action: :clear_request, args: [:request]
+
+      define :dispatch_target_observation,
+        action: :dispatch_observation,
+        args: [:clearance, :invocation]
+
+      define :dispatch_target_effect,
+        action: :dispatch_effect,
+        args: [:clearance, :invocation]
+
+      define :dispatch_target_verification,
+        action: :dispatch_verification,
+        args: [:clearance, :invocation]
+    end
   end
 end

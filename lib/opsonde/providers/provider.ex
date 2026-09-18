@@ -183,6 +183,7 @@ defmodule Opsonde.Providers.Provider do
     end
 
     action :target_observe, :struct do
+      public? false
       constraints instance_of: Opsonde.Providers.Target.Observation
       transaction? false
 
@@ -197,6 +198,7 @@ defmodule Opsonde.Providers.Provider do
     end
 
     action :target_effect, :struct do
+      public? false
       constraints instance_of: Opsonde.Providers.Target.EffectResult
       transaction? false
 
@@ -211,6 +213,7 @@ defmodule Opsonde.Providers.Provider do
     end
 
     action :target_verify, :struct do
+      public? false
       constraints instance_of: Opsonde.Providers.Target.Verification
       transaction? false
 
@@ -303,9 +306,13 @@ defmodule Opsonde.Providers.Provider do
       forbid_if always()
     end
 
-    policy action([:target_capabilities, :target_observe, :target_effect, :target_verify]) do
+    policy action(:target_capabilities) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
+    end
+
+    policy action([:target_observe, :target_effect, :target_verify]) do
+      forbid_if always()
     end
 
     policy action(:signal_ingest) do
