@@ -40,6 +40,12 @@ defmodule Opsonde.Providers.AI do
     |> Enum.map(& &1.id)
   end
 
+  def recovery_ready?(%{alert_state: state} = request)
+      when state in [:recovered, :not_applicable],
+      do: recovery_evidence_ids(request) != []
+
+  def recovery_ready?(_request), do: false
+
   defp verified_target_evidence?(%Evidence{
          kind: "target_verification",
          content: %{"status" => "verified"}

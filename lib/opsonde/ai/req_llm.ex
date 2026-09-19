@@ -465,15 +465,19 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp resolver_schema(request) do
     variants =
-      [
-        target_search_schema(request),
-        target_selection_schema(request),
-        observation_schema(request),
-        target_traversal_schema(request),
-        proposal_schema(request),
-        recovery_schema(request),
-        handoff_schema()
-      ]
+      if AI.recovery_ready?(request) do
+        [recovery_schema(request), handoff_schema()]
+      else
+        [
+          target_search_schema(request),
+          target_selection_schema(request),
+          observation_schema(request),
+          target_traversal_schema(request),
+          proposal_schema(request),
+          recovery_schema(request),
+          handoff_schema()
+        ]
+      end
       |> Enum.reject(&is_nil/1)
 
     object_schema(

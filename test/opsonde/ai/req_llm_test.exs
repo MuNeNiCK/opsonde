@@ -345,6 +345,10 @@ defmodule Opsonde.AI.ReqLLMTest do
              get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
            end)
 
+    assert Enum.any?(ordinary_variants, fn variant ->
+             get_in(variant, ["properties", "type", "enum"]) == ["target_search"]
+           end)
+
     verified = %AI.Evidence{
       id: "verification-1",
       kind: "target_verification",
@@ -367,6 +371,13 @@ defmodule Opsonde.AI.ReqLLMTest do
       Enum.find(output_schema(verified_request)["properties"]["intent"]["anyOf"], fn variant ->
         get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
       end)
+
+    terminal_types =
+      Enum.map(output_schema(verified_request)["properties"]["intent"]["anyOf"], fn variant ->
+        get_in(variant, ["properties", "type", "enum"])
+      end)
+
+    assert terminal_types == [["recovery"], ["handoff"]]
 
     assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
              "verification-1"

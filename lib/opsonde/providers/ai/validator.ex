@@ -259,6 +259,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   def validate_decision(:resolve, %AI.ResolverDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
+         :ok <- validate_recovery_ready_intent(decision.intent, request),
          :ok <- validate_resolver_intent(decision.intent, request),
          true <- encoded_size(%{}, [decision.intent]) <= @max_output_bytes do
       :ok
@@ -282,6 +283,16 @@ defmodule Opsonde.Providers.AI.Validator do
 
   def validate_decision(_operation, _decision, _request),
     do: {:error, ai_error(:invalid_output, "AI output is invalid")}
+
+  defp validate_recovery_ready_intent(intent, request) do
+    if AI.recovery_ready?(request) and
+         not match?(%AI.RecoveryConclusion{}, intent) and
+         not match?(%AI.Handoff{}, intent) do
+      {:error, ai_error(:invalid_output, "AI Resolver must conclude recovery or hand off")}
+    else
+      :ok
+    end
+  end
 
   defp validate_resolver_intent(%AI.ObservationChoice{} = choice, request) do
     tool = Enum.find(request.observation_tools, &(&1.id == choice.tool_id))

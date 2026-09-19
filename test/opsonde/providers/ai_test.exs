@@ -202,6 +202,13 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
              end)
 
+    assert {:error, terminal_gate_error} =
+             resolve(context, recovered_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: proposal, usage: usage()}}
+             end)
+
+    assert ai_error(terminal_gate_error).category == :invalid_output
+
     handoff = %AI.Handoff{
       reason: "A physical inspection is required",
       required_input: "Confirm the drive fault LED"
