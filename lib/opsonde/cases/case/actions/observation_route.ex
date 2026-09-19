@@ -80,7 +80,7 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
   defp persist_and_continue(turn, spec, incident, run) do
     Ash.transact([Case, ResolutionRun, Turn, Evidence, CaseEvent], fn ->
       with {:ok, evidence} <- append_evidence(turn, spec),
-           {:ok, next} <-
+           {:ok, result} <-
              Cases.start_turn(
                incident.id,
                run.id,
@@ -94,10 +94,48 @@ defmodule Opsonde.Cases.Case.Actions.ObservationRoute do
                %{"action" => "continue_resolution", "source_turn_id" => turn.id},
                "Review Resolver limits or continue the Case manually",
                authorize?: false
-             ) do
-        next
+             ),
+           :ok <- set_pending(turn, evidence, result) do
+        result
       end
     end)
+  end
+
+  defp set_pending(_source_turn, _evidence, %{status: :exhausted}), do: :ok
+
+  defp set_pending(source_turn, evidence, %{status: status, value: next_turn})
+       when status in [:charged, :duplicate] do
+    pending = %{
+      "action" => "resolve_turn",
+      "turn_id" => next_turn.id,
+      "source_turn_id" => source_turn.id,
+      "evidence_id" => evidence.id
+    }
+
+    with {:ok, incident} <- Cases.get_case(source_turn.case_id, authorize?: false) do
+      cond do
+        incident.pending_intent == pending ->
+          :ok
+
+        map_size(incident.pending_intent) == 0 or
+            incident.pending_intent["turn_id"] == source_turn.id ->
+          case Cases.update_case_record(
+                 incident,
+                 incident.revision,
+                 %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+                 authorize?: false
+               ) do
+            {:ok, _case} -> :ok
+            {:error, _error} = error -> error
+          end
+
+        status == :duplicate ->
+          :ok
+
+        true ->
+          {:error, "Case has another pending Resolver Turn"}
+      end
+    end
   end
 
   defp append_evidence(turn, spec) do

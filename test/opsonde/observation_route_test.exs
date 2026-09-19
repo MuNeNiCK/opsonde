@@ -87,6 +87,13 @@ defmodule Opsonde.ObservationRouteTest do
     assert refreshed.target_request_count == 1
     assert refreshed.turn_count == 2
 
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => routed.value.id,
+             "source_turn_id" => turn.id,
+             "evidence_id" => evidence.id
+           }
+
     assert {:ok, replayed} =
              Cases.route_observation(
                turn.id,
@@ -97,7 +104,10 @@ defmodule Opsonde.ObservationRouteTest do
     assert replayed.status == :duplicate
     assert replayed.value.id == routed.value.id
     refute_receive {:observe, _, _}
-    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    replayed_case = Cases.get_case!(incident.id, authorize?: false)
+    assert replayed_case.status == :running
+    assert replayed_case.pending_intent["turn_id"] == routed.value.id
   end
 
   test "TargetPolicy denial and stale context become Evidence without adapter calls", context do
