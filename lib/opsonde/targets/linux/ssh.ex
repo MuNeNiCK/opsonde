@@ -101,7 +101,8 @@ defmodule Opsonde.Targets.Linux.SSH do
        effects: [
          operation(
            @restart,
-           "Restart one systemd service only if its observed definition is unchanged",
+           "Restart one systemd service using the exact definition_sha256 from a supplied " <>
+             "linux.service.inspect observation; inspect the service first when unavailable",
            restart_schema()
          )
        ]
@@ -463,7 +464,10 @@ defmodule Opsonde.Targets.Linux.SSH do
       %{
         "expected_definition_sha256" => %{
           "type" => "string",
-          "pattern" => "^[a-f0-9]{64}$"
+          "pattern" => "^[a-f0-9]{64}$",
+          "description" =>
+            "Copy the exact definition_sha256 from cited linux.service.inspect observation " <>
+              "Evidence; never infer or invent this value"
         }
       },
       ["expected_definition_sha256"]

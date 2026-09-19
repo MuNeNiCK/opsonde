@@ -130,6 +130,14 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert effect.operation == "linux.service.restart"
 
+    assert get_in(effect.input_schema, [
+             "properties",
+             "parameters",
+             "properties",
+             "expected_definition_sha256",
+             "description"
+           ]) =~ "never infer or invent"
+
     identity = observe!(context, "observe.identity", "linux.identity.inspect", %{}, %{})
     assert_schema_accepts!(tools["linux.identity.inspect"].output_schema, identity.facts)
     assert identity.facts["kernel"] == "Linux 6.8.0 x86_64"
