@@ -61,7 +61,7 @@ defmodule Opsonde.Secrets do
     to_string(%URI{uri | path: path})
   end
 
-  def oidc_authorization_url(path) do
+  def public_url(path) do
     public = Application.fetch_env!(:opsonde, :oidc_redirect_base_url) |> URI.parse()
     destination = URI.parse(path)
 

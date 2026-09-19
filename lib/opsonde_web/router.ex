@@ -21,8 +21,8 @@ defmodule OpsondeWeb.Router do
     post "/accounts/bootstrap", AccountController, :bootstrap
     post "/sessions", SessionController, :create
     get "/oidc", OIDCController, :status
-    post "/oidc/cli/requests", OIDCController, :create_cli_request
-    post "/oidc/cli/requests/:id/exchange", OIDCController, :exchange_cli_request
+    post "/cli/session-requests", CLISessionController, :create
+    post "/cli/session-requests/:id/exchange", CLISessionController, :exchange
   end
 
   scope "/api/v1", OpsondeWeb.API.V1 do
@@ -36,6 +36,8 @@ defmodule OpsondeWeb.Router do
     get "/oidc/provider", OIDCController, :show_provider
     put "/oidc/provider", OIDCController, :configure_provider
     post "/oidc/link-requests", OIDCController, :create_link_request
+    post "/cli/session-requests/:id/approve", CLISessionController, :approve
+    post "/cli/session-requests/:id/deny", CLISessionController, :deny
 
     get "/providers", ProviderController, :index
     post "/providers", ProviderController, :create

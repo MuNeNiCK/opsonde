@@ -23,9 +23,7 @@ defmodule OpsondeCLI.CLI do
     after: :string,
     interval: :integer,
     timeout: :integer,
-    server: :string,
-    email: :string,
-    oidc: :boolean
+    server: :string
   ]
 
   def run(args, runtime_options \\ [])
@@ -83,42 +81,14 @@ defmodule OpsondeCLI.CLI do
     with {:ok, options} <- parse_options(args),
          {:ok, config} <- Config.load(config_path(runtime_options)),
          server when is_binary(server) <- options[:server] || config["server"] do
-      if options[:oidc] do
-        oidc_login(server, options, runtime_options)
-      else
-        password_login(server, options, runtime_options)
-      end
+      browser_login(server, options, runtime_options)
     else
       nil -> usage_error("auth login requires --server or saved server")
       {:error, message} -> local_error(message)
     end
   end
 
-  defp password_login(server, options, runtime_options) do
-    with email when is_binary(email) <- options[:email],
-         {:ok, password} <- read_password(runtime_options),
-         {:ok, client} <- Client.new(server, nil, request_options(runtime_options)),
-         {:ok, _status, %{"data" => %{"token" => token, "account" => account}}} <-
-           Client.request(client, :post, "/sessions", %{
-             "session" => %{"email" => email, "password" => password}
-           }),
-         :ok <-
-           Config.save(
-             %{"server" => client.server, "token" => token},
-             config_path(runtime_options)
-           ) do
-      print(%{"outcome" => "succeeded", "account" => account})
-      0
-    else
-      nil -> usage_error("password login requires --email")
-      {:error, :http, status, body} -> http_error(status, body)
-      {:error, :transport, message} -> transport_error(message)
-      {:error, message} -> local_error(message)
-      _other -> local_error("Login response did not contain a session")
-    end
-  end
-
-  defp oidc_login(server, options, runtime_options) do
+  defp browser_login(server, options, runtime_options) do
     timeout = max(options[:timeout] || 300, 1) * 1_000
     browser_login = Keyword.get(runtime_options, :browser_login, &BrowserLogin.run/4)
 
@@ -141,7 +111,7 @@ defmodule OpsondeCLI.CLI do
       {:error, :http, status, body} -> http_error(status, body)
       {:error, :transport, message} -> transport_error(message)
       {:error, message} -> local_error(message)
-      _other -> local_error("OIDC login did not produce a session")
+      _other -> local_error("Browser login did not produce a session")
     end
   end
 
@@ -313,22 +283,6 @@ defmodule OpsondeCLI.CLI do
 
   defp read_input(path, _runtime_options), do: File.read(path)
 
-  defp read_password(runtime_options) do
-    case IO.read(runtime_options[:input] || :stdio, :eof) do
-      :eof ->
-        {:error, "Password must be supplied on standard input"}
-
-      {:error, reason} ->
-        {:error, "Cannot read password: #{inspect(reason)}"}
-
-      password ->
-        case password |> String.trim_trailing("\n") |> String.trim_trailing("\r") do
-          "" -> {:error, "Password must be supplied on standard input"}
-          value -> {:ok, value}
-        end
-    end
-  end
-
   defp parse_options(args) do
     case OptionParser.parse(args, strict: @switches) do
       {options, [], []} ->
@@ -415,9 +369,7 @@ defmodule OpsondeCLI.CLI do
     Usage:
       opsonde config set-server URL
       opsonde config show
-      printf 'PASSWORD' | opsonde auth login --server URL --email EMAIL
-      opsonde auth login --oidc [--server URL] [--timeout SEC]
-      opsonde auth bootstrap --input FILE
+      opsonde auth login [--server URL] [--timeout SEC]
       opsonde auth status | logout
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]

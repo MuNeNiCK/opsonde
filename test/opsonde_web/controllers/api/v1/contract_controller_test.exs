@@ -10,8 +10,8 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:post, "/api/v1/accounts/bootstrap"},
     {:post, "/api/v1/sessions"},
     {:get, "/api/v1/oidc"},
-    {:post, "/api/v1/oidc/cli/requests"},
-    {:post, "/api/v1/oidc/cli/requests/:id/exchange"},
+    {:post, "/api/v1/cli/session-requests"},
+    {:post, "/api/v1/cli/session-requests/:id/exchange"},
     {:get, "/api/v1/session"},
     {:delete, "/api/v1/session"},
     {:get, "/api/v1/accounts"},
@@ -20,6 +20,8 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:get, "/api/v1/oidc/provider"},
     {:put, "/api/v1/oidc/provider"},
     {:post, "/api/v1/oidc/link-requests"},
+    {:post, "/api/v1/cli/session-requests/:id/approve"},
+    {:post, "/api/v1/cli/session-requests/:id/deny"},
     {:get, "/api/v1/providers"},
     {:post, "/api/v1/providers"},
     {:get, "/api/v1/providers/:id"},
@@ -219,8 +221,8 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
           {:post, "/api/v1/accounts/bootstrap"},
           {:post, "/api/v1/sessions"},
           {:get, "/api/v1/oidc"},
-          {:post, "/api/v1/oidc/cli/requests"},
-          {:post, "/api/v1/oidc/cli/requests/:id/exchange"}
+          {:post, "/api/v1/cli/session-requests"},
+          {:post, "/api/v1/cli/session-requests/:id/exchange"}
         ]
     end)
   end

@@ -1,9 +1,6 @@
 defmodule OpsondeWeb.API.V1.OIDCControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
-  alias Opsonde.Accounts
-  alias Opsonde.Accounts.OIDCRequest
-
   @password "correct horse battery staple"
 
   test "admin configures optional OIDC without exposing its secret" do
@@ -66,82 +63,7 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
     assert html_response(response, 200) =~ "opsonde:oidc-error"
   end
 
-  test "CLI request accepts only loopback callbacks and exchanges one session once" do
-    token = bootstrap_and_sign_in!()
-    configure_oidc!(token)
-    verifier = OIDCRequest.random_secret()
-    challenge = verifier |> OIDCRequest.digest() |> Base.url_encode64(padding: false)
-
-    invalid =
-      post_json("/api/v1/oidc/cli/requests", %{
-        "request" => %{
-          "redirect_uri" => "https://attacker.example/callback",
-          "code_challenge" => challenge
-        }
-      })
-
-    assert %{"error" => %{"code" => "bad_request"}} = json_response(invalid, 400)
-
-    created =
-      post_json("/api/v1/oidc/cli/requests", %{
-        "request" => %{
-          "redirect_uri" => "http://127.0.0.1:54321/callback",
-          "code_challenge" => challenge
-        }
-      })
-
-    %{"data" => %{"id" => id, "authorization_url" => authorization_url}} =
-      json_response(created, 201)
-
-    authorization_uri = URI.parse(authorization_url)
-    started = get(build_conn(), authorization_uri.path <> "?" <> authorization_uri.query)
-    assert redirected_to(started) == "/auth/user/oidc"
-    assert get_resp_header(started, "cache-control") == ["no-store"]
-    assert get_resp_header(started, "referrer-policy") == ["no-referrer"]
-
-    request = Accounts.get_oidc_request!(id, authorize?: false)
-    assert request.started_at
-
-    user =
-      Accounts.get_user!(
-        json_response(get_json("/api/v1/session", token), 200)["data"]["account"]["id"],
-        authorize?: false
-      )
-
-    code = OIDCRequest.random_secret()
-
-    _completed_request =
-      Accounts.complete_oidc_request!(
-        request,
-        request.revision,
-        user.id,
-        OIDCRequest.digest(code),
-        authorize?: false
-      )
-
-    exchanged =
-      post_json("/api/v1/oidc/cli/requests/#{id}/exchange", %{
-        "request" => %{"code" => code, "verifier" => verifier}
-      })
-
-    assert %{"data" => %{"token" => session_token, "account" => %{"id" => user_id}}} =
-             json_response(exchanged, 201)
-
-    assert user_id == user.id
-
-    assert %{"data" => %{"account" => %{"id" => ^user_id}}} =
-             get_json("/api/v1/session", session_token) |> json_response(200)
-
-    replay =
-      post_json("/api/v1/oidc/cli/requests/#{id}/exchange", %{
-        "request" => %{"code" => code, "verifier" => verifier}
-      })
-
-    assert %{"error" => %{"code" => "invalid_credentials"}} =
-             json_response(replay, 401)
-  end
-
-  defp configure_oidc!(token, enabled \\ true) do
+  defp configure_oidc!(token, enabled) do
     put_json(
       "/api/v1/oidc/provider",
       %{

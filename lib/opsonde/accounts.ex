@@ -28,7 +28,7 @@ defmodule Opsonde.Accounts do
         action: :create_link,
         args: [:user_id, :start_token_digest, :expires_at]
 
-      define :create_oidc_cli_login,
+      define :create_cli_login,
         action: :create_cli_login,
         args: [:start_token_digest, :verifier_digest, :redirect_uri, :expires_at]
 

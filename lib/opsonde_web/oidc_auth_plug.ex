@@ -4,7 +4,6 @@ defmodule OpsondeWeb.OIDCAuthPlug do
   use AshAuthentication.Plug, otp_app: :opsonde
 
   import Plug.Conn
-  import Phoenix.Controller, only: [redirect: 2]
 
   alias Opsonde.Accounts
   alias Opsonde.Accounts.OIDCRequest
@@ -15,9 +14,6 @@ defmodule OpsondeWeb.OIDCAuthPlug do
     conn = put_resp_header(conn, "cache-control", "no-store")
 
     case current_request(conn) do
-      {:ok, %OIDCRequest{purpose: :cli_login} = request} ->
-        complete_cli(conn, request, user)
-
       {:ok, %OIDCRequest{purpose: :link} = request} ->
         complete_link(conn, request, user, token)
 
@@ -34,46 +30,10 @@ defmodule OpsondeWeb.OIDCAuthPlug do
 
   @impl true
   def handle_failure(conn, _activity, _reason) do
-    request = current_request(conn)
-
-    conn =
-      conn
-      |> put_resp_header("cache-control", "no-store")
-      |> delete_session(:opsonde_oidc_request_id)
-
-    case request do
-      {:ok, %OIDCRequest{purpose: :cli_login} = request} ->
-        redirect(conn,
-          external: append_query(request.redirect_uri, %{error: "authentication_failed"})
-        )
-
-      _other ->
-        browser_result(conn, %{type: "opsonde:oidc-error"})
-    end
-  end
-
-  defp complete_cli(conn, request, user) do
-    code = OIDCRequest.random_secret()
-
-    case Accounts.complete_oidc_request(
-           request,
-           request.revision,
-           user.id,
-           OIDCRequest.digest(code),
-           authorize?: false
-         ) do
-      {:ok, completed} ->
-        conn
-        |> delete_session(:opsonde_oidc_request_id)
-        |> redirect(
-          external: append_query(completed.redirect_uri, %{request_id: completed.id, code: code})
-        )
-
-      {:error, _error} ->
-        conn
-        |> delete_session(:opsonde_oidc_request_id)
-        |> browser_result(%{type: "opsonde:oidc-error"})
-    end
+    conn
+    |> put_resp_header("cache-control", "no-store")
+    |> delete_session(:opsonde_oidc_request_id)
+    |> browser_result(%{type: "opsonde:oidc-error"})
   end
 
   defp complete_link(conn, request, user, token) do
@@ -121,16 +81,5 @@ defmodule OpsondeWeb.OIDCAuthPlug do
       "default-src 'none'; script-src 'nonce-#{nonce}'"
     )
     |> send_resp(:ok, html)
-  end
-
-  defp append_query(uri, values) do
-    parsed = URI.parse(uri)
-
-    query =
-      values
-      |> Enum.into(%{}, fn {key, value} -> {to_string(key), to_string(value)} end)
-      |> URI.encode_query()
-
-    to_string(%URI{parsed | query: query})
   end
 end

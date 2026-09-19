@@ -30,6 +30,9 @@ const AuditPage = lazy(() =>
 const ReportPage = lazy(() =>
   import("@/report-page").then((module) => ({ default: module.ReportPage })),
 );
+const CLILoginPage = lazy(() =>
+  import("@/cli-login-page").then((module) => ({ default: module.CLILoginPage })),
+);
 
 function AuthenticationGate({ children }: { children: ReactNode }) {
   const { account, loading } = useAuthentication();
@@ -226,6 +229,14 @@ function AppRoutes() {
     <Suspense fallback={<PageSpinner />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/cli-login/:requestId"
+          element={
+            <AuthenticationGate>
+              <CLILoginPage />
+            </AuthenticationGate>
+          }
+        />
         <Route
           element={
             <AuthenticationGate>

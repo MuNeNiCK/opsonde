@@ -28,10 +28,10 @@ defmodule OpsondeCLI.BrowserLogin do
 
     case System.cmd(elem(command, 0), elem(command, 1), stderr_to_stdout: true) do
       {_output, 0} -> :ok
-      {output, _status} -> {:error, "Cannot open the browser: #{String.trim(output)}"}
+      {_output, _status} -> {:error, "Cannot open the browser"}
     end
   rescue
-    error in ErlangError -> {:error, "Cannot open the browser: #{Exception.message(error)}"}
+    ErlangError -> {:error, "Cannot open the browser"}
   end
 
   defp authorize(client, listener, timeout, open_browser) do
@@ -39,7 +39,7 @@ defmodule OpsondeCLI.BrowserLogin do
          verifier <- random_secret(),
          challenge <- verifier |> digest() |> Base.url_encode64(padding: false),
          {:ok, _status, %{"data" => request}} <-
-           Client.request(client, :post, "/oidc/cli/requests", %{
+           Client.request(client, :post, "/cli/session-requests", %{
              "request" => %{
                "redirect_uri" => "http://127.0.0.1:#{port}/callback",
                "code_challenge" => challenge
@@ -54,18 +54,18 @@ defmodule OpsondeCLI.BrowserLogin do
            Client.request(
              client,
              :post,
-             "/oidc/cli/requests/#{URI.encode_www_form(request["id"])}/exchange",
+             "/cli/session-requests/#{URI.encode_www_form(request["id"])}/exchange",
              %{"request" => %{"code" => code, "verifier" => verifier}}
            ) do
       {:ok, token, account}
     else
-      false -> {:error, "OIDC callback did not match the login request"}
-      nil -> {:error, "OIDC callback did not contain an authorization code"}
-      {:error, :timeout} -> {:error, "OIDC browser login timed out"}
+      false -> {:error, "Browser callback did not match the login request"}
+      nil -> {:error, "Browser callback did not contain an authorization code"}
+      {:error, :timeout} -> {:error, "Browser login timed out"}
       {:error, :http, _status, _body} = error -> error
       {:error, :transport, _message} = error -> error
       {:error, message} when is_binary(message) -> {:error, message}
-      _other -> {:error, "OIDC browser login failed"}
+      _other -> {:error, "Browser login failed"}
     end
   end
 
@@ -77,6 +77,10 @@ defmodule OpsondeCLI.BrowserLogin do
           respond(socket, 200, "Authentication completed. You can close this window.")
           {:ok, query}
         else
+          {:error, "Browser authorization returned " <> _reason} = error ->
+            respond(socket, 200, "Authentication was not authorized. You can close this window.")
+            error
+
           {:error, _reason} = error ->
             respond(socket, 400, "Authentication callback was invalid.")
             error
@@ -88,7 +92,7 @@ defmodule OpsondeCLI.BrowserLogin do
   end
 
   defp receive_headers(_socket, data, _timeout) when byte_size(data) > 8_192,
-    do: {:error, "OIDC callback headers were too large"}
+    do: {:error, "Browser callback headers were too large"}
 
   defp receive_headers(socket, data, timeout) do
     if String.contains?(data, "\r\n\r\n") do
@@ -108,10 +112,10 @@ defmodule OpsondeCLI.BrowserLogin do
          params <- URI.decode_query(query) do
       case params["error"] do
         nil -> {:ok, params}
-        error -> {:error, "OIDC provider returned #{error}"}
+        error -> {:error, "Browser authorization returned #{error}"}
       end
     else
-      _other -> {:error, "OIDC callback request was invalid"}
+      _other -> {:error, "Browser callback request was invalid"}
     end
   end
 

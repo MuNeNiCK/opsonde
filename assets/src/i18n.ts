@@ -32,6 +32,15 @@ const resources = {
         oidcSubmit: "Sign in with OIDC",
         oidcFailed: "OIDC authentication failed or was cancelled.",
       },
+      cliLogin: {
+        title: "Allow CLI access",
+        description: "Confirm that the Opsonde CLI may use your account on this installation.",
+        loopback: "The result returns only to a loopback listener on this computer.",
+        approve: "Allow",
+        deny: "Deny",
+        failed: "The CLI request could not be completed. It may have expired or already been used.",
+        invalid: "The CLI request is incomplete or invalid.",
+      },
       navigation: {
         operations: "Operations",
         configuration: "Configuration",
@@ -468,6 +477,15 @@ const resources = {
           "管理者を作成できませんでした。入力値を確認するか、設定済みの場合はログインしてください。",
         oidcSubmit: "OIDCでログイン",
         oidcFailed: "OIDC認証に失敗したか、キャンセルされました。",
+      },
+      cliLogin: {
+        title: "CLIアクセスを許可",
+        description: "このOpsondeでCLIがあなたのアカウントを使用することを確認します。",
+        loopback: "結果は、このコンピューター上のloopback待受にだけ返されます。",
+        approve: "許可",
+        deny: "拒否",
+        failed: "CLI要求を完了できませんでした。期限切れか、既に使用された可能性があります。",
+        invalid: "CLI要求が不完全または無効です。",
       },
       navigation: {
         operations: "運用",

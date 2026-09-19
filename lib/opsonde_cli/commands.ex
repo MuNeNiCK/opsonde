@@ -19,7 +19,6 @@ defmodule OpsondeCLI.Commands do
   alias __MODULE__.Route
 
   @routes %{
-    {"auth", "bootstrap"} => Route.new(:post, "/accounts/bootstrap", 0, "account", auth?: false),
     {"auth", "status"} => Route.new(:get, "/session"),
     {"auth", "logout"} => Route.new(:delete, "/session"),
     {"account", "list"} => Route.page("/accounts"),

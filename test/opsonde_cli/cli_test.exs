@@ -27,40 +27,32 @@ defmodule OpsondeCLI.CLITest do
              "Unknown or incomplete command. Run opsonde --help for usage.\n"
   end
 
-  test "stores a login session with private permissions and never prints its token", context do
-    Req.Test.stub(context.stub, fn conn ->
-      assert conn.method == "POST"
-      assert conn.request_path == "/api/v1/sessions"
-      {:ok, encoded, conn} = read_body(conn)
+  test "browser login stores a private session without printing its token", context do
+    browser_login = fn client, timeout, open_browser, listen ->
+      assert client.server == "https://opsonde.example"
+      assert timeout == 42_000
+      assert is_function(open_browser, 1)
+      assert is_function(listen, 2)
 
-      assert Jason.decode!(encoded) == %{
-               "session" => %{"email" => "admin@example.test", "password" => "secret-password"}
-             }
-
-      Req.Test.json(conn, %{
-        data: %{token: "session-token", account: %{id: "account-1", role: "admin"}}
-      })
-    end)
+      {:ok, "browser-product-session", %{"id" => "account-1", "role" => "admin"}}
+    end
 
     output =
-      capture_io("secret-password\n", fn ->
+      capture_io(fn ->
         assert CLI.run(
-                 [
-                   "auth",
-                   "login",
-                   "--server",
-                   "https://opsonde.example",
-                   "--email",
-                   "admin@example.test"
-                 ],
-                 runtime(context)
+                 ["auth", "login", "--server", "https://opsonde.example", "--timeout", "42"],
+                 runtime(context) ++ [browser_login: browser_login]
                ) == 0
       end)
 
-    refute output =~ "session-token"
+    refute output =~ "browser-product-session"
     assert output =~ "account-1"
 
-    assert {:ok, %{"server" => "https://opsonde.example", "token" => "session-token"}} =
+    assert {:ok,
+            %{
+              "server" => "https://opsonde.example",
+              "token" => "browser-product-session"
+            }} =
              Config.load(context.config_path)
 
     assert %{mode: 0o100600} = File.stat!(context.config_path)
@@ -69,42 +61,6 @@ defmodule OpsondeCLI.CLITest do
     shown = capture_io(fn -> assert CLI.run(["config", "show"], runtime(context)) == 0 end)
     assert shown =~ ~s("authenticated": true)
     refute shown =~ "session-token"
-  end
-
-  test "stores the ordinary product session returned by OIDC browser login", context do
-    browser_login = fn client, timeout, open_browser, listen ->
-      assert client.server == "https://opsonde.example"
-      assert timeout == 42_000
-      assert is_function(open_browser, 1)
-      assert is_function(listen, 2)
-
-      {:ok, "oidc-product-session", %{"id" => "account-oidc", "role" => "operator"}}
-    end
-
-    output =
-      capture_io(fn ->
-        assert CLI.run(
-                 [
-                   "auth",
-                   "login",
-                   "--oidc",
-                   "--server",
-                   "https://opsonde.example",
-                   "--timeout",
-                   "42"
-                 ],
-                 runtime(context) ++ [browser_login: browser_login]
-               ) == 0
-      end)
-
-    assert output =~ "account-oidc"
-    refute output =~ "oidc-product-session"
-
-    assert {:ok,
-            %{
-              "server" => "https://opsonde.example",
-              "token" => "oidc-product-session"
-            }} = Config.load(context.config_path)
   end
 
   test "changing the server clears its session without changing an existing parent mode",

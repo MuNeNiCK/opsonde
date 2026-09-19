@@ -169,7 +169,7 @@ defmodule Opsonde.OIDCTest do
     user = bootstrap_admin!()
 
     request =
-      Accounts.create_oidc_cli_login!(
+      Accounts.create_cli_login!(
         OIDCRequest.digest(start_token),
         OIDCRequest.digest(verifier),
         "http://127.0.0.1:54321/callback",

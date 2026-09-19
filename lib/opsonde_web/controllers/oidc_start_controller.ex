@@ -5,7 +5,8 @@ defmodule OpsondeWeb.OIDCStartController do
   alias Opsonde.Accounts.OIDCRequest
 
   def start(conn, %{"id" => id, "token" => token}) do
-    with {:ok, %OIDCRequest{} = request} <- Accounts.get_oidc_request(id, authorize?: false),
+    with {:ok, %OIDCRequest{purpose: :link} = request} <-
+           Accounts.get_oidc_request(id, authorize?: false),
          {:ok, _started} <-
            Accounts.start_oidc_request(
              request,

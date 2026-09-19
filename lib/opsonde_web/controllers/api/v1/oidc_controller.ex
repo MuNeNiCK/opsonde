@@ -4,9 +4,8 @@ defmodule OpsondeWeb.API.V1.OIDCController do
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.{OIDCProvider, OIDCRequest, User}
+  alias Opsonde.Accounts.{OIDCProvider, OIDCRequest}
   alias OpsondeWeb.API.Response
-  alias OpsondeWeb.API.V1.AccountJSON
 
   @request_lifetime_seconds 600
 
@@ -19,8 +18,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
 
     Response.data(conn, %{
       enabled: enabled,
-      authorization_url:
-        if(enabled, do: Opsonde.Secrets.oidc_authorization_url("/auth/user/oidc")),
+      authorization_url: if(enabled, do: Opsonde.Secrets.public_url("/auth/user/oidc")),
       callback_uri: Opsonde.Secrets.oidc_callback_uri()
     })
   end
@@ -92,7 +90,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
         conn,
         %{
           authorization_url:
-            Opsonde.Secrets.oidc_authorization_url(
+            Opsonde.Secrets.public_url(
               "/auth/oidc/start/#{request.id}?token=#{URI.encode_www_form(start_token)}"
             ),
           expires_at: request.expires_at
@@ -101,74 +99,6 @@ defmodule OpsondeWeb.API.V1.OIDCController do
       )
     end
   end
-
-  def create_cli_request(
-        conn,
-        %{
-          "request" => %{
-            "redirect_uri" => redirect_uri,
-            "code_challenge" => code_challenge
-          }
-        }
-      ) do
-    start_token = OIDCRequest.random_secret()
-
-    with :ok <- require_provider(),
-         :ok <- validate_loopback_redirect(redirect_uri),
-         {:ok, verifier_digest} <- decode_challenge(code_challenge),
-         {:ok, request} <-
-           Accounts.create_oidc_cli_login(
-             OIDCRequest.digest(start_token),
-             verifier_digest,
-             redirect_uri,
-             expires_at(),
-             authorize?: false
-           ) do
-      Response.data(
-        conn,
-        %{
-          id: request.id,
-          authorization_url:
-            Opsonde.Secrets.oidc_authorization_url(
-              "/auth/oidc/start/#{request.id}?token=#{URI.encode_www_form(start_token)}"
-            ),
-          expires_at: request.expires_at
-        },
-        :created
-      )
-    else
-      {:error, :invalid_redirect} -> {:error, :bad_request}
-      {:error, :invalid_challenge} -> {:error, :bad_request}
-      error -> error
-    end
-  end
-
-  def create_cli_request(_conn, _params), do: {:error, :bad_request}
-
-  def exchange_cli_request(
-        conn,
-        %{"id" => id, "request" => %{"code" => code, "verifier" => verifier}}
-      ) do
-    with {:ok, %OIDCRequest{} = request} <- Accounts.get_oidc_request(id, authorize?: false),
-         {:ok, consumed} <-
-           Accounts.consume_oidc_request(
-             request,
-             request.revision,
-             code,
-             verifier,
-             authorize?: false
-           ),
-         {:ok, token} <- Accounts.issue_session(consumed.user_id, authorize?: false),
-         {:ok, %User{} = user} <- Accounts.get_user(consumed.user_id, authorize?: false) do
-      conn
-      |> put_resp_header("cache-control", "no-store")
-      |> Response.data(%{token: token, account: AccountJSON.data(user)}, :created)
-    else
-      _error -> {:error, :invalid_credentials}
-    end
-  end
-
-  def exchange_cli_request(_conn, _params), do: {:error, :bad_request}
 
   defp require_provider do
     case Accounts.current_oidc_provider(authorize?: false) do
@@ -182,29 +112,6 @@ defmodule OpsondeWeb.API.V1.OIDCController do
     |> DateTime.add(@request_lifetime_seconds, :second)
     |> DateTime.truncate(:microsecond)
   end
-
-  defp decode_challenge(value) when is_binary(value) do
-    case Base.url_decode64(value, padding: false) do
-      {:ok, digest} when byte_size(digest) == 32 -> {:ok, digest}
-      _other -> {:error, :invalid_challenge}
-    end
-  end
-
-  defp decode_challenge(_value), do: {:error, :invalid_challenge}
-
-  defp validate_loopback_redirect(value) when is_binary(value) do
-    uri = URI.parse(value)
-
-    if uri.scheme == "http" and uri.host in ["127.0.0.1", "localhost", "::1"] and
-         is_integer(uri.port) and uri.port > 0 and uri.path == "/callback" and
-         is_nil(uri.userinfo) and is_nil(uri.query) and is_nil(uri.fragment) do
-      :ok
-    else
-      {:error, :invalid_redirect}
-    end
-  end
-
-  defp validate_loopback_redirect(_value), do: {:error, :invalid_redirect}
 
   defp provider_data(provider) do
     %{
