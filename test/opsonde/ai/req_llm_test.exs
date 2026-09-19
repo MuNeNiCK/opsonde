@@ -364,6 +364,15 @@ defmodule Opsonde.AI.ReqLLMTest do
         }
     }
 
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "type" => "recovery",
+        "reason" => "Fresh verification and monitoring agree",
+        "evidence_ids" => ["verification-1"]
+      }
+    })
+
     assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, request, %{})
     verified_request = requests(context.agent) |> List.last()
 
@@ -377,7 +386,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         get_in(variant, ["properties", "type", "enum"])
       end)
 
-    assert terminal_types == [["recovery"], ["handoff"]]
+    assert terminal_types == [["recovery"]]
 
     assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
              "verification-1"

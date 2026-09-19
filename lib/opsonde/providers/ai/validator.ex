@@ -285,10 +285,8 @@ defmodule Opsonde.Providers.AI.Validator do
     do: {:error, ai_error(:invalid_output, "AI output is invalid")}
 
   defp validate_recovery_ready_intent(intent, request) do
-    if AI.recovery_ready?(request) and
-         not match?(%AI.RecoveryConclusion{}, intent) and
-         not match?(%AI.Handoff{}, intent) do
-      {:error, ai_error(:invalid_output, "AI Resolver must conclude recovery or hand off")}
+    if AI.recovery_ready?(request) and not match?(%AI.RecoveryConclusion{}, intent) do
+      {:error, ai_error(:invalid_output, "AI Resolver must conclude recovery")}
     else
       :ok
     end

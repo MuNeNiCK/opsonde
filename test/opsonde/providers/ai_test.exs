@@ -214,6 +214,13 @@ defmodule Opsonde.Providers.AITest do
       required_input: "Confirm the drive fault LED"
     }
 
+    assert {:error, terminal_handoff_error} =
+             resolve(context, recovered_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
+             end)
+
+    assert ai_error(terminal_handoff_error).category == :invalid_output
+
     assert %AI.ResolverDecision{intent: ^handoff} =
              resolve!(context, request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
@@ -221,10 +228,12 @@ defmodule Opsonde.Providers.AITest do
 
     manual_request = %{recovered_request | alert_state: :not_applicable}
 
-    assert %AI.ResolverDecision{intent: ^handoff} =
-             resolve!(context, manual_request, fn _request ->
+    assert {:error, manual_handoff_error} =
+             resolve(context, manual_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
+
+    assert ai_error(manual_handoff_error).category == :invalid_output
 
     assert %AI.ResolverDecision{intent: ^recovery} =
              resolve!(context, manual_request, fn _request ->

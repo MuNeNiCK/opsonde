@@ -466,7 +466,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp resolver_schema(request) do
     variants =
       if AI.recovery_ready?(request) do
-        [recovery_schema(request), handoff_schema()]
+        [recovery_schema(request)]
       else
         [
           target_search_schema(request),
