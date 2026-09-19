@@ -38,6 +38,17 @@ defmodule Opsonde.Cases.Evidence do
               )
     end
 
+    read :review_source_context do
+      argument :case_id, :uuid, allow_nil?: false
+
+      filter expr(case_id == ^arg(:case_id) and kind == "signal_event")
+
+      prepare build(
+                sort: [observed_at: :desc, inserted_at: :desc, id: :desc],
+                limit: 1
+              )
+    end
+
     read :recovery_continuity do
       argument :case_id, :uuid, allow_nil?: false
 
@@ -108,6 +119,7 @@ defmodule Opsonde.Cases.Evidence do
   policies do
     policy action([
              :projection_window,
+             :review_source_context,
              :recovery_continuity,
              :by_idempotency,
              :create_record,

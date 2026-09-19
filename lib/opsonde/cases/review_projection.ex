@@ -9,15 +9,17 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
+         {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,
         session_id: "reviewer:#{proposal.id}",
         resolver_session_id: "resolver:#{run.id}",
         case_id: incident.id,
-        objective: String.slice("#{incident.title}: #{proposal.reason}", 0, 8_000),
+        objective: objective(incident),
         policy_summary: policy_summary(proposal),
         proposal: review_proposal(proposal),
+        source_evidence: source_evidence,
         cited_evidence: evidence,
         budget: budget(run)
       }
@@ -69,6 +71,28 @@ defmodule Opsonde.Cases.ReviewProjection do
           {:halt, {:error, "Proposal Evidence is unavailable"}}
       end
     end)
+  end
+
+  defp source_evidence(incident) do
+    with {:ok, evidence} <- Cases.review_source_context(incident.id, authorize?: false) do
+      {:ok,
+       Enum.map(evidence, fn item ->
+         %AI.Evidence{
+           id: item.id,
+           kind: item.kind,
+           target_id: nil,
+           content: item.content
+         }
+       end)}
+    end
+  end
+
+  defp objective(incident) do
+    Jason.encode!(%{
+      "case_title" => incident.title,
+      "initial_context" => incident.initial_context
+    })
+    |> String.slice(0, 8_000)
   end
 
   defp evidence_target(%{"target_id" => target_id}, target_id), do: target_id

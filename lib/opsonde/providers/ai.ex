@@ -309,6 +309,7 @@ defmodule Opsonde.Providers.AI do
       :objective,
       :policy_summary,
       :proposal,
+      :source_evidence,
       :cited_evidence,
       :budget
     ]

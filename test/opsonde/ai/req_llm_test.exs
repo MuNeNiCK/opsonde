@@ -433,6 +433,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [request] = requests(context.agent)
     assert request.body =~ "proposal-tool"
+    assert request.body =~ "authoritative-request-value"
+    assert request.body =~ "may be truncated"
     refute request.body =~ "resolver-private-session"
     refute request.body =~ "observation_tools"
     refute request.body =~ "proposal_tools"
@@ -669,6 +671,14 @@ defmodule Opsonde.AI.ReqLLMTest do
       objective: "Restore service health",
       policy_summary: "No destructive action",
       proposal: proposal(),
+      source_evidence: [
+        %AI.Evidence{
+          id: "source-evidence-1",
+          kind: "signal_event",
+          target_id: nil,
+          content: %{"requirement" => "authoritative-request-value"}
+        }
+      ],
       cited_evidence: [
         %AI.Evidence{
           id: "evidence-1",

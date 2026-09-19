@@ -609,8 +609,20 @@ defmodule Opsonde.Providers.AITest do
     assert ai_error(kind_error).category == :invalid_input
   end
 
-  test "Reviewer receives an isolated proposal-only request", context do
+  test "Reviewer receives isolated source and Proposal evidence", context do
     request = review_request(context.provider.revision)
+
+    request = %{
+      request
+      | source_evidence: [
+          %AI.Evidence{
+            id: "source-evidence-1",
+            kind: "signal_event",
+            target_id: nil,
+            content: %{"requirement" => "authoritative request"}
+          }
+        ]
+    }
 
     assert %AI.ReviewDecision{verdict: :approved} =
              review!(context, request, fn received ->
@@ -618,6 +630,7 @@ defmodule Opsonde.Providers.AITest do
                refute Map.has_key?(fields, :observation_tools)
                refute Map.has_key?(fields, :proposal_tools)
                refute Map.has_key?(fields, :observation_results)
+               assert received.source_evidence != received.cited_evidence
 
                {:ok,
                 %AI.ReviewDecision{
@@ -653,6 +666,15 @@ defmodule Opsonde.Providers.AITest do
              review(context, request, fn _request -> {:ok, %{verdict: :approved}} end)
 
     assert ai_error(malformed_output).category == :invalid_output
+
+    duplicate_source = %{
+      request
+      | source_evidence: request.source_evidence ++ request.source_evidence
+    }
+
+    assert {:error, invalid_source} = review(context, duplicate_source, unreachable_response())
+    assert ai_error(invalid_source).category == :invalid_input
+    refute_receive {:review, _, ^duplicate_source}
   end
 
   test "budgets, disclosure, cancellation and stale providers stop before model dispatch",
@@ -927,6 +949,7 @@ defmodule Opsonde.Providers.AITest do
       objective: "Restore service health",
       policy_summary: "Target policy permits this exact restart request",
       proposal: proposal(),
+      source_evidence: [],
       cited_evidence: [evidence()],
       budget: budget()
     }

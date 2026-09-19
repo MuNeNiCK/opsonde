@@ -258,6 +258,29 @@ defmodule Opsonde.ProposalAuthorityTest do
   test "Auto accepts one isolated assigned Reviewer decision and usage", context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("review-approved", context)
+
+    source_evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-source-#{proposal.id}",
+        "signal_event",
+        "alertmanager",
+        "alert-#{proposal.id}",
+        %{
+          "state" => "firing",
+          "attributes" => %{
+            "annotations" => %{
+              "description" =>
+                "Restore the exact value opsonde-dedicated-validation even when explanatory text is truncated"
+            }
+          }
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
     response = %AI.ReviewDecision{
@@ -277,6 +300,16 @@ defmodule Opsonde.ProposalAuthorityTest do
         assert request.resolver_session_id == "resolver:#{run.id}"
         refute request.session_id == request.resolver_session_id
         assert request.proposal.tool_id == proposal.tool_id
+        assert Enum.map(request.source_evidence, & &1.id) == [source_evidence.id]
+
+        assert get_in(hd(request.source_evidence).content, [
+                 "attributes",
+                 "annotations",
+                 "description"
+               ]) =~
+                 "opsonde-dedicated-validation"
+
+        refute request.objective =~ proposal.reason
         assert Enum.map(request.cited_evidence, & &1.id) == proposal.evidence_ids
         {:ok, response}
       end

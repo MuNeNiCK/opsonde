@@ -52,17 +52,21 @@ defmodule Opsonde.Providers.AI.Validator do
       valid_resolver_items?(request)
   end
 
-  defp valid_review_request?(%AI.ReviewRequest{cited_evidence: cited_evidence} = request)
-       when is_list(cited_evidence) do
-    if length(cited_evidence) <= @max_review_items and
-         Enum.all?(cited_evidence, &valid_evidence?/1) do
+  defp valid_review_request?(
+         %AI.ReviewRequest{source_evidence: source_evidence, cited_evidence: cited_evidence} =
+           request
+       )
+       when is_list(source_evidence) and is_list(cited_evidence) do
+    if length(source_evidence) + length(cited_evidence) <= @max_review_items and
+         Enum.all?(source_evidence ++ cited_evidence, &valid_evidence?/1) do
+      source_ids = Enum.map(source_evidence, & &1.id)
       evidence_ids = Enum.map(cited_evidence, & &1.id)
 
       positive?(request.provider_revision) and nonempty?(request.session_id) and
         nonempty?(request.resolver_session_id) and
         request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
         nonempty?(request.objective) and nonempty?(request.policy_summary) and
-        valid_budget?(request.budget) and unique?(evidence_ids) and
+        valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
         valid_review_proposal?(request.proposal, evidence_ids)
     else
       false
@@ -249,6 +253,7 @@ defmodule Opsonde.Providers.AI.Validator do
       objective: request.objective,
       policy_summary: request.policy_summary,
       proposal: plain_value(request.proposal),
+      source_evidence: Enum.map(request.source_evidence, &plain_value/1),
       cited_evidence: Enum.map(request.cited_evidence, &plain_value/1)
     }
 
