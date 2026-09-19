@@ -99,12 +99,21 @@ defmodule Opsonde.Targets.Linux.SSH do
          )
        ],
        effects: [
-         operation(
-           @restart,
-           "Restart one systemd service using the exact definition_sha256 from a supplied " <>
-             "linux.service.inspect observation; inspect the service first when unavailable",
-           restart_schema()
-         )
+         %{
+           operation(
+             @restart,
+             "Restart one systemd service using the exact definition_sha256 from a supplied " <>
+               "linux.service.inspect observation; inspect the service first when unavailable",
+             restart_schema()
+           )
+           | evidence_requirements: [
+               %Target.EvidenceRequirement{
+                 parameter: "expected_definition_sha256",
+                 fact: "definition_sha256",
+                 observation: "linux.service.inspect"
+               }
+             ]
+         }
        ]
      }}
   end

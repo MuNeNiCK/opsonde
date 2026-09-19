@@ -126,18 +126,53 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     do: normalize_error(result, @read_failures, "Invalid capabilities result", credentials)
 
   defp valid_capabilities?(%Target.Capabilities{observations: observations, effects: effects}) do
-    valid_observations?(observations) and valid_operations?(effects) and
+    valid_observations?(observations) and valid_effects?(effects, observations) and
       bounded_term_list?(observations ++ effects)
   end
 
   defp valid_observations?(operations) do
     valid_operations?(operations) and
       Enum.all?(operations, fn operation ->
-        valid_schema?(operation.output_schema) and
+        operation.evidence_requirements == [] and valid_schema?(operation.output_schema) and
           (is_nil(operation.verification_schema) or
              valid_schema?(operation.verification_schema))
       end)
   end
+
+  defp valid_effects?(effects, observations) do
+    valid_operations?(effects) and
+      Enum.all?(effects, &valid_evidence_requirements?(&1, observations))
+  end
+
+  defp valid_evidence_requirements?(operation, observations)
+       when is_list(operation.evidence_requirements) do
+    parameter_properties =
+      get_in(operation.input_schema, ["properties", "parameters", "properties"])
+
+    operation.evidence_requirements == [] or
+      (is_map(parameter_properties) and length(operation.evidence_requirements) <= 20 and
+         Enum.all?(operation.evidence_requirements, fn
+           %Target.EvidenceRequirement{} = requirement ->
+             matching_observations =
+               Enum.filter(observations, &(&1.operation == requirement.observation))
+
+             observation = List.first(matching_observations)
+             fact_properties = observation && observation.output_schema["properties"]
+
+             length(matching_observations) == 1 and
+               bounded_binary?(requirement.parameter, 500) and
+               Map.has_key?(parameter_properties, requirement.parameter) and
+               bounded_binary?(requirement.fact, 500) and is_map(fact_properties) and
+               Map.has_key?(fact_properties, requirement.fact)
+
+           _requirement ->
+             false
+         end) and
+         Enum.uniq_by(operation.evidence_requirements, & &1.parameter) ==
+           operation.evidence_requirements)
+  end
+
+  defp valid_evidence_requirements?(_operation, _observations), do: false
 
   defp normalize_observation(
          {:ok,

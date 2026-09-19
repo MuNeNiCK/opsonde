@@ -112,12 +112,26 @@ defmodule Opsonde.Targets.Kubernetes.API do
          )
        ],
        effects: [
-         operation(
-           "effect.workload",
-           "kubernetes.deployment.scale",
-           "Scale one Deployment with UID and resourceVersion preconditions",
-           scale_schema()
-         )
+         %{
+           operation(
+             "effect.workload",
+             "kubernetes.deployment.scale",
+             "Scale one Deployment with UID and resourceVersion preconditions",
+             scale_schema()
+           )
+           | evidence_requirements: [
+               %Target.EvidenceRequirement{
+                 parameter: "expected_uid",
+                 fact: "uid",
+                 observation: "kubernetes.deployment.inspect"
+               },
+               %Target.EvidenceRequirement{
+                 parameter: "expected_resource_version",
+                 fact: "resource_version",
+                 observation: "kubernetes.deployment.inspect"
+               }
+             ]
+         }
        ]
      }}
   end

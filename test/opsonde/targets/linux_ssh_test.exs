@@ -130,6 +130,14 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert effect.operation == "linux.service.restart"
 
+    assert effect.evidence_requirements == [
+             %Target.EvidenceRequirement{
+               parameter: "expected_definition_sha256",
+               fact: "definition_sha256",
+               observation: "linux.service.inspect"
+             }
+           ]
+
     assert get_in(effect.input_schema, [
              "properties",
              "parameters",

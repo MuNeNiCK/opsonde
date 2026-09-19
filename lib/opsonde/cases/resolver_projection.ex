@@ -235,7 +235,10 @@ defmodule Opsonde.Cases.ResolverProjection do
           )
 
         :proposal ->
-          struct!(AI.ProposalTool, common_fields)
+          struct!(
+            AI.ProposalTool,
+            Map.put(common_fields, :evidence_requirements, operation.evidence_requirements)
+          )
       end
     end)
   end
@@ -303,6 +306,9 @@ defmodule Opsonde.Cases.ResolverProjection do
         :evidence,
         generic_evidence(evidence, current.disclosure.allowed_target_ids)
       )
+    end)
+    |> then(fn current ->
+      %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
   end

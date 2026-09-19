@@ -1,10 +1,23 @@
 defmodule Opsonde.Providers.Target do
   @moduledoc false
 
+  defmodule EvidenceRequirement do
+    @moduledoc false
+    @enforce_keys [:parameter, :fact, :observation]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            parameter: String.t(),
+            fact: String.t(),
+            observation: String.t()
+          }
+  end
+
   defmodule Operation do
     @moduledoc false
     @enforce_keys [:capability, :operation, :description, :input_schema]
-    defstruct @enforce_keys ++ [output_schema: nil, verification_schema: nil]
+    defstruct @enforce_keys ++
+                [output_schema: nil, verification_schema: nil, evidence_requirements: []]
 
     @type t :: %__MODULE__{
             capability: String.t(),
@@ -12,7 +25,8 @@ defmodule Opsonde.Providers.Target do
             description: String.t(),
             input_schema: map(),
             output_schema: map() | nil,
-            verification_schema: map() | nil
+            verification_schema: map() | nil,
+            evidence_requirements: [EvidenceRequirement.t()]
           }
   end
 

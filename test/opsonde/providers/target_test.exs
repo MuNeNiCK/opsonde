@@ -60,6 +60,30 @@ defmodule Opsonde.Providers.TargetTest do
   test "capabilities reject malformed or duplicate operations and redact credentials", context do
     duplicate = operation("observe.system", "system.inspect", "Inspect system state")
 
+    effect_with_requirement = %{
+      operation(
+        "effect.service",
+        "service.restart",
+        "Restart one service",
+        %{
+          "type" => "object",
+          "properties" => %{
+            "parameters" => %{
+              "type" => "object",
+              "properties" => %{"expected_status" => %{"type" => "string"}}
+            }
+          }
+        }
+      )
+      | evidence_requirements: [
+          %Target.EvidenceRequirement{
+            parameter: "expected_status",
+            fact: "status",
+            observation: "system.inspect"
+          }
+        ]
+    }
+
     for capabilities <- [
           %Target.Capabilities{observations: [duplicate, duplicate], effects: []},
           %Target.Capabilities{observations: [%{duplicate | output_schema: nil}], effects: []},
@@ -96,6 +120,21 @@ defmodule Opsonde.Providers.TargetTest do
               )
             ],
             effects: []
+          },
+          %Target.Capabilities{observations: [], effects: [effect_with_requirement]},
+          %Target.Capabilities{
+            observations: [duplicate],
+            effects: [
+              %{
+                effect_with_requirement
+                | evidence_requirements: [
+                    %{
+                      hd(effect_with_requirement.evidence_requirements)
+                      | parameter: "missing_parameter"
+                    }
+                  ]
+              }
+            ]
           }
         ] do
       assert {:error, error} =

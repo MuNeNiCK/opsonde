@@ -349,6 +349,19 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     assert effect.operation == "kubernetes.deployment.scale"
 
+    assert effect.evidence_requirements == [
+             %Target.EvidenceRequirement{
+               parameter: "expected_uid",
+               fact: "uid",
+               observation: "kubernetes.deployment.inspect"
+             },
+             %Target.EvidenceRequirement{
+               parameter: "expected_resource_version",
+               fact: "resource_version",
+               observation: "kubernetes.deployment.inspect"
+             }
+           ]
+
     pods = observe!(context, "observe.workloads", "kubernetes.pods.list", %{}, %{"limit" => 10})
     assert_schema_accepts!(tools["kubernetes.pods.list"].output_schema, pods.facts)
     assert pods.facts["resource_version"] == "22"

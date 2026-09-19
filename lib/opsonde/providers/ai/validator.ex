@@ -1,7 +1,7 @@
 defmodule Opsonde.Providers.AI.Validator do
   @moduledoc false
 
-  alias Opsonde.Providers.AI
+  alias Opsonde.Providers.{AI, Target}
 
   @max_output_bytes 65_536
   @max_review_items 100
@@ -185,7 +185,8 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_proposal_tool?(%AI.ProposalTool{} = tool),
     do:
       valid_exact_tool?(tool) and nonempty?(tool.description) and
-        valid_input_schema?(tool.input_schema)
+        valid_input_schema?(tool.input_schema) and
+        valid_evidence_requirements?(tool.evidence_requirements)
 
   defp valid_proposal_tool?(_tool), do: false
 
@@ -359,6 +360,12 @@ defmodule Opsonde.Providers.AI.Validator do
       %AI.ProposalTool{} = tool ->
         if request.budget.remaining_effects > 0 and
              valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
+             AI.proposal_requirements_match?(
+               tool,
+               request,
+               proposal.evidence_ids,
+               proposal.parameters
+             ) and
              exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
              valid_verification_intent?(
                proposal.verification_intent,
@@ -499,6 +506,24 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_expected_result?(_expected, _schema), do: false
+
+  defp valid_evidence_requirements?([]), do: true
+
+  defp valid_evidence_requirements?(requirements) when is_list(requirements) do
+    length(requirements) <= 20 and
+      Enum.all?(requirements, fn
+        %Target.EvidenceRequirement{} = requirement ->
+          bounded_identifier?(requirement.parameter) and
+            bounded_identifier?(requirement.fact) and
+            bounded_identifier?(requirement.observation)
+
+        _requirement ->
+          false
+      end) and
+      unique?(Enum.map(requirements, & &1.parameter))
+  end
+
+  defp valid_evidence_requirements?(_requirements), do: false
 
   defp valid_input_schema?(schema) when is_map(schema) do
     try do

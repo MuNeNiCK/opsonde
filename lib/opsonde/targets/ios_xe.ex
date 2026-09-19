@@ -28,28 +28,46 @@ defmodule Opsonde.Targets.IOSXE do
         )
       ],
       effects: [
-        operation(
-          @description,
-          "Set one interface description after checking its observed value",
-          interface_schema(
-            %{
-              "description" => %{"type" => "string", "minLength" => 1, "maxLength" => 240},
-              "expected_description" => %{"type" => ["string", "null"], "maxLength" => 240}
-            },
-            ~w(description expected_description)
+        %{
+          operation(
+            @description,
+            "Set one interface description after checking its observed value",
+            interface_schema(
+              %{
+                "description" => %{"type" => "string", "minLength" => 1, "maxLength" => 240},
+                "expected_description" => %{"type" => ["string", "null"], "maxLength" => 240}
+              },
+              ~w(description expected_description)
+            )
           )
-        ),
-        operation(
-          @admin_state,
-          "Set one interface administrative state after checking its observed value",
-          interface_schema(
-            %{
-              "enabled" => %{"type" => "boolean"},
-              "expected_enabled" => %{"type" => "boolean"}
-            },
-            ~w(enabled expected_enabled)
+          | evidence_requirements: [
+              %Target.EvidenceRequirement{
+                parameter: "expected_description",
+                fact: "description",
+                observation: "ios_xe.interface.inspect"
+              }
+            ]
+        },
+        %{
+          operation(
+            @admin_state,
+            "Set one interface administrative state after checking its observed value",
+            interface_schema(
+              %{
+                "enabled" => %{"type" => "boolean"},
+                "expected_enabled" => %{"type" => "boolean"}
+              },
+              ~w(enabled expected_enabled)
+            )
           )
-        )
+          | evidence_requirements: [
+              %Target.EvidenceRequirement{
+                parameter: "expected_enabled",
+                fact: "enabled",
+                observation: "ios_xe.interface.inspect"
+              }
+            ]
+        }
       ]
     }
   end

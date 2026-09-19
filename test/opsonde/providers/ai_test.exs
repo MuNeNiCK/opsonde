@@ -3,7 +3,7 @@ defmodule Opsonde.Providers.AITest do
 
   alias Opsonde.Accounts
   alias Opsonde.Providers
-  alias Opsonde.Providers.AI
+  alias Opsonde.Providers.{AI, Target}
 
   @password "correct horse battery staple"
   @api_key "ai-provider-secret"
@@ -474,6 +474,74 @@ defmodule Opsonde.Providers.AITest do
              resolve(context, invalid_schema_request, unreachable_response())
 
     assert ai_error(invalid_schema_error).category == :invalid_input
+  end
+
+  test "Resolver proposals copy required values from cited observation evidence" do
+    request = resolver_request(1)
+    [observation_tool] = request.observation_tools
+    [proposal_tool] = request.proposal_tools
+
+    observation_tool = %{
+      observation_tool
+      | access_method_id: proposal_tool.access_method_id,
+        operation: "service.inspect"
+    }
+
+    requirement = %Target.EvidenceRequirement{
+      parameter: "expected_state",
+      fact: "state",
+      observation: "service.inspect"
+    }
+
+    proposal_tool = %{proposal_tool | evidence_requirements: [requirement]}
+
+    observation_evidence = %AI.Evidence{
+      id: "observed-state",
+      kind: "observation",
+      target_id: proposal_tool.target_id,
+      content: %{
+        "tool_id" => observation_tool.id,
+        "facts" => %{"state" => "inactive"}
+      }
+    }
+
+    request = %{
+      request
+      | evidence: [observation_evidence],
+        observation_tools: [observation_tool],
+        proposal_tools: [proposal_tool]
+    }
+
+    exact = %{
+      proposal()
+      | evidence_ids: [observation_evidence.id],
+        parameters: %{"expected_state" => "inactive"}
+    }
+
+    assert :ok =
+             AI.Validator.validate_decision(
+               :resolve,
+               %AI.ResolverDecision{intent: exact, usage: usage()},
+               request
+             )
+
+    invented = %{exact | parameters: %{"expected_state" => "active"}}
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(
+               :resolve,
+               %AI.ResolverDecision{intent: invented, usage: usage()},
+               request
+             )
+
+    uncited = %{exact | evidence_ids: ["different-evidence"]}
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(
+               :resolve,
+               %AI.ResolverDecision{intent: uncited, usage: usage()},
+               request
+             )
   end
 
   test "Resolver rejects invented effects and recovery without fresh recovered evidence",

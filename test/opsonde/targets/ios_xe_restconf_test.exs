@@ -213,6 +213,23 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
              "ios_xe.interface.admin_state.set"
            ]
 
+    assert Enum.map(effects, & &1.evidence_requirements) == [
+             [
+               %Target.EvidenceRequirement{
+                 parameter: "expected_description",
+                 fact: "description",
+                 observation: "ios_xe.interface.inspect"
+               }
+             ],
+             [
+               %Target.EvidenceRequirement{
+                 parameter: "expected_enabled",
+                 fact: "enabled",
+                 observation: "ios_xe.interface.inspect"
+               }
+             ]
+           ]
+
     tools = Map.new(observations, &{&1.operation, &1})
     interface_tool = tools["ios_xe.interface.inspect"]
 

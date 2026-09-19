@@ -175,6 +175,76 @@ defmodule Opsonde.ResolverProjectionTest do
     refute_receive {:resolve, _, _}
   end
 
+  test "effect tools require a matching observation fact before disclosure", context do
+    {incident, run} = open!("evidence-gate", context.operator, context.target)
+    started = start!(incident, run, "evidence-gate-turn")
+
+    observation = operation("observe.system", "system.inspect", "Inspect system state")
+
+    effect = %Target.Operation{
+      capability: "effect.service",
+      operation: "service.restart",
+      description: "Restart using the observed state",
+      input_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "selectors" => %{"type" => "object", "maxProperties" => 0},
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{"expected_status" => %{"type" => "string"}},
+            "required" => ["expected_status"],
+            "additionalProperties" => false
+          }
+        },
+        "required" => ["selectors", "parameters"],
+        "additionalProperties" => false
+      },
+      evidence_requirements: [
+        %Target.EvidenceRequirement{
+          parameter: "expected_status",
+          fact: "status",
+          observation: "system.inspect"
+        }
+      ]
+    }
+
+    capabilities = %Target.Capabilities{observations: [observation], effects: [effect]}
+
+    assert {:ok, before_observation} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert [%AI.ObservationTool{id: observation_tool_id}] =
+             before_observation.observation_tools
+
+    assert before_observation.proposal_tools == []
+
+    evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        started.value.id,
+        "evidence-gate-observation",
+        "observation",
+        "target_provider",
+        observation_tool_id,
+        %{
+          "target_id" => context.target.id,
+          "tool_id" => observation_tool_id,
+          "facts" => %{"status" => "inactive"}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    assert {:ok, after_observation} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert [%AI.ProposalTool{} = proposal] = after_observation.proposal_tools
+    assert proposal.operation == "service.restart"
+    assert proposal.evidence_requirements == effect.evidence_requirements
+    assert Enum.any?(after_observation.evidence, &(&1.id == evidence.id))
+  end
+
   test "preselection projection exposes candidates without probing Target providers", context do
     {incident, run} = open!("preselection", context.operator)
 

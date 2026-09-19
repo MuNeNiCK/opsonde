@@ -46,6 +46,50 @@ defmodule Opsonde.Providers.AI do
 
   def recovery_ready?(_request), do: false
 
+  def available_proposal_tools(request) do
+    Enum.filter(request.proposal_tools, &proposal_requirements_available?(&1, request))
+  end
+
+  def proposal_requirements_match?(tool, request, evidence_ids, parameters)
+      when is_list(evidence_ids) and is_map(parameters) do
+    Enum.all?(tool.evidence_requirements, fn requirement ->
+      Enum.any?(matching_evidence(requirement, tool, request, evidence_ids), fn evidence ->
+        parameters[requirement.parameter] == evidence.content["facts"][requirement.fact]
+      end)
+    end)
+  end
+
+  def proposal_requirements_match?(_tool, _request, _evidence_ids, _parameters), do: false
+
+  defp proposal_requirements_available?(tool, request) do
+    Enum.all?(tool.evidence_requirements, fn requirement ->
+      matching_evidence(requirement, tool, request, nil) != []
+    end)
+  end
+
+  defp matching_evidence(requirement, tool, request, evidence_ids) do
+    observation_tool =
+      Enum.find(request.observation_tools, fn observation ->
+        observation.target_id == tool.target_id and
+          observation.access_method_id == tool.access_method_id and
+          observation.provider_id == tool.provider_id and
+          observation.operation == requirement.observation
+      end)
+
+    if observation_tool do
+      Enum.filter(request.evidence, fn evidence ->
+        evidence.kind == "observation" and evidence.target_id == tool.target_id and
+          is_map(evidence.content) and
+          (is_nil(evidence_ids) or evidence.id in evidence_ids) and
+          evidence.content["tool_id"] == observation_tool.id and
+          is_map(evidence.content["facts"]) and
+          Map.has_key?(evidence.content["facts"], requirement.fact)
+      end)
+    else
+      []
+    end
+  end
+
   defp verified_target_evidence?(%Evidence{
          kind: "target_verification",
          content: %{"status" => "verified"}
@@ -152,7 +196,7 @@ defmodule Opsonde.Providers.AI do
       :input_schema
     ]
 
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [evidence_requirements: []]
     @type t :: %__MODULE__{}
   end
 
