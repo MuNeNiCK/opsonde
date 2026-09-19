@@ -43,6 +43,10 @@ defmodule Opsonde.AI.ReqLLMTest do
       end
     end
 
+    defp respond(conn, _request, {:text_decision, decision}) do
+      json(conn, openai_text_response(wire_decision(decision)))
+    end
+
     defp respond(conn, _request, {:stream, decision}) do
       decision = wire_decision(decision)
 
@@ -355,9 +359,15 @@ defmodule Opsonde.AI.ReqLLMTest do
       content: %{"status" => "verified", "operation_id" => "operation-1"}
     }
 
+    second_verified = %AI.Evidence{
+      id: "verification-2",
+      kind: "target_verification",
+      content: %{"status" => "verified", "operation_id" => "operation-2"}
+    }
+
     request = %{
       request
-      | evidence: [ordinary, verified],
+      | evidence: [ordinary, verified, second_verified],
         disclosure: %{
           request.disclosure
           | allowed_evidence_kinds: ["observation", "target_verification"]
@@ -365,15 +375,21 @@ defmodule Opsonde.AI.ReqLLMTest do
     }
 
     set_mode(context.agent, {
-      :decision,
+      :text_decision,
       %{
         "type" => "recovery",
         "reason" => "Fresh verification and monitoring agree",
-        "evidence_ids" => ["verification-1"]
+        "evidence_ids" => ["verification-1", "verification-2", "verification-1"]
       }
     })
 
-    assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, request, %{})
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.RecoveryConclusion{
+                evidence_ids: ["verification-1", "verification-2"]
+              }
+            }} = Adapter.resolve(state, request, %{})
+
     verified_request = requests(context.agent) |> List.last()
 
     recovery =
@@ -389,7 +405,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert terminal_types == [["recovery"]]
 
     assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
-             "verification-1"
+             "verification-1",
+             "verification-2"
            ]
   end
 

@@ -624,8 +624,7 @@ defmodule Opsonde.AI.ReqLLM do
     do: %{
       "type" => "array",
       "items" => enum_schema(values),
-      "minItems" => 1,
-      "uniqueItems" => true
+      "minItems" => 1
     }
 
   defp json_object_string_schema,
@@ -761,7 +760,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp string_list(value, key) do
     case Map.get(value, key) do
       items when is_list(items) ->
-        if Enum.all?(items, &nonempty?/1), do: {:ok, items}, else: invalid_output()
+        if Enum.all?(items, &nonempty?/1), do: {:ok, Enum.uniq(items)}, else: invalid_output()
 
       _items ->
         invalid_output()
