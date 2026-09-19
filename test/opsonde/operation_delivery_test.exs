@@ -4,6 +4,7 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.{Accounts, Cases, Providers, Targets}
 
   alias Opsonde.Cases.{
+    OperationAcceptanceWorker,
     OperationDelivery,
     OperationWorker,
     VerificationDelivery,
@@ -97,7 +98,7 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   test "revoked approval authority creates no Operation, job or budget charge", context do
-    {_incident, run, proposal} = authorized_proposal!("revoked", context)
+    {incident, run, proposal} = authorized_proposal!("revoked", context)
     Accounts.change_role!(context.operator, :viewer, actor: context.admin)
 
     assert {:error, _error} = Cases.accept_operation(proposal.id, authorize?: false)
@@ -105,6 +106,16 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
     assert operation_jobs(proposal.reserved_operation_id) == 0
     refute_receive {:effect, _, _}
+
+    assert :ok =
+             OperationAcceptanceWorker.perform(%Oban.Job{
+               args: %{"proposal_id" => proposal.id}
+             })
+
+    attention = Cases.get_case!(incident.id, authorize?: false)
+    assert attention.status == :needs_attention
+    assert attention.pending_intent["action"] == "dispatch_operation"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
   end
 
   test "a Target Policy added after approval prevents acceptance", context do

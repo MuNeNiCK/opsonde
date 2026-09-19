@@ -61,6 +61,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     end
   end
 
+  defp route_locked(%{status: :authorized} = proposal, _incident, _run) do
+    with :ok <- schedule_acceptance(proposal), do: proposal
+  end
+
   defp route_locked(
          %{status: status} = proposal,
          _incident,
@@ -70,7 +74,6 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
               :recommended,
               :awaiting_human,
               :reviewing,
-              :authorized,
               :rejected,
               :invalidated
             ],
@@ -159,7 +162,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   end
 
   defp apply_review_locked(%{status: :authorized} = proposal, _decision, _incident, _run),
-    do: proposal
+    do: schedule_if_authorized(proposal)
 
   defp apply_review_locked(%{status: :awaiting_human} = proposal, _decision, _incident, _run),
     do: proposal
@@ -188,7 +191,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          {:ok, approval} <-
            create_approval(proposal, actor, :approved, :reviewer, decision.reason, clearance),
          {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)) do
+         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
+         :ok <- schedule_acceptance(authorized) do
       authorized
     else
       {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
@@ -223,7 +227,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              clearance
            ),
          {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)) do
+         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
+         :ok <- schedule_acceptance(authorized) do
       authorized
     else
       {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
@@ -236,7 +241,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          {:ok, approval} <-
            create_approval(proposal, actor, :approved, :human, reason, clearance),
          {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)) do
+         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
+         :ok <- schedule_acceptance(authorized) do
       authorized
     else
       {:blocked, category, blocked_reason} ->
@@ -448,7 +454,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          approval.decision == arguments.decision and
          approval.proposal_digest == arguments.proposal_digest and
          approval.reason == arguments.reason do
-      proposal
+      schedule_if_authorized(proposal)
     else
       {:error, "Proposal already has a different decision"}
     end
@@ -512,6 +518,20 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
       "approval_id" => approval.id,
       "operation_id" => proposal.reserved_operation_id
     }
+  end
+
+  defp schedule_if_authorized(%{status: :authorized} = proposal) do
+    with :ok <- schedule_acceptance(proposal), do: proposal
+  end
+
+  defp schedule_if_authorized(proposal), do: proposal
+
+  defp schedule_acceptance(proposal) do
+    case Opsonde.Cases.OperationAcceptanceWorker.new(%{"proposal_id" => proposal.id})
+         |> Oban.insert() do
+      {:ok, _job} -> :ok
+      {:error, _error} = error -> error
+    end
   end
 
   defp clearance_digest(nil), do: nil

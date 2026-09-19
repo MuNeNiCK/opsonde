@@ -2,7 +2,14 @@ defmodule Opsonde.ProposalAuthorityTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{ReviewDelivery, ReviewWorker}
+
+  alias Opsonde.Cases.{
+    OperationAcceptanceWorker,
+    OperationWorker,
+    ReviewDelivery,
+    ReviewWorker
+  }
+
   alias Opsonde.Providers.AI
 
   @password "correct horse battery staple"
@@ -138,6 +145,17 @@ defmodule Opsonde.ProposalAuthorityTest do
            }
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
+    assert acceptance_jobs(proposal.id) == 1
+
+    acceptance_job = %Oban.Job{args: %{"proposal_id" => proposal.id}}
+    assert :ok = OperationAcceptanceWorker.perform(acceptance_job)
+    assert :ok = OperationAcceptanceWorker.perform(acceptance_job)
+
+    [operation] = Cases.list_operations!(actor: context.admin)
+    assert operation.proposal_id == proposal.id
+    assert operation.id == proposal.reserved_operation_id
+    assert operation_jobs(operation.id) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
 
     assert {:error, _error} =
              Cases.decide_proposal(
@@ -215,6 +233,7 @@ defmodule Opsonde.ProposalAuthorityTest do
              "dispatch_operation"
 
     assert Cases.get_resolution_run!(full_run.id, authorize?: false).effect_count == 0
+    assert acceptance_jobs(full_proposal.id) == 1
     refute_receive {:effect, _, _}
 
     configure_mode!(:auto, context.admin)
@@ -231,6 +250,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert length(Cases.list_approvals!(actor: context.admin)) == 1
     assert review_jobs(auto_proposal.id) == 1
+    assert acceptance_jobs(auto_proposal.id) == 0
     assert Cases.get_resolution_run!(auto_run.id, authorize?: false).effect_count == 0
     refute_receive {:review, _, _}
   end
@@ -283,12 +303,15 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
              "dispatch_operation"
 
+    assert acceptance_jobs(proposal.id) == 1
+
     assert :ok =
              ReviewDelivery.run(reviewing.id,
                ai_invocation: %{respond: fn _ -> flunk("accepted review called AI twice") end}
              )
 
     refute_receive {:review, _, _}
+    assert acceptance_jobs(proposal.id) == 1
     refute_receive {:effect, _, _}
   end
 
@@ -607,6 +630,28 @@ defmodule Opsonde.ProposalAuthorityTest do
         where:
           job.worker == ^Oban.Worker.to_string(ReviewWorker) and
             fragment("?->>'proposal_id'", job.args) == ^proposal_id
+      ),
+      :count
+    )
+  end
+
+  defp acceptance_jobs(proposal_id) do
+    Opsonde.Repo.aggregate(
+      from(job in Oban.Job,
+        where:
+          job.worker == ^Oban.Worker.to_string(OperationAcceptanceWorker) and
+            fragment("?->>'proposal_id'", job.args) == ^proposal_id
+      ),
+      :count
+    )
+  end
+
+  defp operation_jobs(operation_id) do
+    Opsonde.Repo.aggregate(
+      from(job in Oban.Job,
+        where:
+          job.worker == ^Oban.Worker.to_string(OperationWorker) and
+            fragment("?->>'operation_id'", job.args) == ^operation_id
       ),
       :count
     )
