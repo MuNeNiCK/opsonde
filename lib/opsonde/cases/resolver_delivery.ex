@@ -296,10 +296,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp verification_tool(request, tool_id) do
-    case observation_tool(request, tool_id) do
-      {:ok, tool} -> {:ok, tool}
-      {:error, _missing} -> proposal_tool(request, tool_id)
-    end
+    observation_tool(request, tool_id)
   end
 
   defp relationship(request, relationship_id) do

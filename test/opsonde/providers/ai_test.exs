@@ -331,10 +331,12 @@ defmodule Opsonde.Providers.AITest do
         }
     }
 
-    assert %AI.ResolverDecision{intent: ^self_verifying_proposal} =
-             resolve!(context, request, fn _request ->
+    assert {:error, self_verification_error} =
+             resolve(context, request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: self_verifying_proposal, usage: usage()}}
              end)
+
+    assert ai_error(self_verification_error).category == :invalid_output
 
     invalid_observation = %{valid_observation | selectors: %{"service" => 42}}
 

@@ -404,7 +404,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp verification_intent(_value, _request), do: invalid_output()
 
   defp verification_tool(request, tool_id),
-    do: Enum.find(request.observation_tools ++ request.proposal_tools, &(&1.id == tool_id))
+    do: Enum.find(request.observation_tools, &(&1.id == tool_id))
 
   defp traversal_target(relationship, selected_target_id) do
     cond do
@@ -519,10 +519,9 @@ defmodule Opsonde.AI.ReqLLM do
     action_variants = tool_input_variants(request.proposal_tools)
 
     verification_variants =
-      tool_input_variants(
-        request.observation_tools ++ request.proposal_tools,
-        %{"expected_result_json" => json_object_string_schema()}
-      )
+      tool_input_variants(request.observation_tools, %{
+        "expected_result_json" => json_object_string_schema()
+      })
 
     evidence_ids = available_evidence_ids(request)
 

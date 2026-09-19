@@ -371,6 +371,10 @@ defmodule Opsonde.AI.ReqLLMTest do
                Map.has_key?(variant["properties"], "expected_result_json")
            end)
 
+    refute Enum.any?(verification_schemas, fn variant ->
+             get_in(variant, ["properties", "tool_id", "enum"]) == ["proposal-tool"]
+           end)
+
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
 

@@ -282,6 +282,7 @@ defmodule Opsonde.ResolverDeliveryTest do
                  test_pid: self(),
                  respond: fn request ->
                    [proposal_tool] = request.proposal_tools
+                   [observation_tool] = request.observation_tools
 
                    {:ok,
                     %AI.ResolverDecision{
@@ -299,9 +300,9 @@ defmodule Opsonde.ResolverDeliveryTest do
                         evidence_ids: [evidence.id],
                         expected_result: %{"service" => "running"},
                         verification_intent: %AI.VerificationIntent{
-                          tool_id: proposal_tool.id,
+                          tool_id: observation_tool.id,
                           selectors: %{"service" => "api"},
-                          parameters: %{"service" => "api", "verify_only" => true},
+                          parameters: %{"service" => "api"},
                           expected_result: %{"service" => "running"}
                         }
                       },
@@ -321,11 +322,11 @@ defmodule Opsonde.ResolverDeliveryTest do
              "service" => "api"
            }
 
-    assert proposal_intent["verification_tool"]["id"] =~ "proposal:"
+    assert proposal_intent["verification_tool"]["id"] =~ "observation:"
     assert proposal_intent["verification_tool"]["access_method_id"] == method.id
     assert proposal_intent["verification_tool"]["provider_id"] == method.provider_id
     assert proposal_intent["verification_tool"]["provider_revision"] == method.provider_revision
-    assert proposal_intent["verification_tool"]["operation"] == "service.restart"
+    assert proposal_intent["verification_tool"]["operation"] == "system.inspect"
   end
 
   test "accepted relationship snapshot reaches the durable related Target route", context do
