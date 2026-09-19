@@ -36,7 +36,7 @@ defmodule Opsonde.Providers.AI do
 
   def recovery_evidence_ids(request) do
     request.evidence
-    |> Enum.filter(&verified_target_evidence?/1)
+    |> Enum.filter(&verified_target_evidence?(&1, request.selected_target_id))
     |> Enum.map(& &1.id)
   end
 
@@ -90,13 +90,28 @@ defmodule Opsonde.Providers.AI do
     end
   end
 
-  defp verified_target_evidence?(%Evidence{
-         kind: "target_verification",
-         content: %{"status" => "verified"}
-       }),
+  defp verified_target_evidence?(
+         %Evidence{
+           kind: "target_verification",
+           target_id: target_id,
+           content: %{"status" => "verified"}
+         },
+         target_id
+       )
+       when is_binary(target_id),
        do: true
 
-  defp verified_target_evidence?(_evidence), do: false
+  defp verified_target_evidence?(
+         %Evidence{
+           kind: "target_verification",
+           target_id: nil,
+           content: %{"status" => "verified"}
+         },
+         nil
+       ),
+       do: true
+
+  defp verified_target_evidence?(_evidence, _target_id), do: false
 
   defmodule TargetCandidate do
     @moduledoc false

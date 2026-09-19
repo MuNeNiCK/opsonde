@@ -7,11 +7,12 @@ defmodule Opsonde.OperationDeliveryTest do
     OperationAcceptanceWorker,
     OperationDelivery,
     OperationWorker,
+    ResolverDelivery,
     VerificationDelivery,
     VerificationWorker
   }
 
-  alias Opsonde.Providers.Target
+  alias Opsonde.Providers.{AI, Target}
 
   @password "correct horse battery staple"
 
@@ -622,6 +623,98 @@ defmodule Opsonde.OperationDeliveryTest do
     assert resolved.status == :resolved
     assert resolved.alert_state == :recovered
     refute_receive {:effect, _, _}
+  end
+
+  test "a resumed run can conclude recovery from prior verified Target Evidence", context do
+    {incident, run, proposal} = authorized_proposal!("resume-verification", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+             )
+
+    pending_case = Cases.get_case!(incident.id, authorize?: false)
+    verification_id = pending_case.pending_intent["verification_evidence_id"]
+    current_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        pending_case.id,
+        pending_case.revision,
+        current_run.id,
+        current_run.revision,
+        "resume-after-verification",
+        "Resolver delivery failed after verification",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue after verified Target recovery",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    assert :ok =
+             ResolverDelivery.run(resumed_turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :not_applicable
+                   assert AI.recovery_ready?(request)
+                   assert AI.recovery_evidence_ids(request) == [verification_id]
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The prior verified Target state remains current after resume",
+                        evidence_ids: [verification_id]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(resumed_turn.id, authorize?: false)
+    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    replayed = Cases.route_downstream_decision!(completed.id, authorize?: false)
+
+    assert resolved.status == :resolved
+    assert replayed.id == resolved.id
+    assert Cases.get_resolution_run!(resumed_run.id, authorize?: false).status == :completed
+
+    assert Enum.count(Cases.list_operations!(actor: context.admin), &(&1.case_id == incident.id)) ==
+             1
   end
 
   test "remaining symptoms create a new Proposal without replaying the prior Operation",

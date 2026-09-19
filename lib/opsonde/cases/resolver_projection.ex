@@ -16,9 +16,11 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, target} <- selected_target(incident),
+         {:ok, continuity} <- recovery_continuity(incident, target, evidence),
          {:ok, relations} <- relations(target, incident, run),
          {:ok, tools} <- tools(target, run, invocation),
-         request <- request(selection, incident, run, turn, evidence, target, relations, tools),
+         request <-
+           request(selection, incident, run, turn, continuity, target, relations, tools),
          :ok <- AI.Validator.validate_request(:resolve, request) do
       {:ok, request}
     end
@@ -69,6 +71,51 @@ defmodule Opsonde.Cases.ResolverProjection do
       {:ok, target}
     end
   end
+
+  defp recovery_continuity(%{alert_state: state} = incident, target, evidence)
+       when state in [:recovered, :not_applicable] and not is_nil(target) do
+    with {:ok, candidates} <-
+           Cases.recovery_continuity_evidence(incident.id, authorize?: false) do
+      latest =
+        Enum.find(candidates, fn candidate ->
+          candidate.content["target_id"] == target.id
+        end)
+
+      {:ok, prepend_verified_continuity(evidence, latest, incident, target)}
+    end
+  end
+
+  defp recovery_continuity(_incident, _target, evidence), do: {:ok, evidence}
+
+  defp prepend_verified_continuity(
+         evidence,
+         %{
+           case_id: case_id,
+           source: "verification",
+           content: %{
+             "status" => "verified",
+             "operation_id" => operation_id,
+             "target_id" => target_id
+           }
+         } = latest,
+         %{id: case_id},
+         %{id: target_id, revision: target_revision}
+       ) do
+    with false <- Enum.any?(evidence, &(&1.id == latest.id)),
+         {:ok,
+          %{
+            case_id: ^case_id,
+            target_id: ^target_id,
+            target_revision: ^target_revision,
+            status: :applied
+          }} <- Cases.get_operation(operation_id, authorize?: false) do
+      [latest | evidence]
+    else
+      _existing_or_stale -> evidence
+    end
+  end
+
+  defp prepend_verified_continuity(evidence, _latest, _incident, _target), do: evidence
 
   defp relations(nil, _incident, _run), do: {:ok, []}
 

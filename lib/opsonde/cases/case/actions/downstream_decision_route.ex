@@ -204,7 +204,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        when is_binary(reason) and byte_size(reason) > 0 and byte_size(reason) <= 500 and
               is_list(evidence_ids) do
     with :ok <- valid_recovery_state(incident),
-         :ok <- valid_evidence(evidence_ids, incident.id, run.id),
+         :ok <- valid_case_evidence(evidence_ids, incident.id),
          :ok <- valid_fresh_verification(evidence_ids, turn, incident, run) do
       :ok
     end
@@ -241,6 +241,14 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     evidence_id = turn.intent["verification_evidence_id"]
     operation_id = turn.intent["operation_id"]
 
+    if is_binary(evidence_id) and is_binary(operation_id) do
+      validate_current_verification(evidence_ids, evidence_id, operation_id, incident, run)
+    else
+      validate_continuity_verification(evidence_ids, incident)
+    end
+  end
+
+  defp validate_current_verification(evidence_ids, evidence_id, operation_id, incident, run) do
     if evidence_id in evidence_ids do
       case Cases.get_evidence(evidence_id, authorize?: false) do
         {:ok,
@@ -262,11 +270,58 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp valid_evidence(ids, case_id, run_id) do
+  defp validate_continuity_verification(evidence_ids, incident) do
+    with {:ok, candidates} <-
+           Cases.recovery_continuity_evidence(incident.id, authorize?: false),
+         %{} = latest <-
+           Enum.find(candidates, &(&1.content["target_id"] == incident.selected_target_id)),
+         true <-
+           latest.id in evidence_ids ||
+             {:error, "Recovery conclusion omits the latest verified Target Evidence"},
+         :ok <- valid_continuity_evidence(latest, incident) do
+      :ok
+    else
+      nil -> {:error, "Recovery conclusion lacks verified Target Evidence"}
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp valid_continuity_evidence(
+         %{
+           case_id: case_id,
+           kind: "target_verification",
+           source: "verification",
+           content: %{
+             "status" => "verified",
+             "operation_id" => operation_id,
+             "target_id" => target_id
+           }
+         },
+         %{id: case_id, selected_target_id: target_id, selected_target_revision: target_revision}
+       ) do
+    case Cases.get_operation(operation_id, authorize?: false) do
+      {:ok,
+       %{
+         case_id: ^case_id,
+         target_id: ^target_id,
+         target_revision: ^target_revision,
+         status: :applied
+       }} ->
+        :ok
+
+      _unavailable ->
+        {:error, "Recovery conclusion cites stale Target verification"}
+    end
+  end
+
+  defp valid_continuity_evidence(_evidence, _incident),
+    do: {:error, "Recovery conclusion lacks verified Target Evidence"}
+
+  defp valid_case_evidence(ids, case_id) do
     with :ok <- unique_ids(ids) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
-          {:ok, %{case_id: ^case_id, resolution_run_id: ^run_id}} -> {:cont, :ok}
+          {:ok, %{case_id: ^case_id}} -> {:cont, :ok}
           _unavailable -> {:halt, {:error, "Resolver decision cites unavailable Evidence"}}
         end
       end)

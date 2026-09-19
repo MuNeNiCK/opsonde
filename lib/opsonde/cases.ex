@@ -227,6 +227,10 @@ defmodule Opsonde.Cases do
         action: :projection_window,
         args: [:case_id, :resolution_run_id]
 
+      define :recovery_continuity_evidence,
+        action: :recovery_continuity,
+        args: [:case_id]
+
       define :evidence_by_idempotency,
         action: :by_idempotency,
         args: [:case_id, :idempotency_key]
