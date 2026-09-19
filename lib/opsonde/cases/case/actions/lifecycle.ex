@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Accounts
-  alias Opsonde.Cases
+  alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun}
 
   @limit_fields [
@@ -24,6 +24,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       :record_source_recovery -> record_source_recovery(input.arguments, context.actor)
       :require_attention -> require_attention(input.arguments, context.actor)
       :resume -> resume(input.arguments, context.actor)
+      :resume_after_target_registration -> resume_after_target_registration(input.arguments)
     end
   end
 
@@ -207,19 +208,73 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       end
 
     with {:ok, run} <- result,
-         :ok <- start_resumed_run(arguments.id, run) do
+         :ok <- start_resumed_run(arguments.id, run, "Continue resolution after operator resume") do
       {:ok, run}
     end
   end
 
-  defp start_resumed_run(case_id, run) do
+  defp resume_after_target_registration(arguments) do
+    key =
+      idempotency_key("target_registration_resume", [
+        arguments.id,
+        arguments.external_identity_id,
+        arguments.expected_identity_revision
+      ])
+
+    result =
+      case event(arguments.id, key) do
+        {:ok, %CaseEvent{}} -> active_run_result(arguments.id)
+        {:ok, nil} -> resume_after_target_registration_once(arguments, key)
+        {:error, _error} = error -> error
+      end
+
+    with {:ok, run} <- result,
+         :ok <-
+           start_resumed_run(
+             arguments.id,
+             run,
+             "Continue resolution after Target registration"
+           ) do
+      {:ok, run}
+    end
+  end
+
+  defp resume_after_target_registration_once(arguments, key) do
+    with {:ok, incident} <- Cases.get_case(arguments.id, authorize?: false),
+         :ok <- target_registration_wait(incident),
+         {:ok, identity} <-
+           Targets.get_external_identity(arguments.external_identity_id, authorize?: false),
+         :ok <- current_identity(identity, arguments.expected_identity_revision),
+         :ok <- matching_signal_identity(incident, identity),
+         {:ok, %{active: true} = target} <-
+           Targets.get_target(identity.target_id, authorize?: false),
+         {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
+         true <-
+           run.status == :needs_attention || {:error, "ResolutionRun does not need attention"},
+         resume_arguments <- registration_resume_arguments(incident, run),
+         {:ok, resumed} <-
+           resume_transaction(incident, run, resume_arguments, nil, key,
+             selected_target: target,
+             target_identity: identity
+           ) do
+      {:ok, resumed}
+    else
+      {:error, _error} = failed ->
+        case event(arguments.id, key) do
+          {:ok, %CaseEvent{}} -> active_run_result(arguments.id)
+          _other -> failed
+        end
+    end
+  end
+
+  defp start_resumed_run(case_id, run, objective) do
     turn_key = "resume:#{run.id}:#{run.generation}"
 
     case Cases.start_turn(
            case_id,
            run.id,
            turn_key,
-           %{"objective" => "Continue resolution after operator resume"},
+           %{"objective" => objective},
            %{"action" => "continue"},
            "Review Case inputs and limits",
            authorize?: false
@@ -258,7 +313,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     end
   end
 
-  defp resume_transaction(incident, run, arguments, actor, key) do
+  defp resume_transaction(incident, run, arguments, actor, key, options \\ []) do
     now = DateTime.utc_now()
 
     Ash.transact([Case, ResolutionRun, CaseEvent], fn ->
@@ -274,13 +329,13 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
                incident,
                arguments.expected_case_revision,
                %{
-                 current_owner_id: actor.id,
                  status: :running,
                  cancel_requested: false,
                  stop_reason: nil,
                  pending_intent: %{},
                  required_human_input: nil
-               },
+               }
+               |> resume_case_attributes(actor, options),
                actor: actor,
                authorize?: false
              ),
@@ -292,14 +347,17 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
                actor,
                "case_resumed",
                key,
-               %{
-                 "prior_run_id" => run.id,
-                 "prior_generation" => run.generation,
-                 "new_generation" => next_run.generation,
-                 "reason" => arguments.reason,
-                 "prior" => settings_map(run),
-                 "new" => settings_map(next_run)
-               }
+               Map.merge(
+                 %{
+                   "prior_run_id" => run.id,
+                   "prior_generation" => run.generation,
+                   "new_generation" => next_run.generation,
+                   "reason" => arguments.reason,
+                   "prior" => settings_map(run),
+                   "new" => settings_map(next_run)
+                 },
+                 target_registration_event(options)
+               )
              ) do
         next_run
       end
@@ -324,10 +382,82 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
         started_at: now,
         deadline_at: DateTime.add(now, arguments.max_elapsed_seconds, :second),
         resume_reason: arguments.reason,
-        resumed_by_id: actor.id
+        resumed_by_id: actor && actor.id
       })
 
     Cases.create_resolution_run_record(attrs, authorize?: false)
+  end
+
+  defp target_registration_wait(%{
+         trigger_kind: :signal,
+         alert_state: :firing,
+         status: :needs_attention,
+         selected_target_id: nil,
+         selected_target_revision: nil,
+         pending_intent: %{"action" => "provide_human_input"}
+       }),
+       do: :ok
+
+  defp target_registration_wait(_incident),
+    do: {:error, "Case is not waiting for Target registration"}
+
+  defp current_identity(%{active: true, revision: revision}, revision), do: :ok
+  defp current_identity(_identity, _revision), do: {:error, "ExternalIdentity changed"}
+
+  defp matching_signal_identity(
+         %{
+           source: source,
+           initial_context: %{"target_ref" => %{"kind" => kind, "value" => value}}
+         },
+         %{source: source, kind: kind, value: value}
+       ),
+       do: :ok
+
+  defp matching_signal_identity(_incident, _identity),
+    do: {:error, "ExternalIdentity does not match the Case signal reference"}
+
+  defp registration_resume_arguments(incident, run) do
+    run
+    |> Map.take([:authority_mode | @limit_fields])
+    |> Map.merge(%{
+      id: incident.id,
+      expected_case_revision: incident.revision,
+      resolution_run_id: run.id,
+      expected_run_revision: run.revision,
+      reason: "The registered ExternalIdentity now resolves the firing signal to a Target"
+    })
+  end
+
+  defp resume_case_attributes(attributes, nil, options) do
+    case options[:selected_target] do
+      nil ->
+        attributes
+
+      target ->
+        Map.merge(attributes, %{
+          selected_target_id: target.id,
+          selected_target_revision: target.revision
+        })
+    end
+  end
+
+  defp resume_case_attributes(attributes, actor, _options),
+    do: Map.put(attributes, :current_owner_id, actor.id)
+
+  defp target_registration_event(options) do
+    case {options[:selected_target], options[:target_identity]} do
+      {%{id: target_id, revision: target_revision},
+       %{id: identity_id, revision: identity_revision}} ->
+        %{
+          "target_id" => target_id,
+          "target_revision" => target_revision,
+          "external_identity_id" => identity_id,
+          "external_identity_revision" => identity_revision
+        }
+
+      _other ->
+        %{}
+    end
   end
 
   defp validate_extension(run, arguments) do

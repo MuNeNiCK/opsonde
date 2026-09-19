@@ -33,7 +33,10 @@ defmodule Opsonde.Cases do
       define :get_case, action: :read, get_by: [:id]
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
-      define :active_unresolved_signal_cases, action: :active_unresolved_signals
+
+      define :unresolved_signal_cases_without_target,
+        action: :unresolved_signals_without_target
+
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]
 
@@ -92,6 +95,10 @@ defmodule Opsonde.Cases do
           :max_no_progress_turns,
           :reason
         ]
+
+      define :resume_case_after_target_registration,
+        action: :resume_after_target_registration,
+        args: [:id, :external_identity_id, :expected_identity_revision]
 
       define :search_case_targets,
         action: :search_targets,

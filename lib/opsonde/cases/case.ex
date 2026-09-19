@@ -46,10 +46,10 @@ defmodule Opsonde.Cases.Case do
              )
     end
 
-    read :active_unresolved_signals do
+    read :unresolved_signals_without_target do
       filter expr(
-               trigger_kind == :signal and alert_state == :firing and status == :running and
-                 is_nil(selected_target_id)
+               trigger_kind == :signal and alert_state == :firing and
+                 status in [:running, :needs_attention] and is_nil(selected_target_id)
              )
 
       prepare build(sort: [inserted_at: :asc, id: :asc])
@@ -259,6 +259,19 @@ defmodule Opsonde.Cases.Case do
       run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :resume}
     end
 
+    action :resume_after_target_registration, :struct do
+      constraints instance_of: Opsonde.Cases.ResolutionRun
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :external_identity_id, :uuid, allow_nil?: false
+
+      argument :expected_identity_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1]
+
+      run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :resume_after_target_registration}
+    end
+
     action :search_targets, :struct do
       constraints instance_of: Opsonde.Cases.BudgetResult
       transaction? false
@@ -359,10 +372,11 @@ defmodule Opsonde.Cases.Case do
 
     policy action([
              :by_trigger,
-             :active_unresolved_signals,
+             :unresolved_signals_without_target,
              :create_record,
              :update_record,
              :require_attention,
+             :resume_after_target_registration,
              :route_target_discovery,
              :route_observation,
              :route_related_target,

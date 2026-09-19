@@ -303,6 +303,116 @@ defmodule Opsonde.SignalIngressTest do
     assert is_nil(incident.selected_target_id)
   end
 
+  test "matching identity registration resumes the same waiting Signal Case exactly once",
+       context do
+    enable_signal_automation!(context.admin)
+    occurred_at = DateTime.utc_now()
+
+    ingest!(
+      context.provider,
+      envelope("waiting-target", occurred_at),
+      invocation("waiting-target", [
+        event("waiting-target", "waiting-target-alert", :firing, occurred_at,
+          target_ref: %{kind: :hostname, value: "late-linux"}
+        )
+      ])
+    )
+
+    [first_turn] = Cases.list_turns!(actor: context.admin)
+
+    Cases.complete_turn!(
+      first_turn.id,
+      first_turn.revision,
+      %{"outcome" => "decision", "intent" => %{"type" => "handoff"}},
+      :human_input,
+      %{"action" => "provide_human_input", "source_turn_id" => first_turn.id},
+      "Register the Target identity",
+      authorize?: false
+    )
+
+    incident = Cases.list_cases!(actor: context.admin) |> List.first()
+    first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    waiting =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        first_run.id,
+        first_run.revision,
+        "waiting-target:handoff",
+        "The exact Target identity is unavailable",
+        %{"action" => "provide_human_input", "source_turn_id" => first_turn.id},
+        "Register the exact Target identity",
+        authorize?: false
+      )
+
+    unrelated =
+      Targets.create_target!("unrelated-linux", "host", "linux", %{}, nil, actor: context.admin)
+
+    unrelated_identity =
+      Targets.create_external_identity!(
+        unrelated.id,
+        "test-monitor",
+        "hostname",
+        "unrelated-linux",
+        actor: context.admin
+      )
+
+    assert :ok =
+             Opsonde.Cases.SignalCaseReconciliationWorker.perform(
+               reconciliation_job!(unrelated_identity.id)
+             )
+
+    unchanged = Cases.get_case!(waiting.id, actor: context.admin)
+    assert unchanged.status == :needs_attention
+    assert unchanged.revision == waiting.revision
+
+    target =
+      Targets.create_target!("late-linux", "host", "linux", %{}, nil, actor: context.admin)
+
+    identity =
+      Targets.create_external_identity!(
+        target.id,
+        "test-monitor",
+        "hostname",
+        "late-linux",
+        actor: context.admin
+      )
+
+    job = reconciliation_job!(identity.id)
+    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+
+    resumed = Cases.get_case!(waiting.id, actor: context.admin)
+    assert resumed.status == :running
+    assert resumed.selected_target_id == target.id
+    assert resumed.selected_target_revision == target.revision
+    assert resumed.current_owner_id == context.admin.id
+
+    runs = Cases.list_resolution_runs!(actor: context.admin) |> Enum.sort_by(& &1.generation)
+
+    assert Enum.map(runs, &{&1.generation, &1.status, &1.active}) == [
+             {1, :superseded, false},
+             {2, :running, true}
+           ]
+
+    resumed_run = List.last(runs)
+    assert is_nil(resumed_run.resumed_by_id)
+
+    assert [resumed_turn] =
+             Cases.list_turns!(actor: context.admin)
+             |> Enum.filter(&(&1.resolution_run_id == resumed_run.id))
+
+    assert resumed_turn.status == :started
+
+    assert resumed_turn.intent == %{
+             "objective" => "Continue resolution after Target registration"
+           }
+
+    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+    assert length(Cases.list_resolution_runs!(actor: context.admin)) == 2
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
+  end
+
   test "Target reconciliation remains retryable while a Resolver Turn is active", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()
@@ -345,6 +455,17 @@ defmodule Opsonde.SignalIngressTest do
       "enable Signal ingress",
       actor: admin
     )
+  end
+
+  defp reconciliation_job!(identity_id) do
+    Repo.all(
+      from(job in Oban.Job,
+        where: job.worker == "Opsonde.Cases.SignalCaseReconciliationWorker"
+      )
+    )
+    |> Enum.find(fn job ->
+      String.contains?(job.args["change_key"], identity_id)
+    end)
   end
 
   defp ingest_one!(provider, receipt_id, state, occurred_at) do
