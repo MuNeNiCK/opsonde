@@ -164,8 +164,24 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp apply_review_locked(%{status: :authorized} = proposal, _decision, _incident, _run),
     do: schedule_if_authorized(proposal)
 
+  defp apply_review_locked(
+         %{status: :awaiting_human} = proposal,
+         %{verdict: :rejected} = decision,
+         incident,
+         run
+       ),
+       do: reject_review(proposal, decision, incident, run)
+
   defp apply_review_locked(%{status: :awaiting_human} = proposal, _decision, _incident, _run),
     do: proposal
+
+  defp apply_review_locked(
+         %{status: :rejected} = proposal,
+         %{verdict: :rejected},
+         _incident,
+         _run
+       ),
+       do: proposal
 
   defp apply_review_locked(%{status: :reviewing} = proposal, decision, incident, run) do
     with :ok <- valid_context(proposal, incident, run),
@@ -176,7 +192,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
         :approved ->
           approve_review(proposal, decision, incident, run)
 
-        verdict when verdict in [:rejected, :needs_human] ->
+        :rejected ->
+          reject_review(proposal, decision, incident, run)
+
+        :needs_human ->
           await_human_review(proposal, decision, incident)
       end
     end
@@ -211,6 +230,15 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              "review_reason" => decision.reason
            }) do
       waiting
+    end
+  end
+
+  defp reject_review(proposal, decision, incident, run) do
+    with {:ok, actor} <- current_owner(incident),
+         {:ok, rejected} <- transition(proposal, :rejected),
+         {:ok, started} <- start_reconsideration(rejected, incident, run, decision.reason, actor),
+         {:ok, _case} <- continue_after_rejection(started, incident, rejected) do
+      rejected
     end
   end
 

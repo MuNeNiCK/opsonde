@@ -315,7 +315,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "Auto uses isolated Resolver fallback and hands rejection to a human", context do
+  test "Auto uses isolated Resolver fallback and reconsiders a rejected proposal once", context do
     configure_mode!(:auto, context.admin)
 
     Providers.update_ai_usage_role_assignment!(
@@ -327,6 +327,13 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     {incident, run, proposal} = proposal!("review-fallback", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    initial_turn_count = length(Cases.list_turns!(actor: context.admin))
+
+    response = %AI.ReviewDecision{
+      verdict: :rejected,
+      reason: "Try a non-disruptive alternative",
+      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+    }
 
     assert :ok =
              ReviewDelivery.run(reviewing.id,
@@ -334,13 +341,7 @@ defmodule Opsonde.ProposalAuthorityTest do
                  test_pid: self(),
                  respond: fn request ->
                    refute request.session_id == request.resolver_session_id
-
-                   {:ok,
-                    %AI.ReviewDecision{
-                      verdict: :rejected,
-                      reason: "A human should assess the disruption",
-                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
-                    }}
+                   {:ok, response}
                  end
                }
              )
@@ -350,14 +351,63 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert decision.selection_source == :resolver_fallback
     assert decision.provider_id == context.resolver_provider.id
 
+    rejected = Cases.get_proposal!(proposal.id, authorize?: false)
+    assert rejected.status == :rejected
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    turns = Cases.list_turns!(actor: context.admin)
+    assert length(turns) == initial_turn_count + 1
+    reconsideration = Enum.max_by(turns, & &1.ordinal)
+    assert reconsideration.intent["rejected_proposal_id"] == proposal.id
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
+             "action" => "resolve_turn",
+             "proposal_id" => proposal.id,
+             "rejected_proposal_id" => proposal.id,
+             "turn_id" => reconsideration.id
+           }
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 4
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{respond: fn _ -> flunk("rejected review called AI twice") end}
+             )
+
+    assert length(Cases.list_turns!(actor: context.admin)) == initial_turn_count + 1
+    refute_receive {:effect, _, _}
+  end
+
+  test "Auto hands an explicit needs_human Reviewer verdict to a human", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-needs-human", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :needs_human,
+                      reason: "The available evidence cannot establish the blast radius",
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, _, _request}
+
     waiting = Cases.get_proposal!(proposal.id, authorize?: false)
     assert waiting.status == :awaiting_human
-    assert Cases.list_approvals!(actor: context.admin) == []
 
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
              "decide_proposal"
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 4
+    assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
   end
 
