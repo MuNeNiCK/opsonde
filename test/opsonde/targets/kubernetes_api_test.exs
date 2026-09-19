@@ -339,9 +339,18 @@ defmodule Opsonde.Targets.KubernetesAPITest do
              "kubernetes.pods.watch"
            ]
 
+    tools = Map.new(observations, &{&1.operation, &1})
+    deployment_tool = tools["kubernetes.deployment.inspect"]
+
+    assert MapSet.new(Map.keys(deployment_tool.verification_schema["properties"])) ==
+             MapSet.new(
+               ~w(uid resource_version generation replicas ready_replicas available_replicas observed_generation)
+             )
+
     assert effect.operation == "kubernetes.deployment.scale"
 
     pods = observe!(context, "observe.workloads", "kubernetes.pods.list", %{}, %{"limit" => 10})
+    assert_schema_accepts!(tools["kubernetes.pods.list"].output_schema, pods.facts)
     assert pods.facts["resource_version"] == "22"
     assert [%{"name" => "pod-one", "phase" => "Running"}] = pods.facts["pods"]
 
@@ -354,10 +363,13 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         %{"tail_lines" => 20, "limit_bytes" => 2_048}
       )
 
+    assert_schema_accepts!(tools["kubernetes.pod.logs"].output_schema, logs.facts)
     assert logs.facts["logs"] == "line one\nline two\n"
 
     events =
       observe!(context, "observe.events", "kubernetes.events.list", %{}, %{"limit" => 10})
+
+    assert_schema_accepts!(tools["kubernetes.events.list"].output_schema, events.facts)
 
     assert [%{"reason" => "Unhealthy", "regarding_name" => "pod-one"}] =
              events.facts["events"]
@@ -370,8 +382,21 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         "labels" => %{"app" => "fixture"}
       })
 
+    assert_schema_accepts!(tools["kubernetes.pods.watch"].output_schema, watch.facts)
+
     assert [%{"type" => "MODIFIED", "object" => %{"resource_version" => "23"}}] =
              watch.facts["events"]
+
+    deployment =
+      observe!(
+        context,
+        "observe.workload",
+        "kubernetes.deployment.inspect",
+        %{"name" => "app"},
+        %{}
+      )
+
+    assert_schema_accepts!(deployment_tool.output_schema, deployment.facts)
 
     assert Enum.all?(requests(context), fn request ->
              request.authorized? and
@@ -679,6 +704,11 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
   defp requests(context),
     do: Agent.get(context.agent, &Enum.reverse(&1.requests))
+
+  defp assert_schema_accepts!(schema, facts) do
+    assert {:ok, root} = JSV.build(schema, warnings: :silent)
+    assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
+  end
 
   defp target_error(%{errors: errors}) do
     Enum.find_value(errors, fn

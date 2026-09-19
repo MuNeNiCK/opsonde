@@ -13,8 +13,19 @@ defmodule Opsonde.Targets.IOSXE do
   def capabilities do
     %Target.Capabilities{
       observations: [
-        operation(@system, "Inspect IOS XE hostname and software version", empty_schema()),
-        operation(@interface, "Inspect one IOS XE interface", interface_schema(%{}, []))
+        operation(
+          @system,
+          "Inspect IOS XE hostname and software version",
+          empty_schema(),
+          system_output_schema()
+        ),
+        operation(
+          @interface,
+          "Inspect one IOS XE interface",
+          interface_schema(%{}, []),
+          interface_output_schema(),
+          interface_verification_schema()
+        )
       ],
       effects: [
         operation(
@@ -175,14 +186,53 @@ defmodule Opsonde.Targets.IOSXE do
 
   defp verification_expected(_expected), do: invalid_request()
 
-  defp operation({capability, operation}, description, schema) do
+  defp operation(
+         {capability, operation},
+         description,
+         schema,
+         output_schema \\ nil,
+         verification_schema \\ nil
+       ) do
     %Target.Operation{
       capability: capability,
       operation: operation,
       description: description,
-      input_schema: schema
+      input_schema: schema,
+      output_schema: output_schema,
+      verification_schema: verification_schema
     }
   end
+
+  defp system_output_schema,
+    do:
+      facts_schema(%{
+        "hostname" => %{"type" => "string", "minLength" => 1, "maxLength" => 255},
+        "version" => %{"type" => "string", "minLength" => 1, "maxLength" => 255}
+      })
+
+  defp interface_output_schema,
+    do:
+      facts_schema(%{
+        "name" => %{"type" => "string", "minLength" => 1, "maxLength" => 128},
+        "description" => nullable("string"),
+        "enabled" => nullable("boolean"),
+        "admin_status" => nullable("string"),
+        "oper_status" => nullable("string"),
+        "input_errors" => nullable("integer"),
+        "output_errors" => nullable("integer")
+      })
+
+  defp interface_verification_schema,
+    do: Map.put(interface_output_schema(), "minProperties", 1)
+
+  defp facts_schema(properties),
+    do: %{
+      "type" => "object",
+      "properties" => properties,
+      "additionalProperties" => false
+    }
+
+  defp nullable(type), do: %{"type" => [type, "null"]}
 
   defp empty_schema, do: schema(%{}, [], %{}, [])
 

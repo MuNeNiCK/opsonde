@@ -396,7 +396,12 @@ defmodule Opsonde.RelatedTargetRouteTest do
           capability: "observe.system",
           operation: "system.inspect",
           description: "Inspect system state",
-          input_schema: %{"type" => "object"}
+          input_schema: %{"type" => "object"},
+          output_schema: %{
+            "type" => "object",
+            "properties" => %{"status" => %{"type" => "string"}},
+            "additionalProperties" => false
+          }
         }
       ],
       effects: []

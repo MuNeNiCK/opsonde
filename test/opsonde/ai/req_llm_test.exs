@@ -240,7 +240,8 @@ defmodule Opsonde.AI.ReqLLMTest do
              String.contains?(request.body, "Recovery is a terminal intent") and
                String.contains?(request.body, "target_verification Evidence") and
                String.contains?(request.body, "never propose an effect when") and
-               String.contains?(request.body, "returned facts can directly establish")
+               String.contains?(request.body, "returned facts can directly establish") and
+               String.contains?(request.body, "tool's verification_schema")
            end)
 
     for request <- requests do
@@ -456,6 +457,8 @@ defmodule Opsonde.AI.ReqLLMTest do
             }} = Adapter.resolve(state, request, %{})
 
     [provider_request] = requests(context.agent)
+    assert String.contains?(provider_request.body, "output_schema")
+    assert String.contains?(provider_request.body, "verification_schema")
     schema = output_schema(provider_request)
 
     proposal_variant =
@@ -676,7 +679,9 @@ defmodule Opsonde.AI.ReqLLMTest do
       capability: "observe.command",
       operation: "service.inspect",
       description: "Inspect one service",
-      input_schema: tool_input_schema()
+      input_schema: tool_input_schema(),
+      output_schema: verification_schema(),
+      verification_schema: verification_schema()
     }
   end
 
@@ -745,6 +750,14 @@ defmodule Opsonde.AI.ReqLLMTest do
       "additionalProperties" => false
     }
   end
+
+  defp verification_schema,
+    do: %{
+      "type" => "object",
+      "properties" => %{"status" => %{"type" => "string"}},
+      "minProperties" => 1,
+      "additionalProperties" => false
+    }
 
   defp output_schema(request) do
     body = Jason.decode!(request.body)

@@ -545,7 +545,18 @@ defmodule Opsonde.ResolverDeliveryTest do
           capability: "observe.system",
           operation: "system.inspect",
           description: "Inspect system state",
-          input_schema: %{"type" => "object"}
+          input_schema: %{"type" => "object"},
+          output_schema: %{
+            "type" => "object",
+            "properties" => %{"status" => %{"type" => "string"}},
+            "additionalProperties" => false
+          },
+          verification_schema: %{
+            "type" => "object",
+            "properties" => %{"service" => %{"type" => "string"}},
+            "minProperties" => 1,
+            "additionalProperties" => false
+          }
         }
       ],
       effects: [

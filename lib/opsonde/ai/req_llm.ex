@@ -238,7 +238,8 @@ defmodule Opsonde.AI.ReqLLM do
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
-        "expected result must describe those facts. Base every intent only on supplied " <>
+        "expected result must use only fields and value types allowed by that observation " <>
+        "tool's verification_schema in the user payload. Base every intent only on supplied " <>
         "evidence and preserve uncertainty. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
         "the user payload. Keep reason concise and at most 500 UTF-8 bytes. Return exactly " <>
@@ -534,7 +535,9 @@ defmodule Opsonde.AI.ReqLLM do
     action_variants = tool_input_variants(request.proposal_tools)
 
     verification_variants =
-      tool_input_variants(request.observation_tools, %{
+      request.observation_tools
+      |> Enum.reject(&is_nil(&1.verification_schema))
+      |> tool_input_variants(%{
         "expected_result_json" => json_object_string_schema()
       })
 

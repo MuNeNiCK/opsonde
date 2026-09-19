@@ -113,7 +113,9 @@ defmodule Opsonde.Providers.AI do
       :capability,
       :operation,
       :description,
-      :input_schema
+      :input_schema,
+      :output_schema,
+      :verification_schema
     ]
 
     defstruct @enforce_keys

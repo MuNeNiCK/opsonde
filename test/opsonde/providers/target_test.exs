@@ -62,6 +62,19 @@ defmodule Opsonde.Providers.TargetTest do
 
     for capabilities <- [
           %Target.Capabilities{observations: [duplicate, duplicate], effects: []},
+          %Target.Capabilities{observations: [%{duplicate | output_schema: nil}], effects: []},
+          %Target.Capabilities{
+            observations: [
+              %{duplicate | output_schema: %{"type" => "unsupported-json-type"}}
+            ],
+            effects: []
+          },
+          %Target.Capabilities{
+            observations: [
+              %{duplicate | verification_schema: %{"type" => "unsupported-json-type"}}
+            ],
+            effects: []
+          },
           %Target.Capabilities{
             observations: [
               %Target.Operation{
@@ -484,7 +497,12 @@ defmodule Opsonde.Providers.TargetTest do
       capability: capability,
       operation: operation,
       description: description,
-      input_schema: input_schema
+      input_schema: input_schema,
+      output_schema: %{
+        "type" => "object",
+        "properties" => %{"status" => %{"type" => "string"}},
+        "additionalProperties" => false
+      }
     }
   end
 

@@ -177,7 +177,8 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_tool?(%AI.ObservationTool{} = tool),
     do:
       valid_exact_tool?(tool) and nonempty?(tool.description) and
-        valid_input_schema?(tool.input_schema)
+        valid_input_schema?(tool.input_schema) and valid_input_schema?(tool.output_schema) and
+        (is_nil(tool.verification_schema) or valid_input_schema?(tool.verification_schema))
 
   defp valid_tool?(_tool), do: false
 
@@ -467,7 +468,8 @@ defmodule Opsonde.Providers.AI.Validator do
     case Enum.find(tools, &(&1.id == intent.tool_id)) do
       %AI.ObservationTool{} = tool ->
         valid_verification_intent?(intent) and
-          valid_tool_input?(intent.selectors, intent.parameters, tool.input_schema)
+          valid_tool_input?(intent.selectors, intent.parameters, tool.input_schema) and
+          valid_expected_result?(intent.expected_result, tool.verification_schema)
 
       _tool ->
         false
@@ -483,28 +485,46 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_verification_intent?(_intent), do: false
 
+  defp valid_expected_result?(expected, schema) when is_map(expected) and is_map(schema) do
+    valid_against_schema?(expected, schema)
+  end
+
+  defp valid_expected_result?(_expected, _schema), do: false
+
   defp valid_input_schema?(schema) when is_map(schema) do
-    match?({:ok, %JSV.Root{}}, JSV.build(schema, warnings: :silent))
+    try do
+      match?({:ok, %JSV.Root{}}, JSV.build(schema, warnings: :silent))
+    rescue
+      _error -> false
+    end
   end
 
   defp valid_input_schema?(_schema), do: false
 
   defp valid_tool_input?(selectors, parameters, schema)
        when is_map(selectors) and is_map(parameters) do
-    with {:ok, root} <- JSV.build(schema, warnings: :silent),
-         {:ok, _validated} <-
-           JSV.validate(
-             %{"selectors" => selectors, "parameters" => parameters},
-             root,
-             cast: false
-           ) do
-      true
-    else
-      _invalid -> false
-    end
+    valid_against_schema?(
+      %{"selectors" => selectors, "parameters" => parameters},
+      schema
+    )
   end
 
   defp valid_tool_input?(_selectors, _parameters, _schema), do: false
+
+  defp valid_against_schema?(value, schema) when is_map(schema) do
+    try do
+      with {:ok, root} <- JSV.build(schema, warnings: :silent),
+           {:ok, _validated} <- JSV.validate(value, root, cast: false) do
+        true
+      else
+        _invalid -> false
+      end
+    rescue
+      _error -> false
+    end
+  end
+
+  defp valid_against_schema?(_value, _schema), do: false
 
   defp plain_value(%_{} = value), do: value |> Map.from_struct() |> plain_value()
 

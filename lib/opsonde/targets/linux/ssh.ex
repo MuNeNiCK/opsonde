@@ -72,13 +72,30 @@ defmodule Opsonde.Targets.Linux.SSH do
     {:ok,
      %Target.Capabilities{
        observations: [
-         operation(@identity, "Inspect fixed Linux kernel and machine identity", empty_schema()),
-         operation(@processes, "List a bounded set of Linux processes", process_schema()),
-         operation(@service, "Inspect one systemd service and its definition", unit_schema()),
+         operation(
+           @identity,
+           "Inspect fixed Linux kernel and machine identity",
+           empty_schema(),
+           identity_output_schema()
+         ),
+         operation(
+           @processes,
+           "List a bounded set of Linux processes",
+           process_schema(),
+           processes_output_schema()
+         ),
+         operation(
+           @service,
+           "Inspect one systemd service and its definition",
+           unit_schema(),
+           service_output_schema(),
+           service_verification_schema()
+         ),
          operation(
            @journal,
            "Read bounded recent journal entries for one systemd service",
-           journal_schema()
+           journal_schema(),
+           journal_output_schema()
          )
        ],
        effects: [
@@ -340,14 +357,80 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   defp read_error(_category, message), do: {:error, :failed, message}
 
-  defp operation({capability, operation}, description, schema) do
+  defp operation(
+         {capability, operation},
+         description,
+         schema,
+         output_schema \\ nil,
+         verification_schema \\ nil
+       ) do
     %Target.Operation{
       capability: capability,
       operation: operation,
       description: description,
-      input_schema: schema
+      input_schema: schema,
+      output_schema: output_schema,
+      verification_schema: verification_schema
     }
   end
+
+  defp identity_output_schema do
+    facts_schema(%{
+      "kernel" => fact_string(1_024, 1),
+      "machine_id" => fact_string(255, 1)
+    })
+  end
+
+  defp processes_output_schema do
+    facts_schema(%{
+      "processes" => %{
+        "type" => "array",
+        "maxItems" => 100,
+        "items" =>
+          facts_schema(%{
+            "pid" => %{"type" => "integer"},
+            "parent_pid" => %{"type" => "integer"},
+            "state" => fact_string(64, 1),
+            "command" => fact_string(1_024, 1)
+          })
+      }
+    })
+  end
+
+  defp service_output_schema do
+    @service_fields
+    |> Map.values()
+    |> Map.new(&{&1, fact_string(1_024)})
+    |> facts_schema()
+  end
+
+  defp service_verification_schema do
+    @verifiable_fields
+    |> Map.new(&{&1, fact_string(1_024, 1)})
+    |> facts_schema()
+    |> Map.put("minProperties", 1)
+  end
+
+  defp journal_output_schema do
+    facts_schema(%{
+      "unit" => fact_string(255, 1),
+      "entries" => %{
+        "type" => "array",
+        "maxItems" => 200,
+        "items" => fact_string(8_192, 1)
+      }
+    })
+  end
+
+  defp facts_schema(properties),
+    do: %{
+      "type" => "object",
+      "properties" => properties,
+      "additionalProperties" => false
+    }
+
+  defp fact_string(maximum, minimum \\ 0),
+    do: %{"type" => "string", "minLength" => minimum, "maxLength" => maximum}
 
   defp empty_schema, do: request_schema(%{}, [], %{}, [])
 

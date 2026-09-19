@@ -4,13 +4,15 @@ defmodule Opsonde.Providers.Target do
   defmodule Operation do
     @moduledoc false
     @enforce_keys [:capability, :operation, :description, :input_schema]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [output_schema: nil, verification_schema: nil]
 
     @type t :: %__MODULE__{
             capability: String.t(),
             operation: String.t(),
             description: String.t(),
-            input_schema: map()
+            input_schema: map(),
+            output_schema: map() | nil,
+            verification_schema: map() | nil
           }
   end
 

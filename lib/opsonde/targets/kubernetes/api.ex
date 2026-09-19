@@ -78,31 +78,37 @@ defmodule Opsonde.Targets.Kubernetes.API do
            "observe.workloads",
            "kubernetes.pods.list",
            "List bounded Pods",
-           pods_schema()
+           pods_schema(),
+           pods_output_schema()
          ),
          operation(
            "observe.workload",
            "kubernetes.deployment.inspect",
            "Inspect one Deployment",
-           name_schema()
+           name_schema(),
+           deployment_output_schema(),
+           deployment_verification_schema()
          ),
          operation(
            "observe.logs",
            "kubernetes.pod.logs",
            "Read bounded logs from one Pod container",
-           logs_schema()
+           logs_schema(),
+           logs_output_schema()
          ),
          operation(
            "observe.events",
            "kubernetes.events.list",
            "List bounded namespace events",
-           events_schema()
+           events_schema(),
+           events_output_schema()
          ),
          operation(
            "observe.workloads",
            "kubernetes.pods.watch",
            "Watch bounded Pod changes from a resource version",
-           watch_schema()
+           watch_schema(),
+           watch_output_schema()
          )
        ],
        effects: [
@@ -632,13 +638,108 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   defp read_error(_category, message), do: {:error, :failed, message}
 
-  defp operation(capability, operation, description, schema),
-    do: %Target.Operation{
-      capability: capability,
-      operation: operation,
-      description: description,
-      input_schema: schema
+  defp operation(
+         capability,
+         operation,
+         description,
+         schema,
+         output_schema \\ nil,
+         verification_schema \\ nil
+       ),
+       do: %Target.Operation{
+         capability: capability,
+         operation: operation,
+         description: description,
+         input_schema: schema,
+         output_schema: output_schema,
+         verification_schema: verification_schema
+       }
+
+  defp pods_output_schema,
+    do:
+      facts_schema(%{
+        "resource_version" => nullable("string"),
+        "pods" => %{"type" => "array", "maxItems" => 100, "items" => pod_output_schema()}
+      })
+
+  defp deployment_output_schema,
+    do:
+      facts_schema(%{
+        "name" => nullable("string"),
+        "uid" => nullable("string"),
+        "resource_version" => nullable("string"),
+        "generation" => nullable("integer"),
+        "replicas" => nullable("integer"),
+        "ready_replicas" => %{"type" => "integer"},
+        "available_replicas" => %{"type" => "integer"},
+        "observed_generation" => nullable("integer")
+      })
+
+  defp deployment_verification_schema do
+    deployment_output_schema()
+    |> Map.put("properties", Map.drop(deployment_output_schema()["properties"], ["name"]))
+    |> Map.put("minProperties", 1)
+  end
+
+  defp logs_output_schema,
+    do:
+      facts_schema(%{
+        "pod" => %{"type" => "string"},
+        "container" => %{"type" => "string"},
+        "logs" => %{"type" => "string", "maxLength" => 60_000}
+      })
+
+  defp events_output_schema,
+    do:
+      facts_schema(%{
+        "resource_version" => nullable("string"),
+        "events" => %{
+          "type" => "array",
+          "maxItems" => 200,
+          "items" =>
+            facts_schema(%{
+              "type" => nullable("string"),
+              "reason" => nullable("string"),
+              "note" => nullable("string"),
+              "regarding_kind" => nullable("string"),
+              "regarding_name" => nullable("string"),
+              "regarding_uid" => nullable("string")
+            })
+        }
+      })
+
+  defp watch_output_schema,
+    do:
+      facts_schema(%{
+        "events" => %{
+          "type" => "array",
+          "maxItems" => 100,
+          "items" =>
+            facts_schema(%{
+              "type" => %{"type" => "string", "enum" => ~w(ADDED MODIFIED DELETED)},
+              "object" => pod_output_schema()
+            })
+        }
+      })
+
+  defp pod_output_schema,
+    do:
+      facts_schema(%{
+        "name" => nullable("string"),
+        "uid" => nullable("string"),
+        "resource_version" => nullable("string"),
+        "phase" => nullable("string"),
+        "node" => nullable("string")
+      })
+
+  defp facts_schema(properties),
+    do: %{
+      "type" => "object",
+      "properties" => properties,
+      "additionalProperties" => false
     }
+
+  defp nullable(type), do: %{"type" => [type, "null"]}
 
   defp pods_schema,
     do: schema(%{}, [], %{"limit" => integer(1, 100), "labels" => labels()}, ["limit"])

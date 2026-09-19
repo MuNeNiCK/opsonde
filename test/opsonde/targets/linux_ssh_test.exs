@@ -117,13 +117,26 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              "linux.journal.read"
            ]
 
+    tools = Map.new(observations, &{&1.operation, &1})
+    service_tool = tools["linux.service.inspect"]
+
+    assert Map.has_key?(service_tool.output_schema["properties"], "active_state")
+    assert Map.has_key?(service_tool.output_schema["properties"], "sub_state")
+
+    assert MapSet.new(Map.keys(service_tool.verification_schema["properties"])) ==
+             MapSet.new(
+               ~w(load_state active_state sub_state unit_file_state need_daemon_reload definition_sha256)
+             )
+
     assert effect.operation == "linux.service.restart"
 
     identity = observe!(context, "observe.identity", "linux.identity.inspect", %{}, %{})
+    assert_schema_accepts!(tools["linux.identity.inspect"].output_schema, identity.facts)
     assert identity.facts["kernel"] == "Linux 6.8.0 x86_64"
     assert identity.facts["machine_id"] == "machine-01"
 
     processes = observe!(context, "observe.processes", "linux.process.list", %{}, %{"limit" => 2})
+    assert_schema_accepts!(tools["linux.process.list"].output_schema, processes.facts)
     assert Enum.map(processes.facts["processes"], & &1["command"]) == ["beam.smp", "sshd"]
 
     unit = "discovered@42.service"
@@ -131,6 +144,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     service =
       observe!(context, "observe.service", "linux.service.inspect", %{"unit" => unit}, %{})
 
+    assert_schema_accepts!(service_tool.output_schema, service.facts)
     assert service.facts["unit"] == unit
     assert service.facts["active_state"] == "active"
     assert service.facts["definition_sha256"] == @definition
@@ -140,6 +154,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         "lines" => 2
       })
 
+    assert_schema_accepts!(tools["linux.journal.read"].output_schema, journal.facts)
     assert journal.facts == %{"unit" => unit, "entries" => ["entry one", "entry two"]}
   end
 
@@ -290,6 +305,11 @@ defmodule Opsonde.Targets.LinuxSSHTest do
   end
 
   defp commands(context), do: Agent.get(context.commands, &Enum.reverse/1)
+
+  defp assert_schema_accepts!(schema, facts) do
+    assert {:ok, root} = JSV.build(schema, warnings: :silent)
+    assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
+  end
 
   defp executor(commands) do
     fn command ->

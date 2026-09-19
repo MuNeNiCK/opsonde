@@ -126,8 +126,17 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     do: normalize_error(result, @read_failures, "Invalid capabilities result", credentials)
 
   defp valid_capabilities?(%Target.Capabilities{observations: observations, effects: effects}) do
-    valid_operations?(observations) and valid_operations?(effects) and
+    valid_observations?(observations) and valid_operations?(effects) and
       bounded_term_list?(observations ++ effects)
+  end
+
+  defp valid_observations?(operations) do
+    valid_operations?(operations) and
+      Enum.all?(operations, fn operation ->
+        valid_schema?(operation.output_schema) and
+          (is_nil(operation.verification_schema) or
+             valid_schema?(operation.verification_schema))
+      end)
   end
 
   defp normalize_observation(
@@ -247,6 +256,17 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   end
 
   defp valid_operation?(_operation), do: false
+
+  defp valid_schema?(schema),
+    do: bounded_map?(schema) and json_encodable?(schema) and valid_json_schema?(schema)
+
+  defp valid_json_schema?(schema) do
+    try do
+      match?({:ok, %JSV.Root{}}, JSV.build(schema, warnings: :silent))
+    rescue
+      _error -> false
+    end
+  end
 
   defp json_encodable?(value), do: match?({:ok, _encoded}, Jason.encode(value))
 

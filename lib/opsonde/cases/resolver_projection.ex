@@ -210,7 +210,7 @@ defmodule Opsonde.Cases.ResolverProjection do
     |> Enum.filter(&(&1.capability in method.capabilities))
     |> Enum.sort_by(&{&1.capability, &1.operation})
     |> Enum.map(fn operation ->
-      fields = %{
+      common_fields = %{
         id: tool_id(kind, method, operation),
         target_id: target.id,
         target_revision: target.revision,
@@ -225,8 +225,17 @@ defmodule Opsonde.Cases.ResolverProjection do
       }
 
       case kind do
-        :observation -> struct!(AI.ObservationTool, fields)
-        :proposal -> struct!(AI.ProposalTool, fields)
+        :observation ->
+          struct!(
+            AI.ObservationTool,
+            Map.merge(common_fields, %{
+              output_schema: operation.output_schema,
+              verification_schema: operation.verification_schema
+            })
+          )
+
+        :proposal ->
+          struct!(AI.ProposalTool, common_fields)
       end
     end)
   end

@@ -358,7 +358,18 @@ defmodule Opsonde.ResolverProjectionTest do
       capability: capability,
       operation: operation,
       description: description,
-      input_schema: %{"type" => "object"}
+      input_schema: %{"type" => "object"},
+      output_schema: %{
+        "type" => "object",
+        "properties" => %{"status" => %{"type" => "string"}},
+        "additionalProperties" => false
+      },
+      verification_schema: %{
+        "type" => "object",
+        "properties" => %{"status" => %{"type" => "string"}},
+        "minProperties" => 1,
+        "additionalProperties" => false
+      }
     }
   end
 

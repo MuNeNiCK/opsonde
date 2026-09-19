@@ -213,7 +213,16 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
              "ios_xe.interface.admin_state.set"
            ]
 
+    tools = Map.new(observations, &{&1.operation, &1})
+    interface_tool = tools["ios_xe.interface.inspect"]
+
+    assert MapSet.new(Map.keys(interface_tool.verification_schema["properties"])) ==
+             MapSet.new(
+               ~w(name description enabled admin_status oper_status input_errors output_errors)
+             )
+
     system = observe!(context, "observe.system", "ios_xe.system.inspect", %{})
+    assert_schema_accepts!(tools["ios_xe.system.inspect"].output_schema, system.facts)
     assert system.facts == %{"hostname" => "router-one", "version" => "17.15"}
 
     before =
@@ -221,6 +230,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
         "interface" => "Loopback100"
       })
 
+    assert_schema_accepts!(interface_tool.output_schema, before.facts)
     assert before.facts["description"] == "initial"
     assert before.facts["input_errors"] == 2
 
@@ -358,4 +368,9 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
   end
 
   defp requests(context), do: Agent.get(context.agent, & &1.requests)
+
+  defp assert_schema_accepts!(schema, facts) do
+    assert {:ok, root} = JSV.build(schema, warnings: :silent)
+    assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
+  end
 end

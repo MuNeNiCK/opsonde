@@ -413,6 +413,40 @@ defmodule Opsonde.Providers.AITest do
 
     assert ai_error(invalid_verification_error).category == :invalid_output
 
+    unknown_verification_fact = %{
+      proposal()
+      | verification_intent: %AI.VerificationIntent{
+          tool_id: observation_tool.id,
+          selectors: %{},
+          parameters: %{},
+          expected_result: %{"invented_status" => "running"}
+        }
+    }
+
+    assert {:error, unknown_fact_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: unknown_verification_fact, usage: usage()}}
+             end)
+
+    assert ai_error(unknown_fact_error).category == :invalid_output
+
+    atom_keyed_verification = %{
+      proposal()
+      | verification_intent: %AI.VerificationIntent{
+          tool_id: observation_tool.id,
+          selectors: %{},
+          parameters: %{},
+          expected_result: %{service: "running"}
+        }
+    }
+
+    assert {:error, atom_key_error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: atom_keyed_verification, usage: usage()}}
+             end)
+
+    assert ai_error(atom_key_error).category == :invalid_output
+
     invalid_schema_request = %{
       request
       | observation_tools: [
@@ -753,7 +787,18 @@ defmodule Opsonde.Providers.AITest do
           capability: "observe.command",
           operation: "system.inspect",
           description: "Inspect system state",
-          input_schema: %{}
+          input_schema: %{},
+          output_schema: %{
+            "type" => "object",
+            "properties" => %{"status" => %{"type" => "string"}},
+            "additionalProperties" => false
+          },
+          verification_schema: %{
+            "type" => "object",
+            "properties" => %{"service" => %{"type" => "string"}},
+            "minProperties" => 1,
+            "additionalProperties" => false
+          }
         }
       ],
       proposal_tools: [
@@ -847,12 +892,12 @@ defmodule Opsonde.Providers.AITest do
       parameters: %{service: "api"},
       reason: "Restart the unhealthy service",
       evidence_ids: ["evidence-1"],
-      expected_result: %{service: "running"},
+      expected_result: %{"service" => "running"},
       verification_intent: %AI.VerificationIntent{
         tool_id: "inspect-system",
         selectors: %{service: "api"},
         parameters: %{service: "api"},
-        expected_result: %{service: "running"}
+        expected_result: %{"service" => "running"}
       }
     }
   end
