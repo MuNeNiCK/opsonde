@@ -310,6 +310,61 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
   end
 
+  test "recovery schema exposes only verified Target verification Evidence", context do
+    state = state!("ollama", context.endpoint <> "/v1", %{})
+
+    ordinary = %AI.Evidence{
+      id: "observation-1",
+      kind: "observation",
+      content: %{"status" => "observed"}
+    }
+
+    request = %{
+      resolver_request()
+      | alert_state: :recovered,
+        evidence: [ordinary],
+        disclosure: %{
+          resolver_request().disclosure
+          | allowed_evidence_kinds: ["observation"]
+        }
+    }
+
+    assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, request, %{})
+    [ordinary_request] = requests(context.agent)
+    ordinary_variants = output_schema(ordinary_request)["properties"]["intent"]["anyOf"]
+
+    refute Enum.any?(ordinary_variants, fn variant ->
+             get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
+           end)
+
+    verified = %AI.Evidence{
+      id: "verification-1",
+      kind: "target_verification",
+      content: %{"status" => "verified", "operation_id" => "operation-1"}
+    }
+
+    request = %{
+      request
+      | evidence: [ordinary, verified],
+        disclosure: %{
+          request.disclosure
+          | allowed_evidence_kinds: ["observation", "target_verification"]
+        }
+    }
+
+    assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, request, %{})
+    verified_request = requests(context.agent) |> List.last()
+
+    recovery =
+      Enum.find(output_schema(verified_request)["properties"]["intent"]["anyOf"], fn variant ->
+        get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
+      end)
+
+    assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
+             "verification-1"
+           ]
+  end
+
   test "streamed and buffered responses produce the same decision", context do
     buffered = state!("ollama", context.endpoint <> "/v1", %{})
     streamed = state!("ollama", context.endpoint <> "/v1", %{}, %{"stream" => true})

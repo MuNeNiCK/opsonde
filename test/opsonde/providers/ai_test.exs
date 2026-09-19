@@ -171,11 +171,30 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: proposal, usage: usage()}}
              end)
 
-    recovered_request = %{later_request | turn: 3, alert_state: :recovered}
+    verified_evidence = %AI.Evidence{
+      id: "verification-1",
+      kind: "target_verification",
+      target_id: "target-1",
+      content: %{"status" => "verified", "operation_id" => "operation-1"}
+    }
+
+    recovered_request = %{
+      later_request
+      | turn: 3,
+        alert_state: :recovered,
+        evidence: later_request.evidence ++ [verified_evidence],
+        disclosure: %{
+          later_request.disclosure
+          | allowed_evidence_kinds:
+              Enum.uniq(
+                later_request.disclosure.allowed_evidence_kinds ++ ["target_verification"]
+              )
+        }
+    }
 
     recovery = %AI.RecoveryConclusion{
       reason: "The alert recovered after fresh verification",
-      evidence_ids: ["observation-1"]
+      evidence_ids: ["verification-1"]
     }
 
     assert %AI.ResolverDecision{intent: ^recovery} =
@@ -193,7 +212,7 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
 
-    manual_request = %{later_request | alert_state: :not_applicable}
+    manual_request = %{recovered_request | alert_state: :not_applicable}
 
     assert %AI.ResolverDecision{intent: ^handoff} =
              resolve!(context, manual_request, fn _request ->
@@ -204,6 +223,15 @@ defmodule Opsonde.Providers.AITest do
              resolve!(context, manual_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
              end)
+
+    ordinary_recovery = %{recovery | evidence_ids: ["observation-1"]}
+
+    assert {:error, ordinary_error} =
+             resolve(context, recovered_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: ordinary_recovery, usage: usage()}}
+             end)
+
+    assert ai_error(ordinary_error).category == :invalid_output
   end
 
   test "Resolver searches and selects only a bounded offered Target before tools are exposed",

@@ -546,7 +546,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp recovery_schema(%{alert_state: state} = request)
        when state in [:recovered, :not_applicable] do
-    case available_evidence_ids(request) do
+    case AI.recovery_evidence_ids(request) do
       [] ->
         nil
 

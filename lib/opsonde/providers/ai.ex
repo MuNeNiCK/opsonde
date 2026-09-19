@@ -34,6 +34,20 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
+  def recovery_evidence_ids(request) do
+    request.evidence
+    |> Enum.filter(&verified_target_evidence?/1)
+    |> Enum.map(& &1.id)
+  end
+
+  defp verified_target_evidence?(%Evidence{
+         kind: "target_verification",
+         content: %{"status" => "verified"}
+       }),
+       do: true
+
+  defp verified_target_evidence?(_evidence), do: false
+
   defmodule TargetCandidate do
     @moduledoc false
     @enforce_keys [:id, :revision, :name, :kind, :platform, :facts]
