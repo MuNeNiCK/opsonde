@@ -107,8 +107,56 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path help.txt -Pattern '^Usage:')) { exit 1 }
 
+  build-image:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            artifact: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            artifact: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push native image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ needs.version.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: OPSONDE_VERSION=${{ needs.version.outputs.value }}
+
+      - name: Export image digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.artifact }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
-    needs: [version, validate-cli]
+    needs: [version, validate-cli, build-image]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -119,6 +167,11 @@ jobs:
         with:
           name: opsonde-${{ needs.version.outputs.value }}-cli
           path: burrito_out
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: /tmp/digests
+          merge-multiple: true
 
       - name: Publish CLI artifacts
         env:
@@ -132,7 +185,6 @@ jobs:
               --title "Opsonde ${VERSION}" --generate-notes
           fi
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -140,12 +192,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: OPSONDE_VERSION=${{ needs.version.outputs.value }}
-          tags: |
-            ${{ needs.version.outputs.image }}:${{ needs.version.outputs.value }}
-            ${{ needs.version.outputs.image }}:latest
+      - name: Publish multi-architecture image
+        env:
+          IMAGE: ${{ needs.version.outputs.image }}
+          VERSION: ${{ needs.version.outputs.value }}
+        run: |
+          images=()
+          for digest in /tmp/digests/*; do
+            images+=("${IMAGE}@sha256:$(basename "${digest}")")
+          done
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:latest" \
+            "${images[@]}"
