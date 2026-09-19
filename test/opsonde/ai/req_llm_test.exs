@@ -236,6 +236,13 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.all?(requests, &String.contains?(&1.body, "one intent allowed"))
     assert Enum.all?(requests, &String.contains?(&1.body, "expected_result_json"))
 
+    assert Enum.all?(requests, fn request ->
+             String.contains?(request.body, "Recovery is a terminal intent") and
+               String.contains?(request.body, "target_verification Evidence") and
+               String.contains?(request.body, "never propose an effect when") and
+               String.contains?(request.body, "returned facts can directly establish")
+           end)
+
     for request <- requests do
       schema = output_schema(request)
       assert schema["additionalProperties"] == false
