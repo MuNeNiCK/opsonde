@@ -38,7 +38,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates libncurses6 libstdc++6 openssl \
   && rm -rf /var/lib/apt/lists/*
 
-ARG OPSONDE_VERSION=0.1.0
+ARG OPSONDE_VERSION=0.1.1
 LABEL org.opencontainers.image.title="Opsonde" \
       org.opencontainers.image.version="${OPSONDE_VERSION}"
 

@@ -16,11 +16,11 @@ services:
       - database:/var/lib/postgresql
 
   migrate:
-    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.0}
+    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.1}
     build:
       context: .
       args:
-        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.0}
+        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.1}
     command: ["eval", "Opsonde.Release.migrate()"]
     environment:
       DATABASE_HOST: database
@@ -37,11 +37,11 @@ services:
     restart: "no"
 
   server:
-    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.0}
+    image: ${OPSONDE_IMAGE:-ghcr.io/munenick/opsonde}:${OPSONDE_VERSION:-0.1.1}
     build:
       context: .
       args:
-        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.0}
+        OPSONDE_VERSION: ${OPSONDE_VERSION:-0.1.1}
     environment:
       DATABASE_HOST: database
       DATABASE_NAME: opsonde

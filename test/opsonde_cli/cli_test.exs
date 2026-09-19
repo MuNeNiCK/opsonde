@@ -19,7 +19,7 @@ defmodule OpsondeCLI.CLITest do
 
   test "prints the product version" do
     assert capture_io(fn -> assert CLI.run(["--version"]) == 0 end) ==
-             "opsonde 0.1.0\n"
+             "opsonde 0.1.1\n"
   end
 
   test "rejects an unknown command" do
