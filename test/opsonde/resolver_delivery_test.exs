@@ -204,6 +204,103 @@ defmodule Opsonde.ResolverDeliveryTest do
     refute_receive {:resolve, _, _}
   end
 
+  test "source changes during AI resolution rerun the same Turn from fresh context", context do
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        "source-change",
+        "Service is unavailable",
+        :critical,
+        :firing,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    verification =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "source-change-verification",
+        "target_verification",
+        "target_provider",
+        "verification-1",
+        %{
+          "status" => "verified",
+          "facts" => %{"state" => "healthy"},
+          "expected" => %{"state" => "healthy"}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    turn = start_turn!(incident, run, "source-change")
+
+    stale = %AI.ResolverDecision{
+      intent: %AI.Handoff{reason: "Old firing context", required_input: "Inspect the alert"},
+      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+    }
+
+    assert {:snooze, 1} =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :firing
+                   current = Cases.get_case!(incident.id, authorize?: false)
+
+                   Cases.record_case_source_recovery!(current.id, current.revision,
+                     authorize?: false
+                   )
+
+                   {:ok, stale}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, %{alert_state: :firing}}
+    assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.event_type == "case_needs_attention")
+           )
+
+    recovery = %AI.ResolverDecision{
+      intent: %AI.RecoveryConclusion{
+        reason: "The source recovered and target verification is healthy",
+        evidence_ids: [verification.id]
+      },
+      usage: %AI.Usage{input_tokens: 4, output_tokens: 3}
+    }
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :recovered
+                   assert AI.recovery_ready?(request)
+                   {:ok, recovery}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, %{alert_state: :recovered}}
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.status == :completed
+    assert completed.result["intent"]["type"] == "recovery_conclusion"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 7
+  end
+
   test "accepted observation and Proposal retain exact offered tool snapshots", context do
     {target, method, capabilities} = target_context!(context.admin)
 

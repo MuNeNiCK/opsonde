@@ -1,13 +1,16 @@
 defmodule Opsonde.Cases.ResolverDelivery do
   @moduledoc false
 
+  require Ash.Query
+
   alias Opsonde.{Cases, Providers}
   alias Opsonde.Cases.{Budget, Case, CaseEvent, ResolutionRun, ResolverProjection, Turn}
   alias Opsonde.Providers.AI
 
   @max_result_bytes 65_536
 
-  @spec run(String.t(), keyword()) :: :ok | {:cancel, String.t()} | {:error, term()}
+  @spec run(String.t(), keyword()) ::
+          :ok | {:cancel, String.t()} | {:snooze, pos_integer()} | {:error, term()}
   def run(turn_id, opts \\ []) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
       if turn.status == :completed do
@@ -22,16 +25,32 @@ defmodule Opsonde.Cases.ResolverDelivery do
     with {:ok, selection} <- assigned_selection(turn),
          {:ok, selection} <- current_selection(selection),
          target_invocation <- invocation(turn.case_id, Keyword.get(opts, :target_invocation, %{})),
-         {:ok, request} <- ResolverProjection.build(turn.id, selection, target_invocation),
-         ai_invocation <- invocation(turn.case_id, Keyword.get(opts, :ai_invocation, %{})),
-         {:ok, decision} <-
-           Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false),
-         {:ok, result} <- result(decision, selection, request),
-         :ok <- valid_result_size(result),
-         {:ok, _result} <- accept(turn, decision, result) do
-      :ok
+         {:ok, request} <- ResolverProjection.build(turn.id, selection, target_invocation) do
+      resolve(turn, selection, request, opts)
     else
       {:error, error} -> handle_failure(turn, error)
+    end
+  end
+
+  defp resolve(turn, selection, request, opts) do
+    ai_invocation =
+      resolver_invocation(request, Keyword.get(opts, :ai_invocation, %{}))
+
+    with {:ok, decision} <-
+           Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false),
+         true <- resolver_context_current?(request) || :context_changed,
+         {:ok, result} <- result(decision, selection, request),
+         :ok <- valid_result_size(result),
+         {:ok, _result} <- accept(turn, decision, result, request) do
+      :ok
+    else
+      :context_changed ->
+        retry_changed_context(turn)
+
+      {:error, error} ->
+        if resolver_context_current?(request),
+          do: handle_failure(turn, error),
+          else: retry_changed_context(turn)
     end
   end
 
@@ -147,6 +166,39 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end)
   end
 
+  defp resolver_invocation(request, supplied) do
+    supplied_cancelled = Map.get(supplied, :cancelled?)
+
+    Map.put(supplied, :cancelled?, fn ->
+      cancelled?(supplied_cancelled) or not resolver_context_current?(request)
+    end)
+  end
+
+  defp resolver_context_current?(request) do
+    case Cases.get_case(request.case_id, authorize?: false) do
+      {:ok, incident} ->
+        resolver_context_matches?(incident, request)
+
+      {:error, _error} ->
+        false
+    end
+  end
+
+  defp resolver_context_matches?(incident, request) do
+    incident.status == :running and not incident.cancel_requested and
+      incident.alert_state == request.alert_state and
+      incident.selected_target_id == request.selected_target_id and
+      incident.selected_target_revision == request.selected_target_revision
+  end
+
+  defp retry_changed_context(turn) do
+    cond do
+      case_cancelled?(turn.case_id) -> {:cancel, "Case resolution was cancelled"}
+      turn_completed?(turn.id) -> :ok
+      true -> {:snooze, 1}
+    end
+  end
+
   defp cancelled?(callback) when is_function(callback, 0), do: callback.()
   defp cancelled?(_callback), do: false
 
@@ -159,12 +211,14 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp accept(turn, decision, result) do
+  defp accept(turn, decision, result, request) do
     usage_units = decision.usage.input_tokens + decision.usage.output_tokens
     progress_kind = progress_kind(decision.intent)
 
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
-      with {:ok, usage_result} <- charge_usage(turn, usage_units),
+      with {:ok, incident} <- lock_case(turn.case_id),
+           true <- resolver_context_matches?(incident, request) || :context_changed,
+           {:ok, usage_result} <- charge_usage(turn, usage_units),
            true <-
              usage_result.status in [:charged, :duplicate] ||
                {:error, "AI usage limit exhausted"},
@@ -183,6 +237,18 @@ defmodule Opsonde.Cases.ResolverDelivery do
       end
     end)
     |> accepted_or_existing(turn.id)
+  end
+
+  defp lock_case(case_id) do
+    Case
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(id: case_id)
+    |> Ash.Query.lock(:for_update)
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} -> {:error, "Case is unavailable"}
+      result -> result
+    end
   end
 
   defp charge_usage(turn, 0) do
