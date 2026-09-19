@@ -243,7 +243,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert schema["properties"]["reason"]["type"] == "string"
 
       if Map.has_key?(schema["properties"]["reason"], "maxLength") do
-        assert schema["properties"]["reason"]["maxLength"] == 500
+        assert schema["properties"]["reason"]["maxLength"] == 125
       end
 
       refute Map.has_key?(schema["properties"], "arguments_json")
@@ -251,7 +251,63 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert Enum.any?(schema["properties"]["intent"]["anyOf"], fn variant ->
                get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
              end)
+
+      target_search =
+        Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
+          get_in(variant, ["properties", "type", "enum"]) == ["target_search"]
+        end)
+
+      handoff =
+        Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
+          get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
+        end)
+
+      assert get_in(target_search, ["properties", "query", "maxLength"]) == 50
+      assert get_in(handoff, ["properties", "required_input", "maxLength"]) == 250
     end
+  end
+
+  test "multilingual output stays within the byte-bounded AI contract", context do
+    reason = String.duplicate("界", 125)
+    required_input = String.duplicate("界", 250)
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "type" => "handoff",
+        "reason" => reason,
+        "required_input" => required_input
+      }
+    })
+
+    state = state!("ollama", context.endpoint <> "/v1", %{})
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{reason: ^reason, required_input: ^required_input}
+            }} = Adapter.resolve(state, resolver_request(), %{})
+
+    [resolver_request] = requests(context.agent)
+    resolver_schema = output_schema(resolver_request)
+    assert resolver_schema["properties"]["reason"]["maxLength"] == 125
+
+    set_mode(context.agent, {
+      :decision,
+      %{"verdict" => "approved", "reason" => String.duplicate("界", 250)}
+    })
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved}} =
+             Adapter.review(state, review_request(), %{})
+
+    [review_request] = requests(context.agent)
+    assert output_schema(review_request)["properties"]["reason"]["maxLength"] == 250
+
+    set_mode(context.agent, {
+      :decision,
+      %{"type" => "handoff", "reason" => String.duplicate("界", 167), "required_input" => "x"}
+    })
+
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
   end
 
   test "streamed and buffered responses produce the same decision", context do

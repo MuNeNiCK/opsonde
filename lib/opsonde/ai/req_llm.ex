@@ -13,6 +13,10 @@ defmodule Opsonde.AI.ReqLLM do
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
+  @resolver_reason_codepoints 125
+  @search_query_codepoints 50
+  @reviewer_reason_codepoints 250
+  @handoff_input_codepoints 250
 
   @impl Opsonde.Providers.Adapter
   def type, do: "req-llm"
@@ -465,7 +469,7 @@ defmodule Opsonde.AI.ReqLLM do
 
     object_schema(
       %{
-        "reason" => bounded_string_schema(500),
+        "reason" => bounded_string_schema(@resolver_reason_codepoints),
         "intent" => %{"anyOf" => variants}
       },
       ~w(reason intent)
@@ -474,7 +478,10 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp target_search_schema(%{budget: %{remaining_target_requests: remaining}})
        when remaining > 0,
-       do: intent_schema("target_search", %{"query" => bounded_string_schema(200)})
+       do:
+         intent_schema("target_search", %{
+           "query" => bounded_string_schema(@search_query_codepoints)
+         })
 
   defp target_search_schema(_request), do: nil
 
@@ -553,7 +560,10 @@ defmodule Opsonde.AI.ReqLLM do
   defp recovery_schema(_request), do: nil
 
   defp handoff_schema,
-    do: intent_schema("handoff", %{"required_input" => bounded_string_schema(1_000)})
+    do:
+      intent_schema("handoff", %{
+        "required_input" => bounded_string_schema(@handoff_input_codepoints)
+      })
 
   defp intent_schema(type, properties),
     do:
@@ -614,7 +624,7 @@ defmodule Opsonde.AI.ReqLLM do
     object_schema(
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
-        "reason" => bounded_string_schema(1_000)
+        "reason" => bounded_string_schema(@reviewer_reason_codepoints)
       },
       ~w(verdict reason)
     )
