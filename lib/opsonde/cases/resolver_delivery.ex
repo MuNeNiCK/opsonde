@@ -4,7 +4,18 @@ defmodule Opsonde.Cases.ResolverDelivery do
   require Ash.Query
 
   alias Opsonde.{Cases, Providers}
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, ResolutionRun, ResolverProjection, Turn}
+
+  alias Opsonde.Cases.{
+    AIInvocation,
+    AIInvocationClaim,
+    Budget,
+    Case,
+    CaseEvent,
+    ResolutionRun,
+    ResolverProjection,
+    Turn
+  }
+
   alias Opsonde.Providers.AI
 
   @max_result_bytes 65_536
@@ -33,24 +44,79 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp resolve(turn, selection, request, opts) do
-    ai_invocation =
-      resolver_invocation(request, Keyword.get(opts, :ai_invocation, %{}))
+    case claim_invocation(turn, selection, request) do
+      {:ok, %AIInvocationClaim{state: :claimed} = claim} ->
+        dispatch(turn, selection, request, claim, opts)
 
-    with {:ok, decision} <-
-           Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false),
-         true <- resolver_context_current?(request) || :context_changed,
-         {:ok, result} <- result(decision, selection, request),
-         :ok <- valid_result_size(result),
-         {:ok, _result} <- accept(turn, decision, result, request) do
-      :ok
-    else
-      :context_changed ->
-        retry_changed_context(turn)
+      {:ok, %AIInvocationClaim{state: :interrupted, invocation: invocation}} ->
+        handle_interruption(turn, invocation)
+
+      {:ok, %AIInvocationClaim{state: :terminal}} ->
+        if turn_completed?(turn.id), do: :ok, else: {:error, "AI invocation is already terminal"}
 
       {:error, error} ->
         if resolver_context_current?(request),
           do: handle_failure(turn, error),
           else: retry_changed_context(turn)
+    end
+  end
+
+  defp dispatch(turn, selection, request, claim, opts) do
+    ai_invocation =
+      resolver_invocation(request, Keyword.get(opts, :ai_invocation, %{}))
+
+    case Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false) do
+      {:ok, decision} ->
+        accept_decision(turn, selection, request, claim.invocation, decision)
+
+      {:error, error} ->
+        if resolver_context_current?(request) do
+          handle_failure(turn, error, claim.invocation)
+        else
+          with {:ok, _invocation} <-
+                 record_invocation(claim.invocation, :failed, category: "context_changed") do
+            retry_changed_context(turn)
+          end
+        end
+    end
+  end
+
+  defp accept_decision(turn, selection, request, invocation, decision) do
+    if resolver_context_current?(request) do
+      with {:ok, result} <- result(decision, selection, request),
+           :ok <- valid_result_size(result),
+           {:ok, _result} <- accept(turn, invocation, decision, result, request) do
+        :ok
+      else
+        {:error, error} -> handle_failure(turn, error, invocation)
+      end
+    else
+      with {:ok, _result} <- settle_unused_result(turn, invocation, decision, "context_changed") do
+        retry_changed_context(turn)
+      end
+    end
+  end
+
+  defp claim_invocation(turn, selection, request) do
+    with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
+         true <- resolver_context_matches?(incident, request) || :context_changed do
+      Cases.claim_ai_invocation(
+        :resolver,
+        turn.case_id,
+        incident.revision,
+        turn.resolution_run_id,
+        turn.id,
+        turn.revision,
+        nil,
+        nil,
+        selection.provider_id,
+        selection.assignment_id,
+        selection.provider_revision,
+        selection.assignment_revision,
+        selection.source,
+        AIInvocation.request_digest(request),
+        authorize?: false
+      )
     end
   end
 
@@ -211,14 +277,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp accept(turn, decision, result, request) do
+  defp accept(turn, invocation, decision, result, request) do
     usage_units = decision.usage.input_tokens + decision.usage.output_tokens
     progress_kind = progress_kind(decision.intent)
 
-    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+    Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
       with {:ok, incident} <- lock_case(turn.case_id),
            true <- resolver_context_matches?(incident, request) || :context_changed,
-           {:ok, usage_result} <- charge_usage(turn, usage_units),
+           {:ok, usage_result} <-
+             charge_usage(turn, usage_units, "resolver-result:#{invocation.id}"),
            true <-
              usage_result.status in [:charged, :duplicate] ||
                {:error, "AI usage limit exhausted"},
@@ -232,11 +299,17 @@ defmodule Opsonde.Cases.ResolverDelivery do
                "Review the Resolver decision",
                authorize?: false
              ),
+           {:ok, _invocation} <-
+             record_invocation(invocation, :completed,
+               input_tokens: decision.usage.input_tokens,
+               output_tokens: decision.usage.output_tokens,
+               result_digest: digest(result)
+             ),
            {:ok, _job} <- enqueue_route(turn.id) do
         completion
       end
     end)
-    |> accepted_or_existing(turn.id)
+    |> accepted_or_existing(turn, invocation, decision)
   end
 
   defp lock_case(case_id) do
@@ -251,20 +324,20 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp charge_usage(turn, 0) do
+  defp charge_usage(turn, 0, _idempotency_key) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
       {:ok, %Cases.BudgetResult{status: :charged, case: incident, run: run, value: run}}
     end
   end
 
-  defp charge_usage(turn, usage_units) do
+  defp charge_usage(turn, usage_units, idempotency_key) do
     Cases.charge_resolution_run(
       turn.case_id,
       turn.resolution_run_id,
       :ai_usage,
       usage_units,
-      "resolver-result:#{turn.id}",
+      idempotency_key,
       %{"action" => "review_ai_usage", "turn_id" => turn.id},
       "Increase the AI usage limit or review the Case",
       authorize?: false
@@ -277,12 +350,18 @@ defmodule Opsonde.Cases.ResolverDelivery do
     |> Oban.insert()
   end
 
-  defp accepted_or_existing({:ok, result}, _turn_id), do: {:ok, result}
+  defp accepted_or_existing({:ok, result}, _turn, _invocation, _decision), do: {:ok, result}
 
-  defp accepted_or_existing({:error, error}, turn_id) do
-    case Cases.get_turn(turn_id, authorize?: false) do
-      {:ok, %{status: :completed} = turn} -> {:ok, turn}
-      _unfinished -> {:error, error}
+  defp accepted_or_existing({:error, error}, turn, invocation, decision) do
+    case Cases.get_turn(turn.id, authorize?: false) do
+      {:ok, %{status: :completed} = completed} ->
+        case settle_unused_result(turn, invocation, decision, "superseded") do
+          {:ok, _invocation} -> {:ok, completed}
+          {:error, settle_error} -> {:error, settle_error}
+        end
+
+      _unfinished ->
+        {:error, error}
     end
   end
 
@@ -422,7 +501,57 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp handle_failure(turn, error) do
+  defp handle_interruption(turn, invocation) do
+    reason = "Resolver response is unknown after dispatch"
+    intent = %{"action" => "review_resolver_response", "turn_id" => turn.id}
+
+    Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with {:ok, usage_result} <-
+             charge_usage(
+               turn,
+               invocation.reserved_units,
+               "resolver-unknown:#{invocation.id}"
+             ),
+           true <-
+             usage_result.status in [:charged, :duplicate] ||
+               {:error, "AI usage reservation could not be charged"},
+           {:ok, completed} <-
+             Cases.complete_turn(
+               turn.id,
+               turn.revision,
+               %{
+                 "outcome" => "delivery_unknown",
+                 "category" => "response_unknown",
+                 "message" => reason,
+                 "reserved_usage_units" => invocation.reserved_units
+               },
+               :human_input,
+               intent,
+               "Review the unknown Resolver response before retrying",
+               authorize?: false
+             ),
+           {:ok, incident} <-
+             Cases.require_case_attention(
+               turn.case_id,
+               completed.case.revision,
+               turn.resolution_run_id,
+               completed.run.revision,
+               "resolver-unknown:#{invocation.id}",
+               reason,
+               intent,
+               "Review the unknown Resolver response before retrying",
+               authorize?: false
+             ) do
+        incident
+      end
+    end)
+    |> case do
+      {:ok, _incident} -> :ok
+      {:error, error} -> if(turn_completed?(turn.id), do: :ok, else: {:error, error})
+    end
+  end
+
+  defp handle_failure(turn, error, invocation \\ nil) do
     cond do
       case_cancelled?(turn.case_id) ->
         {:cancel, "Case resolution was cancelled"}
@@ -433,7 +562,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
       true ->
         {category, message} = failure(error)
 
-        case persist_failure(turn, category, message) do
+        case persist_failure(turn, invocation, category, message) do
           {:ok, _incident} ->
             :ok
 
@@ -443,11 +572,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp persist_failure(turn, category, message) do
+  defp persist_failure(turn, invocation, category, message) do
     reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
     intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
 
-    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+    Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
       with {:ok, completed} <-
              Cases.complete_turn(
                turn.id,
@@ -462,6 +591,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                "Review the Resolver delivery failure",
                authorize?: false
              ),
+           {:ok, _invocation} <- record_failure(invocation, category),
            {:ok, incident} <-
              Cases.require_case_attention(
                turn.case_id,
@@ -477,6 +607,55 @@ defmodule Opsonde.Cases.ResolverDelivery do
         incident
       end
     end)
+  end
+
+  defp settle_unused_result(turn, invocation, decision, category) do
+    amount = decision.usage.input_tokens + decision.usage.output_tokens
+
+    Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent], fn ->
+      with {:ok, charged} <-
+             charge_usage(turn, amount, "resolver-result:#{invocation.id}"),
+           true <-
+             charged.status in [:charged, :duplicate] ||
+               {:error, "AI usage limit exhausted"},
+           {:ok, invocation} <-
+             record_invocation(invocation, :completed,
+               input_tokens: decision.usage.input_tokens,
+               output_tokens: decision.usage.output_tokens,
+               category: category,
+               result_digest: digest(decision)
+             ) do
+        invocation
+      end
+    end)
+  end
+
+  defp record_failure(nil, _category), do: {:ok, nil}
+
+  defp record_failure(invocation, category),
+    do: record_invocation(invocation, :failed, category: category)
+
+  defp record_invocation(invocation, status, attrs) do
+    Cases.record_ai_invocation_outcome(
+      invocation,
+      invocation.revision,
+      %{
+        status: status,
+        input_tokens: Keyword.get(attrs, :input_tokens, 0),
+        output_tokens: Keyword.get(attrs, :output_tokens, 0),
+        category: Keyword.get(attrs, :category),
+        result_digest: Keyword.get(attrs, :result_digest),
+        completed_at: DateTime.utc_now()
+      },
+      authorize?: false
+    )
+  end
+
+  defp digest(value) do
+    value
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   defp failure(error) do

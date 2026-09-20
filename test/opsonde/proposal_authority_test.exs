@@ -333,6 +333,11 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert approval.proposal_digest == proposal.proposal_digest
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
 
+    [record] = Cases.list_ai_invocations!(authorize?: false)
+    assert record.status == :completed
+    assert record.input_tokens == 3
+    assert record.output_tokens == 2
+
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
              "dispatch_operation"
 
@@ -464,8 +469,86 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert decision.category == "timeout"
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :awaiting_human
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    [record] = Cases.list_ai_invocations!(authorize?: false)
+    assert record.status == :failed
+    assert record.category == "timeout"
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
+  end
+
+  test "an interrupted Reviewer dispatch is reserved and handed to a human once", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-interrupted", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        ReviewDelivery.run(reviewing.id,
+          ai_invocation: %{
+            test_pid: parent,
+            respond: fn _request ->
+              send(parent, :reviewer_remote_started)
+              receive do: (:never -> :unreachable)
+            end
+          }
+        )
+      end)
+
+    assert_receive {:review, _, _request}
+    assert_receive :reviewer_remote_started
+    assert nil == Task.shutdown(task, :brutal_kill)
+
+    [dispatching] = Cases.list_ai_invocations!(authorize?: false)
+    assert dispatching.role == :reviewer
+    assert dispatching.status == :dispatching
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> flunk("interrupted Reviewer called AI again") end
+               }
+             )
+
+    refute_receive {:review, _, _}
+
+    [unknown] = Cases.list_ai_invocations!(authorize?: false)
+    assert unknown.id == dispatching.id
+    assert unknown.status == :unknown
+    assert unknown.category == "response_unknown"
+
+    [decision] = Cases.list_review_decisions!(actor: context.admin)
+    assert decision.outcome == :delivery_failed
+    assert decision.verdict == :needs_human
+    assert decision.category == "response_unknown"
+    assert decision.reason =~ "#{unknown.reserved_units} AI usage units were reserved"
+
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :awaiting_human
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             unknown.reserved_units
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    assert pending["action"] == "decide_proposal"
+    assert pending["review_decision_id"] == decision.id
+    assert Cases.list_approvals!(actor: context.admin) == []
+    refute_receive {:effect, _, _}
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> flunk("unknown Reviewer called AI again") end
+               }
+             )
+
+    events = Cases.list_case_events!(actor: context.admin)
+
+    assert Enum.count(events, fn event ->
+             event.data["request_key"] == "review-unknown:#{unknown.id}"
+           end) == 1
   end
 
   test "stale Target context invalidates Ask approval and cannot be overridden", context do

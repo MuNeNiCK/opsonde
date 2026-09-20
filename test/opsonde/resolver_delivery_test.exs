@@ -94,6 +94,11 @@ defmodule Opsonde.ResolverDeliveryTest do
     charged = Cases.get_resolution_run!(run.id, authorize?: false)
     assert charged.ai_usage_units == 12
 
+    [record] = Cases.list_ai_invocations!(authorize?: false)
+    assert record.status == :completed
+    assert record.input_tokens == 7
+    assert record.output_tokens == 5
+
     assert :ok =
              ResolverDelivery.run(turn.id,
                ai_invocation: %{
@@ -143,6 +148,13 @@ defmodule Opsonde.ResolverDeliveryTest do
       assert paused.status == :needs_attention
       assert paused.ai_usage_units == 0
 
+      record =
+        Cases.list_ai_invocations!(authorize?: false)
+        |> Enum.find(&(&1.turn_id == turn.id))
+
+      assert record.status == :failed
+      assert record.category == expected_category
+
       assert :ok =
                ResolverDelivery.run(turn.id,
                  ai_invocation: %{
@@ -155,7 +167,95 @@ defmodule Opsonde.ResolverDeliveryTest do
     end
   end
 
-  test "a competing Turn completion rolls back the later AI usage charge", context do
+  test "an interrupted dispatch becomes visible without a second AI call", context do
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        "interrupted",
+        "Service is unavailable",
+        :critical,
+        :firing,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    turn = start_turn!(incident, run, "interrupted")
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        ResolverDelivery.run(turn.id,
+          ai_invocation: %{
+            test_pid: parent,
+            respond: fn _request ->
+              send(parent, :resolver_remote_started)
+              receive do: (:never -> :unreachable)
+            end
+          }
+        )
+      end)
+
+    assert_receive {:resolve, _, _request}
+    assert_receive :resolver_remote_started
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    Cases.record_case_source_recovery!(current.id, current.revision, authorize?: false)
+    assert nil == Task.shutdown(task, :brutal_kill)
+
+    [dispatching] = Cases.list_ai_invocations!(authorize?: false)
+    assert dispatching.status == :dispatching
+    assert dispatching.reserved_units == 10_000
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> flunk("interrupted dispatch called AI again") end
+               }
+             )
+
+    refute_receive {:resolve, _, _}
+
+    [unknown] = Cases.list_ai_invocations!(authorize?: false)
+    assert unknown.id == dispatching.id
+    assert unknown.status == :unknown
+    assert unknown.category == "response_unknown"
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.status == :completed
+    assert completed.result["outcome"] == "delivery_unknown"
+    assert completed.result["reserved_usage_units"] == 10_000
+
+    paused = Cases.get_case!(incident.id, authorize?: false)
+    assert paused.status == :needs_attention
+
+    assert paused.pending_intent == %{
+             "action" => "review_resolver_response",
+             "turn_id" => turn.id
+           }
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10_000
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> flunk("unknown dispatch called AI again") end
+               }
+             )
+
+    events = Cases.list_case_events!(actor: context.admin)
+
+    assert Enum.count(events, fn event ->
+             event.data["request_key"] == "resolver-unknown:#{unknown.id}"
+           end) == 1
+  end
+
+  test "a competing Turn completion still accounts for the later AI result", context do
     {_incident, run, turn} = turn!("competing-result", context.operator)
 
     ai_invocation = %{
@@ -184,7 +284,11 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.result == %{"outcome" => "already_accepted"}
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 20
+
+    [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :completed
+    assert invocation.category == "superseded"
     assert route_jobs(turn.id) == []
   end
 
@@ -267,7 +371,11 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Cases.get_turn!(turn.id, authorize?: false).status == :started
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+
+    [discarded] = Cases.list_ai_invocations!(authorize?: false)
+    assert discarded.status == :completed
+    assert discarded.category == "context_changed"
 
     refute Enum.any?(
              Cases.list_case_events!(actor: context.admin),
@@ -297,8 +405,13 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert_receive {:resolve, _, %{alert_state: :recovered}}
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.status == :completed
+    assert completed.result["outcome"] == "decision"
     assert completed.result["intent"]["type"] == "recovery_conclusion"
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 7
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 19
+
+    invocations = Cases.list_ai_invocations!(authorize?: false)
+    assert Enum.count(invocations) == 2
+    assert Enum.count(invocations, &(&1.category == "context_changed")) == 1
   end
 
   test "accepted observation and Proposal retain exact offered tool snapshots", context do

@@ -338,5 +338,38 @@ defmodule Opsonde.Cases do
       define :claim_verification_dispatch, action: :claim_dispatch, args: [:id]
       define :evaluate_verification, action: :evaluate, args: [:id]
     end
+
+    resource Opsonde.Cases.AIInvocation do
+      define :list_ai_invocations, action: :read
+
+      define :ai_invocation_by_idempotency,
+        action: :by_idempotency,
+        args: [:idempotency_key]
+
+      define :create_ai_invocation_record, action: :create_record
+
+      define :record_ai_invocation_outcome,
+        action: :record_outcome,
+        args: [:expected_revision]
+
+      define :claim_ai_invocation,
+        action: :claim,
+        args: [
+          :role,
+          :case_id,
+          :expected_case_revision,
+          :resolution_run_id,
+          :turn_id,
+          :expected_turn_revision,
+          :proposal_id,
+          :expected_proposal_revision,
+          :provider_id,
+          :assignment_id,
+          :provider_revision,
+          :assignment_revision,
+          :selection_source,
+          :request_digest
+        ]
+    end
   end
 end
