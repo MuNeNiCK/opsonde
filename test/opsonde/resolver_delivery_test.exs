@@ -505,7 +505,12 @@ defmodule Opsonde.ResolverDeliveryTest do
                         capability: proposal_tool.capability,
                         operation: proposal_tool.operation,
                         selectors: %{"service" => "api"},
-                        parameters: %{"service" => "api"},
+                        parameters: %{
+                          "service" => "api",
+                          "enabled" => true,
+                          "expected_enabled" => false,
+                          "optional" => nil
+                        },
                         reason: "Restart the unhealthy service",
                         evidence_ids: [evidence.id],
                         expected_result: %{"service" => "running"},
@@ -525,6 +530,14 @@ defmodule Opsonde.ResolverDeliveryTest do
     proposal_intent = Cases.get_turn!(proposal_turn.id, authorize?: false).result["intent"]
     assert proposal_intent["type"] == "proposal"
     assert proposal_intent["selectors"] == %{"service" => "api"}
+
+    assert proposal_intent["parameters"] == %{
+             "service" => "api",
+             "enabled" => true,
+             "expected_enabled" => false,
+             "optional" => nil
+           }
+
     assert proposal_intent["tool"]["provider_id"] == method.provider_id
     assert proposal_intent["tool"]["provider_revision"] == method.provider_revision
 

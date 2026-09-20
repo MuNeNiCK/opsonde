@@ -486,6 +486,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     do: Map.new(value, fn {key, nested} -> {to_string(key), json_value(nested)} end)
 
   defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value) when value in [true, false, nil], do: value
   defp json_value(value) when is_atom(value), do: to_string(value)
   defp json_value(value), do: value
 
