@@ -74,7 +74,8 @@ defmodule Opsonde.Cases.ReviewProjection do
   end
 
   defp source_evidence(incident) do
-    with {:ok, evidence} <- Cases.review_source_context(incident.id, authorize?: false) do
+    with {:ok, evidence} <-
+           Cases.source_context_evidence(incident.id, incident.source_ref, authorize?: false) do
       {:ok,
        Enum.map(evidence, fn item ->
          %AI.Evidence{

@@ -267,7 +267,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         "review-source-#{proposal.id}",
         "signal_event",
         "alertmanager",
-        "alert-#{proposal.id}",
+        incident.source_ref,
         %{
           "state" => "firing",
           "attributes" => %{

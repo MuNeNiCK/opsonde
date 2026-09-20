@@ -797,6 +797,44 @@ defmodule Opsonde.OperationDeliveryTest do
         alert_state: :firing
       )
 
+    stale_source =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "resume-investigation-stale-source",
+        "signal_event",
+        "alertmanager",
+        incident.source_ref,
+        %{
+          "current" => false,
+          "state" => "recovered",
+          "attributes" => %{"annotations" => %{"description" => "stale"}}
+        },
+        DateTime.add(DateTime.utc_now(), -60, :second),
+        authorize?: false
+      )
+
+    source =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "resume-investigation-current-source",
+        "signal_event",
+        "alertmanager",
+        incident.source_ref,
+        %{
+          "current" => true,
+          "state" => "firing",
+          "attributes" => %{
+            "annotations" => %{"description" => "Restore the service to running"}
+          }
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     assert :ok =
@@ -886,7 +924,18 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     assert request.alert_state == :firing
-    assert [%AI.Evidence{id: ^verification_id, kind: "target_verification"}] = request.evidence
+
+    assert [
+             %AI.Evidence{id: ^verification_id, kind: "target_verification"},
+             %AI.Evidence{id: source_id, kind: "signal_event", content: source_content}
+           ] = request.evidence
+
+    assert source_id == source.id
+    refute source_id == stale_source.id
+
+    assert get_in(source_content, ["attributes", "annotations", "description"]) ==
+             "Restore the service to running"
+
     assert request.proposal_tools == []
     assert [%AI.ObservationTool{operation: "service.inspect"}] = request.observation_tools
   end

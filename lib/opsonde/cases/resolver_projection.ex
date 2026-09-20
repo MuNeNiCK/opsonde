@@ -15,8 +15,9 @@ defmodule Opsonde.Cases.ResolverProjection do
          :ok <- eligible(incident, run, turn),
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
+         {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
-         {:ok, continuity} <- target_continuity(incident, target, evidence),
+         {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, relations} <- relations(target, incident, run),
          {:ok, tools} <- tools(target, run, invocation),
          request <-
@@ -71,6 +72,31 @@ defmodule Opsonde.Cases.ResolverProjection do
       {:ok, target}
     end
   end
+
+  defp source_context(%{trigger_kind: :signal} = incident, evidence) do
+    with {:ok, candidates} <-
+           Cases.source_context_evidence(incident.id, incident.source_ref, authorize?: false) do
+      {:ok, replace_source_context(evidence, List.first(candidates), incident)}
+    end
+  end
+
+  defp source_context(_incident, evidence), do: {:ok, evidence}
+
+  defp replace_source_context(
+         evidence,
+         %{
+           case_id: case_id,
+           kind: "signal_event",
+           source_ref: source_ref,
+           content: %{"current" => true}
+         } = latest,
+         %{id: case_id, source_ref: source_ref}
+       ) do
+    [latest | Enum.reject(evidence, &(&1.kind == "signal_event"))]
+  end
+
+  defp replace_source_context(evidence, _latest, _incident),
+    do: Enum.reject(evidence, &(&1.kind == "signal_event"))
 
   defp target_continuity(incident, target, evidence) when not is_nil(target) do
     with {:ok, candidates} <-

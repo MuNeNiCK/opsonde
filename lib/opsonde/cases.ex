@@ -238,9 +238,9 @@ defmodule Opsonde.Cases do
         action: :projection_window,
         args: [:case_id, :resolution_run_id]
 
-      define :review_source_context,
-        action: :review_source_context,
-        args: [:case_id]
+      define :source_context_evidence,
+        action: :source_context,
+        args: [:case_id, :source_ref]
 
       define :target_continuity_evidence,
         action: :target_continuity,
