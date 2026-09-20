@@ -304,6 +304,25 @@
         ],
         "type": "object"
       },
+      "AuditRunPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuditRun"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "ErrorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -313,6 +332,18 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      "ReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Report"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -506,6 +537,109 @@
         ],
         "type": "object"
       },
+      "AuditRun": {
+        "additionalProperties": false,
+        "properties": {
+          "audit_schedule_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "case_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schedule_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "case_opened",
+              "skipped",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "target_key": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "audit_schedule_id",
+          "schedule_revision",
+          "target_key",
+          "target_id",
+          "target_revision",
+          "case_id",
+          "case_revision",
+          "scheduled_for",
+          "status",
+          "reason",
+          "started_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ProposalResponse": {
         "additionalProperties": false,
         "properties": {
@@ -684,6 +818,20 @@
           "check",
           "inserted_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "SignalWebhookAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt_id": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_id"
         ],
         "type": "object"
       },
@@ -988,6 +1136,158 @@
         ],
         "type": "object"
       },
+      "Report": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "content_digest": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "resolved",
+              "needs_attention",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "case_revision",
+          "language",
+          "outcome",
+          "content",
+          "content_digest",
+          "generated_at",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "GenerateReportRequest": {
+        "properties": {
+          "report": {
+            "properties": {
+              "expected_case_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_case_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "report"
+        ],
+        "type": "object"
+      },
+      "SignalEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "event_key": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "signal_receipt_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source_sequence": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "firing",
+              "recovered"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "target_ref": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "signal_receipt_id",
+          "event_key",
+          "state",
+          "source_sequence",
+          "occurred_at",
+          "target_ref",
+          "case_id",
+          "target_id",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "Error": {
         "additionalProperties": false,
         "properties": {
@@ -1099,6 +1399,47 @@
         },
         "required": [
           "case"
+        ],
+        "type": "object"
+      },
+      "CreateDeliveryRequest": {
+        "properties": {
+          "delivery": {
+            "properties": {
+              "idempotency_key": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "provider_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "provider_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "report_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "report_id",
+              "report_revision",
+              "provider_id",
+              "provider_revision",
+              "idempotency_key"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "delivery"
         ],
         "type": "object"
       },
@@ -1899,6 +2240,25 @@
         ],
         "type": "object"
       },
+      "AuditSchedulePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuditSchedule"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "AIUsageRoleAssignmentResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2001,6 +2361,10 @@
         "required": [
           "account"
         ],
+        "type": "object"
+      },
+      "SignalWebhookPayload": {
+        "additionalProperties": true,
         "type": "object"
       },
       "Operation": {
@@ -2364,6 +2728,18 @@
         ],
         "type": "object"
       },
+      "AuditRunResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuditRun"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "AccessMethodResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2373,6 +2749,62 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "SignalReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "event_count": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "receipt_id": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider_id",
+          "provider_revision",
+          "receipt_id",
+          "source",
+          "received_at",
+          "event_count",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -2850,6 +3282,89 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "AuditSchedule": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "cron_expression": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "management_boundary_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "objective": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "report_language": {
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "target_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "timezone": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "objective",
+          "timezone",
+          "cron_expression",
+          "report_language",
+          "target_ids",
+          "management_boundary_id",
+          "active",
+          "next_run_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -3408,6 +3923,18 @@
         ],
         "type": "object"
       },
+      "AuditScheduleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuditSchedule"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "DeactivateTargetRelationshipRequest": {
         "properties": {
           "relationship": {
@@ -3425,6 +3952,65 @@
         },
         "required": [
           "relationship"
+        ],
+        "type": "object"
+      },
+      "CreateAuditScheduleRequest": {
+        "properties": {
+          "audit_schedule": {
+            "properties": {
+              "cron_expression": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "management_boundary_id": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "objective": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "report_language": {
+                "enum": [
+                  "en",
+                  "ja"
+                ],
+                "type": "string"
+              },
+              "target_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "timezone": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "objective",
+              "timezone",
+              "cron_expression",
+              "report_language"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "audit_schedule"
         ],
         "type": "object"
       },
@@ -3726,6 +4312,25 @@
         ],
         "type": "object"
       },
+      "ReportPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Report"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "CurrentSessionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3780,6 +4385,47 @@
         ],
         "type": "object"
       },
+      "DeliveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Delivery"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "SignalWebhookValidationError": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SignalWebhookError"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          }
+        ]
+      },
+      "DeliveryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "AccountResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3789,6 +4435,25 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "SignalEventPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SignalEvent"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -4156,6 +4821,94 @@
         },
         "required": [
           "access_method"
+        ],
+        "type": "object"
+      },
+      "Delivery": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "destination_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "destination_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reference": {
+            "maxLength": 1024,
+            "nullable": true,
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "report_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "accepted",
+              "delivered",
+              "failed",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "report_revision",
+          "provider_id",
+          "provider_revision",
+          "destination_id",
+          "destination_revision",
+          "status",
+          "reference",
+          "details",
+          "enqueued_at",
+          "dispatch_started_at",
+          "completed_at",
+          "revision"
         ],
         "type": "object"
       },
@@ -4611,6 +5364,59 @@
         ],
         "type": "object"
       },
+      "SignalWebhookError": {
+        "additionalProperties": false,
+        "properties": {
+          "errors": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      },
+      "SignalReceiptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SignalReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "DeactivateAuditScheduleRequest": {
+        "properties": {
+          "audit_schedule": {
+            "properties": {
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "audit_schedule"
+        ],
+        "type": "object"
+      },
       "CaseSnapshotResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4620,6 +5426,25 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "SignalReceiptPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SignalReceipt"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -4696,6 +5521,11 @@
     "securitySchemes": {
       "bearerAuth": {
         "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "webhookBearerAuth": {
+        "description": "Signal Provider webhook secret",
         "scheme": "bearer",
         "type": "http"
       }
@@ -5199,6 +6029,99 @@
         "summary": "List authority-setting revisions",
         "tags": [
           "Authority settings"
+        ]
+      }
+    },
+    "/api/v1/signals/zabbix/{provider_id}": {
+      "post": {
+        "callbacks": {},
+        "operationId": "ingestZabbixSignal",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalWebhookPayload"
+              }
+            }
+          },
+          "description": "Zabbix webhook payload",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookAccepted"
+                }
+              }
+            },
+            "description": "Signal accepted"
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Webhook authentication failed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal endpoint not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookValidationError"
+                }
+              }
+            },
+            "description": "Webhook payload rejected"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal could not be accepted"
+          }
+        },
+        "security": [
+          {
+            "webhookBearerAuth": []
+          }
+        ],
+        "summary": "Accept a Zabbix webhook",
+        "tags": [
+          "Signal webhooks"
         ]
       }
     },
@@ -5744,6 +6667,99 @@
         ]
       }
     },
+    "/api/v1/signals/alertmanager/{provider_id}": {
+      "post": {
+        "callbacks": {},
+        "operationId": "ingestAlertmanagerSignal",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalWebhookPayload"
+              }
+            }
+          },
+          "description": "Alertmanager webhook payload",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookAccepted"
+                }
+              }
+            },
+            "description": "Signal accepted"
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Webhook authentication failed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal endpoint not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookValidationError"
+                }
+              }
+            },
+            "description": "Webhook payload rejected"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal could not be accepted"
+          }
+        },
+        "security": [
+          {
+            "webhookBearerAuth": []
+          }
+        ],
+        "summary": "Accept an Alertmanager webhook",
+        "tags": [
+          "Signal webhooks"
+        ]
+      }
+    },
     "/api/v1/external-identities": {
       "get": {
         "callbacks": {},
@@ -5929,6 +6945,92 @@
         "summary": "Create an external identity",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/audit-runs": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAuditRuns",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditRunPage"
+                }
+              }
+            },
+            "description": "Audit-run page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List audit runs",
+        "tags": [
+          "Audits"
         ]
       }
     },
@@ -6738,6 +7840,90 @@
         ]
       }
     },
+    "/api/v1/audit-schedules/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getAuditSchedule",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditScheduleResponse"
+                }
+              }
+            },
+            "description": "Audit schedule"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get an audit schedule",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/proposals/{id}": {
       "get": {
         "callbacks": {},
@@ -7115,6 +8301,90 @@
         ]
       }
     },
+    "/api/v1/signal-receipts/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getSignalReceipt",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalReceiptResponse"
+                }
+              }
+            },
+            "description": "Signal receipt"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a Signal receipt",
+        "tags": [
+          "Signals"
+        ]
+      }
+    },
     "/api/v1/cli/session-requests/{id}/exchange": {
       "post": {
         "callbacks": {},
@@ -7341,6 +8611,194 @@
         ]
       }
     },
+    "/api/v1/audit-schedules": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAuditSchedules",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSchedulePage"
+                }
+              }
+            },
+            "description": "Audit-schedule page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List audit schedules",
+        "tags": [
+          "Audits"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createAuditSchedule",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAuditScheduleRequest"
+              }
+            }
+          },
+          "description": "Audit schedule",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditScheduleResponse"
+                }
+              }
+            },
+            "description": "Audit schedule created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Create an audit schedule",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "callbacks": {},
@@ -7478,6 +8936,178 @@
         "summary": "Disable a Provider",
         "tags": [
           "Providers"
+        ]
+      }
+    },
+    "/api/v1/reports": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listReports",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportPage"
+                }
+              }
+            },
+            "description": "Report page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Reports",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/signal-receipts": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listSignalReceipts",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalReceiptPage"
+                }
+              }
+            },
+            "description": "Signal receipt page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Signal receipts",
+        "tags": [
+          "Signals"
         ]
       }
     },
@@ -7781,6 +9411,227 @@
         "summary": "Deactivate a Target",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/cases/{case_id}/reports": {
+      "post": {
+        "callbacks": {},
+        "operationId": "generateCaseReport",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateReportRequest"
+              }
+            }
+          },
+          "description": "Case revision",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Report generated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Generate an immutable Case Report",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/signal-receipts/{id}/events": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listSignalReceiptEvents",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalEventPage"
+                }
+              }
+            },
+            "description": "Signal event page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List normalized events for a Signal receipt",
+        "tags": [
+          "Signals"
         ]
       }
     },
@@ -9159,6 +11010,90 @@
         ]
       }
     },
+    "/api/v1/audit-runs/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getAuditRun",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditRunResponse"
+                }
+              }
+            },
+            "description": "Audit run"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get an audit run",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/access-methods/{id}/deactivate": {
       "post": {
         "callbacks": {},
@@ -9848,6 +11783,90 @@
         "summary": "Request Case cancellation",
         "tags": [
           "Cases"
+        ]
+      }
+    },
+    "/api/v1/reports/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getReport",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Report"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a Report",
+        "tags": [
+          "Reports"
         ]
       }
     },
@@ -11002,6 +13021,121 @@
         ]
       }
     },
+    "/api/v1/audit-schedules/{id}/deactivate": {
+      "post": {
+        "callbacks": {},
+        "operationId": "deactivateAuditSchedule",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeactivateAuditScheduleRequest"
+              }
+            }
+          },
+          "description": "Audit-schedule revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditScheduleResponse"
+                }
+              }
+            },
+            "description": "Audit schedule deactivated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Deactivate an audit schedule",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/cli/session-requests/{id}/deny": {
       "post": {
         "callbacks": {},
@@ -11094,6 +13228,194 @@
         "summary": "Deny a CLI browser session request",
         "tags": [
           "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/deliveries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listDeliveries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryPage"
+                }
+              }
+            },
+            "description": "Delivery page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Report deliveries",
+        "tags": [
+          "Deliveries"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createDelivery",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeliveryRequest"
+              }
+            }
+          },
+          "description": "Delivery",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            },
+            "description": "Delivery queued"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Enqueue a Report delivery",
+        "tags": [
+          "Deliveries"
         ]
       }
     },
@@ -11294,6 +13616,90 @@
         "summary": "Configure the OIDC provider",
         "tags": [
           "OIDC"
+        ]
+      }
+    },
+    "/api/v1/deliveries/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getDelivery",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                }
+              }
+            },
+            "description": "Delivery"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a Report delivery",
+        "tags": [
+          "Deliveries"
         ]
       }
     },

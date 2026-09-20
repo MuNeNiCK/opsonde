@@ -1,8 +1,49 @@
 defmodule OpsondeWeb.SignalWebhookController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   alias Opsonde.{Providers, Signals}
   alias Opsonde.Providers.Signal
+  alias OpsondeWeb.API.Schemas
+  alias OpsondeWeb.API.V1.OutcomeSchemas
+
+  @webhook_responses [
+    accepted:
+      {"Signal accepted", "application/json", OutcomeSchemas.ref("SignalWebhookAccepted")},
+    bad_request: {"Malformed JSON", nil, nil},
+    unauthorized:
+      {"Webhook authentication failed", "application/json",
+       OutcomeSchemas.ref("SignalWebhookError")},
+    not_found:
+      {"Signal endpoint not found", "application/json", OutcomeSchemas.ref("SignalWebhookError")},
+    unprocessable_entity:
+      {"Webhook payload rejected", "application/json",
+       OutcomeSchemas.ref("SignalWebhookValidationError")},
+    service_unavailable:
+      {"Signal could not be accepted", "application/json",
+       OutcomeSchemas.ref("SignalWebhookError")}
+  ]
+
+  tags ["Signal webhooks"]
+
+  operation :alertmanager,
+    operation_id: "ingestAlertmanagerSignal",
+    summary: "Accept an Alertmanager webhook",
+    security: [%{"webhookBearerAuth" => []}],
+    parameters: Schemas.id_parameter(:provider_id),
+    request_body:
+      {"Alertmanager webhook payload", "application/json",
+       OutcomeSchemas.ref("SignalWebhookPayload"), required: true},
+    responses: @webhook_responses
+
+  operation :zabbix,
+    operation_id: "ingestZabbixSignal",
+    summary: "Accept a Zabbix webhook",
+    security: [%{"webhookBearerAuth" => []}],
+    parameters: Schemas.id_parameter(:provider_id),
+    request_body:
+      {"Zabbix webhook payload", "application/json", OutcomeSchemas.ref("SignalWebhookPayload"),
+       required: true},
+    responses: @webhook_responses
 
   def alertmanager(conn, %{"provider_id" => provider_id}),
     do: ingest(conn, provider_id, "alertmanager-webhook")

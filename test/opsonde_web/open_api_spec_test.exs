@@ -35,10 +35,10 @@ defmodule OpsondeWeb.OpenAPISpecTest do
              "getOpenAPISpecification"
   end
 
-  test "route coverage exposes operations that still need domain contracts" do
+  test "every product API route has an operation contract" do
     missing = api_routes() -- documented_operations()
 
-    assert {:post, "/api/v1/signals/zabbix/{provider_id}"} in missing
+    assert missing == []
     refute {:get, "/api/v1/openapi.json"} in missing
   end
 
@@ -113,6 +113,20 @@ defmodule OpsondeWeb.OpenAPISpecTest do
     case_schema = OpsondeWeb.ApiSpec.spec().components.schemas["Case"]
     refute Map.has_key?(case_schema.properties, :pending_intent)
     assert case_schema.additionalProperties == false
+  end
+
+  test "Signal webhooks use their Provider secret security scheme" do
+    spec = OpsondeWeb.ApiSpec.spec()
+
+    assert spec.components.securitySchemes["webhookBearerAuth"].scheme == "bearer"
+
+    assert spec.paths["/api/v1/signals/alertmanager/{provider_id}"].post.security == [
+             %{"webhookBearerAuth" => []}
+           ]
+
+    assert spec.paths["/api/v1/signals/zabbix/{provider_id}"].post.security == [
+             %{"webhookBearerAuth" => []}
+           ]
   end
 
   defp api_routes do

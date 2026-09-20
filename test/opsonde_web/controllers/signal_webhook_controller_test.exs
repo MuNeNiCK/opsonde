@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.SignalWebhookControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.{Accounts, Providers, Signals}
 
   @password "correct horse battery staple"
@@ -29,6 +31,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
     assert %{"receipt_id" => receipt_id} = json_response(conn, 202)
     assert is_binary(receipt_id)
+    assert_operation_response(conn)
 
     receipts = Signals.list_signal_receipts!(actor: context.admin)
     events = Signals.list_signal_events!(actor: context.admin)
@@ -77,6 +80,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              "errors" => %{"detail" => "Webhook authentication failed"}
            }
 
+    assert_operation_response(conn)
+
     assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 
@@ -91,6 +96,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert json_response(conn, 422) == %{
              "errors" => %{"detail" => "Alertmanager timestamp is invalid"}
            }
+
+    assert_operation_response(conn)
 
     assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
@@ -122,6 +129,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
     assert response(firing, 202)
     assert response(recovery, 202)
+    assert_operation_response(firing)
+    assert_operation_response(recovery)
 
     events = Signals.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
 
@@ -168,6 +177,25 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              "errors" => %{"detail" => "Signal endpoint was not found"}
            }
 
+    assert_operation_response(conn)
+
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
+  end
+
+  test "webhook contract rejects a malformed Provider identifier", context do
+    conn =
+      context.conn
+      |> authorized()
+      |> post_json("/api/v1/signals/zabbix/not-a-uuid", zabbix_payload("1", "1726650000"))
+
+    assert %{
+             "error" => %{
+               "code" => "validation_failed",
+               "details" => %{"fields" => ["provider_id"]}
+             }
+           } = json_response(conn, 422)
+
+    assert_operation_response(conn)
     assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 

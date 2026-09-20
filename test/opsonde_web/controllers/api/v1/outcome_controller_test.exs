@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Signals, Targets}
   alias Opsonde.Notifications.DeliveryDispatch
   alias Opsonde.Providers.Notification
@@ -110,14 +112,16 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
              "page" => %{"next" => nil}
            } = json_response(list, 200)
 
+    assert_operation_response(list)
+
     assert id == receipt.id
     refute list.resp_body =~ "metadata"
     refute list.resp_body =~ "normalized_digest"
     refute list.resp_body =~ "receipt-provider-secret"
 
-    assert %{"data" => %{"id" => ^id}} =
-             get_json("/api/v1/signal-receipts/#{id}", context.operator_token)
-             |> json_response(200)
+    shown = get_json("/api/v1/signal-receipts/#{id}", context.operator_token)
+    assert %{"data" => %{"id" => ^id}} = json_response(shown, 200)
+    assert_operation_response(shown)
 
     event_response =
       get_json("/api/v1/signal-receipts/#{id}/events", context.viewer_token)
@@ -135,6 +139,8 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
              ],
              "page" => %{"next" => nil}
            } = json_response(event_response, 200)
+
+    assert_operation_response(event_response)
 
     assert event_id == signal_event.id
     assert case_id == incident.id
@@ -168,6 +174,15 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         },
         context.admin_token
       )
+
+    schedules = get_json("/api/v1/audit-schedules", context.viewer_token)
+    assert %{"data" => [%{"id" => schedule_id}]} = json_response(schedules, 200)
+    assert schedule_id == schedule["id"]
+    assert_operation_response(schedules)
+
+    shown_schedule = get_json("/api/v1/audit-schedules/#{schedule["id"]}", context.viewer_token)
+    assert %{"data" => %{"id" => ^schedule_id}} = json_response(shown_schedule, 200)
+    assert_operation_response(shown_schedule)
 
     persisted = Audits.get_audit_schedule!(schedule["id"], actor: context.admin)
 
@@ -236,6 +251,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     assert %{"data" => %{"active" => false}} = json_response(deactivated, 200)
+    assert_operation_response(deactivated)
 
     invalid =
       post_json(
@@ -293,8 +309,15 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
              }
            } = json_response(report_response, 201)
 
+    assert_operation_response(report_response)
+
     assert byte_size(digest) == 64
     assert case_revision == terminal.revision
+
+    reports = get_json("/api/v1/reports", context.viewer_token)
+    assert %{"data" => [%{"id" => listed_report_id}]} = json_response(reports, 200)
+    assert listed_report_id == report_id
+    assert_operation_response(reports)
 
     duplicate_report =
       post_json(
@@ -341,6 +364,8 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert %{"data" => %{"id" => delivery_id, "status" => "queued"}} =
              json_response(delivery_response, 202)
 
+    assert_operation_response(delivery_response)
+
     duplicate_delivery = post_json("/api/v1/deliveries", delivery_body, context.operator_token)
     assert json_response(duplicate_delivery, 202)["data"]["id"] == delivery_id
 
@@ -365,6 +390,8 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert %{"data" => %{"status" => "failed", "reference" => "remote-failure"}} =
              json_response(stored, 200)
 
+    assert_operation_response(stored)
+
     refute stored.resp_body =~ "delivery-provider-secret"
     refute stored.resp_body =~ "idempotency_key"
 
@@ -374,7 +401,14 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert %{"data" => %{"id" => retry_id, "status" => "queued"}} =
              json_response(retry, 202)
 
+    assert_operation_response(retry)
+
     refute retry_id == delivery_id
+
+    deliveries = get_json("/api/v1/deliveries", context.viewer_token)
+    assert %{"data" => delivery_records} = json_response(deliveries, 200)
+    assert Enum.sort(Enum.map(delivery_records, & &1["id"])) == Enum.sort([delivery_id, retry_id])
+    assert_operation_response(deliveries)
 
     assert get_data!("/api/v1/reports/#{report_id}", context.viewer_token)["content_digest"] ==
              digest
@@ -386,11 +420,15 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   end
 
   defp post_data!(path, body, token) do
-    post_json(path, body, token) |> json_response(201) |> Map.fetch!("data")
+    response = post_json(path, body, token)
+    assert_operation_response(response)
+    response |> json_response(201) |> Map.fetch!("data")
   end
 
   defp get_data!(path, token) do
-    get_json(path, token) |> json_response(200) |> Map.fetch!("data")
+    response = get_json(path, token)
+    assert_operation_response(response)
+    response |> json_response(200) |> Map.fetch!("data")
   end
 
   defp token!(email) do

@@ -1,11 +1,54 @@
 defmodule OpsondeWeb.API.V1.SignalReceiptController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Signals
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.OutcomeJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{OutcomeJSON, OutcomeSchemas}
+
+  @list_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @show_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :not_found,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+
+  tags ["Signals"]
+
+  operation :index,
+    operation_id: "listSignalReceipts",
+    summary: "List Signal receipts",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok: {"Signal receipt page", "application/json", OutcomeSchemas.ref("SignalReceiptPage")}
+      ] ++ @list_errors
+
+  operation :show,
+    operation_id: "getSignalReceipt",
+    summary: "Get a Signal receipt",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [
+        ok: {"Signal receipt", "application/json", OutcomeSchemas.ref("SignalReceiptResponse")}
+      ] ++ @show_errors
+
+  operation :events,
+    operation_id: "listSignalReceiptEvents",
+    summary: "List normalized events for a Signal receipt",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok: {"Signal event page", "application/json", OutcomeSchemas.ref("SignalEventPage")}
+      ] ++ @show_errors
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),

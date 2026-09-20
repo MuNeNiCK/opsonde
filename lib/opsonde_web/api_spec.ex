@@ -9,6 +9,7 @@ defmodule OpsondeWeb.ApiSpec do
   alias OpsondeWeb.API.V1.{
     AccountSchemas,
     InventorySchemas,
+    OutcomeSchemas,
     ProviderSchemas,
     TargetSchemas,
     WorkflowSchemas
@@ -30,12 +31,18 @@ defmodule OpsondeWeb.ApiSpec do
           |> Map.merge(ProviderSchemas.components())
           |> Map.merge(TargetSchemas.components())
           |> Map.merge(InventorySchemas.components())
-          |> Map.merge(WorkflowSchemas.components()),
+          |> Map.merge(WorkflowSchemas.components())
+          |> Map.merge(OutcomeSchemas.components()),
         securitySchemes: %{
           "bearerAuth" => %SecurityScheme{
             type: "http",
             scheme: "bearer",
             bearerFormat: "JWT"
+          },
+          "webhookBearerAuth" => %SecurityScheme{
+            type: "http",
+            scheme: "bearer",
+            description: "Signal Provider webhook secret"
           }
         }
       },

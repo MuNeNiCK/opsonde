@@ -1,11 +1,61 @@
 defmodule OpsondeWeb.API.V1.DeliveryController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Notifications
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.OutcomeJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{OutcomeJSON, OutcomeSchemas}
+
+  @list_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @show_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :not_found,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+
+  tags ["Deliveries"]
+
+  operation :index,
+    operation_id: "listDeliveries",
+    summary: "List Report deliveries",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Delivery page", "application/json", OutcomeSchemas.ref("DeliveryPage")}] ++
+        @list_errors
+
+  operation :show,
+    operation_id: "getDelivery",
+    summary: "Get a Report delivery",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Delivery", "application/json", OutcomeSchemas.ref("DeliveryResponse")}] ++
+        @show_errors
+
+  operation :create,
+    operation_id: "createDelivery",
+    summary: "Enqueue a Report delivery",
+    request_body:
+      {"Delivery", "application/json", OutcomeSchemas.ref("CreateDeliveryRequest"),
+       required: true},
+    responses:
+      [accepted: {"Delivery queued", "application/json", OutcomeSchemas.ref("DeliveryResponse")}] ++
+        Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
