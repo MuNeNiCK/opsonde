@@ -359,7 +359,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.Proposal{} = proposal, request) do
-    evidence_ids = available_evidence_ids(request)
+    evidence_ids = AI.proposal_evidence_ids(request)
 
     case Enum.find(request.proposal_tools, &(&1.id == proposal.tool_id)) do
       %AI.ProposalTool{} = tool ->

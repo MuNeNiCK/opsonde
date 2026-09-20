@@ -50,6 +50,24 @@ defmodule Opsonde.Providers.AI do
     Enum.filter(request.proposal_tools, &proposal_requirements_available?(&1, request))
   end
 
+  def proposal_evidence_ids(request) do
+    request.evidence
+    |> Enum.filter(fn
+      %Evidence{kind: "observation", target_id: target_id} ->
+        target_id == request.selected_target_id
+
+      _evidence ->
+        false
+    end)
+    |> Enum.map(& &1.id)
+    |> Kernel.++(
+      request.observation_results
+      |> Enum.filter(&(&1.kind == "observation" and &1.target_id == request.selected_target_id))
+      |> Enum.map(& &1.id)
+    )
+    |> Enum.uniq()
+  end
+
   def proposal_requirements_match?(tool, request, evidence_ids, parameters)
       when is_list(evidence_ids) and is_map(parameters) do
     Enum.all?(tool.evidence_requirements, fn requirement ->

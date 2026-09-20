@@ -164,7 +164,13 @@ defmodule Opsonde.Providers.AITest do
     assert_receive {:resolve, %{model: "test-model", api_key: @api_key}, ^request}
 
     proposal = proposal()
-    later_request = %{request | turn: 2, observation_results: [observation_result()]}
+
+    later_request = %{
+      request
+      | turn: 2,
+        evidence: [%{evidence() | kind: "observation"}],
+        observation_results: [observation_result()]
+    }
 
     assert %AI.ResolverDecision{intent: ^proposal} =
              resolve!(context, later_request, fn _request ->
@@ -523,6 +529,22 @@ defmodule Opsonde.Providers.AITest do
                :resolve,
                %AI.ResolverDecision{intent: exact, usage: usage()},
                request
+             )
+
+    source_evidence = %AI.Evidence{
+      id: "current-signal",
+      kind: "signal_event",
+      target_id: nil,
+      content: %{"current" => true, "state" => "firing"}
+    }
+
+    source_cited = %{exact | evidence_ids: [observation_evidence.id, source_evidence.id]}
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(
+               :resolve,
+               %AI.ResolverDecision{intent: source_cited, usage: usage()},
+               %{request | evidence: [observation_evidence, source_evidence]}
              )
 
     invented = %{exact | parameters: %{"expected_state" => "active"}}

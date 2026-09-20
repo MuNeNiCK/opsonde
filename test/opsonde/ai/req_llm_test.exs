@@ -531,6 +531,18 @@ defmodule Opsonde.AI.ReqLLMTest do
             kind: "observation",
             target_id: "target-1",
             content: %{"status" => "stopped"}
+          },
+          %AI.Evidence{
+            id: "source-evidence-1",
+            kind: "signal_event",
+            target_id: nil,
+            content: %{"current" => true, "state" => "firing"}
+          },
+          %AI.Evidence{
+            id: "verification-1",
+            kind: "target_verification",
+            target_id: "target-1",
+            content: %{"status" => "verified"}
           }
         ],
         observation_tools: [observation_tool()],
@@ -579,6 +591,10 @@ defmodule Opsonde.AI.ReqLLMTest do
       Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
         get_in(variant, ["properties", "type", "enum"]) == ["proposal"]
       end)
+
+    assert get_in(proposal_variant, ["properties", "evidence_ids", "items", "enum"]) == [
+             "evidence-1"
+           ]
 
     [action_schema] = get_in(proposal_variant, ["properties", "action", "anyOf"])
     assert get_in(action_schema, ["properties", "tool_id", "enum"]) == ["proposal-tool"]

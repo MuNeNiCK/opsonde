@@ -599,7 +599,7 @@ defmodule Opsonde.AI.ReqLLM do
         "expected_result_json" => json_object_string_schema()
       })
 
-    evidence_ids = available_evidence_ids(request)
+    evidence_ids = AI.proposal_evidence_ids(request)
 
     if action_variants != [] and verification_variants != [] and evidence_ids != [] do
       intent_schema("proposal", %{
