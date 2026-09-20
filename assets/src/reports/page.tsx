@@ -2,18 +2,21 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { apiCollection, apiRequest } from "@/api";
-import type { Delivery, Report } from "@/assurance-types";
-import { useAuthentication } from "@/auth-context";
-import type { CaseRecord } from "@/case-types";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { NotificationProviderSection } from "@/notification-provider-section";
-import type { Provider } from "@/setup-types";
+import { NotificationProviderSection } from "@/providers/notification-section";
+
+type CaseRecord = components["schemas"]["Case"];
+type Delivery = components["schemas"]["Delivery"];
+type Report = components["schemas"]["Report"];
+type Provider = components["schemas"]["Provider"];
 
 type Snapshot = {
   cases: CaseRecord[];
@@ -26,10 +29,26 @@ const selectClass =
 
 async function loadSnapshot(): Promise<Snapshot> {
   const [cases, reports, deliveries, providers] = await Promise.all([
-    apiCollection<CaseRecord>("/cases"),
-    apiCollection<Report>("/reports"),
-    apiCollection<Delivery>("/deliveries"),
-    apiCollection<Provider>("/providers"),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/reports", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/deliveries", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
   ]);
   return { cases, reports, deliveries, providers };
 }
@@ -75,9 +94,9 @@ export function ReportPage() {
     const incident = snapshot?.cases.find((item) => item.id === caseId);
     if (!incident) return;
     await mutate("generate", () =>
-      apiRequest(`/cases/${incident.id}/reports`, {
-        method: "POST",
-        body: JSON.stringify({ report: { expected_case_revision: incident.revision } }),
+      apiClient.POST("/api/v1/cases/{case_id}/reports", {
+        params: { path: { case_id: incident.id } },
+        body: { report: { expected_case_revision: incident.revision } },
       }),
     );
   }
@@ -89,9 +108,8 @@ export function ReportPage() {
     const provider = snapshot?.providers.find((item) => item.id === formValue(form, "provider_id"));
     if (!report || !provider) return;
     await mutate("deliver", () =>
-      apiRequest("/deliveries", {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/deliveries", {
+        body: {
           delivery: {
             report_id: report.id,
             report_revision: report.revision,
@@ -99,7 +117,7 @@ export function ReportPage() {
             provider_revision: provider.revision,
             idempotency_key: crypto.randomUUID(),
           },
-        }),
+        },
       }),
     );
   }

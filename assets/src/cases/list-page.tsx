@@ -2,17 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { apiCollection } from "@/api";
-import { useAuthentication } from "@/auth-context";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import type { CaseRecord, SignalEvent, SignalReceipt } from "@/case-types";
-import { SignalProviderSection } from "@/signal-provider-section";
-import type { Provider } from "@/setup-types";
-import type { Target } from "@/target-types";
+import { SignalProviderSection } from "@/providers/signal-section";
+
+type CaseRecord = components["schemas"]["Case"];
+type SignalEvent = components["schemas"]["SignalEvent"];
+type SignalReceipt = components["schemas"]["SignalReceipt"];
+type Provider = components["schemas"]["Provider"];
+type Target = components["schemas"]["Target"];
 
 type Snapshot = {
   cases: CaseRecord[];
@@ -23,10 +27,28 @@ type Snapshot = {
 
 async function loadSnapshot(): Promise<Snapshot> {
   const [cases, receipts, providers, targets] = await Promise.all([
-    apiCollection<CaseRecord>("/cases"),
-    apiCollection<SignalReceipt>("/signal-receipts"),
-    apiCollection<Provider>("/providers"),
-    apiCollection<Target>("/targets"),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/signal-receipts", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
   ]);
   return { cases, receipts, providers, targets };
 }
@@ -67,7 +89,13 @@ export function CaseListPage() {
     setLoadingReceipt(receiptId);
     setError("");
     try {
-      const records = await apiCollection<SignalEvent>(`/signal-receipts/${receiptId}/events`);
+      const records = await collectPages((after) =>
+        apiClient
+          .GET("/api/v1/signal-receipts/{id}/events", {
+            params: { path: { id: receiptId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      );
       setEvents((current) => ({ ...current, [receiptId]: records }));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));

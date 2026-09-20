@@ -5,10 +5,12 @@ ARG RUNNER_IMAGE=debian:bookworm-slim
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS assets
 
 WORKDIR /app
-COPY assets/package.json assets/package-lock.json assets/
-RUN npm --prefix assets ci
+COPY assets/package.json assets/pnpm-lock.yaml assets/
+RUN corepack enable \
+  && cd assets \
+  && pnpm install --frozen-lockfile
 COPY assets assets
-RUN npm --prefix assets run build
+RUN cd assets && pnpm run build
 
 FROM ${ELIXIR_IMAGE} AS builder
 

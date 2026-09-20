@@ -1,11 +1,7 @@
 import { createContext, useContext } from "react";
+import type { components } from "@/api/schema";
 
-export type Account = {
-  id: string;
-  email: string;
-  role: "admin" | "operator" | "viewer";
-  role_version: number;
-};
+export type Account = components["schemas"]["Account"];
 
 export type Authentication = {
   account: Account | null;

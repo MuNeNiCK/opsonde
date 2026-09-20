@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { KeyRound, Link } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest, type DataResponse } from "@/api";
-import { useAuthentication } from "@/auth-context";
+import { apiClient, apiData } from "@/api/client";
+import type { components } from "@/api/schema";
+import { useAuthentication } from "@/auth/context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,15 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
-type OIDCProvider = {
-  id?: string;
-  issuer?: string;
-  client_id?: string;
-  id_token_alg?: string;
-  callback_uri?: string;
-  enabled: boolean;
-  revision?: number;
-};
+type OIDCProvider = components["schemas"]["OIDCProvider"];
 
 type Props = {
   canManage: boolean;
@@ -38,7 +31,9 @@ export function OIDCSetup({ canManage, onError }: Props) {
     if (!canManage) return;
 
     let active = true;
-    apiRequest<DataResponse<OIDCProvider>>("/oidc/provider")
+    apiClient
+      .GET("/api/v1/oidc/provider")
+      .then(apiData)
       .then(({ data }) => {
         if (!active) return;
         setProvider(data);
@@ -66,7 +61,7 @@ export function OIDCSetup({ canManage, onError }: Props) {
       typeof issuer !== "string" ||
       typeof clientId !== "string" ||
       typeof clientSecret !== "string" ||
-      typeof idTokenAlg !== "string"
+      !isIDTokenAlgorithm(idTokenAlg)
     ) {
       onError(t("setup.requestFailed"));
       return;
@@ -76,18 +71,19 @@ export function OIDCSetup({ canManage, onError }: Props) {
     setLinked(false);
     onError("");
     try {
-      const { data } = await apiRequest<DataResponse<OIDCProvider>>("/oidc/provider", {
-        method: "PUT",
-        body: JSON.stringify({
-          oidc_provider: {
-            issuer,
-            client_id: clientId,
-            client_secret: clientSecret,
-            id_token_alg: idTokenAlg,
-            enabled,
+      const { data } = apiData(
+        await apiClient.PUT("/api/v1/oidc/provider", {
+          body: {
+            oidc_provider: {
+              issuer,
+              client_id: clientId,
+              client_secret: clientSecret,
+              id_token_alg: idTokenAlg,
+              enabled,
+            },
           },
         }),
-      });
+      );
       setProvider(data);
       setEnabled(data.enabled);
       const secretInput = formElement.elements.namedItem("client_secret");
@@ -220,5 +216,14 @@ export function OIDCSetup({ canManage, onError }: Props) {
         </Card>
       )}
     </section>
+  );
+}
+
+function isIDTokenAlgorithm(
+  value: FormDataEntryValue | null,
+): value is "RS256" | "PS256" | "ES256" | "ES384" | "ES512" | "EdDSA" | "Ed25519" | "Ed448" {
+  return (
+    typeof value === "string" &&
+    ["RS256", "PS256", "ES256", "ES384", "ES512", "EdDSA", "Ed25519", "Ed448"].includes(value)
   );
 }

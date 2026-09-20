@@ -1,10 +1,8 @@
-import { lazy, Suspense, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AppShell } from "@/app-shell";
-import { AuthenticationProvider } from "@/auth";
-import { useAuthentication } from "@/auth-context";
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,55 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
-const CaseListPage = lazy(() =>
-  import("@/case-list-page").then((module) => ({ default: module.CaseListPage })),
-);
-const CaseDetailPage = lazy(() =>
-  import("@/case-detail-page").then((module) => ({ default: module.CaseDetailPage })),
-);
-const SetupPage = lazy(() =>
-  import("@/setup-page").then((module) => ({ default: module.SetupPage })),
-);
-const TargetPage = lazy(() =>
-  import("@/target-page").then((module) => ({ default: module.TargetPage })),
-);
-const AuditPage = lazy(() =>
-  import("@/audit-page").then((module) => ({ default: module.AuditPage })),
-);
-const ReportPage = lazy(() =>
-  import("@/report-page").then((module) => ({ default: module.ReportPage })),
-);
-const CLILoginPage = lazy(() =>
-  import("@/cli-login-page").then((module) => ({ default: module.CLILoginPage })),
-);
-
-function AuthenticationGate({ children }: { children: ReactNode }) {
-  const { account, loading } = useAuthentication();
-  const location = useLocation();
-  const { t } = useTranslation();
-
-  if (loading) {
-    return (
-      <div className="flex min-h-svh items-center justify-center gap-2 text-muted-foreground">
-        <Spinner />
-        <span className="sr-only">{t("common.loading")}</span>
-      </div>
-    );
-  }
-
-  if (!account) {
-    return (
-      <Navigate
-        to="/login"
-        replace
-        state={{ from: location.pathname + location.search + location.hash }}
-      />
-    );
-  }
-  return children;
-}
-
-function LoginPage() {
+export function LoginPage() {
   const { account, bootstrap, oidcEnabled, signIn, signInWithOIDC } = useAuthentication();
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -211,70 +161,5 @@ function LoginPage() {
         </Card>
       </div>
     </main>
-  );
-}
-
-function FoundationPage({ title }: { title: string }) {
-  const { t } = useTranslation();
-  return (
-    <main className="p-6 lg:p-8">
-      <h1 className="text-2xl font-semibold tracking-tight">{t(title)}</h1>
-      <p className="mt-2 text-muted-foreground">{t("pages.foundation")}</p>
-    </main>
-  );
-}
-
-function AppRoutes() {
-  return (
-    <Suspense fallback={<PageSpinner />}>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/cli-login/:requestId"
-          element={
-            <AuthenticationGate>
-              <CLILoginPage />
-            </AuthenticationGate>
-          }
-        />
-        <Route
-          element={
-            <AuthenticationGate>
-              <AppShell />
-            </AuthenticationGate>
-          }
-        >
-          <Route index element={<Navigate to="/cases" replace />} />
-          <Route path="cases" element={<CaseListPage />} />
-          <Route path="cases/:caseId" element={<CaseDetailPage />} />
-          <Route path="targets" element={<TargetPage />} />
-          <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
-          <Route path="audits" element={<AuditPage />} />
-          <Route path="reports" element={<ReportPage />} />
-          <Route path="settings" element={<SetupPage />} />
-          <Route path="*" element={<FoundationPage title="pages.notFound" />} />
-        </Route>
-      </Routes>
-    </Suspense>
-  );
-}
-
-function PageSpinner() {
-  const { t } = useTranslation();
-  return (
-    <div className="flex min-h-svh items-center justify-center gap-2 text-muted-foreground">
-      <Spinner />
-      <span className="sr-only">{t("common.loading")}</span>
-    </div>
-  );
-}
-
-export default function App() {
-  return (
-    <BrowserRouter>
-      <AuthenticationProvider>
-        <AppRoutes />
-      </AuthenticationProvider>
-    </BrowserRouter>
   );
 }

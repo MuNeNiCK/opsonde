@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest } from "@/api";
+import { apiClient } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { AuthoritySetting } from "@/setup-types";
+
+type AuthoritySetting = components["schemas"]["AuthoritySetting"];
 
 type Props = {
   setting: AuthoritySetting;
@@ -40,9 +42,8 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
     setSaving(true);
     onError("");
     try {
-      await apiRequest("/authority-setting", {
-        method: "PUT",
-        body: JSON.stringify({
+      await apiClient.PUT("/api/v1/authority-setting", {
+        body: {
           authority_setting: {
             expected_setting_revision: setting.setting_revision,
             authority_mode: mode,
@@ -56,7 +57,7 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
             max_no_progress_turns: integer(form, "max_no_progress_turns"),
             reason,
           },
-        }),
+        },
       });
       await onRefresh();
     } catch (error) {

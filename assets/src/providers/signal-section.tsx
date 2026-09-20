@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest } from "@/api";
+import { apiClient } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import type { Provider } from "@/setup-types";
+
+type Provider = components["schemas"]["Provider"];
 
 type Props = {
   providers: Provider[];
@@ -53,9 +55,8 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
     if (adapterType === "zabbix-webhook" && timezone) configuration.timezone = timezone;
 
     const created = await mutate("create", () =>
-      apiRequest("/providers", {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/providers", {
+        body: {
           provider: {
             name,
             kind: "signal",
@@ -63,19 +64,30 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
             configuration,
             credentials: { secret },
           },
-        }),
+        },
       }),
     );
     if (created) formElement.reset();
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
-    await mutate(`${provider.id}-${action}`, () =>
-      apiRequest(`/providers/${provider.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({ provider: { expected_revision: provider.revision } }),
-      }),
-    );
+    const body = { provider: { expected_revision: provider.revision } };
+    await mutate(`${provider.id}-${action}`, () => {
+      if (action === "check")
+        return apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      if (action === "enable")
+        return apiClient.POST("/api/v1/providers/{id}/enable", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      return apiClient.POST("/api/v1/providers/{id}/disable", {
+        params: { path: { id: provider.id } },
+        body,
+      });
+    });
   }
 
   return (

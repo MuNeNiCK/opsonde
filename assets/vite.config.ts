@@ -7,13 +7,14 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       "src/components/ui/**",
+      "src/api/schema.d.ts",
       "src/hooks/use-mobile.ts",
       "src/index.css",
       "src/lib/utils.ts",
     ],
   },
   lint: {
-    ignorePatterns: ["src/components/ui/**", "src/hooks/use-mobile.ts"],
+    ignorePatterns: ["src/api/schema.d.ts", "src/components/ui/**", "src/hooks/use-mobile.ts"],
     plugins: ["react", "typescript", "oxc"],
     rules: {
       "react/rules-of-hooks": "error",
@@ -44,6 +45,6 @@ export default defineConfig({
   },
   build: {
     outDir: "../priv/static",
-    emptyOutDir: false,
+    emptyOutDir: true,
   },
 });

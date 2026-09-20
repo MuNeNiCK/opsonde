@@ -2,18 +2,10 @@ import { Children, useCallback, useEffect, useState, type FormEvent, type ReactN
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
-import { apiCollection, apiRequest, type DataResponse } from "@/api";
-import type { Account } from "@/auth-context";
-import { useAuthentication } from "@/auth-context";
-import type {
-  Approval,
-  CaseEvent,
-  CaseSnapshot,
-  Evidence,
-  Proposal,
-  ReviewDecision,
-  Turn,
-} from "@/case-types";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
+import type { Account } from "@/auth/context";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,8 +15,17 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { Provider } from "@/setup-types";
-import type { AccessMethod, Target } from "@/target-types";
+
+type Approval = components["schemas"]["Approval"];
+type CaseEvent = components["schemas"]["CaseEvent"];
+type CaseSnapshot = components["schemas"]["CaseSnapshot"];
+type Evidence = components["schemas"]["Evidence"];
+type Proposal = components["schemas"]["Proposal"];
+type ReviewDecision = components["schemas"]["ReviewDecision"];
+type Turn = components["schemas"]["ResolverTurn"];
+type Provider = components["schemas"]["Provider"];
+type AccessMethod = components["schemas"]["AccessMethod"];
+type Target = components["schemas"]["Target"];
 
 type Detail = {
   snapshot: CaseSnapshot;
@@ -52,16 +53,68 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
     providers,
     accounts,
   ] = await Promise.all([
-    apiRequest<DataResponse<CaseSnapshot>>(`/cases/${caseId}`),
-    apiCollection<CaseEvent>(`/cases/${caseId}/timeline`),
-    apiCollection<Turn>(`/cases/${caseId}/turns`),
-    apiCollection<Evidence>(`/cases/${caseId}/evidence`),
-    apiCollection<Approval>(`/cases/${caseId}/approvals`),
-    apiCollection<ReviewDecision>(`/cases/${caseId}/review-decisions`),
-    apiCollection<Target>("/targets"),
-    apiCollection<AccessMethod>("/access-methods"),
-    apiCollection<Provider>("/providers"),
-    includeAccounts ? apiCollection<Account>("/accounts") : Promise.resolve([]),
+    apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/timeline", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/turns", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/evidence", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/approvals", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/review-decisions", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/access-methods", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    includeAccounts
+      ? collectPages((after) =>
+          apiClient
+            .GET("/api/v1/accounts", {
+              params: { query: { limit: 100, after: after ?? undefined } },
+            })
+            .then(apiData),
+        )
+      : Promise.resolve([]),
   ]);
   return {
     snapshot: snapshotResponse.data,
@@ -141,11 +194,17 @@ export function CaseDetailPage() {
   const methodName = (id: string) => detail.methods.find((item) => item.id === id)?.name ?? id;
 
   async function lifecycle(action: "claim" | "cancel") {
+    const request = { case: { expected_revision: incident.revision } };
     await mutate(action, () =>
-      apiRequest(`/cases/${incident.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({ case: { expected_revision: incident.revision } }),
-      }),
+      action === "claim"
+        ? apiClient.POST("/api/v1/cases/{id}/claim", {
+            params: { path: { id: incident.id } },
+            body: request,
+          })
+        : apiClient.POST("/api/v1/cases/{id}/cancel", {
+            params: { path: { id: incident.id } },
+            body: request,
+          }),
     );
   }
 
@@ -153,9 +212,9 @@ export function CaseDetailPage() {
     event.preventDefault();
     const ownerId = formValue(new FormData(event.currentTarget), "owner_id");
     await mutate("handoff", () =>
-      apiRequest(`/cases/${incident.id}/handoff`, {
-        method: "POST",
-        body: JSON.stringify({ case: { expected_revision: incident.revision, owner_id: ownerId } }),
+      apiClient.POST("/api/v1/cases/{id}/handoff", {
+        params: { path: { id: incident.id } },
+        body: { case: { expected_revision: incident.revision, owner_id: ownerId } },
       }),
     );
   }
@@ -166,14 +225,14 @@ export function CaseDetailPage() {
     const form = new FormData(event.currentTarget);
     const integer = (name: string) => Number(formValue(form, name));
     await mutate("resume", () =>
-      apiRequest(`/cases/${incident.id}/resume`, {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/cases/{id}/resume", {
+        params: { path: { id: incident.id } },
+        body: {
           case: {
             expected_case_revision: incident.revision,
             resolution_run_id: latestRun.id,
             expected_run_revision: latestRun.revision,
-            authority_mode: formValue(form, "authority_mode"),
+            authority_mode: parseAuthorityMode(formValue(form, "authority_mode")),
             max_elapsed_seconds: integer("max_elapsed_seconds"),
             max_resolver_turns: integer("max_resolver_turns"),
             max_target_requests: integer("max_target_requests"),
@@ -183,7 +242,7 @@ export function CaseDetailPage() {
             max_no_progress_turns: integer("max_no_progress_turns"),
             reason: formValue(form, "reason"),
           },
-        }),
+        },
       }),
     );
   }
@@ -360,16 +419,16 @@ export function CaseDetailPage() {
               pending={pending}
               decide={(decision, reason) =>
                 mutate(`proposal-${proposal.id}`, () =>
-                  apiRequest(`/proposals/${proposal.id}/decision`, {
-                    method: "POST",
-                    body: JSON.stringify({
+                  apiClient.POST("/api/v1/proposals/{id}/decision", {
+                    params: { path: { id: proposal.id } },
+                    body: {
                       proposal: {
                         expected_revision: proposal.revision,
                         proposal_digest: proposal.proposal_digest,
                         decision,
                         reason,
                       },
-                    }),
+                    },
                   }),
                 )
               }
@@ -510,6 +569,12 @@ const selectClass =
 function formValue(form: FormData, name: string) {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
+}
+
+function parseAuthorityMode(value: string): components["schemas"]["Case"]["authority_mode"] {
+  return value === "readonly" || value === "ask" || value === "auto" || value === "full_access"
+    ? value
+    : "readonly";
 }
 
 function ProposalCard({

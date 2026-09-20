@@ -1,14 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, KeyRound, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest } from "@/api";
+import { apiClient } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import type { AIUsageRoleAssignment, Provider } from "@/setup-types";
+
+type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
+type Provider = components["schemas"]["Provider"];
 
 type Props = {
   providers: Provider[];
@@ -73,9 +76,8 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     const credentials = apiKey ? { api_key: apiKey } : {};
 
     const created = await mutate("create-provider", () =>
-      apiRequest("/providers", {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/providers", {
+        body: {
           provider: {
             name,
             kind: "ai",
@@ -83,7 +85,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
             configuration,
             credentials,
           },
-        }),
+        },
       }),
     );
 
@@ -91,12 +93,25 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
-    await mutate(`${provider.id}-${action}`, () =>
-      apiRequest(`/providers/${provider.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({ provider: { expected_revision: provider.revision } }),
-      }),
-    );
+    const body = { provider: { expected_revision: provider.revision } };
+    await mutate(`${provider.id}-${action}`, () => {
+      if (action === "check") {
+        return apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      }
+      if (action === "enable") {
+        return apiClient.POST("/api/v1/providers/{id}/enable", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      }
+      return apiClient.POST("/api/v1/providers/{id}/disable", {
+        params: { path: { id: provider.id } },
+        body,
+      });
+    });
   }
 
   async function createAssignment(event: FormEvent<HTMLFormElement>) {
@@ -108,7 +123,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
 
     if (
       typeof providerId !== "string" ||
-      typeof role !== "string" ||
+      (role !== "resolver" && role !== "reviewer") ||
       typeof priority !== "string"
     ) {
       onError(t("setup.requestFailed"));
@@ -116,25 +131,24 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     }
 
     await mutate("create-assignment", () =>
-      apiRequest("/ai-usage-role-assignments", {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/ai-usage-role-assignments", {
+        body: {
           assignment: { provider_id: providerId, role, priority: Number(priority) },
-        }),
+        },
       }),
     );
   }
 
   async function toggleAssignment(assignment: AIUsageRoleAssignment) {
     await mutate(`assignment-${assignment.id}`, () =>
-      apiRequest(`/ai-usage-role-assignments/${assignment.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
+      apiClient.PATCH("/api/v1/ai-usage-role-assignments/{id}", {
+        params: { path: { id: assignment.id } },
+        body: {
           assignment: {
             expected_revision: assignment.revision,
             enabled: !assignment.enabled,
           },
-        }),
+        },
       }),
     );
   }

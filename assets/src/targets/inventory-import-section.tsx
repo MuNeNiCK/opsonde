@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiCollection, apiRequest, type DataResponse } from "@/api";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { Provider } from "@/setup-types";
-import type { InventoryImport, InventoryImportRow } from "@/target-types";
+
+type Provider = components["schemas"]["Provider"];
+type InventoryImport = components["schemas"]["InventoryImport"];
+type InventoryImportRow = components["schemas"]["InventoryImportRow"];
 
 type Props = {
   providers: Provider[];
@@ -51,7 +54,13 @@ export function InventoryImportSection({
   useEffect(() => {
     if (!selectedId) return;
     let active = true;
-    apiCollection<InventoryImportRow>(`/inventory-imports/${selectedId}/rows`)
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/inventory-imports/{id}/rows", {
+          params: { path: { id: selectedId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    )
       .then((next) => {
         if (active) setRows(next);
       })
@@ -89,14 +98,12 @@ export function InventoryImportSection({
     await mutate(
       "manual-preview",
       async () => {
-        const response = await apiRequest<DataResponse<InventoryImport>>(
-          "/inventory-imports/manual-preview",
-          {
-            method: "POST",
-            body: JSON.stringify({
+        const response = apiData(
+          await apiClient.POST("/api/v1/inventory-imports/manual-preview", {
+            body: {
               inventory_import: { source: value(form, "source"), csv: value(form, "csv") },
-            }),
-          },
+            },
+          }),
         );
         return response.data;
       },
@@ -113,11 +120,9 @@ export function InventoryImportSection({
     await mutate(
       "provider-preview",
       async () => {
-        const response = await apiRequest<DataResponse<InventoryImport>>(
-          "/inventory-imports/provider-preview",
-          {
-            method: "POST",
-            body: JSON.stringify({
+        const response = apiData(
+          await apiClient.POST("/api/v1/inventory-imports/provider-preview", {
+            body: {
               inventory_import: {
                 source: value(form, "source"),
                 provider_id: provider.id,
@@ -128,8 +133,8 @@ export function InventoryImportSection({
                   page_size: Number(value(form, "page_size")),
                 },
               },
-            }),
-          },
+            },
+          }),
         );
         return response.data;
       },
@@ -140,17 +145,16 @@ export function InventoryImportSection({
   async function applySelected() {
     if (!selected) return;
     await mutate(`apply-${selected.id}`, async () => {
-      const response = await apiRequest<DataResponse<InventoryImport>>(
-        `/inventory-imports/${selected.id}/apply`,
-        {
-          method: "POST",
-          body: JSON.stringify({
+      const response = apiData(
+        await apiClient.POST("/api/v1/inventory-imports/{id}/apply", {
+          params: { path: { id: selected.id } },
+          body: {
             inventory_import: {
               expected_revision: selected.revision,
               expected_digest: selected.content_digest,
             },
-          }),
-        },
+          },
+        }),
       );
       return response.data;
     });

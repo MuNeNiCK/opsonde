@@ -130,15 +130,15 @@ defmodule Opsonde.MixProject do
       ],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      "assets.setup": ["cmd npm --prefix assets ci"],
-      "assets.build": ["cmd npm --prefix assets run build"],
+      "assets.setup": ["cmd --cd assets corepack pnpm install --frozen-lockfile"],
+      "assets.build": ["cmd --cd assets corepack pnpm run build"],
       test: ["ash.setup --quiet", "test"],
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",
         "format",
         "openapi.spec.json --spec OpsondeWeb.ApiSpec --pretty=true --vendor-extensions=false --start-app=false --check=true --filename openapi.json",
-        "cmd npm --prefix assets run check",
+        "cmd --cd assets corepack pnpm run check",
         "assets.build",
         "test"
       ]

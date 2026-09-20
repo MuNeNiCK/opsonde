@@ -1,24 +1,23 @@
 import { useState, type FormEvent } from "react";
 import { Boxes, Link2, Plus, ShieldBan } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest, type DataResponse } from "@/api";
+import { apiClient, apiData } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import type { Provider } from "@/setup-types";
-import { targetAdapter } from "@/target-adapters";
-import type {
-  AccessMethod,
-  ExternalIdentity,
-  ManagementBoundary,
-  Target,
-  TargetCapabilities,
-  TargetPolicy,
-  TargetRelationship,
-} from "@/target-types";
+import { targetAdapter } from "@/targets/adapters";
+
+type Provider = components["schemas"]["Provider"];
+type AccessMethod = components["schemas"]["AccessMethod"];
+type ExternalIdentity = components["schemas"]["ExternalIdentity"];
+type ManagementBoundary = components["schemas"]["ManagementBoundary"];
+type Target = components["schemas"]["Target"];
+type TargetPolicy = components["schemas"]["TargetPolicy"];
+type TargetRelationship = components["schemas"]["TargetRelationship"];
 
 type Props = {
   providers: Provider[];
@@ -85,25 +84,12 @@ export function TargetRegisterSection({
     }
   }
 
-  function submit(
-    key: string,
-    path: string,
-    root: string,
-    body: (form: FormData) => Record<string, unknown>,
-  ) {
+  function submit(key: string, request: (form: FormData) => Promise<unknown>) {
     return (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const element = event.currentTarget;
       const form = new FormData(element);
-      void mutate(
-        key,
-        () =>
-          apiRequest(path, {
-            method: "POST",
-            body: JSON.stringify({ [root]: body(form) }),
-          }),
-        element,
-      );
+      void mutate(key, () => request(form), element);
     };
   }
 
@@ -121,12 +107,11 @@ export function TargetRegisterSection({
     await mutate(
       "access-method",
       async () => {
-        const response = await apiRequest<DataResponse<TargetCapabilities>>(
-          `/providers/${provider.id}/target-capabilities`,
-          {
-            method: "POST",
-            body: JSON.stringify({ provider: { expected_revision: provider.revision } }),
-          },
+        const response = apiData(
+          await apiClient.POST("/api/v1/providers/{id}/target-capabilities", {
+            params: { path: { id: provider.id } },
+            body: { provider: { expected_revision: provider.revision } },
+          }),
         );
         const capabilities = Array.from(
           new Set(
@@ -135,9 +120,8 @@ export function TargetRegisterSection({
             ),
           ),
         );
-        await apiRequest("/access-methods", {
-          method: "POST",
-          body: JSON.stringify({
+        await apiClient.POST("/api/v1/access-methods", {
+          body: {
             access_method: {
               target_id: value(form, "target_id"),
               provider_id: provider.id,
@@ -149,7 +133,7 @@ export function TargetRegisterSection({
               priority: Number(value(form, "priority")),
               capabilities,
             },
-          }),
+          },
         });
       },
       element,
@@ -168,14 +152,15 @@ export function TargetRegisterSection({
           <FormCard title={t("targets.addBoundary")} description={t("targets.boundaryDescription")}>
             <form
               className="grid gap-4 md:grid-cols-2"
-              onSubmit={submit(
-                "boundary",
-                "/management-boundaries",
-                "management_boundary",
-                (form) => ({
-                  name: value(form, "name"),
-                  kind: value(form, "kind"),
-                  facts: {},
+              onSubmit={submit("boundary", (form) =>
+                apiClient.POST("/api/v1/management-boundaries", {
+                  body: {
+                    management_boundary: {
+                      name: value(form, "name"),
+                      kind: value(form, "kind"),
+                      facts: {},
+                    },
+                  },
                 }),
               )}
             >
@@ -194,13 +179,19 @@ export function TargetRegisterSection({
           <FormCard title={t("targets.addTarget")} description={t("targets.targetDescription")}>
             <form
               className="grid gap-4 md:grid-cols-2"
-              onSubmit={submit("target", "/targets", "target", (form) => ({
-                name: value(form, "name"),
-                kind: value(form, "kind"),
-                platform: value(form, "platform"),
-                facts: {},
-                management_boundary_id: value(form, "management_boundary_id") || null,
-              }))}
+              onSubmit={submit("target", (form) =>
+                apiClient.POST("/api/v1/targets", {
+                  body: {
+                    target: {
+                      name: value(form, "name"),
+                      kind: value(form, "kind"),
+                      platform: value(form, "platform"),
+                      facts: {},
+                      management_boundary_id: value(form, "management_boundary_id") || null,
+                    },
+                  },
+                }),
+              )}
             >
               <Field id="record-name" label={t("targets.name")} name="name" required />
               <Field
@@ -238,12 +229,18 @@ export function TargetRegisterSection({
           <FormCard title={t("targets.addIdentity")} description={t("targets.identityDescription")}>
             <form
               className="grid gap-4 md:grid-cols-2"
-              onSubmit={submit("identity", "/external-identities", "external_identity", (form) => ({
-                target_id: value(form, "target_id"),
-                source: value(form, "source"),
-                kind: value(form, "kind"),
-                value: value(form, "value"),
-              }))}
+              onSubmit={submit("identity", (form) =>
+                apiClient.POST("/api/v1/external-identities", {
+                  body: {
+                    external_identity: {
+                      target_id: value(form, "target_id"),
+                      source: value(form, "source"),
+                      kind: value(form, "kind"),
+                      value: value(form, "value"),
+                    },
+                  },
+                }),
+              )}
             >
               <TargetSelect targets={activeTargets} id="identity-target" />
               <Field
@@ -319,13 +316,19 @@ export function TargetRegisterSection({
           >
             <form
               className="grid gap-4 md:grid-cols-2"
-              onSubmit={submit("relationship", "/target-relationships", "relationship", (form) => ({
-                source_target_id: value(form, "source_target_id"),
-                destination_target_id: value(form, "destination_target_id"),
-                kind: value(form, "kind"),
-                facts: {},
-                valid_until: null,
-              }))}
+              onSubmit={submit("relationship", (form) =>
+                apiClient.POST("/api/v1/target-relationships", {
+                  body: {
+                    relationship: {
+                      source_target_id: value(form, "source_target_id"),
+                      destination_target_id: value(form, "destination_target_id"),
+                      kind: value(form, "kind"),
+                      facts: {},
+                      valid_until: null,
+                    },
+                  },
+                }),
+              )}
             >
               <TargetSelect
                 targets={activeTargets}
@@ -357,22 +360,27 @@ export function TargetRegisterSection({
           <FormCard title={t("targets.addPolicy")} description={t("targets.policyDescription")}>
             <form
               className="grid gap-4 md:grid-cols-2"
-              onSubmit={submit("policy", "/target-policies", "target_policy", (form) => {
+              onSubmit={submit("policy", (form) => {
                 const selector = value(form, "selector");
                 const prefix = value(form, "prefix");
-                return {
-                  target_id: value(form, "target_id"),
-                  name: value(form, "name"),
-                  request_kinds:
-                    value(form, "request_kinds") === "both"
-                      ? ["observation", "effect"]
-                      : [value(form, "request_kinds")],
-                  capabilities: values(value(form, "capabilities")),
-                  operations: values(value(form, "operations")),
-                  selector_match: { [selector]: { prefix } },
-                  parameter_match: {},
-                  reason: value(form, "reason"),
-                };
+                const requestKinds: Array<"observation" | "effect"> =
+                  value(form, "request_kinds") === "both"
+                    ? ["observation", "effect"]
+                    : [value(form, "request_kinds") === "effect" ? "effect" : "observation"];
+                return apiClient.POST("/api/v1/target-policies", {
+                  body: {
+                    target_policy: {
+                      target_id: value(form, "target_id"),
+                      name: value(form, "name"),
+                      request_kinds: requestKinds,
+                      capabilities: values(value(form, "capabilities")),
+                      operations: values(value(form, "operations")),
+                      selector_match: { [selector]: { prefix } },
+                      parameter_match: {},
+                      reason: value(form, "reason"),
+                    },
+                  },
+                });
               })}
             >
               <TargetSelect targets={activeTargets} id="policy-target" />

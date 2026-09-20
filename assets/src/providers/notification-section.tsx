@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { apiRequest } from "@/api";
+import { apiClient } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { Provider } from "@/setup-types";
+
+type Provider = components["schemas"]["Provider"];
 
 type Props = {
   providers: Provider[];
@@ -46,9 +48,8 @@ export function NotificationProviderSection({ providers, canManage, onRefresh, o
     if (caCertificate) configuration.ca_certificate = caCertificate;
 
     const created = await mutate("create", () =>
-      apiRequest("/providers", {
-        method: "POST",
-        body: JSON.stringify({
+      apiClient.POST("/api/v1/providers", {
+        body: {
           provider: {
             name: formValue(form, "name"),
             kind: "notification",
@@ -56,19 +57,30 @@ export function NotificationProviderSection({ providers, canManage, onRefresh, o
             configuration,
             credentials: { signing_secret: formValue(form, "signing_secret") },
           },
-        }),
+        },
       }),
     );
     if (created) formElement.reset();
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
-    await mutate(`${provider.id}-${action}`, () =>
-      apiRequest(`/providers/${provider.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({ provider: { expected_revision: provider.revision } }),
-      }),
-    );
+    const body = { provider: { expected_revision: provider.revision } };
+    await mutate(`${provider.id}-${action}`, () => {
+      if (action === "check")
+        return apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      if (action === "enable")
+        return apiClient.POST("/api/v1/providers/{id}/enable", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      return apiClient.POST("/api/v1/providers/{id}/disable", {
+        params: { path: { id: provider.id } },
+        body,
+      });
+    });
   }
 
   return (

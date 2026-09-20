@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, Network, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiRequest, type DataResponse } from "@/api";
+import { apiClient, apiData } from "@/api/client";
+import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { Provider } from "@/setup-types";
-import { targetAdapter, targetAdapterOptions } from "@/target-adapters";
+
+type Provider = components["schemas"]["Provider"];
+import { targetAdapter, targetAdapterOptions } from "@/targets/adapters";
 
 type Props = {
   providers: Provider[];
@@ -85,27 +87,28 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
     }
 
     const created = await mutate("create-target-provider", async () => {
-      const response = await apiRequest<DataResponse<Provider>>("/providers", {
-        method: "POST",
-        body: JSON.stringify({
-          provider: {
-            name: value(form, "name"),
-            kind: "target",
-            adapter_type: adapterType,
-            configuration,
-            credentials,
+      const response = apiData(
+        await apiClient.POST("/api/v1/providers", {
+          body: {
+            provider: {
+              name: value(form, "name"),
+              kind: "target",
+              adapter_type: adapterType,
+              configuration,
+              credentials,
+            },
           },
         }),
-      });
+      );
       setCheckInputs((current) => ({ ...current, [response.data.id]: endpoint }));
-      await apiRequest(`/providers/${response.data.id}/check`, {
-        method: "POST",
-        body: JSON.stringify({
+      await apiClient.POST("/api/v1/providers/{id}/check", {
+        params: { path: { id: response.data.id } },
+        body: {
           provider: {
             expected_revision: response.data.revision,
             check_input: { endpoint },
           },
-        }),
+        },
       });
     });
 
@@ -118,29 +121,30 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
     const form = new FormData(formElement);
     const resource = value(form, "resource");
     const created = await mutate("create-inventory-provider", async () => {
-      const response = await apiRequest<DataResponse<Provider>>("/providers", {
-        method: "POST",
-        body: JSON.stringify({
-          provider: {
-            name: value(form, "name"),
-            kind: "inventory",
-            adapter_type: "netbox-api",
-            configuration: {
-              base_url: value(form, "base_url"),
-              ca_certificate: value(form, "ca_certificate"),
+      const response = apiData(
+        await apiClient.POST("/api/v1/providers", {
+          body: {
+            provider: {
+              name: value(form, "name"),
+              kind: "inventory",
+              adapter_type: "netbox-api",
+              configuration: {
+                base_url: value(form, "base_url"),
+                ca_certificate: value(form, "ca_certificate"),
+              },
+              credentials: { token: value(form, "token") },
             },
-            credentials: { token: value(form, "token") },
           },
         }),
-      });
-      await apiRequest(`/providers/${response.data.id}/check`, {
-        method: "POST",
-        body: JSON.stringify({
+      );
+      await apiClient.POST("/api/v1/providers/{id}/check", {
+        params: { path: { id: response.data.id } },
+        body: {
           provider: {
             expected_revision: response.data.revision,
             check_input: { resource, filters: {}, page_size: 50 },
           },
-        }),
+        },
       });
     });
     if (created) formElement.reset();
@@ -159,17 +163,29 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
           }
         : { resource: "devices", filters: {}, page_size: 50 };
 
-    await mutate(`${provider.id}-${action}`, () =>
-      apiRequest(`/providers/${provider.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({
-          provider: {
-            expected_revision: provider.revision,
-            ...(action === "check" ? { check_input: checkInput } : {}),
-          },
-        }),
-      }),
-    );
+    await mutate(`${provider.id}-${action}`, () => {
+      const body = {
+        provider: {
+          expected_revision: provider.revision,
+          ...(action === "check" ? { check_input: checkInput } : {}),
+        },
+      };
+      if (action === "check")
+        return apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: provider.id } },
+          body,
+        });
+      const revisionBody = { provider: { expected_revision: provider.revision } };
+      if (action === "enable")
+        return apiClient.POST("/api/v1/providers/{id}/enable", {
+          params: { path: { id: provider.id } },
+          body: revisionBody,
+        });
+      return apiClient.POST("/api/v1/providers/{id}/disable", {
+        params: { path: { id: provider.id } },
+        body: revisionBody,
+      });
+    });
   }
 
   return (

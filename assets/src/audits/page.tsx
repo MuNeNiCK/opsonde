@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { apiCollection, apiRequest } from "@/api";
-import type { AuditRun, AuditSchedule } from "@/assurance-types";
-import { useAuthentication } from "@/auth-context";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { ManagementBoundary, Target } from "@/target-types";
+
+type AuditRun = components["schemas"]["AuditRun"];
+type AuditSchedule = components["schemas"]["AuditSchedule"];
+type ManagementBoundary = components["schemas"]["ManagementBoundary"];
+type Target = components["schemas"]["Target"];
 
 type Snapshot = {
   schedules: AuditSchedule[];
@@ -27,10 +31,30 @@ const selectClass =
 
 async function loadSnapshot(): Promise<Snapshot> {
   const [schedules, runs, targets, boundaries] = await Promise.all([
-    apiCollection<AuditSchedule>("/audit-schedules"),
-    apiCollection<AuditRun>("/audit-runs"),
-    apiCollection<Target>("/targets"),
-    apiCollection<ManagementBoundary>("/management-boundaries"),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/audit-schedules", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/audit-runs", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/management-boundaries", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
   ]);
   return { schedules, runs, targets, boundaries };
 }
@@ -73,19 +97,18 @@ export function AuditPage() {
     setPending("create");
     setError("");
     try {
-      await apiRequest("/audit-schedules", {
-        method: "POST",
-        body: JSON.stringify({
+      await apiClient.POST("/api/v1/audit-schedules", {
+        body: {
           audit_schedule: {
             name: formValue(form, "name"),
             objective: formValue(form, "objective"),
             timezone: formValue(form, "timezone"),
             cron_expression: formValue(form, "cron_expression"),
-            report_language: formValue(form, "report_language"),
+            report_language: formValue(form, "report_language") === "ja" ? "ja" : "en",
             target_ids: targetIds,
             management_boundary_id: boundary || null,
           },
-        }),
+        },
       });
       formElement.reset();
       setScope("targets");
@@ -101,9 +124,9 @@ export function AuditPage() {
     setPending(schedule.id);
     setError("");
     try {
-      await apiRequest(`/audit-schedules/${schedule.id}/deactivate`, {
-        method: "POST",
-        body: JSON.stringify({ audit_schedule: { expected_revision: schedule.revision } }),
+      await apiClient.POST("/api/v1/audit-schedules/{id}/deactivate", {
+        params: { path: { id: schedule.id } },
+        body: { audit_schedule: { expected_revision: schedule.revision } },
       });
       await refresh();
     } catch (failure) {

@@ -2,16 +2,12 @@ import { useMemo, useState } from "react";
 import { AlertCircle, Terminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
-import { apiRequest, type DataResponse } from "@/api";
-import { useAuthentication } from "@/auth-context";
+import { apiClient, apiData } from "@/api/client";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-
-type ApprovalResponse = {
-  redirect_uri: string;
-};
 
 export function CLILoginPage() {
   const { requestId } = useParams<{ requestId: string }>();
@@ -33,13 +29,18 @@ export function CLILoginPage() {
     setFailed(false);
 
     try {
-      const { data } = await apiRequest<DataResponse<ApprovalResponse>>(
-        `/cli/session-requests/${encodeURIComponent(requestId)}/${action}`,
-        {
-          method: "POST",
-          body: JSON.stringify({ request: { start_token: startToken } }),
-        },
-      );
+      const request = { request: { start_token: startToken } };
+      const result =
+        action === "approve"
+          ? await apiClient.POST("/api/v1/cli/session-requests/{id}/approve", {
+              params: { path: { id: requestId } },
+              body: request,
+            })
+          : await apiClient.POST("/api/v1/cli/session-requests/{id}/deny", {
+              params: { path: { id: requestId } },
+              body: request,
+            });
+      const { data } = apiData(result);
       window.location.replace(data.redirect_uri);
     } catch {
       setFailed(true);

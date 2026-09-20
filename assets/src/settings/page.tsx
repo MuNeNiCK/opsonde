@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Bot, Check, CircleDashed, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiCollection, apiRequest, type DataResponse } from "@/api";
-import { AuthoritySetup } from "@/authority-setup";
-import { useAuthentication } from "@/auth-context";
+import { apiClient, apiData, collectPages } from "@/api/client";
+import type { components } from "@/api/schema";
+import { AuthoritySetup } from "@/settings/authority-section";
+import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { OIDCSetup } from "@/oidc-setup";
-import { ProviderSetup } from "@/provider-setup";
-import type { AIUsageRoleAssignment, AuthoritySetting, Provider } from "@/setup-types";
+import { OIDCSetup } from "@/settings/oidc-section";
+import { ProviderSetup } from "@/providers/ai-section";
+
+type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
+type AuthoritySetting = components["schemas"]["AuthoritySetting"];
+type Provider = components["schemas"]["Provider"];
 
 type Snapshot = {
   providers: Provider[];
@@ -20,9 +24,19 @@ type Snapshot = {
 
 async function loadSnapshot(): Promise<Snapshot> {
   const [providers, assignments, authority] = await Promise.all([
-    apiCollection<Provider>("/providers"),
-    apiCollection<AIUsageRoleAssignment>("/ai-usage-role-assignments"),
-    apiRequest<DataResponse<AuthoritySetting>>("/authority-setting"),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/ai-usage-role-assignments", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    apiClient.GET("/api/v1/authority-setting").then(apiData),
   ]);
   return { providers, assignments, authority: authority.data };
 }

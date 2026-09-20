@@ -23,8 +23,7 @@ erl_crash.dump
 /tmp/
 
 # Web build output is produced from assets/ during setup and release builds.
-/priv/static/assets/
-/priv/static/index.html
+/priv/static/
 /burrito_out/
 /.env
 

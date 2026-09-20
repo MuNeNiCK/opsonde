@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  apiRequest,
+  apiClient,
+  apiData,
   authenticationExpiredEvent,
   clearStoredToken,
   storeToken,
   storedToken,
-} from "@/api";
-import { AuthenticationContext, type Account } from "@/auth-context";
+} from "@/api/client";
+import { AuthenticationContext, type Account } from "@/auth/context";
+import type { components } from "@/api/schema";
 
-type SessionResponse = { data: { account: Account } };
-type SignInResponse = { data: { token: string; account: Account } };
-type OIDCStatusResponse = { data: { enabled: boolean; authorization_url: string | null } };
-type OIDCLinkResponse = { data: { authorization_url: string; expires_at: string } };
+type OIDCStatus = components["schemas"]["OIDCStatusResponse"]["data"];
 
 type OIDCMessage = {
   type: "opsonde:oidc-session" | "opsonde:oidc-linked" | "opsonde:oidc-error";
@@ -67,9 +66,10 @@ function browserOIDC(path: string, successType: OIDCMessage["type"]) {
 export function AuthenticationProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(Boolean(storedToken()));
-  const [oidcStatus, setOIDCStatus] = useState<OIDCStatusResponse["data"]>({
+  const [oidcStatus, setOIDCStatus] = useState<OIDCStatus>({
     enabled: false,
     authorization_url: null,
+    callback_uri: "",
   });
 
   useEffect(() => {
@@ -83,18 +83,20 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    apiRequest<OIDCStatusResponse>("/oidc")
-      .then(({ data }) => setOIDCStatus(data))
-      .catch(() => setOIDCStatus({ enabled: false, authorization_url: null }));
+    apiClient
+      .GET("/api/v1/oidc")
+      .then((result) => setOIDCStatus(apiData(result).data))
+      .catch(() => setOIDCStatus({ enabled: false, authorization_url: null, callback_uri: "" }));
   }, []);
 
   useEffect(() => {
     if (!storedToken()) return;
 
     let active = true;
-    apiRequest<SessionResponse>("/session")
-      .then(({ data }) => {
-        if (active) setAccount(data.account);
+    apiClient
+      .GET("/api/v1/session")
+      .then((result) => {
+        if (active) setAccount(apiData(result).data.account);
       })
       .catch(() => {
         if (active) setAccount(null);
@@ -109,10 +111,11 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { data } = await apiRequest<SignInResponse>("/sessions", {
-      method: "POST",
-      body: JSON.stringify({ session: { email, password } }),
-    });
+    const { data } = apiData(
+      await apiClient.POST("/api/v1/sessions", {
+        body: { session: { email, password } },
+      }),
+    );
     storeToken(data.token);
     setAccount(data.account);
   }, []);
@@ -128,10 +131,7 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
   }, [oidcStatus]);
 
   const linkOIDC = useCallback(async () => {
-    const { data } = await apiRequest<OIDCLinkResponse>("/oidc/link-requests", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    const { data } = apiData(await apiClient.POST("/api/v1/oidc/link-requests"));
     const result = await browserOIDC(data.authorization_url, "opsonde:oidc-linked");
     storeToken(result.token);
     setAccount(result.account);
@@ -139,11 +139,10 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
 
   const bootstrap = useCallback(
     async (email: string, password: string, confirmation: string) => {
-      await apiRequest("/accounts/bootstrap", {
-        method: "POST",
-        body: JSON.stringify({
+      await apiClient.POST("/api/v1/accounts/bootstrap", {
+        body: {
           account: { email, password, password_confirmation: confirmation },
-        }),
+        },
       });
       await signIn(email, password);
     },
@@ -152,7 +151,7 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
-      await apiRequest<void>("/session", { method: "DELETE" });
+      await apiClient.DELETE("/api/v1/session");
     } finally {
       clearStoredToken();
       setAccount(null);
