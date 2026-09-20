@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { CheckCircle2, CircleAlert, KeyRound, Plus } from "lucide-react";
+import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,20 +31,32 @@ function configurationValue(provider: Provider, key: string) {
   return typeof value === "string" ? value : "";
 }
 
+function configurationNumber(provider: Provider, key: string, fallback: number) {
+  const value = provider.configuration[key];
+  return typeof value === "number" ? value : fallback;
+}
+
 export function ProviderSetup({ providers, assignments, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
   const aiProviders = providers.filter((provider) => provider.kind === "ai");
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);
     onError("");
+    setLocalError("");
+    setSuccess("");
     try {
       await action();
       await onRefresh();
       return true;
     } catch {
-      onError(t("setup.requestFailed"));
+      const message = t("setup.requestFailed");
+      setLocalError(message);
+      onError(message);
       return false;
     } finally {
       setPending(null);
@@ -123,6 +136,60 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     });
   }
 
+  async function updateProvider(provider: Provider, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = form.get("name");
+    const service = form.get("service");
+    const model = form.get("model");
+    const endpoint = form.get("endpoint");
+    const apiKey = form.get("api_key");
+    const timeoutMs = form.get("timeout_ms");
+    const maxTokens = form.get("max_tokens");
+
+    if (
+      typeof name !== "string" ||
+      typeof service !== "string" ||
+      typeof model !== "string" ||
+      typeof endpoint !== "string" ||
+      typeof apiKey !== "string" ||
+      typeof timeoutMs !== "string" ||
+      typeof maxTokens !== "string"
+    ) {
+      setLocalError(t("setup.requestFailed"));
+      return;
+    }
+
+    const configuration: Record<string, unknown> = {
+      ...provider.configuration,
+      provider: service,
+      model,
+      timeout_ms: Number(timeoutMs),
+      max_tokens: Number(maxTokens),
+    };
+    if (endpoint) configuration.endpoint = endpoint;
+    else delete configuration.endpoint;
+
+    const providerUpdate: components["schemas"]["UpdateProviderRequest"]["provider"] = {
+      expected_revision: provider.revision,
+      name,
+      configuration,
+    };
+    if (apiKey) providerUpdate.credentials = { api_key: apiKey };
+
+    const updated = await mutate(`${provider.id}-update`, () =>
+      apiClient.PATCH("/api/v1/providers/{id}", {
+        params: { path: { id: provider.id } },
+        body: { provider: providerUpdate },
+      }),
+    );
+
+    if (updated) {
+      setEditingProviderId(null);
+      setSuccess(t("setup.connectionUpdated", { name }));
+    }
+  }
+
   async function createAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -169,6 +236,18 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
       </div>
 
+      {localError && (
+        <Alert variant="destructive">
+          <AlertDescription>{localError}</AlertDescription>
+        </Alert>
+      )}
+      {success && (
+        <Alert>
+          <CheckCircle2 />
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
+
       {canManage && (
         <Card>
           <CardHeader>
@@ -177,56 +256,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
           </CardHeader>
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
-              <div className="space-y-2">
-                <Label htmlFor="provider-name">{t("setup.name")}</Label>
-                <Input id="provider-name" name="name" required maxLength={120} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-service">{t("setup.service")}</Label>
-                <select id="provider-service" name="service" className={selectClassName()}>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="ollama">Ollama</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-model">{t("setup.model")}</Label>
-                <Input id="provider-model" name="model" required maxLength={200} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-endpoint">{t("setup.endpoint")}</Label>
-                <Input id="provider-endpoint" name="endpoint" type="url" placeholder="https://…" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-timeout-ms">{t("setup.timeoutMs")}</Label>
-                <Input
-                  id="provider-timeout-ms"
-                  name="timeout_ms"
-                  type="number"
-                  min={100}
-                  max={600_000}
-                  defaultValue={180_000}
-                  required
-                />
-                <p className="text-xs text-muted-foreground">{t("setup.timeoutMsDescription")}</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-max-tokens">{t("setup.maxTokens")}</Label>
-                <Input
-                  id="provider-max-tokens"
-                  name="max_tokens"
-                  type="number"
-                  min={1}
-                  max={32_768}
-                  defaultValue={4_096}
-                  required
-                />
-                <p className="text-xs text-muted-foreground">{t("setup.maxTokensDescription")}</p>
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="provider-api-key">{t("setup.apiKey")}</Label>
-                <Input id="provider-api-key" name="api_key" type="password" autoComplete="off" />
-              </div>
+              <AIProviderFields idPrefix="provider" />
               <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending !== null}>
                 {pending === "create-provider" ? <Spinner /> : <Plus />}
                 {t("setup.addConnection")}
@@ -272,38 +302,74 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                   </div>
                 </div>
                 {canManage && (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={pending !== null}
-                      onClick={() => void providerAction(provider, "check")}
-                    >
-                      {pending === `${provider.id}-check` && <Spinner />}
-                      {t("setup.check")}
-                    </Button>
-                    {!provider.enabled && (
-                      <Button
-                        size="sm"
-                        disabled={!passed || pending !== null}
-                        onClick={() => void providerAction(provider, "enable")}
-                      >
-                        {pending === `${provider.id}-enable` && <Spinner />}
-                        {t("setup.enable")}
-                      </Button>
-                    )}
-                    {provider.enabled && (
+                  <>
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={pending !== null}
-                        onClick={() => void providerAction(provider, "disable")}
+                        onClick={() =>
+                          setEditingProviderId(
+                            editingProviderId === provider.id ? null : provider.id,
+                          )
+                        }
                       >
-                        {pending === `${provider.id}-disable` && <Spinner />}
-                        {t("setup.disable")}
+                        {editingProviderId === provider.id ? <X /> : <Pencil />}
+                        {t(editingProviderId === provider.id ? "common.cancel" : "setup.edit")}
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={pending !== null}
+                        onClick={() => void providerAction(provider, "check")}
+                      >
+                        {pending === `${provider.id}-check` && <Spinner />}
+                        {t("setup.check")}
+                      </Button>
+                      {!provider.enabled && (
+                        <Button
+                          size="sm"
+                          disabled={!passed || pending !== null}
+                          onClick={() => void providerAction(provider, "enable")}
+                        >
+                          {pending === `${provider.id}-enable` && <Spinner />}
+                          {t("setup.enable")}
+                        </Button>
+                      )}
+                      {provider.enabled && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pending !== null}
+                          onClick={() => void providerAction(provider, "disable")}
+                        >
+                          {pending === `${provider.id}-disable` && <Spinner />}
+                          {t("setup.disable")}
+                        </Button>
+                      )}
+                    </div>
+
+                    {editingProviderId === provider.id && (
+                      <form
+                        className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
+                        onSubmit={(event) => void updateProvider(provider, event)}
+                      >
+                        <AIProviderFields
+                          idPrefix={`provider-${provider.id}`}
+                          provider={provider}
+                          editing
+                        />
+                        <Button
+                          type="submit"
+                          className="md:col-span-2 md:w-fit"
+                          disabled={pending !== null}
+                        >
+                          {pending === `${provider.id}-update` ? <Spinner /> : <Save />}
+                          {t("setup.saveConnection")}
+                        </Button>
+                      </form>
                     )}
-                  </div>
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -398,5 +464,101 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+function AIProviderFields({
+  idPrefix,
+  provider,
+  editing = false,
+}: {
+  idPrefix: string;
+  provider?: Provider;
+  editing?: boolean;
+}) {
+  const { t } = useTranslation();
+  const value = (key: string) => (provider ? configurationValue(provider, key) : "");
+  const number = (key: string, fallback: number) =>
+    provider ? configurationNumber(provider, key, fallback) : fallback;
+
+  return (
+    <>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-name`}>{t("setup.name")}</Label>
+        <Input
+          id={`${idPrefix}-name`}
+          name="name"
+          defaultValue={provider?.name}
+          required
+          maxLength={120}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-service`}>{t("setup.service")}</Label>
+        <select
+          id={`${idPrefix}-service`}
+          name="service"
+          className={selectClassName()}
+          defaultValue={value("provider") || "openai"}
+        >
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="ollama">Ollama</option>
+        </select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-model`}>{t("setup.model")}</Label>
+        <Input
+          id={`${idPrefix}-model`}
+          name="model"
+          defaultValue={value("model")}
+          required
+          maxLength={200}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-endpoint`}>{t("setup.endpoint")}</Label>
+        <Input
+          id={`${idPrefix}-endpoint`}
+          name="endpoint"
+          type="url"
+          defaultValue={value("endpoint")}
+          placeholder="https://…"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-timeout-ms`}>{t("setup.timeoutMs")}</Label>
+        <Input
+          id={`${idPrefix}-timeout-ms`}
+          name="timeout_ms"
+          type="number"
+          min={100}
+          max={600_000}
+          defaultValue={number("timeout_ms", 180_000)}
+          required
+        />
+        <p className="text-xs text-muted-foreground">{t("setup.timeoutMsDescription")}</p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-max-tokens`}>{t("setup.maxTokens")}</Label>
+        <Input
+          id={`${idPrefix}-max-tokens`}
+          name="max_tokens"
+          type="number"
+          min={1}
+          max={32_768}
+          defaultValue={number("max_tokens", 4_096)}
+          required
+        />
+        <p className="text-xs text-muted-foreground">{t("setup.maxTokensDescription")}</p>
+      </div>
+      <div className="space-y-2 md:col-span-2">
+        <Label htmlFor={`${idPrefix}-api-key`}>{t("setup.apiKey")}</Label>
+        <Input id={`${idPrefix}-api-key`} name="api_key" type="password" autoComplete="off" />
+        {editing && (
+          <p className="text-xs text-muted-foreground">{t("setup.editConnectionDescription")}</p>
+        )}
+      </div>
+    </>
   );
 }

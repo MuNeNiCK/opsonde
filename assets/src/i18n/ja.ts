@@ -91,6 +91,11 @@ const ja = {
       maxTokensDescription: "1回のリクエストで許可するモデル出力の上限です。",
       apiKey: "APIキー（ローカルOllamaでは不要）",
       addConnection: "接続を追加",
+      edit: "編集",
+      editConnectionDescription:
+        "保存済みの認証情報を維持する場合はAPIキーを空欄にします。保存すると接続は無効になり、再度の接続確認が必要です。",
+      saveConnection: "接続を保存",
+      connectionUpdated: "{{name}}を更新しました。有効化する前に現在の設定を接続確認してください。",
       enabled: "有効",
       disabled: "無効",
       checkPassed: "現在の設定で接続確認に成功しました。",

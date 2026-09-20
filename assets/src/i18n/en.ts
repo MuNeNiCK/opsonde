@@ -91,6 +91,12 @@ const en = {
       maxTokensDescription: "Maximum model output allowed for one request.",
       apiKey: "API key (not required for local Ollama)",
       addConnection: "Add connection",
+      edit: "Edit",
+      editConnectionDescription:
+        "Leave the API key blank to keep the saved credential. Saving disables this connection and requires a new check.",
+      saveConnection: "Save connection",
+      connectionUpdated:
+        "{{name}} was updated. Check the current configuration before enabling it.",
       enabled: "Enabled",
       disabled: "Disabled",
       checkPassed: "The current configuration passed its connection check.",
