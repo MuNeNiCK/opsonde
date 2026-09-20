@@ -170,7 +170,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   defp parse(xml) do
-    case Saxy.SimpleForm.parse_string(xml, expand_entity: :never) do
+    case Saxy.SimpleForm.parse_string(xml, expand_entity: :keep) do
       {:ok, root} -> {:ok, root}
       {:error, _error} -> {:error, :failed, "IOS XE NETCONF response is invalid"}
     end

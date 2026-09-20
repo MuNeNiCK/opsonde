@@ -58,7 +58,7 @@ defmodule Opsonde.Transports.NETCONF do
   end
 
   defp capabilities(xml) do
-    with {:ok, root} <- Saxy.SimpleForm.parse_string(xml, expand_entity: :never),
+    with {:ok, root} <- Saxy.SimpleForm.parse_string(xml, expand_entity: :keep),
          "hello" <- local_name(elem(root, 0)) do
       values =
         root
