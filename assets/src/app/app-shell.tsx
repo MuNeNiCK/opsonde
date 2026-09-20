@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -119,11 +120,13 @@ export function AppShell() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" align="start" className="min-w-56">
-              <DropdownMenuLabel>{account?.email}</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => void signOut()}>
-                {t("common.signOut")}
-              </DropdownMenuItem>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{account?.email}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void signOut()}>
+                  {t("common.signOut")}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarFooter>
