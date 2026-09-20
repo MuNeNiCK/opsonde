@@ -18,17 +18,18 @@ defmodule Opsonde.Cases.Operation do
   end
 
   state_machine do
-    state_attribute :status
-    initial_states [:queued]
-    default_initial_state :queued
+    state_attribute(:status)
+    initial_states([:queued])
+    default_initial_state(:queued)
 
     transitions do
-      transition :mark_dispatching, from: :queued, to: :dispatching
-      transition :record_no_send, from: :queued, to: :failed
+      transition(:mark_dispatching, from: :queued, to: :dispatching)
+      transition(:record_no_send, from: :queued, to: :failed)
 
-      transition :record_outcome,
+      transition(:record_outcome,
         from: :dispatching,
         to: [:applied, :failed, :partial, :unknown]
+      )
     end
   end
 
