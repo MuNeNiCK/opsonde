@@ -380,14 +380,14 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {
       :decision,
-      %{"verdict" => "approved", "reason" => String.duplicate("界", 250)}
+      %{"verdict" => "approved", "reason" => String.duplicate("界", 1_000)}
     })
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved}} =
              Adapter.review(state, review_request(), %{})
 
     [review_request] = requests(context.agent)
-    assert output_schema(review_request)["properties"]["reason"]["maxLength"] == 250
+    assert output_schema(review_request)["properties"]["reason"]["maxLength"] == 1_000
 
     set_mode(context.agent, {
       :decision,
