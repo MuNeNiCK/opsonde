@@ -47,6 +47,10 @@ defmodule Opsonde.AI.ReqLLMTest do
       json(conn, openai_text_response(wire_decision(decision)))
     end
 
+    defp respond(conn, _request, {:raw_text, text}) do
+      json(conn, openai_text_response(text, false))
+    end
+
     defp respond(conn, _request, {:stream, decision}) do
       decision = wire_decision(decision)
 
@@ -110,7 +114,12 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
 
     defp openai_text_response(decision) do
-      base_response(%{"role" => "assistant", "content" => Jason.encode!(decision)}, "stop")
+      openai_text_response(decision, true)
+    end
+
+    defp openai_text_response(decision, encode?) do
+      content = if encode?, do: Jason.encode!(decision), else: decision
+      base_response(%{"role" => "assistant", "content" => content}, "stop")
     end
 
     defp base_response(message, finish_reason) do
@@ -277,6 +286,72 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert get_in(target_search, ["properties", "query", "maxLength"]) == 50
       assert get_in(handoff, ["properties", "required_input", "maxLength"]) == 250
     end
+  end
+
+  test "Ollama Cloud uses exact JSON text with the existing strict output schemas", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+
+    set_mode(context.agent, {:text_decision, handoff()})
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{reason: "probe", required_input: "human"},
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} = Adapter.resolve(state, resolver_request(), %{})
+
+    [request] = requests(context.agent)
+    body = Jason.decode!(request.body)
+    refute Map.has_key?(body, "tools")
+    refute Map.has_key?(body, "response_format")
+    assert body["temperature"] == 0
+
+    assert Enum.any?(body["messages"], fn message ->
+             message["role"] == "system" and
+               String.contains?(message["content"], "exactly one JSON value") and
+               String.contains?(message["content"], "JSON Schema") and
+               String.contains?(message["content"], "additionalProperties")
+           end)
+
+    set_mode(context.agent, {:text_decision, %{"value" => "ready"}})
+    assert :ok = Adapter.check(state, %{})
+
+    set_mode(context.agent, {:text_decision, %{"verdict" => "approved", "reason" => "bounded"}})
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
+             Adapter.review(state, review_request(), %{})
+
+    set_mode(context.agent, {:text_decision, %{"unexpected" => true}})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
+    assert {:error, :capability, _message} = Adapter.check(state, %{})
+
+    set_mode(context.agent, {:raw_text, String.duplicate("x", 65_537)})
+    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+  end
+
+  test "Ollama Cloud JSON requests preserve timeout and cancellation", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{
+        "model" => "test-model:cloud",
+        "timeout_ms" => 100
+      })
+
+    set_mode(context.agent, {:sleep, 500})
+    assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    cancellation =
+      start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
+
+    set_mode(context.agent, {:sleep, 500})
+
+    cancelled? = fn ->
+      Agent.get_and_update(cancellation, fn count -> {count >= 1, count + 1} end)
+    end
+
+    assert {:error, :cancelled, _message} =
+             Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
   end
 
   test "multilingual output stays within the byte-bounded AI contract", context do

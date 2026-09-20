@@ -44,7 +44,8 @@ defmodule Opsonde.AI.ReqLLM do
          stream?: stream?,
          max_tokens: max_tokens,
          timeout: timeout,
-         api_key: api_key
+         api_key: api_key,
+         output_mode: output_mode(provider, model)
        }}
     else
       _error -> {:error, :invalid_configuration}
@@ -141,8 +142,6 @@ defmodule Opsonde.AI.ReqLLM do
   defp safe_request(state, messages, output, max_tokens, parent, stream_ref) do
     options =
       [
-        output: output,
-        output_validation: :strict,
         max_tokens: max_tokens,
         max_retries: 0,
         total_timeout: state.timeout,
@@ -152,11 +151,52 @@ defmodule Opsonde.AI.ReqLLM do
       |> maybe_put(:api_key, state.api_key)
       |> maybe_put(:base_url, state.endpoint)
 
-    request(state, messages, options, parent, stream_ref)
+    case state.output_mode do
+      :prompt_json ->
+        prompt_json_request(state, messages, output, options, parent, stream_ref)
+
+      :native ->
+        options = Keyword.merge(options, output: output, output_validation: :strict)
+        request(state, messages, options, parent, stream_ref)
+    end
   rescue
     _error -> {:error, :failed, "AI provider failed"}
   catch
     _kind, _reason -> {:error, :failed, "AI provider failed"}
+  end
+
+  defp prompt_json_request(state, messages, output, options, parent, stream_ref) do
+    with {:ok, %{compiled_schema: %{schema: schema}}} <- ReqLLM.Output.compile(output),
+         {:ok, encoded_schema} <- Jason.encode(schema),
+         messages <- prompt_json_context(messages, encoded_schema),
+         options <- Keyword.put(options, :temperature, 0.0),
+         {:ok, response} <- request(state, messages, options, parent, stream_ref),
+         {:ok, value} <- prompt_json_value(response, schema) do
+      {:ok, %{response | object: value}}
+    else
+      {:error, _category, _message} = error -> error
+      _error -> invalid_output()
+    end
+  end
+
+  defp prompt_json_context(messages, encoded_schema) do
+    instruction =
+      "Your entire response must be exactly one JSON value that validates against the " <>
+        "following JSON Schema. Do not include Markdown, code fences, commentary, or " <>
+        "reasoning outside the JSON value. JSON Schema: " <> encoded_schema
+
+    ReqLLM.Context.prepend(messages, ReqLLM.Context.system(instruction))
+  end
+
+  defp prompt_json_value(response, schema) do
+    with text when is_binary(text) <- ReqLLM.Response.text(response),
+         true <- byte_size(text) <= @max_output_bytes,
+         {:ok, value} <- ReqLLM.JSON.decode(text, json_repair: false),
+         {:ok, _validated} <- ReqLLM.Schema.validate(value, schema) do
+      {:ok, value}
+    else
+      _error -> invalid_output()
+    end
   end
 
   defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
@@ -716,6 +756,12 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp model_spec(provider, model), do: %{provider: provider, id: model}
+
+  defp output_mode(:ollama, model) do
+    if String.ends_with?(model, ":cloud"), do: :prompt_json, else: :native
+  end
+
+  defp output_mode(_provider, _model), do: :native
 
   defp known_configuration(configuration) do
     if Enum.all?(Map.keys(configuration), &(to_string(&1) in @configuration_keys)),
