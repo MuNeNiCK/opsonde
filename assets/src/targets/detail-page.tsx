@@ -57,7 +57,7 @@ export function TargetDetailPage() {
   const target = snapshot.targets.find((item) => item.id === targetId && item.active);
   if (!target) {
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-4 p-6 lg:p-8">
+      <div className="space-y-4 p-6 lg:p-8">
         <Button asChild variant="ghost">
           <Link to="/targets">
             <ArrowLeft />
@@ -92,7 +92,7 @@ export function TargetDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+    <div className="space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
           <Link to="/targets">

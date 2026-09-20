@@ -54,7 +54,7 @@ export function OnboardingPage() {
 
   if (snapshot === null) {
     return (
-      <div className="mx-auto w-full max-w-3xl p-6 lg:p-8">
+      <div className="p-6 lg:p-8">
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
@@ -80,7 +80,7 @@ export function OnboardingPage() {
   const completed = steps.filter((step) => status[step.key]).length;
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-8 p-6 lg:p-8">
+    <div className="space-y-8 p-6 lg:p-8">
       <div className="space-y-2">
         <Badge variant="secondary">
           {t("onboarding.progress", { completed, total: steps.length })}

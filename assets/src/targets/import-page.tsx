@@ -36,7 +36,7 @@ export function TargetImportPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+    <div className="space-y-6 p-6 lg:p-8">
       <Button asChild size="sm" variant="ghost" className="-ml-3">
         <Link to="/targets">
           <ArrowLeft />

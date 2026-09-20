@@ -275,7 +275,7 @@ export function CaseDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
+    <div className="space-y-8 p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">

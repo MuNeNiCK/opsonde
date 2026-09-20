@@ -80,7 +80,7 @@ export function SetupPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
+    <div className="space-y-8 p-6 lg:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t("setup.title")}</h1>
         <p className="mt-2 text-muted-foreground">{t("setup.description")}</p>

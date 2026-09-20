@@ -146,7 +146,9 @@ export function AppShell() {
             </Button>
           </div>
         </header>
-        <Outlet />
+        <div className="mx-auto w-full max-w-[96rem]">
+          <Outlet />
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );
