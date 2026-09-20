@@ -38,13 +38,13 @@ defmodule Opsonde.Accounts.OIDCProvider do
 
     create :create_configuration do
       public? false
-      accept [:issuer, :client_id, :client_secret, :enabled]
+      accept [:issuer, :client_id, :client_secret, :id_token_alg, :enabled]
       change set_attribute(:singleton, "oidc")
     end
 
     update :update_configuration do
       public? false
-      accept [:issuer, :client_id, :client_secret, :enabled]
+      accept [:issuer, :client_id, :client_secret, :id_token_alg, :enabled]
 
       argument :expected_revision, :integer,
         allow_nil?: false,
@@ -60,15 +60,43 @@ defmodule Opsonde.Accounts.OIDCProvider do
       argument :issuer, :string, allow_nil?: false
       argument :client_id, :string, allow_nil?: false
       argument :client_secret, :string, allow_nil?: false, sensitive?: true
+      argument :id_token_alg, :string, allow_nil?: false, default: "RS256"
       argument :enabled, :boolean, allow_nil?: false, default: true
 
       run Opsonde.Accounts.OIDCProvider.Configure
+    end
+
+    action :available, :boolean do
+      run Opsonde.Accounts.OIDCProvider.Available
+    end
+
+    action :begin_authorization, :map do
+      argument :request_id, :uuid
+      argument :start_token, :string, sensitive?: true
+      argument :provider_revision, :integer, constraints: [min: 1]
+      run Opsonde.Accounts.OIDCProvider.Actions.Authorization
+    end
+
+    action :complete_authorization, :map do
+      argument :params, :map, allow_nil?: false, sensitive?: true
+      argument :browser_binding, :string, allow_nil?: false, sensitive?: true
+      argument :provider_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :request_id, :uuid
+      run Opsonde.Accounts.OIDCProvider.Actions.Authorization
     end
   end
 
   policies do
     policy action(:configure) do
       authorize_if actor_attribute_equals(:role, :admin)
+    end
+
+    policy action(:available) do
+      authorize_if always()
+    end
+
+    policy action([:begin_authorization, :complete_authorization]) do
+      authorize_if always()
     end
 
     policy action_type(:read) do
@@ -92,6 +120,12 @@ defmodule Opsonde.Accounts.OIDCProvider do
     attribute :client_secret, :string do
       allow_nil? false
       sensitive? true
+    end
+
+    attribute :id_token_alg, :string do
+      allow_nil? false
+      public? true
+      default "RS256"
     end
 
     attribute :enabled, :boolean do

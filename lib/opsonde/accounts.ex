@@ -10,7 +10,6 @@ defmodule Opsonde.Accounts do
       define :list_users, action: :page
       define :get_user, action: :read, get_by: [:id]
       define :sign_in, action: :sign_in_with_password, args: [:email, :password]
-      define :issue_session, action: :issue_session, args: [:user_id]
     end
 
     resource Opsonde.Accounts.Token
@@ -19,28 +18,35 @@ defmodule Opsonde.Accounts do
     resource Opsonde.Accounts.OIDCProvider do
       define :configure_oidc, action: :configure
       define :current_oidc_provider, action: :current
+      define :oidc_available?, action: :available
+
+      define :begin_oidc_authorization,
+        action: :begin_authorization,
+        args: [:request_id, :start_token, :provider_revision]
+
+      define :complete_oidc_authorization,
+        action: :complete_authorization,
+        args: [:params, :browser_binding, :provider_revision, :request_id]
     end
 
     resource Opsonde.Accounts.OIDCRequest do
-      define :get_oidc_request, action: :get_by_id, args: [:id]
+      define :request_oidc_link, action: :request_link
 
-      define :create_oidc_link,
-        action: :create_link,
-        args: [:user_id, :start_token_digest, :expires_at]
+      define :request_cli_login,
+        action: :request_cli_login,
+        args: [:redirect_uri, :code_challenge]
 
-      define :create_cli_login,
-        action: :create_cli_login,
-        args: [:start_token_digest, :verifier_digest, :redirect_uri, :expires_at]
+      define :approve_cli_login,
+        action: :approve_cli_login,
+        args: [:id, :start_token]
 
-      define :start_oidc_request, action: :start, args: [:expected_revision, :start_token]
+      define :deny_cli_login,
+        action: :deny_cli_login,
+        args: [:id, :start_token]
 
-      define :complete_oidc_request,
-        action: :complete,
-        args: [:expected_revision, :user_id, :code_digest]
-
-      define :consume_oidc_request,
-        action: :consume,
-        args: [:expected_revision, :code, :verifier]
+      define :exchange_cli_login,
+        action: :exchange_cli_login,
+        args: [:id, :code, :verifier]
     end
   end
 end

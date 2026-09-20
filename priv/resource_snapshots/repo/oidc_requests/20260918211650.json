@@ -45,6 +45,18 @@
       "references": null,
       "scale": null,
       "size": null,
+      "source": "browser_binding_digest",
+      "type": "binary"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
       "source": "verifier_digest",
       "type": "binary"
     },
@@ -196,7 +208,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "59FEBB1E31C8B97783BBEE08C9D601AD008E9114D91E548668893FC58ABDE793",
+  "hash": "ED95B98026702BFEE0C7B8A547E0C3C48455117B97D0AD48291ED344DCDF05C9",
   "identities": [],
   "multitenancy": {
     "attribute": null,

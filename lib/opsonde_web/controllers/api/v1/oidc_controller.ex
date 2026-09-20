@@ -4,17 +4,11 @@ defmodule OpsondeWeb.API.V1.OIDCController do
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.{OIDCProvider, OIDCRequest}
+  alias Opsonde.Accounts.OIDCProvider
   alias OpsondeWeb.API.Response
 
-  @request_lifetime_seconds 600
-
   def status(conn, _params) do
-    enabled =
-      match?(
-        {:ok, %OIDCProvider{enabled: true}},
-        Accounts.current_oidc_provider(authorize?: false)
-      )
+    enabled = Accounts.oidc_available?()
 
     Response.data(conn, %{
       enabled: enabled,
@@ -65,6 +59,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
                issuer: issuer,
                client_id: client_id,
                client_secret: client_secret,
+               id_token_alg: Map.get(input, "id_token_alg", "RS256"),
                enabled: Map.get(input, "enabled", true)
              },
              actor: conn.assigns.current_user
@@ -76,16 +71,8 @@ defmodule OpsondeWeb.API.V1.OIDCController do
   def configure_provider(_conn, _params), do: {:error, :bad_request}
 
   def create_link_request(conn, _params) do
-    start_token = OIDCRequest.random_secret()
-
-    with :ok <- require_provider(),
-         {:ok, request} <-
-           Accounts.create_oidc_link(
-             conn.assigns.current_user.id,
-             OIDCRequest.digest(start_token),
-             expires_at(),
-             authorize?: false
-           ) do
+    with {:ok, %{request: request, start_token: start_token}} <-
+           Accounts.request_oidc_link(actor: conn.assigns.current_user) do
       Response.data(
         conn,
         %{
@@ -97,20 +84,9 @@ defmodule OpsondeWeb.API.V1.OIDCController do
         },
         :created
       )
+    else
+      _error -> {:error, :not_found}
     end
-  end
-
-  defp require_provider do
-    case Accounts.current_oidc_provider(authorize?: false) do
-      {:ok, %OIDCProvider{enabled: true}} -> :ok
-      _other -> {:error, :not_found}
-    end
-  end
-
-  defp expires_at do
-    DateTime.utc_now()
-    |> DateTime.add(@request_lifetime_seconds, :second)
-    |> DateTime.truncate(:microsecond)
   end
 
   defp provider_data(provider) do
@@ -118,6 +94,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
       id: provider.id,
       issuer: provider.issuer,
       client_id: provider.client_id,
+      id_token_alg: provider.id_token_alg,
       enabled: provider.enabled,
       revision: provider.revision,
       callback_uri: Opsonde.Secrets.oidc_callback_uri(),

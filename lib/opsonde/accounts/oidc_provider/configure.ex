@@ -8,12 +8,14 @@ defmodule Opsonde.Accounts.OIDCProvider.Configure do
     with {:ok, issuer} <- normalize_issuer(input.arguments.issuer),
          {:ok, client_id} <- nonempty(input.arguments.client_id, :client_id),
          {:ok, client_secret} <- nonempty(input.arguments.client_secret, :client_secret),
+         {:ok, id_token_alg} <- signing_algorithm(input.arguments.id_token_alg),
          {:ok, current} <- current_provider(),
          :ok <- permit_identity_change(current, issuer, client_id) do
       attributes = %{
         issuer: issuer,
         client_id: client_id,
         client_secret: client_secret,
+        id_token_alg: id_token_alg,
         enabled: input.arguments.enabled
       }
 
@@ -68,21 +70,18 @@ defmodule Opsonde.Accounts.OIDCProvider.Configure do
   end
 
   defp normalize_issuer(value) do
-    value = value |> String.trim() |> String.trim_trailing("/")
+    value = String.trim(value)
     uri = URI.parse(value)
 
     cond do
       uri.userinfo || uri.query || uri.fragment ->
         {:error, "issuer must not include credentials, query, or fragment"}
 
-      uri.scheme == "https" and is_binary(uri.host) ->
-        {:ok, value}
-
-      uri.scheme == "http" and uri.host in ["127.0.0.1", "localhost", "::1"] ->
+      uri.scheme == "https" and is_binary(uri.host) and uri.host != "" ->
         {:ok, value}
 
       true ->
-        {:error, "issuer must be HTTPS, except for a loopback validation issuer"}
+        {:error, "issuer must be HTTPS"}
     end
   end
 
@@ -90,6 +89,15 @@ defmodule Opsonde.Accounts.OIDCProvider.Configure do
     case String.trim(value) do
       "" -> {:error, "#{field} must not be empty"}
       value -> {:ok, value}
+    end
+  end
+
+  defp signing_algorithm(value) do
+    with {:ok, value} <- nonempty(value, :id_token_alg),
+         true <- value in Attesto.SigningAlg.allowed() do
+      {:ok, value}
+    else
+      _invalid -> {:error, "id_token_alg is not supported"}
     end
   end
 end

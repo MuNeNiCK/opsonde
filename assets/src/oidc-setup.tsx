@@ -15,6 +15,7 @@ type OIDCProvider = {
   id?: string;
   issuer?: string;
   client_id?: string;
+  id_token_alg?: string;
   callback_uri?: string;
   enabled: boolean;
   revision?: number;
@@ -59,11 +60,13 @@ export function OIDCSetup({ canManage, onError }: Props) {
     const issuer = form.get("issuer");
     const clientId = form.get("client_id");
     const clientSecret = form.get("client_secret");
+    const idTokenAlg = form.get("id_token_alg");
 
     if (
       typeof issuer !== "string" ||
       typeof clientId !== "string" ||
-      typeof clientSecret !== "string"
+      typeof clientSecret !== "string" ||
+      typeof idTokenAlg !== "string"
     ) {
       onError(t("setup.requestFailed"));
       return;
@@ -80,6 +83,7 @@ export function OIDCSetup({ canManage, onError }: Props) {
             issuer,
             client_id: clientId,
             client_secret: clientSecret,
+            id_token_alg: idTokenAlg,
             enabled,
           },
         }),
@@ -171,6 +175,15 @@ export function OIDCSetup({ canManage, onError }: Props) {
                   name="client_secret"
                   type="password"
                   autoComplete="off"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="oidc-id-token-alg">{t("setup.oidcIdTokenAlg")}</Label>
+                <Input
+                  id="oidc-id-token-alg"
+                  name="id_token_alg"
+                  defaultValue={provider?.id_token_alg ?? "RS256"}
                   required
                 />
               </div>

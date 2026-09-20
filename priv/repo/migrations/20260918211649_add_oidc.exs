@@ -12,6 +12,7 @@ defmodule Opsonde.Repo.Migrations.AddOidc do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :purpose, :text, null: false
       add :start_token_digest, :binary, null: false
+      add :browser_binding_digest, :binary
       add :verifier_digest, :binary
       add :code_digest, :binary
       add :redirect_uri, :text
@@ -42,6 +43,7 @@ defmodule Opsonde.Repo.Migrations.AddOidc do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :issuer, :text, null: false
       add :client_id, :text, null: false
+      add :id_token_alg, :text, null: false, default: "RS256"
       add :enabled, :boolean, null: false, default: true
       add :revision, :bigint, null: false, default: 1
       add :singleton, :text, null: false, default: "oidc"
@@ -62,9 +64,6 @@ defmodule Opsonde.Repo.Migrations.AddOidc do
            )
 
     create table(:user_identities, primary_key: false) do
-      add :refresh_token, :text
-      add :access_token_expires_at, :utc_datetime_usec
-      add :access_token, :text
       add :uid, :text, null: false
       add :strategy, :text, null: false
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
@@ -75,7 +74,8 @@ defmodule Opsonde.Repo.Migrations.AddOidc do
             name: "user_identities_user_id_fkey",
             type: :uuid,
             prefix: "public"
-          )
+          ),
+          null: false
     end
 
     create unique_index(:user_identities, [:strategy, :user_id],

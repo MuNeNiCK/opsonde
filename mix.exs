@@ -5,7 +5,7 @@ defmodule Opsonde.MixProject do
     [
       app: :opsonde,
       version: "0.1.1",
-      elixir: "~> 1.17",
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       default_release: :opsonde_server,
@@ -71,6 +71,7 @@ defmodule Opsonde.MixProject do
       {:ash_cloak, "~> 0.4"},
       {:argon2_elixir, "~> 4.0"},
       {:simple_sat, "~> 0.1"},
+      {:attesto_client, "~> 2.5"},
       {:ash_authentication, "~> 4.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},

@@ -8,7 +8,6 @@ defmodule OpsondeWeb.Router do
   pipeline :oidc_browser do
     plug :accepts, ["html"]
     plug :fetch_session
-    plug OpsondeWeb.OIDCContext
   end
 
   pipeline :authenticated_api do
@@ -148,8 +147,9 @@ defmodule OpsondeWeb.Router do
   scope "/auth", OpsondeWeb do
     pipe_through :oidc_browser
 
-    get "/oidc/start/:id", OIDCStartController, :start
-    forward "/", OIDCAuthPlug
+    get "/user/oidc", OIDCController, :start
+    get "/user/oidc/callback", OIDCController, :callback
+    get "/oidc/start/:id", OIDCController, :start_link
   end
 
   scope "/", OpsondeWeb do

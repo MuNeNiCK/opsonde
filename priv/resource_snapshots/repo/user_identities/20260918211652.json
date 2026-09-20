@@ -1,19 +1,19 @@
 {
   "attributes": [
     {
-      "allow_nil?": true,
-      "default": "nil",
+      "allow_nil?": false,
+      "default": "fragment(\"gen_random_uuid()\")",
       "generated?": false,
       "precision": null,
-      "primary_key?": false,
+      "primary_key?": true,
       "references": null,
       "scale": null,
       "size": null,
-      "source": "refresh_token",
-      "type": "text"
+      "source": "id",
+      "type": "uuid"
     },
     {
-      "allow_nil?": true,
+      "allow_nil?": false,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -21,19 +21,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "access_token_expires_at",
-      "type": "utc_datetime_usec"
-    },
-    {
-      "allow_nil?": true,
-      "default": "nil",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "access_token",
+      "source": "strategy",
       "type": "text"
     },
     {
@@ -50,30 +38,6 @@
     },
     {
       "allow_nil?": false,
-      "default": "nil",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "strategy",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "fragment(\"gen_random_uuid()\")",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": true,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "id",
-      "type": "uuid"
-    },
-    {
-      "allow_nil?": true,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -112,7 +76,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "53878DD8FA5604F2BFDE85483B5A9038E5303F65BF45EACAAFD044BED27E4D47",
+  "hash": "1AD4834E89D0A8CACA0ED7FC7C71BC5ED859CDA5B62923AE7A890DB51373CA31",
   "identities": [
     {
       "all_tenants?": false,
