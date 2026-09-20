@@ -47,8 +47,8 @@ export function TargetDetailActions({
       await request(new FormData(event.currentTarget));
       setAction(null);
       await onComplete(t("targets.changeSaved"));
-    } catch (failure) {
-      onError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
+    } catch {
+      onError(t("targets.requestFailed"));
     } finally {
       setPending(false);
     }

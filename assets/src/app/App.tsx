@@ -81,10 +81,10 @@ function AuthenticationGate({ children }: { children: ReactNode }) {
 function FoundationPage({ title }: { title: string }) {
   const { t } = useTranslation();
   return (
-    <main className="p-6 lg:p-8">
+    <div className="p-6 lg:p-8">
       <h1 className="text-2xl font-semibold tracking-tight">{t(title)}</h1>
       <p className="mt-2 text-muted-foreground">{t("pages.foundation")}</p>
-    </main>
+    </div>
   );
 }
 
@@ -113,6 +113,36 @@ function HomeRoute() {
 }
 
 function AppRoutes() {
+  const location = useLocation();
+  const { t } = useTranslation();
+
+  useEffect(() => {
+    const path = location.pathname;
+    const key =
+      path === "/login"
+        ? "login.title"
+        : path.startsWith("/cli-login/")
+          ? "cliLogin.title"
+          : path === "/onboarding"
+            ? "onboarding.title"
+            : path === "/cases/signals"
+              ? "cases.signalDiagnostics"
+              : path.startsWith("/cases/")
+                ? "pages.case"
+                : path === "/cases" || path === "/"
+                  ? "pages.cases"
+                  : path.startsWith("/targets")
+                    ? "pages.targets"
+                    : path === "/audits"
+                      ? "pages.audits"
+                      : path === "/reports"
+                        ? "pages.reports"
+                        : path === "/settings" || path === "/providers"
+                          ? "pages.settings"
+                          : "pages.notFound";
+    document.title = `${t(key)} · Opsonde`;
+  }, [location.pathname, t]);
+
   return (
     <Suspense fallback={<PageSpinner />}>
       <Routes>

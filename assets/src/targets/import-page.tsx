@@ -21,11 +21,7 @@ export function TargetImportPage() {
     let active = true;
     loadTargetSnapshot()
       .then((next) => active && setSnapshot(next))
-      .catch(
-        (failure: unknown) =>
-          active &&
-          setError(failure instanceof Error ? failure.message : t("targets.requestFailed")),
-      );
+      .catch(() => active && setError(t("targets.requestFailed")));
     return () => {
       active = false;
     };
@@ -33,14 +29,14 @@ export function TargetImportPage() {
 
   if (!snapshot)
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
       <Button asChild size="sm" variant="ghost" className="-ml-3">
         <Link to="/targets">
           <ArrowLeft />
@@ -48,7 +44,7 @@ export function TargetImportPage() {
         </Link>
       </Button>
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -64,6 +60,6 @@ export function TargetImportPage() {
         onRefresh={refresh}
         onError={setError}
       />
-    </main>
+    </div>
   );
 }

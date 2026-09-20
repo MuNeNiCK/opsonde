@@ -155,7 +155,13 @@ export function ProposalCard({
         </div>
         {proposal.preflight_reason && (
           <Alert variant="destructive">
-            <AlertDescription>{proposal.preflight_reason}</AlertDescription>
+            <AlertDescription>
+              <p>{t("cases.situation.preflightBlocked")}</p>
+              <details className="mt-2 text-xs">
+                <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                <p className="mt-1">{proposal.preflight_reason}</p>
+              </details>
+            </AlertDescription>
           </Alert>
         )}
         {proposal.status === "awaiting_human" && canOperate && (

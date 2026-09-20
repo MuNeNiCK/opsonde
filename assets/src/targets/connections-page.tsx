@@ -25,9 +25,8 @@ export function TargetConnectionsPage() {
     let active = true;
     loadTargetSnapshot()
       .then((next) => active && setSnapshot(next))
-      .catch((failure: unknown) => {
-        if (active)
-          setError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("targets.requestFailed"));
       });
     return () => {
       active = false;
@@ -36,14 +35,14 @@ export function TargetConnectionsPage() {
 
   if (!snapshot)
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <Button asChild size="sm" variant="ghost" className="-ml-3">
           <Link to="/targets">
@@ -71,7 +70,7 @@ export function TargetConnectionsPage() {
         )}
       </div>
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -97,6 +96,6 @@ export function TargetConnectionsPage() {
           setSuccess(t("targets.connectionCreated"));
         }}
       />
-    </main>
+    </div>
   );
 }

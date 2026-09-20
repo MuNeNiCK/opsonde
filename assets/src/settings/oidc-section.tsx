@@ -39,8 +39,8 @@ export function OIDCSetup({ canManage, onError }: Props) {
         setProvider(data);
         setEnabled(data.enabled);
       })
-      .catch((error: unknown) => {
-        if (active) onError(error instanceof Error ? error.message : t("setup.requestFailed"));
+      .catch(() => {
+        if (active) onError(t("setup.requestFailed"));
       });
 
     return () => {
@@ -88,8 +88,8 @@ export function OIDCSetup({ canManage, onError }: Props) {
       setEnabled(data.enabled);
       const secretInput = formElement.elements.namedItem("client_secret");
       if (secretInput instanceof HTMLInputElement) secretInput.value = "";
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("setup.requestFailed"));
+    } catch {
+      onError(t("setup.requestFailed"));
     } finally {
       setPending(null);
     }
@@ -102,8 +102,8 @@ export function OIDCSetup({ canManage, onError }: Props) {
     try {
       await linkOIDC();
       setLinked(true);
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("setup.requestFailed"));
+    } catch {
+      onError(t("setup.requestFailed"));
     } finally {
       setPending(null);
     }

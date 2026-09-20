@@ -64,8 +64,8 @@ export function InventoryImportSection({
       .then((next) => {
         if (active) setRows(next);
       })
-      .catch((error: unknown) => {
-        if (active) onError(error instanceof Error ? error.message : t("targets.requestFailed"));
+      .catch(() => {
+        if (active) onError(t("targets.requestFailed"));
       });
     return () => {
       active = false;
@@ -84,8 +84,8 @@ export function InventoryImportSection({
       setSelectedId(next.id);
       form?.reset();
       await onRefresh();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("targets.requestFailed"));
+    } catch {
+      onError(t("targets.requestFailed"));
     } finally {
       setPending(null);
     }
@@ -277,7 +277,7 @@ export function InventoryImportSection({
                 onClick={() => setSelectedId(item.id)}
               >
                 <span className="min-w-0 truncate">{item.source}</span>
-                <Badge variant="outline">{item.status}</Badge>
+                <Badge variant="outline">{t(`targets.importStatus.${item.status}`)}</Badge>
               </Button>
             ))}
           </CardContent>
@@ -317,11 +317,17 @@ export function InventoryImportSection({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium">{row.identity_value}</span>
                       <Badge variant={row.errors.length === 0 ? "secondary" : "destructive"}>
-                        {row.disposition}
+                        {t(`targets.importDisposition.${row.disposition}`)}
                       </Badge>
                     </div>
                     {row.errors.length > 0 && (
-                      <p className="mt-1 text-destructive">{row.errors.join(", ")}</p>
+                      <div className="mt-1 text-destructive">
+                        <p>{t("targets.importRowInvalid")}</p>
+                        <details className="mt-1 text-xs">
+                          <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                          <p className="mt-1">{row.errors.join(", ")}</p>
+                        </details>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -66,6 +66,7 @@ export function AuditPage() {
   const [scope, setScope] = useState<"targets" | "boundary">("targets");
   const [pending, setPending] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState<string | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
@@ -75,9 +76,8 @@ export function AuditPage() {
     let active = true;
     loadSnapshot()
       .then((next) => active && setSnapshot(next))
-      .catch((failure: unknown) => {
-        if (active)
-          setError(failure instanceof Error ? failure.message : t("audits.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("audits.requestFailed"));
       });
     return () => {
       active = false;
@@ -115,8 +115,8 @@ export function AuditPage() {
       setScope("targets");
       setShowCreate(false);
       await refresh();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("audits.requestFailed"));
+    } catch {
+      setError(t("audits.requestFailed"));
     } finally {
       setPending(null);
     }
@@ -130,9 +130,10 @@ export function AuditPage() {
         params: { path: { id: schedule.id } },
         body: { audit_schedule: { expected_revision: schedule.revision } },
       });
+      setConfirmDeactivate(null);
       await refresh();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("audits.requestFailed"));
+    } catch {
+      setError(t("audits.requestFailed"));
     } finally {
       setPending(null);
     }
@@ -144,7 +145,7 @@ export function AuditPage() {
     snapshot.boundaries.find((item) => item.id === id)?.name ?? id;
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-10 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-10 p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t("audits.title")}</h1>
@@ -164,7 +165,7 @@ export function AuditPage() {
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -309,16 +310,40 @@ export function AuditPage() {
                     }
                   />
                 </dl>
-                {canManage && schedule.active && (
+                {canManage && schedule.active && confirmDeactivate !== schedule.id && (
                   <Button
                     size="sm"
                     variant="outline"
                     disabled={pending !== null}
-                    onClick={() => void deactivate(schedule)}
+                    onClick={() => setConfirmDeactivate(schedule.id)}
                   >
-                    {pending === schedule.id && <Spinner />}
                     {t("audits.deactivate")}
                   </Button>
+                )}
+                {confirmDeactivate === schedule.id && (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      <p>{t("audits.deactivateConfirmation")}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={pending !== null}
+                          onClick={() => void deactivate(schedule)}
+                        >
+                          {pending === schedule.id && <Spinner />}
+                          {t("audits.confirmDeactivate")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setConfirmDeactivate(null)}
+                        >
+                          {t("common.cancel")}
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
                 )}
               </CardContent>
             </Card>
@@ -353,8 +378,14 @@ export function AuditPage() {
                 </div>
                 <p className="mt-1 text-muted-foreground">
                   {formatDate(run.scheduled_for, i18n.resolvedLanguage)}
-                  {run.reason ? ` · ${run.reason}` : ""}
+                  {run.reason ? ` · ${t("audits.runFailedGuidance")}` : ""}
                 </p>
+                {run.reason && (
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                    <p className="mt-1">{run.reason}</p>
+                  </details>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 {run.case_id ? (
@@ -381,17 +412,17 @@ export function AuditPage() {
           )}
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 
 function Loading() {
   const { t } = useTranslation();
   return (
-    <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+    <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
       <Spinner />
       <span>{t("common.loading")}</span>
-    </main>
+    </div>
   );
 }
 function Empty({ text }: { text: string }) {

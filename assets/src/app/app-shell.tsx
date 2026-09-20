@@ -1,4 +1,5 @@
 import { BookOpenCheck, Boxes, FileText, RadioTower, Settings, ShieldCheck } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
@@ -53,8 +54,21 @@ export function AppShell() {
   const initials = account?.email.slice(0, 2).toUpperCase() ?? "OP";
   const setLanguage = (language: string) => void i18n.changeLanguage(language);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("main-content")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname]);
+
   return (
     <SidebarProvider>
+      <a
+        href="#main-content"
+        className="fixed top-2 left-2 z-50 -translate-y-20 rounded-md bg-background px-3 py-2 text-sm font-medium shadow focus:translate-y-0"
+      >
+        {t("common.skipToContent")}
+      </a>
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <div className="flex h-10 items-center gap-2 px-2 font-semibold">
@@ -111,9 +125,9 @@ export function AppShell() {
           </DropdownMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset id="main-content" tabIndex={-1}>
         <header className="flex h-14 items-center justify-between border-b px-4">
-          <SidebarTrigger />
+          <SidebarTrigger aria-label={t("common.toggleNavigation")} />
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span>{t("common.language")}</span>
             <Button

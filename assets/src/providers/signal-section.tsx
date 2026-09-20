@@ -34,8 +34,8 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
       await action();
       await onRefresh();
       return true;
-    } catch (failure) {
-      onError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+    } catch {
+      onError(t("cases.requestFailed"));
       return false;
     } finally {
       setPending(null);

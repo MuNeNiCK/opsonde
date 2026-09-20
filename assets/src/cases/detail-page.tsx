@@ -166,8 +166,8 @@ export function CaseDetailPage() {
     let active = true;
     loadDetail(caseId, account?.role === "admin")
       .then((next) => active && setDetail(next))
-      .catch((failure: unknown) => {
-        if (active) setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("cases.requestFailed"));
       });
     return () => {
       active = false;
@@ -186,8 +186,8 @@ export function CaseDetailPage() {
     try {
       await action();
       await refresh();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+    } catch {
+      setError(t("cases.requestFailed"));
     } finally {
       setPending(null);
     }
@@ -195,10 +195,10 @@ export function CaseDetailPage() {
 
   if (!detail) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
@@ -275,7 +275,7 @@ export function CaseDetailPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
@@ -300,7 +300,7 @@ export function CaseDetailPage() {
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -326,7 +326,15 @@ export function CaseDetailPage() {
             {situation.blocker && (
               <Alert variant={incident.status === "needs_attention" ? "destructive" : "default"}>
                 <CircleAlert />
-                <AlertDescription>{situation.blocker}</AlertDescription>
+                <AlertDescription>
+                  <p>{situation.blocker}</p>
+                  {situation.blockerDiagnostic && (
+                    <details className="mt-2 text-xs">
+                      <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                      <p className="mt-1">{situation.blockerDiagnostic}</p>
+                    </details>
+                  )}
+                </AlertDescription>
               </Alert>
             )}
           </div>
@@ -549,8 +557,7 @@ export function CaseDetailPage() {
             >
               {turn.failure_message && (
                 <p className="text-sm text-destructive">
-                  {translatedToken(t, "failure", turn.failure_category ?? "failed")}:{" "}
-                  {turn.failure_message}
+                  {translatedToken(t, "failure", turn.failure_category ?? "failed")}
                 </p>
               )}
               <DataBlock
@@ -685,6 +692,6 @@ export function CaseDetailPage() {
           {JSON.stringify(detail.snapshot, null, 2)}
         </pre>
       </details>
-    </main>
+    </div>
   );
 }

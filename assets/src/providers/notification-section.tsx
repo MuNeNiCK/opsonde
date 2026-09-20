@@ -31,8 +31,8 @@ export function NotificationProviderSection({ providers, canManage, onRefresh, o
       await action();
       await onRefresh();
       return true;
-    } catch (failure) {
-      onError(failure instanceof Error ? failure.message : t("reports.requestFailed"));
+    } catch {
+      onError(t("reports.requestFailed"));
       return false;
     } finally {
       setPending(null);
@@ -153,7 +153,10 @@ export function NotificationProviderSection({ providers, canManage, onRefresh, o
                   {t(passed ? "reports.checkPassed" : "reports.checkRequired")}
                 </p>
                 {provider.check.status === "failed" && provider.check.message && (
-                  <p className="text-sm text-destructive">{provider.check.message}</p>
+                  <details className="text-sm text-destructive">
+                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                    <p>{provider.check.message}</p>
+                  </details>
                 )}
                 {canManage && (
                   <div className="flex flex-wrap gap-2">

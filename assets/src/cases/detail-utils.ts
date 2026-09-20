@@ -31,13 +31,21 @@ export function describeSituation(
                 ? t("cases.situation.resolvingTarget")
                 : t("cases.situation.resolving");
 
+  const blockerDiagnostic =
+    incident.required_human_input ??
+    incident.stop_reason ??
+    awaitingProposal?.preflight_reason ??
+    null;
   const blocker =
     incident.alert_state === "recovered" && incident.status === "needs_attention"
       ? t("cases.situation.recoveryNeedsResume")
-      : (incident.required_human_input ??
-        incident.stop_reason ??
-        awaitingProposal?.preflight_reason ??
-        null);
+      : incident.required_human_input
+        ? t("cases.actionInputRequired")
+        : incident.stop_reason
+          ? t("cases.situation.stoppedAtBoundary")
+          : awaitingProposal?.preflight_reason
+            ? t("cases.situation.preflightBlocked")
+            : null;
 
   const action =
     incident.status === "resolved" || incident.status === "cancelled"
@@ -52,7 +60,7 @@ export function describeSituation(
               ? t("cases.situation.claimOptional")
               : t("cases.situation.noAction");
 
-  return { happened, doing, blocker, action };
+  return { happened, doing, blocker, blockerDiagnostic, action };
 }
 
 export function formValue(form: FormData, name: string) {

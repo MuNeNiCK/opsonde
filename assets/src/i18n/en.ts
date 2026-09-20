@@ -1,6 +1,14 @@
 const en = {
   translation: {
-    common: { language: "Language", loading: "Loading", signOut: "Sign out", cancel: "Cancel" },
+    common: {
+      language: "Language",
+      loading: "Loading",
+      signOut: "Sign out",
+      cancel: "Cancel",
+      skipToContent: "Skip to content",
+      toggleNavigation: "Toggle navigation",
+      diagnostics: "Diagnostics",
+    },
     login: {
       title: "Sign in to Opsonde",
       description: "Use your Opsonde account to continue.",
@@ -56,7 +64,7 @@ const en = {
       checklist: "Operational readiness",
       readOnly: "Your account can view these settings. An administrator must change them.",
       ready: "Ready",
-      requestFailed: "The request failed.",
+      requestFailed: "The request failed. Review the values and connection, then try again.",
       connectionStatus: "AI connection",
       connectionPending: "Connection required",
       resolverStatus: "Resolver role",
@@ -196,7 +204,7 @@ const en = {
       title: "Cases",
       description:
         "Follow incoming Signals through autonomous investigation, effects, and recovery.",
-      requestFailed: "The request failed.",
+      requestFailed: "The request failed. Review the values and connection, then try again.",
       refresh: "Refresh",
       syncing: "Syncing Cases…",
       syncRetrying: "Sync failed; retrying automatically",
@@ -250,6 +258,7 @@ const en = {
       ownerYou: "You",
       ownerAssigned: "Another operator",
       actionReview: "Review the Case and resume or cancel it.",
+      actionInputRequired: "Operator input is required.",
       actionNone: "No action required",
       actionReviewCancellation: "Review cancellation",
       actionVerifying: "Opsonde is verifying recovery",
@@ -349,6 +358,10 @@ const en = {
         resumeRequired: "Review the blocker and resume with the current safe defaults.",
         recoveryNeedsResume:
           "The source recovered after automated work paused. Resume once to verify the Target before closing the Case.",
+        stoppedAtBoundary:
+          "Automated resolution stopped at a configured boundary. Review the diagnostics and resume or cancel the Case.",
+        preflightBlocked:
+          "The proposed change did not pass its safety check. Review the diagnostics before deciding what to do next.",
         waitForVerification: "No operator action is required while recovery is verified.",
         claimOptional: "Claim the Case if you will coordinate the response.",
         noAction: "Opsonde is continuing automatically; monitor its progress.",
@@ -460,7 +473,7 @@ const en = {
     audits: {
       title: "Audits",
       description: "Schedule recurring investigations and follow the Cases they open.",
-      requestFailed: "The request failed.",
+      requestFailed: "The request failed. Review the values and connection, then try again.",
       refresh: "Refresh",
       readOnly: "Your account can inspect audits. An administrator must change schedules.",
       addSchedule: "Add audit schedule",
@@ -483,12 +496,16 @@ const en = {
       schedule: "Schedule",
       nextRun: "Next run",
       deactivate: "Deactivate",
+      deactivateConfirmation:
+        "This schedule will stop creating future audit runs. Existing Cases and history remain available.",
+      confirmDeactivate: "Deactivate schedule",
       noSchedules: "No audit schedules are configured.",
       runs: "Audit runs",
       noRuns: "No audit runs have started.",
       openCase: "Open Case",
       noCaseOpened: "No Case was opened",
       reviewSchedule: "Review schedule",
+      runFailedGuidance: "The run did not open a Case. Review this schedule and Target path.",
       runStatus: {
         queued: "Queued",
         running: "Running",
@@ -501,7 +518,7 @@ const en = {
     reports: {
       title: "Reports",
       description: "Create immutable Case reports and deliver them through verified destinations.",
-      requestFailed: "The request failed.",
+      requestFailed: "The request failed. Review the values and connection, then try again.",
       refresh: "Refresh",
       manageDestinations: "Manage destinations",
       readOnly: "Your account can inspect reports and deliveries. An operator must create them.",
@@ -592,7 +609,7 @@ const en = {
         policy: "Add blacklist policy",
       },
       readOnly: "Your account can view inventory. An administrator must change it.",
-      requestFailed: "The request failed.",
+      requestFailed: "The request failed. Review the values and connection, then try again.",
       connectionsTitle: "Connections",
       connectionsDescription: "Register and verify only the access paths Opsonde may use.",
       addConnection: "Add Target connection",
@@ -684,6 +701,10 @@ const en = {
       apply: "Apply import",
       selectImport: "Select an import preview.",
       noImportRows: "This preview contains no rows.",
+      importRowInvalid:
+        "This row cannot be applied. Review its diagnostics and correct the source data.",
+      importStatus: { previewed: "Previewed", applied: "Applied" },
+      importDisposition: { create: "Create", update: "Update", error: "Error" },
     },
   },
 } as const;

@@ -42,8 +42,8 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
       await action();
       await onRefresh();
       return true;
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("setup.requestFailed"));
+    } catch {
+      onError(t("setup.requestFailed"));
       return false;
     } finally {
       setPending(null);
@@ -229,7 +229,10 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                   <div>
                     <p>{t(passed ? "setup.checkPassed" : "setup.checkRequired")}</p>
                     {provider.check.message && (
-                      <p className="text-muted-foreground">{provider.check.message}</p>
+                      <details className="text-muted-foreground">
+                        <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                        <p>{provider.check.message}</p>
+                      </details>
                     )}
                   </div>
                 </div>

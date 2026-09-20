@@ -29,11 +29,7 @@ export function TargetCreatePage() {
     let active = true;
     loadBoundaries()
       .then((items) => active && setBoundaries(items))
-      .catch(
-        (failure: unknown) =>
-          active &&
-          setError(failure instanceof Error ? failure.message : t("targets.requestFailed")),
-      );
+      .catch(() => active && setError(t("targets.requestFailed")));
     return () => {
       active = false;
     };
@@ -57,8 +53,8 @@ export function TargetCreatePage() {
       setBoundaries(await loadBoundaries());
       setCreatingBoundary(false);
       setSuccess(t("targets.boundaryCreated"));
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
+    } catch {
+      setError(t("targets.requestFailed"));
     } finally {
       setPending(false);
     }
@@ -84,14 +80,14 @@ export function TargetCreatePage() {
         }),
       );
       void navigate("/targets/" + response.data.id, { replace: true, state: { created: true } });
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
+    } catch {
+      setError(t("targets.requestFailed"));
       setPending(false);
     }
   }
 
   return (
-    <main className="mx-auto w-full max-w-3xl space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-3xl space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
           <Link to="/targets">
@@ -118,7 +114,7 @@ export function TargetCreatePage() {
         <p className="mt-2 text-muted-foreground">{t("targets.targetDescription")}</p>
       </div>
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -222,7 +218,7 @@ export function TargetCreatePage() {
           </CardContent>
         </Card>
       )}
-    </main>
+    </div>
   );
 }
 

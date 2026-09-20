@@ -32,8 +32,8 @@ export function SetupPage() {
       .then((next) => {
         if (active) setSnapshot(next);
       })
-      .catch((failure: unknown) => {
-        if (active) setError(failure instanceof Error ? failure.message : t("setup.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("setup.requestFailed"));
       });
     return () => {
       active = false;
@@ -50,10 +50,10 @@ export function SetupPage() {
 
   if (!snapshot) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
@@ -79,14 +79,14 @@ export function SetupPage() {
   );
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-8 p-6 lg:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t("setup.title")}</h1>
         <p className="mt-2 text-muted-foreground">{t("setup.description")}</p>
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -148,7 +148,7 @@ export function SetupPage() {
         onRefresh={refresh}
         onError={setError}
       />
-    </main>
+    </div>
   );
 }
 

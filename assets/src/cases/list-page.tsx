@@ -98,9 +98,9 @@ export function CaseListPage() {
         setLastSyncedAt(new Date());
         setError("");
         await resolveTargetNames(next.data);
-      } catch (failure) {
+      } catch {
         if (active) {
-          setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+          setError(t("cases.requestFailed"));
         }
       } finally {
         inFlight = false;
@@ -119,10 +119,10 @@ export function CaseListPage() {
 
   if (!page && !error) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
@@ -166,7 +166,7 @@ export function CaseListPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[96rem] space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-[96rem] space-y-6 p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t("cases.title")}</h1>
@@ -200,7 +200,7 @@ export function CaseListPage() {
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <CircleAlert />
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             <span>{error}</span>
@@ -374,7 +374,7 @@ export function CaseListPage() {
           </Button>
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -417,7 +417,7 @@ function SeverityBadge({ severity }: { severity: CaseRecord["severity"] }) {
 function RequiredAction({ incident }: { incident: CaseRecord }) {
   const { t } = useTranslation();
   const label = incident.required_human_input
-    ? incident.required_human_input
+    ? t("cases.actionInputRequired")
     : incident.status === "needs_attention"
       ? t("cases.actionReview")
       : incident.status === "resolved"

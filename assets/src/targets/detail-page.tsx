@@ -37,9 +37,8 @@ export function TargetDetailPage() {
     let active = true;
     loadTargetSnapshot()
       .then((next) => active && setSnapshot(next))
-      .catch((failure: unknown) => {
-        if (active)
-          setError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("targets.requestFailed"));
       });
     return () => {
       active = false;
@@ -48,17 +47,17 @@ export function TargetDetailPage() {
 
   if (!snapshot) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
   const target = snapshot.targets.find((item) => item.id === targetId && item.active);
   if (!target) {
     return (
-      <main className="mx-auto w-full max-w-5xl space-y-4 p-6 lg:p-8">
+      <div className="mx-auto w-full max-w-5xl space-y-4 p-6 lg:p-8">
         <Button asChild variant="ghost">
           <Link to="/targets">
             <ArrowLeft />
@@ -68,7 +67,7 @@ export function TargetDetailPage() {
         <Alert variant="destructive">
           <AlertDescription>{t("targets.targetNotFound")}</AlertDescription>
         </Alert>
-      </main>
+      </div>
     );
   }
 
@@ -93,7 +92,7 @@ export function TargetDetailPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
           <Link to="/targets">
@@ -112,7 +111,7 @@ export function TargetDetailPage() {
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -167,11 +166,16 @@ export function TargetDetailPage() {
                     {provider
                       ? provider.name +
                         " · " +
-                        (provider.check.message ||
-                          t(available ? "targets.checkPassed" : "targets.checkRequired"))
+                        t(available ? "targets.checkPassed" : "targets.checkRequired")
                       : t("targets.connectionMissing")}
                   </span>
                 </div>
+                {provider?.check.message && (
+                  <details className="mt-2 text-sm text-muted-foreground">
+                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                    <p>{provider.check.message}</p>
+                  </details>
+                )}
                 {method.capabilities.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1">
                     {method.capabilities.map((capability) => (
@@ -231,7 +235,7 @@ export function TargetDetailPage() {
           ))}
         </Section>
       </div>
-    </main>
+    </div>
   );
 }
 

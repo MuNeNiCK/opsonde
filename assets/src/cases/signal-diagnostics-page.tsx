@@ -30,8 +30,8 @@ export function SignalDiagnosticsPage() {
       })
       .then(apiData)
       .then((next) => active && setPage(next))
-      .catch((failure: unknown) => {
-        if (active) setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+      .catch(() => {
+        if (active) setError(t("cases.requestFailed"));
       });
     return () => {
       active = false;
@@ -55,8 +55,8 @@ export function SignalDiagnosticsPage() {
         params: { path: { id: receiptId }, query: { limit: 100 } },
       });
       setEvents((current) => ({ ...current, [receiptId]: apiData(response).data }));
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+    } catch {
+      setError(t("cases.requestFailed"));
     } finally {
       setLoadingReceipt(null);
     }
@@ -64,10 +64,10 @@ export function SignalDiagnosticsPage() {
 
   if (!page && !error) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
@@ -80,7 +80,7 @@ export function SignalDiagnosticsPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-6 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-5xl space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3">
           <Link to="/cases">
@@ -93,7 +93,7 @@ export function SignalDiagnosticsPage() {
       </div>
 
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="sticky top-16 z-20">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -167,7 +167,7 @@ export function SignalDiagnosticsPage() {
           {t("cases.nextPage")}
         </Button>
       </div>
-    </main>
+    </div>
   );
 }
 

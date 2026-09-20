@@ -1,6 +1,14 @@
 const ja = {
   translation: {
-    common: { language: "言語", loading: "読み込み中", signOut: "ログアウト", cancel: "戻る" },
+    common: {
+      language: "言語",
+      loading: "読み込み中",
+      signOut: "ログアウト",
+      cancel: "戻る",
+      skipToContent: "本文へ移動",
+      toggleNavigation: "ナビゲーションを切り替え",
+      diagnostics: "診断情報",
+    },
     login: {
       title: "Opsondeにログイン",
       description: "Opsondeアカウントで続行します。",
@@ -56,7 +64,7 @@ const ja = {
       checklist: "運用準備状況",
       readOnly: "このアカウントでは設定を参照できます。変更には管理者が必要です。",
       ready: "準備完了",
-      requestFailed: "リクエストに失敗しました。",
+      requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       connectionStatus: "AI接続",
       connectionPending: "接続が必要",
       resolverStatus: "Resolver役割",
@@ -191,7 +199,7 @@ const ja = {
     cases: {
       title: "ケース",
       description: "受信Signalから自律調査、変更、復旧までを追跡します。",
-      requestFailed: "リクエストに失敗しました。",
+      requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       refresh: "更新",
       syncing: "ケースを同期中…",
       syncRetrying: "同期に失敗しました。自動再試行しています",
@@ -244,6 +252,7 @@ const ja = {
       ownerYou: "自分",
       ownerAssigned: "別の運用者",
       actionReview: "ケースを確認し、再開または中止してください。",
+      actionInputRequired: "運用者の入力が必要です。",
       actionNone: "対応不要",
       actionReviewCancellation: "中止内容を確認",
       actionVerifying: "Opsondeが復旧を確認中",
@@ -341,6 +350,10 @@ const ja = {
         resumeRequired: "停止理由を確認し、現在の安全な初期値で再開してください。",
         recoveryNeedsResume:
           "自動処理の停止後に監視元が復旧しました。ケースを閉じる前に一度再開し、Targetの状態を確認してください。",
+        stoppedAtBoundary:
+          "設定された境界で自動解決を停止しました。診断情報を確認し、ケースを再開または中止してください。",
+        preflightBlocked:
+          "変更案は安全確認を通過しませんでした。診断情報を確認して次の対応を判断してください。",
         waitForVerification: "復旧確認中は運用者の対応は不要です。",
         claimOptional: "対応を調整する場合はケースを担当してください。",
         noAction: "Opsondeが自動で継続しています。進行状況を監視してください。",
@@ -452,7 +465,7 @@ const ja = {
     audits: {
       title: "監査",
       description: "定期調査を設定し、そこから開始されたCaseを追跡します。",
-      requestFailed: "リクエストに失敗しました。",
+      requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       refresh: "更新",
       readOnly: "このアカウントでは監査を参照できます。スケジュール変更には管理者が必要です。",
       addSchedule: "監査スケジュールを追加",
@@ -475,12 +488,16 @@ const ja = {
       schedule: "実行周期",
       nextRun: "次回実行",
       deactivate: "無効化",
+      deactivateConfirmation:
+        "このスケジュールから今後の監査実行を開始しなくなります。既存のCaseと履歴は残ります。",
+      confirmDeactivate: "スケジュールを無効化",
       noSchedules: "監査スケジュールは未登録です。",
       runs: "監査実行履歴",
       noRuns: "監査はまだ実行されていません。",
       openCase: "Caseを開く",
       noCaseOpened: "Caseは開始されませんでした",
       reviewSchedule: "スケジュールを確認",
+      runFailedGuidance: "Caseを開始できませんでした。スケジュールとTarget経路を確認してください。",
       runStatus: {
         queued: "待機中",
         running: "実行中",
@@ -493,7 +510,7 @@ const ja = {
     reports: {
       title: "レポート",
       description: "Caseの不変レポートを生成し、確認済みの宛先へ配送します。",
-      requestFailed: "リクエストに失敗しました。",
+      requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       refresh: "更新",
       manageDestinations: "通知先を管理",
       readOnly: "このアカウントではレポートと配送を参照できます。作成にはOperatorが必要です。",
@@ -583,7 +600,7 @@ const ja = {
         policy: "禁止Policyを追加",
       },
       readOnly: "このアカウントでは台帳を参照できます。変更には管理者が必要です。",
-      requestFailed: "リクエストに失敗しました。",
+      requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       connectionsTitle: "接続",
       connectionsDescription: "Opsondeが利用してよい接続経路だけを登録し、確認します。",
       addConnection: "Target接続を追加",
@@ -673,6 +690,10 @@ const ja = {
       apply: "インポートを反映",
       selectImport: "インポートプレビューを選択してください。",
       noImportRows: "このプレビューに行はありません。",
+      importRowInvalid:
+        "この行は反映できません。診断情報を確認し、インポート元データを修正してください。",
+      importStatus: { previewed: "プレビュー済み", applied: "反映済み" },
+      importDisposition: { create: "新規作成", update: "更新", error: "エラー" },
     },
   },
 } as const;

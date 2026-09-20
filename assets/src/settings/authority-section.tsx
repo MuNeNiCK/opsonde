@@ -61,8 +61,8 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
         },
       });
       await onRefresh();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("setup.requestFailed"));
+    } catch {
+      onError(t("setup.requestFailed"));
     } finally {
       setSaving(false);
     }

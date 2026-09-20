@@ -61,8 +61,8 @@ export function TargetProviderSection({
       await action();
       await onRefresh();
       return true;
-    } catch (error) {
-      onError(error instanceof Error ? error.message : t("targets.requestFailed"));
+    } catch {
+      onError(t("targets.requestFailed"));
       return false;
     } finally {
       setPending(null);
@@ -404,11 +404,14 @@ export function TargetProviderSection({
                   ) : (
                     <CircleAlert className="mt-0.5 size-4 text-warning" />
                   )}
-                  <span>
-                    {provider.check.message ||
-                      t(passed ? "targets.checkPassed" : "targets.checkRequired")}
-                  </span>
+                  <span>{t(passed ? "targets.checkPassed" : "targets.checkRequired")}</span>
                 </div>
+                {provider.check.message && (
+                  <details className="text-sm text-muted-foreground">
+                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                    <p>{provider.check.message}</p>
+                  </details>
+                )}
                 {canManage && (
                   <div className="space-y-3">
                     {provider.kind === "target" && (

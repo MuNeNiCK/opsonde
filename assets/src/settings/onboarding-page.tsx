@@ -32,10 +32,10 @@ export function OnboardingPage() {
     let active = true;
     loadSettingsSnapshot()
       .then((next) => active && setSnapshot(next))
-      .catch((failure: unknown) => {
+      .catch(() => {
         if (active) {
           setSnapshot(null);
-          setError(failure instanceof Error ? failure.message : t("setup.requestFailed"));
+          setError(t("setup.requestFailed"));
         }
       });
     return () => {
@@ -45,20 +45,20 @@ export function OnboardingPage() {
 
   if (snapshot === undefined) {
     return (
-      <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
         <span>{t("common.loading")}</span>
-      </main>
+      </div>
     );
   }
 
   if (snapshot === null) {
     return (
-      <main className="mx-auto w-full max-w-3xl p-6 lg:p-8">
+      <div className="mx-auto w-full max-w-3xl p-6 lg:p-8">
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </main>
+      </div>
     );
   }
 
@@ -80,7 +80,7 @@ export function OnboardingPage() {
   const completed = steps.filter((step) => status[step.key]).length;
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-8 p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-5xl space-y-8 p-6 lg:p-8">
       <div className="space-y-2">
         <Badge variant="secondary">
           {t("onboarding.progress", { completed, total: steps.length })}
@@ -151,6 +151,6 @@ export function OnboardingPage() {
         </Button>
         <p className="text-sm text-muted-foreground">{t("onboarding.resume")}</p>
       </div>
-    </main>
+    </div>
   );
 }
