@@ -190,6 +190,7 @@ function AppRoutes() {
           <Route path="cases/:caseId" element={<CaseDetailPage />} />
           <Route path="targets" element={<TargetPage />} />
           <Route path="targets/new" element={<TargetCreatePage />} />
+          <Route path="targets/new/:targetType" element={<TargetCreatePage />} />
           <Route path="targets/connections" element={<TargetConnectionsPage />} />
           <Route path="targets/connections/new" element={<TargetConnectionCreatePage />} />
           <Route path="targets/connections/new/:family" element={<TargetConnectionCreatePage />} />

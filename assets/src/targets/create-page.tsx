@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Boxes, Cable, Network, Plus, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
@@ -12,21 +12,58 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { ProviderChoiceCard } from "@/providers/choice-card";
 
 type Boundary = components["schemas"]["ManagementBoundary"];
+
+const targetChoices = {
+  linux: {
+    title: "Linux",
+    kind: "host",
+    platform: "linux",
+    icon: Server,
+    description: "targets.targetChoiceLinux",
+  },
+  "cisco-ios-xe": {
+    title: "Cisco IOS XE",
+    kind: "network_device",
+    platform: "cisco_ios_xe",
+    icon: Network,
+    description: "targets.targetChoiceCisco",
+  },
+  kubernetes: {
+    title: "Kubernetes",
+    kind: "cluster",
+    platform: "kubernetes",
+    icon: Boxes,
+    description: "targets.targetChoiceKubernetes",
+  },
+  generic: {
+    title: "Generic",
+    kind: null,
+    platform: null,
+    icon: Cable,
+    description: "targets.targetChoiceGeneric",
+  },
+} as const;
 
 export function TargetCreatePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { targetType } = useParams();
   const { account } = useAuthentication();
   const [boundaries, setBoundaries] = useState<Boundary[] | null>(null);
   const [creatingBoundary, setCreatingBoundary] = useState(false);
   const [targetKind, setTargetKind] = useState("host");
-  const [targetPlatform, setTargetPlatform] = useState("linux");
+  const [targetPlatform, setTargetPlatform] = useState("generic");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const canManage = account?.role === "admin";
+  const choice =
+    targetType && targetType in targetChoices
+      ? targetChoices[targetType as keyof typeof targetChoices]
+      : undefined;
 
   useEffect(() => {
     let active = true;
@@ -37,6 +74,8 @@ export function TargetCreatePage() {
       active = false;
     };
   }, [t]);
+
+  if (targetType && !choice) return <Navigate to="/targets/new" replace />;
 
   async function createBoundary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,17 +108,21 @@ export function TargetCreatePage() {
     setPending(true);
     setError("");
     try {
+      const targetKindValue =
+        choice?.kind ??
+        (value(form, "kind") === "custom" ? value(form, "custom_kind") : value(form, "kind"));
+      const targetPlatformValue =
+        choice?.platform ??
+        (value(form, "platform") === "custom"
+          ? value(form, "custom_platform")
+          : value(form, "platform"));
       const response = apiData(
         await apiClient.POST("/api/v1/targets", {
           body: {
             target: {
               name: value(form, "name"),
-              kind:
-                value(form, "kind") === "custom" ? value(form, "custom_kind") : value(form, "kind"),
-              platform:
-                value(form, "platform") === "custom"
-                  ? value(form, "custom_platform")
-                  : value(form, "platform"),
+              kind: targetKindValue,
+              platform: targetPlatformValue,
               facts: {},
               management_boundary_id: value(form, "management_boundary_id") || null,
             },
@@ -97,16 +140,20 @@ export function TargetCreatePage() {
     <div className="space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
-          <Link to="/targets">
+          <Link to={choice ? "/targets/new" : "/targets"}>
             <ArrowLeft />
-            {t("targets.back")}
+            {t(choice ? "targets.backToTargetTypes" : "targets.back")}
           </Link>
         </Button>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">
-            {t(creatingBoundary ? "targets.addBoundary" : "targets.addTarget")}
+            {creatingBoundary
+              ? t("targets.addBoundary")
+              : choice
+                ? choice.title
+                : t("targets.chooseTargetType")}
           </h1>
-          {canManage && (
+          {canManage && choice && (
             <Button
               variant="outline"
               onClick={() => {
@@ -118,7 +165,9 @@ export function TargetCreatePage() {
             </Button>
           )}
         </div>
-        <p className="mt-2 text-muted-foreground">{t("targets.targetDescription")}</p>
+        <p className="mt-2 text-muted-foreground">
+          {t(choice ? choice.description : "targets.chooseTargetTypeDescription")}
+        </p>
       </div>
       {error && (
         <Alert variant="destructive" className="sticky top-16 z-20">
@@ -134,6 +183,18 @@ export function TargetCreatePage() {
         <Alert>
           <AlertDescription>{t("targets.readOnly")}</AlertDescription>
         </Alert>
+      ) : !choice ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Object.entries(targetChoices).map(([id, item]) => (
+            <ProviderChoiceCard
+              key={id}
+              to={`/targets/new/${id}`}
+              title={item.title}
+              description={t(item.description)}
+              icon={item.icon}
+            />
+          ))}
+        </div>
       ) : creatingBoundary ? (
         <Card>
           <CardHeader>
@@ -166,45 +227,49 @@ export function TargetCreatePage() {
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
               <Field label={t("targets.name")} name="name" required maxLength={120} />
-              <div className="space-y-2">
-                <Label htmlFor="target-create-kind">{t("targets.kind")}</Label>
-                <FormSelect
-                  id="target-create-kind"
-                  name="kind"
-                  value={targetKind}
-                  onValueChange={(next) => next && setTargetKind(next)}
-                  required
-                  options={[
-                    { value: "host", label: "host" },
-                    { value: "cluster", label: "cluster" },
-                    { value: "network_device", label: "network_device" },
-                    { value: "bmc", label: "bmc" },
-                    { value: "virtualization", label: "virtualization" },
-                    { value: "custom", label: t("targets.custom") },
-                  ]}
-                />
-              </div>
-              {targetKind === "custom" && (
+              {choice.kind === null && (
+                <div className="space-y-2">
+                  <Label htmlFor="target-create-kind">{t("targets.kind")}</Label>
+                  <FormSelect
+                    id="target-create-kind"
+                    name="kind"
+                    value={targetKind}
+                    onValueChange={(next) => next && setTargetKind(next)}
+                    required
+                    options={[
+                      { value: "host", label: "host" },
+                      { value: "cluster", label: "cluster" },
+                      { value: "network_device", label: "network_device" },
+                      { value: "bmc", label: "bmc" },
+                      { value: "virtualization", label: "virtualization" },
+                      { value: "custom", label: t("targets.custom") },
+                    ]}
+                  />
+                </div>
+              )}
+              {choice.kind === null && targetKind === "custom" && (
                 <Field label={t("targets.customKind")} name="custom_kind" required maxLength={80} />
               )}
-              <div className="space-y-2">
-                <Label htmlFor="target-create-platform">{t("targets.platform")}</Label>
-                <FormSelect
-                  id="target-create-platform"
-                  name="platform"
-                  value={targetPlatform}
-                  onValueChange={(next) => next && setTargetPlatform(next)}
-                  required
-                  options={[
-                    { value: "linux", label: "linux" },
-                    { value: "kubernetes", label: "kubernetes" },
-                    { value: "cisco_ios_xe", label: "cisco_ios_xe" },
-                    { value: "generic", label: "generic" },
-                    { value: "custom", label: t("targets.custom") },
-                  ]}
-                />
-              </div>
-              {targetPlatform === "custom" && (
+              {choice.platform === null && (
+                <div className="space-y-2">
+                  <Label htmlFor="target-create-platform">{t("targets.platform")}</Label>
+                  <FormSelect
+                    id="target-create-platform"
+                    name="platform"
+                    value={targetPlatform}
+                    onValueChange={(next) => next && setTargetPlatform(next)}
+                    required
+                    options={[
+                      { value: "linux", label: "linux" },
+                      { value: "kubernetes", label: "kubernetes" },
+                      { value: "cisco_ios_xe", label: "cisco_ios_xe" },
+                      { value: "generic", label: "generic" },
+                      { value: "custom", label: t("targets.custom") },
+                    ]}
+                  />
+                </div>
+              )}
+              {choice.platform === null && targetPlatform === "custom" && (
                 <Field
                   label={t("targets.customPlatform")}
                   name="custom_platform"
