@@ -101,6 +101,26 @@ const ja = {
       priority: "優先度",
       assign: "役割を割り当て",
       noRoles: "AI役割は未設定です。",
+      accounts: {
+        title: "運用者アカウント",
+        description: "ローカルアカウントを作成し、各運用者に必要な権限を割り当てます。",
+        createTitle: "アカウントを作成",
+        passwordDescription:
+          "パスワードは12文字以上必要です。書き込み専用で、送信後に再表示されません。",
+        email: "メールアドレス",
+        password: "パスワード",
+        role: "役割",
+        create: "アカウントを作成",
+        created: "アカウントを作成しました。",
+        listTitle: "アカウント",
+        roleDescription:
+          "役割を変更すると、そのアカウントの全セッションが終了します。現在の管理者自身の役割はここでは変更できません。",
+        current: "現在のアカウント",
+        saveRole: "役割を保存",
+        roleChanged: "{{email}}の役割を変更しました。",
+        requestFailed: "アカウントを変更できませんでした。入力値を確認して再試行してください。",
+        roles: { admin: "管理者", operator: "Operator", viewer: "閲覧者" },
+      },
       oidcTitle: "OIDC認証",
       oidcDescription:
         "任意で1つのIDプロバイダーを接続し、既存のOpsondeアカウントへ明示的にリンクします。",

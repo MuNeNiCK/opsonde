@@ -102,6 +102,26 @@ const en = {
       priority: "Priority",
       assign: "Assign role",
       noRoles: "No AI role is assigned.",
+      accounts: {
+        title: "Operator accounts",
+        description: "Create local accounts and assign the access each operator needs.",
+        createTitle: "Create account",
+        passwordDescription:
+          "Passwords must contain at least 12 characters. They are write-only and are never displayed after submission.",
+        email: "Email address",
+        password: "Password",
+        role: "Role",
+        create: "Create account",
+        created: "The account was created.",
+        listTitle: "Accounts",
+        roleDescription:
+          "Role changes sign the account out everywhere. Your current administrator role cannot be changed here.",
+        current: "Current account",
+        saveRole: "Save role",
+        roleChanged: "The role for {{email}} was changed.",
+        requestFailed: "The account change failed. Review the values and try again.",
+        roles: { admin: "Administrator", operator: "Operator", viewer: "Viewer" },
+      },
       oidcTitle: "OIDC authentication",
       oidcDescription:
         "Optionally connect one identity provider and link it explicitly to existing Opsonde accounts.",

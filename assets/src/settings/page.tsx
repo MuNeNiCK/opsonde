@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { AccountSection } from "@/settings/account-section";
 import { OIDCSetup } from "@/settings/oidc-section";
 import { ProviderSetup } from "@/providers/ai-section";
 import { SignalProviderSection } from "@/providers/signal-section";
@@ -127,6 +128,7 @@ export function SetupPage() {
         />
       </section>
 
+      {canManage && account && <AccountSection currentAccountId={account.id} />}
       <ProviderSetup
         providers={snapshot.providers}
         assignments={snapshot.assignments}
