@@ -2,6 +2,9 @@ const ja = {
   translation: {
     common: {
       language: "言語",
+      theme: "テーマ",
+      light: "ライト",
+      dark: "ダーク",
       loading: "読み込み中",
       signOut: "ログアウト",
       cancel: "戻る",

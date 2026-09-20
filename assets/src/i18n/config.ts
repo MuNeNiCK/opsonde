@@ -4,23 +4,32 @@ import en from "@/i18n/en";
 import ja from "@/i18n/ja";
 
 const localeKey = "opsonde.locale";
+export const supportedLocales = [
+  { value: "en", label: "English", resource: en },
+  { value: "ja", label: "日本語", resource: ja },
+] as const;
+
+export type SupportedLocale = (typeof supportedLocales)[number]["value"];
+
+export function normalizeLocale(locale: string | null | undefined): SupportedLocale {
+  const language = locale?.trim().toLocaleLowerCase().split("-")[0];
+  return supportedLocales.find((candidate) => candidate.value === language)?.value ?? "en";
+}
+
 const storedLocale = localStorage.getItem(localeKey);
-const defaultLocale =
-  storedLocale === "ja" || storedLocale === "en"
-    ? storedLocale
-    : navigator.language.startsWith("ja")
-      ? "ja"
-      : "en";
+const defaultLocale = storedLocale
+  ? normalizeLocale(storedLocale)
+  : normalizeLocale(navigator.language);
 
 void i18n.use(initReactI18next).init({
-  resources: { en, ja },
+  resources: Object.fromEntries(supportedLocales.map(({ value, resource }) => [value, resource])),
   lng: defaultLocale,
   fallbackLng: "en",
   interpolation: { escapeValue: false },
 });
 
 i18n.on("languageChanged", (locale) => {
-  const supportedLocale = locale.startsWith("ja") ? "ja" : "en";
+  const supportedLocale = normalizeLocale(locale);
   localStorage.setItem(localeKey, supportedLocale);
   document.documentElement.lang = supportedLocale;
 });

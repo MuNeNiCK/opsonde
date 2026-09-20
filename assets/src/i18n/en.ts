@@ -2,6 +2,9 @@ const en = {
   translation: {
     common: {
       language: "Language",
+      theme: "Theme",
+      light: "Light",
+      dark: "Dark",
       loading: "Loading",
       signOut: "Sign out",
       cancel: "Cancel",
