@@ -154,7 +154,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
   }
 
   return (
-    <section id="providers" className="space-y-6">
+    <section id="ai" className="scroll-mt-6 space-y-6">
       <div>
         <h2 className="text-xl font-semibold">{t("setup.aiTitle")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
@@ -273,7 +273,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         })}
       </div>
 
-      <Card>
+      <Card id="ai-roles" className="scroll-mt-6">
         <CardHeader>
           <CardTitle>{t("setup.rolesTitle")}</CardTitle>
           <CardDescription>{t("setup.rolesDescription")}</CardDescription>

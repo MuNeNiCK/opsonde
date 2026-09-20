@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "@/app/app-shell";
@@ -6,6 +6,7 @@ import { AuthenticationProvider } from "@/auth/provider";
 import { LoginPage } from "@/auth/login-page";
 import { useAuthentication } from "@/auth/context";
 import { Spinner } from "@/components/ui/spinner";
+import { loadSettingsSnapshot, readiness } from "@/settings/data";
 
 const CaseListPage = lazy(() =>
   import("@/cases/list-page").then((module) => ({ default: module.CaseListPage })),
@@ -20,6 +21,9 @@ const SignalDiagnosticsPage = lazy(() =>
 );
 const SetupPage = lazy(() =>
   import("@/settings/page").then((module) => ({ default: module.SetupPage })),
+);
+const OnboardingPage = lazy(() =>
+  import("@/settings/onboarding-page").then((module) => ({ default: module.OnboardingPage })),
 );
 const TargetPage = lazy(() =>
   import("@/targets/page").then((module) => ({ default: module.TargetPage })),
@@ -84,6 +88,30 @@ function FoundationPage({ title }: { title: string }) {
   );
 }
 
+function HomeRoute() {
+  const { account } = useAuthentication();
+  const [destination, setDestination] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (account?.role !== "admin") return;
+
+    loadSettingsSnapshot()
+      .then((snapshot) => {
+        if (active) setDestination(readiness(snapshot).complete ? "/cases" : "/onboarding");
+      })
+      .catch(() => {
+        if (active) setDestination("/settings");
+      });
+    return () => {
+      active = false;
+    };
+  }, [account?.role]);
+
+  if (account?.role !== "admin") return <Navigate to="/cases" replace />;
+  return destination ? <Navigate to={destination} replace /> : <PageSpinner />;
+}
+
 function AppRoutes() {
   return (
     <Suspense fallback={<PageSpinner />}>
@@ -104,7 +132,8 @@ function AppRoutes() {
             </AuthenticationGate>
           }
         >
-          <Route index element={<Navigate to="/cases" replace />} />
+          <Route index element={<HomeRoute />} />
+          <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="cases" element={<CaseListPage />} />
           <Route path="cases/signals" element={<SignalDiagnosticsPage />} />
           <Route path="cases/:caseId" element={<CaseDetailPage />} />
@@ -113,7 +142,7 @@ function AppRoutes() {
           <Route path="targets/connections" element={<TargetConnectionsPage />} />
           <Route path="targets/imports" element={<TargetImportPage />} />
           <Route path="targets/:targetId" element={<TargetDetailPage />} />
-          <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
+          <Route path="providers" element={<Navigate to="/settings#ai" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />
           <Route path="settings" element={<SetupPage />} />

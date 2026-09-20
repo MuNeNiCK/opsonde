@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,7 +69,7 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
   }
 
   return (
-    <section className="space-y-4">
+    <section id="authority" className="scroll-mt-6 space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("setup.authorityTitle")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.authorityDescription")}</p>
@@ -191,6 +192,16 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
                 disabled={!canManage || saving}
               />
             </div>
+
+            <Alert>
+              <AlertDescription>
+                {t(
+                  automation
+                    ? "setup.automationEnabledConsequence"
+                    : "setup.automationDisabledConsequence",
+                )}
+              </AlertDescription>
+            </Alert>
 
             {canManage && (
               <Button type="submit" disabled={saving}>

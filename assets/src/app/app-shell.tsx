@@ -41,7 +41,7 @@ const navigation = [
     label: "navigation.configuration",
     items: [
       ["/targets", "navigation.targets", Boxes],
-      ["/settings", "navigation.setup", Settings],
+      ["/settings", "navigation.settings", Settings],
     ],
   },
 ] as const;

@@ -34,7 +34,7 @@ const ja = {
       cases: "ケース",
       targets: "対象",
       providers: "プロバイダー",
-      setup: "初期設定",
+      setup: "設定",
       audits: "監査",
       reports: "レポート",
       settings: "設定",
@@ -51,9 +51,9 @@ const ja = {
       notFound: "ページが見つかりません",
     },
     setup: {
-      title: "初期設定",
-      description: "AIの役割を接続し、新しいケースに適用する常設権限を設定します。",
-      checklist: "設定状況",
+      title: "設定",
+      description: "AI役割、受信Signal、認証、新しいケースに適用する常設権限を管理します。",
+      checklist: "運用準備状況",
       readOnly: "このアカウントでは設定を参照できます。変更には管理者が必要です。",
       ready: "準備完了",
       requestFailed: "リクエストに失敗しました。",
@@ -65,12 +65,14 @@ const ja = {
       reviewerFallback:
         "Reviewerは任意です。未設定時はResolverモデルの独立セッションを使用します。",
       authorityStatus: "常設権限",
+      authorityPending: "確認が必要",
       automationOn: "Signalからの自動解決は有効です。",
       automationOff: "Signalからの自動解決は無効です。",
       aiTitle: "AI接続と役割",
       aiDescription: "Opsondeが利用できる接続を登録・確認し、役割を割り当てます。",
       addAI: "AI接続を追加",
-      secretDescription: "認証情報は書き込み専用で、再表示されません。",
+      secretDescription:
+        "認証情報は書き込み専用です。接続を置き換える場合は認証情報を再入力してください。保存値は再表示されません。",
       name: "名前",
       service: "サービス",
       model: "モデル",
@@ -115,6 +117,10 @@ const ja = {
       policyAlwaysApplies: "TargetのブラックリストPolicyは、すべてのモードで適用されます。",
       automation: "受信Signalから解決を開始",
       automationDescription: "無効時は、受信アラートを表示しますが自動解決は開始しません。",
+      automationEnabledConsequence:
+        "保存後、受信Signalはこの権限モードと制限で自律解決を開始できます。",
+      automationDisabledConsequence:
+        "保存後、受信Signalは運用者向けに記録されますが、自律解決は開始しません。",
       limits: "解決制限",
       maxElapsed: "最大経過秒数",
       maxTurns: "最大Resolverターン数",
@@ -141,6 +147,47 @@ const ja = {
         },
       },
     },
+    onboarding: {
+      title: "Opsondeを環境へ接続",
+      description:
+        "受信アラートを解決できるように、必要な接続と権限を設定します。途中で離れても、保存済みの構成から再開できます。",
+      progress: "必須{{total}}項目中{{completed}}項目が準備完了",
+      ready: "準備完了",
+      pending: "未完了",
+      optional: "任意",
+      oidcTitle: "OIDC認証",
+      oidcDescription: "運用者がOIDCログインを必要とする場合にIDプロバイダーを追加します。",
+      configureOIDC: "OIDCを設定",
+      continueLater: "一旦ケースへ進む",
+      resume: "必須項目が揃うまで、管理者の通常ログイン時にこの画面へ戻ります。",
+      steps: {
+        ai: {
+          title: "AI接続",
+          description: "モデル接続を追加し、接続確認して有効化します。",
+          action: "AIを設定",
+        },
+        resolver: {
+          title: "Resolver役割",
+          description: "有効なAI接続をケース解決に割り当てます。",
+          action: "Resolverを割り当て",
+        },
+        authority: {
+          title: "権限と制限",
+          description: "運用モードと有限の制限を確認し、明示的に保存します。",
+          action: "権限を確認",
+        },
+        signal: {
+          title: "受信Signal",
+          description: "監視Webhook接続を追加し、接続確認して有効化します。",
+          action: "監視を接続",
+        },
+        target: {
+          title: "Targetアクセス",
+          description: "確認済みAccess Methodで有効なTargetを1つ以上接続します。",
+          action: "Targetを接続",
+        },
+      },
+    },
     cases: {
       title: "ケース",
       description: "受信Signalから自律調査、変更、復旧までを追跡します。",
@@ -160,7 +207,8 @@ const ja = {
       signalConnections: "Signal接続",
       signalDescription: "監視基盤を共通のSignal受信経路へ接続します。",
       addSignal: "Signal接続を追加",
-      signalSecret: "Webhook secretは書き込み専用で、16文字以上必要です。",
+      signalSecret:
+        "Webhook secretは書き込み専用で、16文字以上必要です。変更する場合は接続を置き換えます。",
       name: "名前",
       signalType: "監視基盤",
       source: "ソース識別子",

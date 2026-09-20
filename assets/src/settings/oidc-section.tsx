@@ -112,7 +112,7 @@ export function OIDCSetup({ canManage, onError }: Props) {
   const connectionEnabled = provider?.enabled ?? oidcEnabled;
 
   return (
-    <section id="oidc" className="space-y-4">
+    <section id="oidc" className="scroll-mt-6 space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("setup.oidcTitle")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.oidcDescription")}</p>

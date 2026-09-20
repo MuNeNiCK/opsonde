@@ -18,7 +18,7 @@ export function LoginPage() {
   const [failed, setFailed] = useState(false);
   const [oidcFailed, setOIDCFailed] = useState(false);
   const [firstUse, setFirstUse] = useState(false);
-  const returnPath = (location.state as { from?: string } | null)?.from ?? "/cases";
+  const returnPath = (location.state as { from?: string } | null)?.from ?? "/";
 
   if (account) return <Navigate to={returnPath} replace />;
 

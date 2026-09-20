@@ -91,7 +91,7 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
   }
 
   return (
-    <section className="space-y-4">
+    <section id="signals" className="scroll-mt-6 space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("cases.signalConnections")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("cases.signalDescription")}</p>

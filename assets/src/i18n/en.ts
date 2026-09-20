@@ -34,7 +34,7 @@ const en = {
       cases: "Cases",
       targets: "Targets",
       providers: "Providers",
-      setup: "Setup",
+      setup: "Settings",
       audits: "Audits",
       reports: "Reports",
       settings: "Settings",
@@ -51,10 +51,10 @@ const en = {
       notFound: "Page not found",
     },
     setup: {
-      title: "Setup",
-      description: "Connect the AI roles and set the standing authority used for new Cases.",
-      checklist: "Setup status",
-      readOnly: "Your account can view this setup. An administrator must change it.",
+      title: "Settings",
+      description: "Manage AI roles, incoming Signals, authentication, and standing authority.",
+      checklist: "Operational readiness",
+      readOnly: "Your account can view these settings. An administrator must change them.",
       ready: "Ready",
       requestFailed: "The request failed.",
       connectionStatus: "AI connection",
@@ -65,12 +65,14 @@ const en = {
       reviewerFallback:
         "Reviewer is optional; Opsonde will use an isolated session of the Resolver model.",
       authorityStatus: "Standing authority",
+      authorityPending: "Confirmation required",
       automationOn: "Signal automation is enabled.",
       automationOff: "Signal automation is disabled.",
       aiTitle: "AI connections and roles",
       aiDescription: "Register the connection Opsonde may use, verify it, then assign its roles.",
       addAI: "Add AI connection",
-      secretDescription: "Credentials are write-only and are never displayed again.",
+      secretDescription:
+        "Credentials are write-only. To replace a connection, enter its credential again; saved values are never displayed.",
       name: "Name",
       service: "Service",
       model: "Model",
@@ -118,6 +120,10 @@ const en = {
       automation: "Start resolution from incoming Signals",
       automationDescription:
         "When disabled, incoming alerts remain visible without starting an automated resolution.",
+      automationEnabledConsequence:
+        "After you save, incoming Signals can start autonomous resolution with this authority mode and these limits.",
+      automationDisabledConsequence:
+        "After you save, incoming Signals are recorded for operators, but autonomous resolution does not start.",
       limits: "Resolution limits",
       maxElapsed: "Maximum elapsed seconds",
       maxTurns: "Maximum Resolver turns",
@@ -144,6 +150,48 @@ const en = {
         },
       },
     },
+    onboarding: {
+      title: "Connect Opsonde to your environment",
+      description:
+        "Complete the required connections and authority before Opsonde can resolve incoming alerts. You can leave and resume from the same persisted configuration.",
+      progress: "{{completed}} of {{total}} required steps ready",
+      ready: "Ready",
+      pending: "Pending",
+      optional: "Optional",
+      oidcTitle: "OIDC authentication",
+      oidcDescription: "Add an identity provider when your operators need OIDC sign-in.",
+      configureOIDC: "Configure OIDC",
+      continueLater: "Continue to Cases for now",
+      resume:
+        "Opsonde will return administrators here on their next normal sign-in until all required steps are ready.",
+      steps: {
+        ai: {
+          title: "AI connection",
+          description: "Add, check, and enable a model connection.",
+          action: "Configure AI",
+        },
+        resolver: {
+          title: "Resolver role",
+          description: "Assign an enabled AI connection to resolve Cases.",
+          action: "Assign Resolver",
+        },
+        authority: {
+          title: "Authority and limits",
+          description: "Review and explicitly save the operating mode and finite limits.",
+          action: "Review authority",
+        },
+        signal: {
+          title: "Incoming Signals",
+          description: "Add, check, and enable a monitoring webhook connection.",
+          action: "Connect monitoring",
+        },
+        target: {
+          title: "Target access",
+          description: "Connect at least one active Target through a checked Access Method.",
+          action: "Connect a Target",
+        },
+      },
+    },
     cases: {
       title: "Cases",
       description:
@@ -164,7 +212,8 @@ const en = {
       signalConnections: "Signal connections",
       signalDescription: "Connect monitoring systems to the common incoming Signal path.",
       addSignal: "Add Signal connection",
-      signalSecret: "The webhook secret is write-only and must contain at least 16 characters.",
+      signalSecret:
+        "The webhook secret is write-only and must contain at least 16 characters. Create a replacement connection to change it.",
       name: "Name",
       signalType: "Monitoring system",
       source: "Source identity",

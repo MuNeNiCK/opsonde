@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Bot, Check, CircleDashed, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData, collectPages } from "@/api/client";
-import type { components } from "@/api/schema";
+import { useLocation } from "react-router-dom";
 import { AuthoritySetup } from "@/settings/authority-section";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,51 +11,24 @@ import { Spinner } from "@/components/ui/spinner";
 import { OIDCSetup } from "@/settings/oidc-section";
 import { ProviderSetup } from "@/providers/ai-section";
 import { SignalProviderSection } from "@/providers/signal-section";
-
-type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
-type AuthoritySetting = components["schemas"]["AuthoritySetting"];
-type Provider = components["schemas"]["Provider"];
-
-type Snapshot = {
-  providers: Provider[];
-  assignments: AIUsageRoleAssignment[];
-  authority: AuthoritySetting;
-};
-
-async function loadSnapshot(): Promise<Snapshot> {
-  const [providers, assignments, authority] = await Promise.all([
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/ai-usage-role-assignments", {
-          params: { query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    apiClient.GET("/api/v1/authority-setting").then(apiData),
-  ]);
-  return { providers, assignments, authority: authority.data };
-}
+import { loadSettingsSnapshot, readiness, type SettingsSnapshot } from "@/settings/data";
 
 export function SetupPage() {
   const { t } = useTranslation();
+  const { hash } = useLocation();
   const { account } = useAuthentication();
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
   const refresh = useCallback(async () => {
-    const next = await loadSnapshot();
+    const next = await loadSettingsSnapshot();
     setSnapshot(next);
   }, []);
 
   useEffect(() => {
     let active = true;
-    loadSnapshot()
+    loadSettingsSnapshot()
       .then((next) => {
         if (active) setSnapshot(next);
       })
@@ -68,6 +40,14 @@ export function SetupPage() {
     };
   }, [t]);
 
+  useEffect(() => {
+    if (!snapshot || !hash) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hash, snapshot]);
+
   if (!snapshot) {
     return (
       <main className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
@@ -77,13 +57,9 @@ export function SetupPage() {
     );
   }
 
-  const activeAI = snapshot.providers.some(
-    (provider) =>
-      provider.kind === "ai" &&
-      provider.enabled &&
-      provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision,
-  );
+  const status = readiness(snapshot);
+  const activeAI = status.ai;
+  const resolverReady = status.resolver;
   const activeAIIds = new Set(
     snapshot.providers
       .filter(
@@ -94,12 +70,6 @@ export function SetupPage() {
           provider.check.checked_revision === provider.revision,
       )
       .map((provider) => provider.id),
-  );
-  const resolverReady = snapshot.assignments.some(
-    (assignment) =>
-      assignment.role === "resolver" &&
-      assignment.enabled &&
-      activeAIIds.has(assignment.provider_id),
   );
   const reviewerConfigured = snapshot.assignments.some(
     (assignment) =>
@@ -146,9 +116,9 @@ export function SetupPage() {
         <StatusCard
           icon={<ShieldCheck />}
           title={t("setup.authorityStatus")}
-          ready
+          ready={status.authority}
           readyText={t(`setup.modes.${snapshot.authority.authority_mode}.name`)}
-          pendingText=""
+          pendingText={t("setup.authorityPending")}
           detail={
             snapshot.authority.signal_automation_enabled
               ? t("setup.automationOn")
