@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Cases.ReviewDelivery
   alias Opsonde.Providers.AI
@@ -68,6 +70,12 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{"data" => %{"authority_mode" => "ask", "setting_revision" => 2}} =
              json_response(configured, 200)
 
+    assert_operation_response(configured)
+
+    authority_history = get_json("/api/v1/authority-settings", context.viewer_token)
+    assert %{"data" => [_, _], "page" => %{"next" => nil}} = json_response(authority_history, 200)
+    assert_operation_response(authority_history)
+
     stale_setting =
       put_json(
         "/api/v1/authority-setting",
@@ -95,6 +103,11 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert incident["status"] == "running"
     assert incident["authority_mode"] == "ask"
 
+    cases = get_json("/api/v1/cases", context.viewer_token)
+    assert %{"data" => [%{"id" => case_id}]} = json_response(cases, 200)
+    assert case_id == incident["id"]
+    assert_operation_response(cases)
+
     claimed =
       post_json(
         "/api/v1/cases/#{incident["id"]}/claim",
@@ -104,6 +117,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"data" => %{"revision" => 2, "current_owner_id" => owner_id}} =
              json_response(claimed, 200)
+
+    assert_operation_response(claimed)
 
     assert owner_id == context.operator.id
 
@@ -127,6 +142,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              json_response(handed_off, 200)
 
     assert next_owner == context.next_operator.id
+    assert_operation_response(handed_off)
 
     cancelled =
       post_json(
@@ -137,6 +153,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"data" => %{"revision" => 4, "cancel_requested" => true}} =
              json_response(cancelled, 200)
+
+    assert_operation_response(cancelled)
 
     snapshot = get_json("/api/v1/cases/#{incident["id"]}", context.viewer_token)
 
@@ -150,6 +168,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              }
            } = json_response(snapshot, 200)
 
+    assert_operation_response(snapshot)
+
     assert case_id == incident["id"]
     refute snapshot.resp_body =~ "pending_intent"
     refute snapshot.resp_body =~ "idempotency_key"
@@ -158,6 +178,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"data" => first_events, "page" => %{"next" => cursor}} =
              json_response(timeline, 200)
+
+    assert_operation_response(timeline)
 
     assert Enum.map(first_events, & &1["type"]) == ["case_opened", "case_claimed"]
     assert is_binary(cursor)
@@ -214,6 +236,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{"data" => %{"generation" => 2, "status" => "running", "active" => true}} =
              json_response(resumed, 200)
 
+    assert_operation_response(resumed)
+
     snapshot = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)
     assert snapshot["case"]["status"] == "running"
     assert Enum.map(snapshot["resolution_runs"], & &1["generation"]) == [2, 1]
@@ -265,7 +289,14 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{"data" => %{"status" => "authorized", "revision" => approved_revision}} =
              json_response(approved, 200)
 
+    assert_operation_response(approved)
+
     assert approved_revision > proposal.revision
+
+    proposal_response = get_json("/api/v1/proposals/#{proposal.id}", context.viewer_token)
+    assert %{"data" => %{"id" => proposal_id}} = json_response(proposal_response, 200)
+    assert proposal_id == proposal.id
+    assert_operation_response(proposal_response)
 
     duplicate =
       post_json(
@@ -293,6 +324,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              "page" => %{"next" => nil}
            } = json_response(turns, 200)
 
+    assert_operation_response(turns)
+
     evidence = get_json("/api/v1/cases/#{incident.id}/evidence", context.viewer_token)
 
     assert %{
@@ -307,6 +340,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              "page" => %{"next" => nil}
            } = json_response(evidence, 200)
 
+    assert_operation_response(evidence)
+
     approvals = get_json("/api/v1/cases/#{incident.id}/approvals", context.viewer_token)
 
     assert %{
@@ -320,6 +355,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              ],
              "page" => %{"next" => nil}
            } = json_response(approvals, 200)
+
+    assert_operation_response(approvals)
 
     assert proposal_id == proposal.id
 
@@ -340,6 +377,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"data" => %{"id" => operation_id, "status" => "queued"}} =
              json_response(operation_response, 200)
+
+    assert_operation_response(operation_response)
 
     assert operation_id == operation.id
     assert Cases.get_operation!(operation.id, authorize?: false).revision == operation.revision
@@ -367,6 +406,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"data" => %{"id" => attempt_id, "status" => "queued"}} =
              json_response(verification_response, 200)
+
+    assert_operation_response(verification_response)
 
     assert attempt_id == attempt.id
 
@@ -426,6 +467,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              "page" => %{"next" => nil}
            } = json_response(response, 200)
 
+    assert_operation_response(response)
+
     assert proposal_id == reviewing.id
     assert reviewer_id == setup.reviewer.id
 
@@ -467,8 +510,37 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              ]
            } = json_response(response, 200)
 
+    assert_operation_response(response)
+
     refute response.resp_body =~ "internal-review-secret"
     refute response.resp_body =~ "RuntimeError"
+  end
+
+  test "contract rejects malformed Case identifiers and action bodies", context do
+    invalid_id = get_json("/api/v1/cases/not-a-uuid", context.viewer_token)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"fields" => ["id"]}}} =
+             json_response(invalid_id, 422)
+
+    assert_operation_response(invalid_id)
+
+    incident = open_case!(context.operator_token, "invalid-action-contract")
+
+    invalid_revision =
+      post_json(
+        "/api/v1/cases/#{incident["id"]}/claim",
+        %{"case" => %{"expected_revision" => 0}},
+        context.operator_token
+      )
+
+    assert %{
+             "error" => %{
+               "code" => "validation_failed",
+               "details" => %{"fields" => ["expected_revision"]}
+             }
+           } = json_response(invalid_revision, 422)
+
+    assert_operation_response(invalid_revision)
   end
 
   defp resume_input(incident, run, expected_run_revision) do
@@ -694,28 +766,35 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   end
 
   defp open_case!(token, source_ref) do
-    post_json(
-      "/api/v1/cases",
-      %{
-        "case" => %{
-          "trigger_kind" => "manual",
-          "source" => "api",
-          "source_ref" => source_ref,
-          "title" => "Investigate #{source_ref}",
-          "severity" => "warning",
-          "alert_state" => "not_applicable",
-          "initial_context" => %{},
-          "report_language" => "en"
-        }
-      },
-      token
-    )
+    response =
+      post_json(
+        "/api/v1/cases",
+        %{
+          "case" => %{
+            "trigger_kind" => "manual",
+            "source" => "api",
+            "source_ref" => source_ref,
+            "title" => "Investigate #{source_ref}",
+            "severity" => "warning",
+            "alert_state" => "not_applicable",
+            "initial_context" => %{},
+            "report_language" => "en"
+          }
+        },
+        token
+      )
+
+    assert_operation_response(response)
+
+    response
     |> json_response(201)
     |> Map.fetch!("data")
   end
 
   defp get_data!(path, token) do
-    get_json(path, token) |> json_response(200) |> Map.fetch!("data")
+    response = get_json(path, token)
+    assert_operation_response(response)
+    response |> json_response(200) |> Map.fetch!("data")
   end
 
   defp token!(email) do

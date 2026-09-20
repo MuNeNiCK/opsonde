@@ -2,6 +2,47 @@
   "components": {
     "responses": {},
     "schemas": {
+      "CaseEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "actor_id",
+          "type",
+          "inserted_at"
+        ],
+        "type": "object"
+      },
       "TargetRelationshipPage": {
         "additionalProperties": false,
         "properties": {
@@ -18,6 +59,189 @@
         "required": [
           "data",
           "page"
+        ],
+        "type": "object"
+      },
+      "VerificationAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "expected": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_reference": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "outcome_category": {
+            "maxLength": 120,
+            "nullable": true,
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_evidence": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selectors": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "verified",
+              "not_verified",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "operation_id",
+          "proposal_id",
+          "actor_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "case_generation",
+          "authority_mode",
+          "tool_id",
+          "capability",
+          "operation",
+          "selectors",
+          "parameters",
+          "expected",
+          "operation_reference",
+          "dispatch_started_at",
+          "outcome_category",
+          "facts",
+          "provider_evidence",
+          "observed_at",
+          "accepted_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "AuthoritySettingResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuthoritySetting"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -61,6 +285,25 @@
         ],
         "type": "object"
       },
+      "ResolverTurnPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ResolverTurn"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "ErrorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -73,12 +316,143 @@
         ],
         "type": "object"
       },
+      "CaseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Case"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "AuthoritySetting": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "changed_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "max_ai_usage_units": {
+            "maximum": 1000000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_effects": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_elapsed_seconds": {
+            "maximum": 2592000,
+            "minimum": 60,
+            "type": "integer"
+          },
+          "max_no_progress_turns": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_related_targets": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_resolver_turns": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_target_requests": {
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "setting_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "signal_automation_enabled": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "authority_mode",
+          "signal_automation_enabled",
+          "max_elapsed_seconds",
+          "max_resolver_turns",
+          "max_target_requests",
+          "max_effects",
+          "max_related_targets",
+          "max_ai_usage_units",
+          "max_no_progress_turns",
+          "setting_revision",
+          "active",
+          "reason",
+          "changed_by_id",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "AccessMethodPage": {
         "additionalProperties": false,
         "properties": {
           "data": {
             "items": {
               "$ref": "#/components/schemas/AccessMethod"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
+      "ApprovalPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
             },
             "type": "array"
           },
@@ -132,6 +506,18 @@
         ],
         "type": "object"
       },
+      "ProposalResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Proposal"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "CreateManagementBoundaryRequest": {
         "properties": {
           "management_boundary": {
@@ -160,6 +546,25 @@
         },
         "required": [
           "management_boundary"
+        ],
+        "type": "object"
+      },
+      "CaseEventPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CaseEvent"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -387,6 +792,107 @@
         ],
         "type": "object"
       },
+      "ResolverTurn": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "decision": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "failure_category": {
+            "nullable": true,
+            "type": "string"
+          },
+          "failure_message": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "intent": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "ordinal": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "outcome": {
+            "nullable": true,
+            "type": "string"
+          },
+          "progress_kind": {
+            "enum": [
+              "evidence",
+              "hypothesis",
+              "proposal",
+              "source_change",
+              "human_input",
+              "none"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "started",
+              "completed"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "ordinal",
+          "status",
+          "intent",
+          "outcome",
+          "decision",
+          "failure_category",
+          "failure_message",
+          "progress_kind",
+          "started_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ExternalIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -508,6 +1014,94 @@
         ],
         "type": "object"
       },
+      "ResumeCaseRequest": {
+        "properties": {
+          "case": {
+            "properties": {
+              "authority_mode": {
+                "enum": [
+                  "readonly",
+                  "ask",
+                  "auto",
+                  "full_access"
+                ],
+                "type": "string"
+              },
+              "expected_case_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "expected_run_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_ai_usage_units": {
+                "maximum": 1000000000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_effects": {
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_elapsed_seconds": {
+                "maximum": 2592000,
+                "minimum": 60,
+                "type": "integer"
+              },
+              "max_no_progress_turns": {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_related_targets": {
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_resolver_turns": {
+                "maximum": 1000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_target_requests": {
+                "maximum": 10000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "reason": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "resolution_run_id": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected_case_revision",
+              "resolution_run_id",
+              "expected_run_revision",
+              "authority_mode",
+              "max_elapsed_seconds",
+              "max_resolver_turns",
+              "max_target_requests",
+              "max_effects",
+              "max_related_targets",
+              "max_ai_usage_units",
+              "max_no_progress_turns",
+              "reason"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "type": "object"
+      },
       "OIDCLinkResponse": {
         "additionalProperties": false,
         "properties": {
@@ -572,6 +1166,81 @@
         },
         "required": [
           "external_identity"
+        ],
+        "type": "object"
+      },
+      "CreateCaseRequest": {
+        "properties": {
+          "case": {
+            "properties": {
+              "alert_state": {
+                "enum": [
+                  "firing",
+                  "not_applicable"
+                ],
+                "type": "string"
+              },
+              "initial_context": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "initial_target_id": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "report_language": {
+                "enum": [
+                  "en",
+                  "ja"
+                ],
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "info",
+                  "warning",
+                  "error",
+                  "critical"
+                ],
+                "type": "string"
+              },
+              "source": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "source_ref": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "trigger_kind": {
+                "enum": [
+                  "manual",
+                  "signal",
+                  "audit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger_kind",
+              "source",
+              "source_ref",
+              "title",
+              "severity"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "case"
         ],
         "type": "object"
       },
@@ -678,6 +1347,44 @@
         ],
         "type": "object"
       },
+      "ResolutionCounters": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_usage_units": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effects": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "no_progress_turns": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "related_targets": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resolver_turns": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_requests": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolver_turns",
+          "target_requests",
+          "effects",
+          "related_targets",
+          "ai_usage_units",
+          "no_progress_turns"
+        ],
+        "type": "object"
+      },
       "CreateSessionRequest": {
         "properties": {
           "session": {
@@ -746,6 +1453,25 @@
         ],
         "type": "object"
       },
+      "EvidencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "CLISessionRequestResponse": {
         "additionalProperties": false,
         "properties": {
@@ -775,6 +1501,46 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "CaseSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/Case"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/Operation"
+            },
+            "type": "array"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/Proposal"
+            },
+            "type": "array"
+          },
+          "resolution_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ResolutionRun"
+            },
+            "type": "array"
+          },
+          "verification_attempts": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationAttempt"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "case",
+          "resolution_runs",
+          "proposals",
+          "operations",
+          "verification_attempts"
         ],
         "type": "object"
       },
@@ -813,6 +1579,25 @@
         ],
         "type": "object"
       },
+      "CasePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Case"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "CreateAccountRequest": {
         "properties": {
           "account": {
@@ -845,6 +1630,25 @@
         },
         "required": [
           "account"
+        ],
+        "type": "object"
+      },
+      "ReviewDecisionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewDecision"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -996,6 +1800,105 @@
         ],
         "type": "object"
       },
+      "ResolutionRun": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "counters": {
+            "$ref": "#/components/schemas/ResolutionCounters"
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/WorkflowLimits"
+          },
+          "resume_reason": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "resumed_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "needs_attention",
+              "completed",
+              "cancelled",
+              "superseded"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "generation",
+          "active",
+          "status",
+          "authority_mode",
+          "limits",
+          "counters",
+          "started_at",
+          "deadline_at",
+          "ended_at",
+          "resume_reason",
+          "resumed_by_id",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "AIUsageRoleAssignmentResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1100,6 +2003,156 @@
         ],
         "type": "object"
       },
+      "Operation": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "approval_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome_category": {
+            "maxLength": 120,
+            "nullable": true,
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reference": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "result_details": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selectors": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "applied",
+              "failed",
+              "partial",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "proposal_id",
+          "approval_id",
+          "actor_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "case_generation",
+          "authority_mode",
+          "capability",
+          "operation",
+          "selectors",
+          "parameters",
+          "dispatch_started_at",
+          "outcome_category",
+          "reference",
+          "result_details",
+          "accepted_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ExternalIdentityResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1178,6 +2231,104 @@
         },
         "required": [
           "target_policy"
+        ],
+        "type": "object"
+      },
+      "ReviewDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "category": {
+            "maxLength": 80,
+            "nullable": true,
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "input_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "decision",
+              "delivery_failed"
+            ],
+            "type": "string"
+          },
+          "output_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "selection_source": {
+            "enum": [
+              "assignment",
+              "resolver_fallback"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "approved",
+              "rejected",
+              "needs_human"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "proposal_id",
+          "case_id",
+          "resolution_run_id",
+          "provider_id",
+          "outcome",
+          "verdict",
+          "category",
+          "reason",
+          "selection_source",
+          "provider_revision",
+          "input_tokens",
+          "output_tokens",
+          "decided_at",
+          "inserted_at"
         ],
         "type": "object"
       },
@@ -1286,6 +2437,173 @@
         ],
         "type": "object"
       },
+      "Case": {
+        "additionalProperties": false,
+        "properties": {
+          "alert_state": {
+            "enum": [
+              "firing",
+              "recovered",
+              "not_applicable"
+            ],
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "authority_setting_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_setting_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "cancel_requested": {
+            "type": "boolean"
+          },
+          "current_owner_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "initial_context": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "initial_target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/WorkflowLimits"
+          },
+          "report_language": {
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "type": "string"
+          },
+          "required_human_input": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selected_target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "selected_target_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_recovered_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "source_ref": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "needs_attention",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "stop_reason": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "trigger_kind": {
+            "enum": [
+              "manual",
+              "signal",
+              "audit"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trigger_kind",
+          "source",
+          "source_ref",
+          "title",
+          "severity",
+          "alert_state",
+          "report_language",
+          "status",
+          "initial_context",
+          "authority_setting_id",
+          "authority_setting_revision",
+          "authority_mode",
+          "limits",
+          "cancel_requested",
+          "stop_reason",
+          "required_human_input",
+          "source_recovered_at",
+          "initial_target_id",
+          "selected_target_id",
+          "selected_target_revision",
+          "current_owner_id",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "DeactivateManagementBoundaryRequest": {
         "properties": {
           "management_boundary": {
@@ -1303,6 +2621,18 @@
         },
         "required": [
           "management_boundary"
+        ],
+        "type": "object"
+      },
+      "VerificationAttemptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VerificationAttempt"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -1523,6 +2853,247 @@
         ],
         "type": "object"
       },
+      "WorkflowLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "max_ai_usage_units": {
+            "maximum": 1000000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_effects": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_elapsed_seconds": {
+            "maximum": 2592000,
+            "minimum": 60,
+            "type": "integer"
+          },
+          "max_no_progress_turns": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_related_targets": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_resolver_turns": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_target_requests": {
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_elapsed_seconds",
+          "max_resolver_turns",
+          "max_target_requests",
+          "max_effects",
+          "max_related_targets",
+          "max_ai_usage_units",
+          "max_no_progress_turns"
+        ],
+        "type": "object"
+      },
+      "Proposal": {
+        "additionalProperties": false,
+        "properties": {
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "access_method_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "expected_result": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "preflight_reason": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "preflight_status": {
+            "enum": [
+              "cleared",
+              "blocked"
+            ],
+            "type": "string"
+          },
+          "proposal_digest": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "proposed_for_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "selectors": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "source_turn_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "blocked",
+              "recommended",
+              "awaiting_human",
+              "reviewing",
+              "authorized",
+              "rejected",
+              "invalidated"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "target_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tool_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "verification_intent": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "verification_tool": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "source_turn_id",
+          "proposed_for_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "authority_mode",
+          "case_generation",
+          "target_revision",
+          "access_method_revision",
+          "provider_revision",
+          "tool_id",
+          "capability",
+          "operation",
+          "selectors",
+          "parameters",
+          "reason",
+          "evidence_ids",
+          "expected_result",
+          "verification_intent",
+          "verification_tool",
+          "preflight_status",
+          "preflight_reason",
+          "proposal_digest",
+          "expires_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ConfigureOIDCProviderRequest": {
         "properties": {
           "oidc_provider": {
@@ -1602,6 +3173,26 @@
         ],
         "type": "object"
       },
+      "CaseRevisionRequest": {
+        "properties": {
+          "case": {
+            "properties": {
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "type": "object"
+      },
       "TargetRelationship": {
         "additionalProperties": false,
         "properties": {
@@ -1658,6 +3249,31 @@
           "facts",
           "valid_until",
           "active"
+        ],
+        "type": "object"
+      },
+      "HandoffCaseRequest": {
+        "properties": {
+          "case": {
+            "properties": {
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "owner_id": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected_revision",
+              "owner_id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "case"
         ],
         "type": "object"
       },
@@ -1812,6 +3428,73 @@
         ],
         "type": "object"
       },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_ref": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "turn_id",
+          "kind",
+          "source",
+          "source_ref",
+          "content",
+          "observed_at",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "InventoryImportRowPage": {
         "additionalProperties": false,
         "properties": {
@@ -1920,6 +3603,107 @@
           "parameter_match",
           "reason",
           "enabled"
+        ],
+        "type": "object"
+      },
+      "UpdateAuthoritySettingRequest": {
+        "properties": {
+          "authority_setting": {
+            "properties": {
+              "authority_mode": {
+                "enum": [
+                  "readonly",
+                  "ask",
+                  "auto",
+                  "full_access"
+                ],
+                "type": "string"
+              },
+              "expected_setting_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_ai_usage_units": {
+                "maximum": 1000000000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_effects": {
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_elapsed_seconds": {
+                "maximum": 2592000,
+                "minimum": 60,
+                "type": "integer"
+              },
+              "max_no_progress_turns": {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_related_targets": {
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_resolver_turns": {
+                "maximum": 1000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_target_requests": {
+                "maximum": 10000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "reason": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "signal_automation_enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "expected_setting_revision",
+              "authority_mode",
+              "signal_automation_enabled",
+              "max_elapsed_seconds",
+              "max_resolver_turns",
+              "max_target_requests",
+              "max_effects",
+              "max_related_targets",
+              "max_ai_usage_units",
+              "max_no_progress_turns",
+              "reason"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "authority_setting"
+        ],
+        "type": "object"
+      },
+      "AuthoritySettingPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuthoritySetting"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -2213,6 +3997,46 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "DecideProposalRequest": {
+        "properties": {
+          "proposal": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "approved",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "proposal_digest": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected_revision",
+              "proposal_digest",
+              "decision",
+              "reason"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "proposal"
         ],
         "type": "object"
       },
@@ -2591,6 +4415,18 @@
         ],
         "type": "object"
       },
+      "ResolutionRunResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResolutionRun"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "UpdateAccessMethodRequest": {
         "properties": {
           "access_method": {
@@ -2677,6 +4513,82 @@
         ],
         "type": "object"
       },
+      "Approval": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposal_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "human",
+              "full_access",
+              "reviewer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "proposal_id",
+          "case_id",
+          "resolution_run_id",
+          "actor_id",
+          "decision",
+          "source",
+          "proposal_revision",
+          "case_generation",
+          "reason",
+          "decided_at",
+          "inserted_at"
+        ],
+        "type": "object"
+      },
       "CLISessionDenialResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2692,6 +4604,18 @@
               "redirect_uri"
             ],
             "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CaseSnapshotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CaseSnapshot"
           }
         },
         "required": [
@@ -2744,6 +4668,18 @@
         ],
         "type": "object"
       },
+      "OperationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Operation"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "TargetResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2771,6 +4707,112 @@
   },
   "openapi": "3.0.0",
   "paths": {
+    "/api/v1/cases/{id}/evidence": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseEvidence",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidencePage"
+                }
+              }
+            },
+            "description": "Evidence page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case evidence",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
     "/api/v1/targets": {
       "get": {
         "callbacks": {},
@@ -3074,6 +5116,92 @@
         ]
       }
     },
+    "/api/v1/authority-settings": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAuthoritySettings",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthoritySettingPage"
+                }
+              }
+            },
+            "description": "Authority-setting page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List authority-setting revisions",
+        "tags": [
+          "Authority settings"
+        ]
+      }
+    },
     "/api/v1/providers/{id}/target-capabilities": {
       "post": {
         "callbacks": {},
@@ -3301,6 +5429,121 @@
         "summary": "Update an Access Method",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/resume": {
+      "post": {
+        "callbacks": {},
+        "operationId": "resumeCase",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeCaseRequest"
+              }
+            }
+          },
+          "description": "Case resume",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolutionRunResponse"
+                }
+              }
+            },
+            "description": "Resolution run resumed"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Resume a Case with new limits",
+        "tags": [
+          "Cases"
         ]
       }
     },
@@ -4495,6 +6738,90 @@
         ]
       }
     },
+    "/api/v1/proposals/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getProposal",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            },
+            "description": "Proposal"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a Proposal",
+        "tags": [
+          "Proposals"
+        ]
+      }
+    },
     "/api/v1/accounts": {
       "get": {
         "callbacks": {},
@@ -4673,6 +7000,121 @@
         ]
       }
     },
+    "/api/v1/proposals/{id}/decision": {
+      "post": {
+        "callbacks": {},
+        "operationId": "decideProposal",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideProposalRequest"
+              }
+            }
+          },
+          "description": "Proposal decision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            },
+            "description": "Proposal decided"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Approve or reject a Proposal",
+        "tags": [
+          "Proposals"
+        ]
+      }
+    },
     "/api/v1/cli/session-requests/{id}/exchange": {
       "post": {
         "callbacks": {},
@@ -4756,6 +7198,112 @@
         "summary": "Exchange an approved CLI browser grant",
         "tags": [
           "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/turns": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseResolverTurns",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverTurnPage"
+                }
+              }
+            },
+            "description": "Resolver-turn page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case resolver turns",
+        "tags": [
+          "Cases"
         ]
       }
     },
@@ -5351,6 +7899,90 @@
         ]
       }
     },
+    "/api/v1/verification-attempts/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getVerificationAttempt",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationAttemptResponse"
+                }
+              }
+            },
+            "description": "Verification attempt"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a verification attempt",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
     "/api/v1/accounts/bootstrap": {
       "post": {
         "callbacks": {},
@@ -5538,6 +8170,112 @@
         "summary": "Update a Target relationship",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/review-decisions": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseReviewDecisions",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDecisionPage"
+                }
+              }
+            },
+            "description": "Review-decision page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case reviewer decisions",
+        "tags": [
+          "Cases"
         ]
       }
     },
@@ -5934,6 +8672,90 @@
         "summary": "Get an inventory import",
         "tags": [
           "Inventory imports"
+        ]
+      }
+    },
+    "/api/v1/operations/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getOperation",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Operation"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get an Operation",
+        "tags": [
+          "Operations"
         ]
       }
     },
@@ -6914,6 +9736,541 @@
         ]
       }
     },
+    "/api/v1/cases/{id}/cancel": {
+      "post": {
+        "callbacks": {},
+        "operationId": "cancelCase",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseRevisionRequest"
+              }
+            }
+          },
+          "description": "Case revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            },
+            "description": "Case cancellation requested"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Request Case cancellation",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/handoff": {
+      "post": {
+        "callbacks": {},
+        "operationId": "handoffCase",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffCaseRequest"
+              }
+            }
+          },
+          "description": "Case handoff",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            },
+            "description": "Case handed off"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Handoff a Case",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getCase",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseSnapshotResponse"
+                }
+              }
+            },
+            "description": "Case snapshot"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Reconnect to a Case",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/claim": {
+      "post": {
+        "callbacks": {},
+        "operationId": "claimCase",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseRevisionRequest"
+              }
+            }
+          },
+          "description": "Case revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            },
+            "description": "Case claimed"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Claim a Case",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/approvals": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseApprovals",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalPage"
+                }
+              }
+            },
+            "description": "Approval page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case approvals",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
     "/api/v1/inventory-imports/manual-preview": {
       "post": {
         "callbacks": {},
@@ -7015,6 +10372,112 @@
         "summary": "Preview a manual CSV inventory import",
         "tags": [
           "Inventory imports"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/timeline": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseTimeline",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseEventPage"
+                }
+              }
+            },
+            "description": "Case event page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case timeline events",
+        "tags": [
+          "Cases"
         ]
       }
     },
@@ -7193,6 +10656,349 @@
         "summary": "Create a Provider",
         "tags": [
           "Providers"
+        ]
+      }
+    },
+    "/api/v1/authority-setting": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getAuthoritySetting",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthoritySettingResponse"
+                }
+              }
+            },
+            "description": "Current authority setting"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get the current authority setting",
+        "tags": [
+          "Authority settings"
+        ]
+      },
+      "put": {
+        "callbacks": {},
+        "operationId": "updateAuthoritySetting",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAuthoritySettingRequest"
+              }
+            }
+          },
+          "description": "Authority setting",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthoritySettingResponse"
+                }
+              }
+            },
+            "description": "Authority setting updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Create the next authority-setting revision",
+        "tags": [
+          "Authority settings"
+        ]
+      }
+    },
+    "/api/v1/cases": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCases",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CasePage"
+                }
+              }
+            },
+            "description": "Case page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Cases",
+        "tags": [
+          "Cases"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createCase",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseRequest"
+              }
+            }
+          },
+          "description": "Case",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            },
+            "description": "Case opened"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Open a Case",
+        "tags": [
+          "Cases"
         ]
       }
     },

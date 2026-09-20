@@ -1,11 +1,151 @@
 defmodule OpsondeWeb.API.V1.CaseController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Cases
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.WorkflowJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{WorkflowJSON, WorkflowSchemas}
+
+  @list_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @show_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :not_found,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @write_errors Schemas.errors([
+                  :bad_request,
+                  :unauthorized,
+                  :forbidden,
+                  :not_found,
+                  :conflict,
+                  :unprocessable_entity,
+                  :internal_server_error
+                ])
+
+  tags ["Cases"]
+
+  operation :index,
+    operation_id: "listCases",
+    summary: "List Cases",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Case page", "application/json", WorkflowSchemas.ref("CasePage")}] ++ @list_errors
+
+  operation :show,
+    operation_id: "getCase",
+    summary: "Reconnect to a Case",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Case snapshot", "application/json", WorkflowSchemas.ref("CaseSnapshotResponse")}] ++
+        @show_errors
+
+  operation :create,
+    operation_id: "createCase",
+    summary: "Open a Case",
+    request_body:
+      {"Case", "application/json", WorkflowSchemas.ref("CreateCaseRequest"), required: true},
+    responses:
+      [created: {"Case opened", "application/json", WorkflowSchemas.ref("CaseResponse")}] ++
+        @write_errors
+
+  operation :timeline,
+    operation_id: "listCaseTimeline",
+    summary: "List Case timeline events",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Case event page", "application/json", WorkflowSchemas.ref("CaseEventPage")}] ++
+        @show_errors
+
+  operation :turns,
+    operation_id: "listCaseResolverTurns",
+    summary: "List Case resolver turns",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Resolver-turn page", "application/json", WorkflowSchemas.ref("ResolverTurnPage")}] ++
+        @show_errors
+
+  operation :evidence,
+    operation_id: "listCaseEvidence",
+    summary: "List Case evidence",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Evidence page", "application/json", WorkflowSchemas.ref("EvidencePage")}] ++
+        @show_errors
+
+  operation :approvals,
+    operation_id: "listCaseApprovals",
+    summary: "List Case approvals",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Approval page", "application/json", WorkflowSchemas.ref("ApprovalPage")}] ++
+        @show_errors
+
+  operation :review_decisions,
+    operation_id: "listCaseReviewDecisions",
+    summary: "List Case reviewer decisions",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Review-decision page", "application/json", WorkflowSchemas.ref("ReviewDecisionPage")}
+      ] ++ @show_errors
+
+  operation :claim,
+    operation_id: "claimCase",
+    summary: "Claim a Case",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Case revision", "application/json", WorkflowSchemas.ref("CaseRevisionRequest"),
+       required: true},
+    responses:
+      [ok: {"Case claimed", "application/json", WorkflowSchemas.ref("CaseResponse")}] ++
+        @write_errors
+
+  operation :handoff,
+    operation_id: "handoffCase",
+    summary: "Handoff a Case",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Case handoff", "application/json", WorkflowSchemas.ref("HandoffCaseRequest"),
+       required: true},
+    responses:
+      [ok: {"Case handed off", "application/json", WorkflowSchemas.ref("CaseResponse")}] ++
+        @write_errors
+
+  operation :cancel,
+    operation_id: "cancelCase",
+    summary: "Request Case cancellation",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Case revision", "application/json", WorkflowSchemas.ref("CaseRevisionRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"Case cancellation requested", "application/json", WorkflowSchemas.ref("CaseResponse")}
+      ] ++ @write_errors
+
+  operation :resume,
+    operation_id: "resumeCase",
+    summary: "Resume a Case with new limits",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Case resume", "application/json", WorkflowSchemas.ref("ResumeCaseRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"Resolution run resumed", "application/json",
+           WorkflowSchemas.ref("ResolutionRunResponse")}
+      ] ++ @write_errors
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),

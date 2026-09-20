@@ -1,11 +1,62 @@
 defmodule OpsondeWeb.API.V1.AuthoritySettingController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Cases
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.WorkflowJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{WorkflowJSON, WorkflowSchemas}
+
+  @read_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @write_errors Schemas.errors([
+                  :bad_request,
+                  :unauthorized,
+                  :forbidden,
+                  :conflict,
+                  :unprocessable_entity,
+                  :internal_server_error
+                ])
+
+  tags ["Authority settings"]
+
+  operation :index,
+    operation_id: "listAuthoritySettings",
+    summary: "List authority-setting revisions",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Authority-setting page", "application/json",
+           WorkflowSchemas.ref("AuthoritySettingPage")}
+      ] ++ @read_errors
+
+  operation :show,
+    operation_id: "getAuthoritySetting",
+    summary: "Get the current authority setting",
+    responses:
+      [
+        ok:
+          {"Current authority setting", "application/json",
+           WorkflowSchemas.ref("AuthoritySettingResponse")}
+      ] ++ @read_errors
+
+  operation :update,
+    operation_id: "updateAuthoritySetting",
+    summary: "Create the next authority-setting revision",
+    request_body:
+      {"Authority setting", "application/json",
+       WorkflowSchemas.ref("UpdateAuthoritySettingRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Authority setting updated", "application/json",
+           WorkflowSchemas.ref("AuthoritySettingResponse")}
+      ] ++ @write_errors
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
