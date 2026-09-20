@@ -59,19 +59,28 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     const model = form.get("model");
     const endpoint = form.get("endpoint");
     const apiKey = form.get("api_key");
+    const timeoutMs = form.get("timeout_ms");
+    const maxTokens = form.get("max_tokens");
 
     if (
       typeof name !== "string" ||
       typeof service !== "string" ||
       typeof model !== "string" ||
       typeof endpoint !== "string" ||
-      typeof apiKey !== "string"
+      typeof apiKey !== "string" ||
+      typeof timeoutMs !== "string" ||
+      typeof maxTokens !== "string"
     ) {
       onError(t("setup.requestFailed"));
       return;
     }
 
-    const configuration: Record<string, string> = { provider: service, model };
+    const configuration: Record<string, string | number> = {
+      provider: service,
+      model,
+      timeout_ms: Number(timeoutMs),
+      max_tokens: Number(maxTokens),
+    };
     if (endpoint) configuration.endpoint = endpoint;
     const credentials = apiKey ? { api_key: apiKey } : {};
 
@@ -187,6 +196,32 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
               <div className="space-y-2">
                 <Label htmlFor="provider-endpoint">{t("setup.endpoint")}</Label>
                 <Input id="provider-endpoint" name="endpoint" type="url" placeholder="https://…" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="provider-timeout-ms">{t("setup.timeoutMs")}</Label>
+                <Input
+                  id="provider-timeout-ms"
+                  name="timeout_ms"
+                  type="number"
+                  min={100}
+                  max={600_000}
+                  defaultValue={180_000}
+                  required
+                />
+                <p className="text-xs text-muted-foreground">{t("setup.timeoutMsDescription")}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="provider-max-tokens">{t("setup.maxTokens")}</Label>
+                <Input
+                  id="provider-max-tokens"
+                  name="max_tokens"
+                  type="number"
+                  min={1}
+                  max={32_768}
+                  defaultValue={4_096}
+                  required
+                />
+                <p className="text-xs text-muted-foreground">{t("setup.maxTokensDescription")}</p>
               </div>
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="provider-api-key">{t("setup.apiKey")}</Label>
