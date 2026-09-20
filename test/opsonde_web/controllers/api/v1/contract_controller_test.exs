@@ -7,6 +7,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
   @uuid "00000000-0000-0000-0000-000000000000"
 
   @required_routes [
+    {:get, "/api/v1/openapi.json"},
     {:post, "/api/v1/accounts/bootstrap"},
     {:post, "/api/v1/sessions"},
     {:get, "/api/v1/oidc"},
@@ -218,6 +219,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
       String.starts_with?(route.path, "/api/v1") and
         route.plug not in [OpsondeWeb.APIErrorController, OpsondeWeb.SignalWebhookController] and
         {route.verb, route.path} not in [
+          {:get, "/api/v1/openapi.json"},
           {:post, "/api/v1/accounts/bootstrap"},
           {:post, "/api/v1/sessions"},
           {:get, "/api/v1/oidc"},

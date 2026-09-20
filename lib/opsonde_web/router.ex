@@ -3,6 +3,7 @@ defmodule OpsondeWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: OpsondeWeb.ApiSpec
   end
 
   pipeline :oidc_browser do
@@ -17,6 +18,7 @@ defmodule OpsondeWeb.Router do
   scope "/api/v1", OpsondeWeb.API.V1 do
     pipe_through :api
 
+    get "/openapi.json", OpenAPIController, :show
     post "/accounts/bootstrap", AccountController, :bootstrap
     post "/sessions", SessionController, :create
     get "/oidc", OIDCController, :status

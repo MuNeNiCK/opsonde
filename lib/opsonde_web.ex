@@ -47,6 +47,17 @@ defmodule OpsondeWeb do
     end
   end
 
+  def api_controller do
+    quote do
+      use OpsondeWeb, :controller
+      use OpenApiSpex.ControllerSpecs
+
+      plug OpenApiSpex.Plug.CastAndValidate,
+        render_error: OpsondeWeb.API.OpenAPIError,
+        replace_params: false
+    end
+  end
+
   def verified_routes do
     quote do
       use Phoenix.VerifiedRoutes,

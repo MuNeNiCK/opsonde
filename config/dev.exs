@@ -7,6 +7,7 @@ config :opsonde, Opsonde.Vault,
   ]
 
 config :ash, policies: [show_policy_breakdowns?: true]
+config :open_api_spex, :cache_adapter, OpenApiSpex.Plug.NoneCache
 
 # Configure your database
 config :opsonde, Opsonde.Repo,

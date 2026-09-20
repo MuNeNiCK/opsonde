@@ -72,6 +72,7 @@ defmodule Opsonde.MixProject do
       {:argon2_elixir, "~> 4.0"},
       {:simple_sat, "~> 0.1"},
       {:attesto_client, "~> 2.5"},
+      {:open_api_spex, "~> 3.22"},
       {:ash_authentication, "~> 4.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
@@ -136,6 +137,7 @@ defmodule Opsonde.MixProject do
         "compile --warnings-as-errors",
         "deps.unlock --unused",
         "format",
+        "openapi.spec.json --spec OpsondeWeb.ApiSpec --pretty=true --vendor-extensions=false --start-app=false --check=true --filename openapi.json",
         "cmd npm --prefix assets run check",
         "assets.build",
         "test"
