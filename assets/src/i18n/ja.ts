@@ -279,7 +279,7 @@ const ja = {
       requiredAction: "必要な対応",
       targetLoading: "Targetを読込中…",
       ownerYou: "自分",
-      ownerAssigned: "別の運用者",
+      ownerAssigned: "担当運用者",
       actionReview: "ケースを確認し、再開または中止してください。",
       actionInputRequired: "運用者の入力が必要です。",
       actionNone: "対応不要",

@@ -286,7 +286,7 @@ const en = {
       requiredAction: "Required action",
       targetLoading: "Loading Target…",
       ownerYou: "You",
-      ownerAssigned: "Another operator",
+      ownerAssigned: "Assigned operator",
       actionReview: "Review the Case and resume or cancel it.",
       actionInputRequired: "Operator input is required.",
       actionNone: "No action required",
