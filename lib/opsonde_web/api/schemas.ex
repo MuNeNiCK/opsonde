@@ -24,6 +24,17 @@ defmodule OpsondeWeb.API.Schemas do
   def uuid, do: %Schema{type: :string, format: :uuid}
   def timestamp, do: %Schema{type: :string, format: :"date-time"}
 
+  def id_parameter(name \\ :id) do
+    [{name, [in: :path, required: true, schema: uuid()]}]
+  end
+
+  def pagination_parameters do
+    [
+      {:limit, [in: :query, schema: %Schema{type: :integer, minimum: 1, maximum: 100}]},
+      {:after, [in: :query, schema: %Schema{type: :string, minLength: 1, maxLength: 16_384}]}
+    ]
+  end
+
   def data(value) do
     %Schema{
       type: :object,

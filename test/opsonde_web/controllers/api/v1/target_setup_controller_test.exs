@@ -440,7 +440,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     request(
       :post,
       "/api/v1/sessions",
-      %{"session" => %{"email" => email, "password" => @password}},
+      %{"session" => %{"email" => to_string(email), "password" => @password}},
       nil
     )
     |> json_response(201)
@@ -452,8 +452,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   defp get_json(path, token), do: request(:get, path, nil, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end

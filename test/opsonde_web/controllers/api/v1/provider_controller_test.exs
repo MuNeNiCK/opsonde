@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.Accounts
 
   @password "correct horse battery staple"
@@ -56,6 +58,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         assert %{"data" => %{"id" => id, "kind" => ^kind, "revision" => 1}} =
                  json_response(response, 201)
 
+        assert_operation_response(response)
         assert_secret_free(response, Map.values(credentials))
 
         checked =
@@ -68,6 +71,8 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         assert %{"data" => %{"check" => %{"status" => "passed", "checked_revision" => 1}}} =
                  json_response(checked, 200)
 
+        assert_operation_response(checked)
+
         enabled =
           post_json(
             "/api/v1/providers/#{id}/enable",
@@ -76,6 +81,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
           )
 
         assert %{"data" => %{"enabled" => true}} = json_response(enabled, 200)
+        assert_operation_response(enabled)
         assert_secret_free(enabled, Map.values(credentials))
         id
       end)
@@ -84,6 +90,8 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
 
     assert %{"data" => first, "page" => %{"next" => cursor}} =
              json_response(first_page, 200)
+
+    assert_operation_response(first_page)
 
     assert length(first) == 2
     assert is_binary(cursor)
@@ -370,7 +378,9 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   end
 
   defp token!(email) do
-    post_json("/api/v1/sessions", %{"session" => %{"email" => email, "password" => @password}})
+    post_json("/api/v1/sessions", %{
+      "session" => %{"email" => to_string(email), "password" => @password}
+    })
     |> json_response(201)
     |> get_in(["data", "token"])
   end
@@ -386,8 +396,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   defp get_json(path, token), do: request(:get, path, nil, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end

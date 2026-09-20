@@ -1,11 +1,95 @@
 defmodule OpsondeWeb.API.V1.CLISessionController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
   alias OpsondeWeb.API.Response
-  alias OpsondeWeb.API.V1.AccountJSON
+  alias OpsondeWeb.API.V1.{AccountJSON, AccountSchemas}
+
+  tags ["CLI sessions"]
+
+  operation :create,
+    operation_id: "createCLISessionRequest",
+    summary: "Start a CLI browser session request",
+    security: [],
+    request_body:
+      {"CLI session request", "application/json", AccountSchemas.ref("CreateCLISessionRequest"),
+       required: true},
+    responses:
+      [
+        created:
+          {"CLI session request created", "application/json",
+           AccountSchemas.ref("CLISessionRequestResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :approve,
+    operation_id: "approveCLISessionRequest",
+    summary: "Approve a CLI browser session request",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"CLI session approval", "application/json",
+       AccountSchemas.ref("CLISessionDecisionRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"CLI session request approved", "application/json",
+           AccountSchemas.ref("CLISessionApprovalResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :deny,
+    operation_id: "denyCLISessionRequest",
+    summary: "Deny a CLI browser session request",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"CLI session denial", "application/json", AccountSchemas.ref("CLISessionDecisionRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"CLI session request denied", "application/json",
+           AccountSchemas.ref("CLISessionDenialResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :exchange,
+    operation_id: "exchangeCLISessionRequest",
+    summary: "Exchange an approved CLI browser grant",
+    security: [],
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"CLI session exchange", "application/json",
+       AccountSchemas.ref("ExchangeCLISessionRequest"), required: true},
+    responses:
+      [
+        created:
+          {"CLI session created", "application/json",
+           AccountSchemas.ref("ExchangeCLISessionResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
 
   def create(
         conn,

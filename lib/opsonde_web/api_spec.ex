@@ -5,6 +5,7 @@ defmodule OpsondeWeb.ApiSpec do
 
   alias OpenApiSpex.{Components, Info, OpenApi, Paths, SecurityScheme, Server}
   alias OpsondeWeb.API.Schemas
+  alias OpsondeWeb.API.V1.{AccountSchemas, ProviderSchemas}
 
   @impl OpenApiSpex.OpenApi
   def spec do
@@ -16,7 +17,10 @@ defmodule OpsondeWeb.ApiSpec do
       servers: [%Server{url: "/"}],
       paths: Paths.from_router(OpsondeWeb.Router),
       components: %Components{
-        schemas: Schemas.components(),
+        schemas:
+          Schemas.components()
+          |> Map.merge(AccountSchemas.components())
+          |> Map.merge(ProviderSchemas.components()),
         securitySchemes: %{
           "bearerAuth" => %SecurityScheme{
             type: "http",

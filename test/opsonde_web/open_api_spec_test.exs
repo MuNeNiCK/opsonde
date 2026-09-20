@@ -2,6 +2,14 @@ defmodule OpsondeWeb.OpenAPISpecTest do
   use OpsondeWeb.ConnCase, async: true
 
   @http_methods [:delete, :get, :head, :options, :patch, :post, :put, :trace]
+  @account_provider_controllers [
+    OpsondeWeb.API.V1.AccountController,
+    OpsondeWeb.API.V1.AIUsageRoleAssignmentController,
+    OpsondeWeb.API.V1.CLISessionController,
+    OpsondeWeb.API.V1.OIDCController,
+    OpsondeWeb.API.V1.ProviderController,
+    OpsondeWeb.API.V1.SessionController
+  ]
 
   test "the application serves the resolved specification" do
     document =
@@ -20,7 +28,7 @@ defmodule OpsondeWeb.OpenAPISpecTest do
   test "route coverage exposes operations that still need domain contracts" do
     missing = api_routes() -- documented_operations()
 
-    assert {:post, "/api/v1/accounts/bootstrap"} in missing
+    assert {:post, "/api/v1/targets"} in missing
     refute {:get, "/api/v1/openapi.json"} in missing
   end
 
@@ -38,6 +46,32 @@ defmodule OpsondeWeb.OpenAPISpecTest do
                "details" => %{"fields" => ["email"]}
              }
            } = json_response(response, 422)
+  end
+
+  test "account and Provider routes have unique operations without response secrets" do
+    routes =
+      OpsondeWeb.Router
+      |> Phoenix.Router.routes()
+      |> Enum.filter(&(&1.plug in @account_provider_controllers))
+      |> Enum.map(&{&1.verb, normalize_path(&1.path)})
+
+    assert routes -- documented_operations() == []
+
+    operation_ids =
+      for {_path, path_item} <- OpsondeWeb.ApiSpec.spec().paths,
+          method <- @http_methods,
+          %OpenApiSpex.Operation{operationId: id} <- [Map.get(path_item, method)],
+          do: id
+
+    assert length(operation_ids) == length(Enum.uniq(operation_ids))
+
+    schemas = OpsondeWeb.ApiSpec.spec().components.schemas
+    refute Map.has_key?(schemas["Account"].properties, :password)
+    refute Map.has_key?(schemas["Provider"].properties, :credentials)
+    refute Map.has_key?(schemas["OIDCProvider"].properties, :client_secret)
+    assert schemas["CreateProviderRequest"].properties.provider.properties.credentials.writeOnly
+
+    assert schemas["ConfigureOIDCProviderRequest"].properties.oidc_provider.properties.client_secret.writeOnly
   end
 
   defp api_routes do

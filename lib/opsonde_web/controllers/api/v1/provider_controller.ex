@@ -1,13 +1,158 @@
 defmodule OpsondeWeb.API.V1.ProviderController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Providers
   alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.ProviderJSON
+  alias OpsondeWeb.API.V1.{ProviderJSON, ProviderSchemas}
 
   @update_fields ~w(name configuration credentials)
+
+  tags ["Providers"]
+
+  operation :index,
+    operation_id: "listProviders",
+    summary: "List Providers",
+    parameters: OpsondeWeb.API.Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Provider page", "application/json", ProviderSchemas.ref("ProviderPage")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :show,
+    operation_id: "getProvider",
+    summary: "Get a Provider",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    responses:
+      [ok: {"Provider", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :create,
+    operation_id: "createProvider",
+    summary: "Create a Provider",
+    request_body:
+      {"Provider", "application/json", ProviderSchemas.ref("CreateProviderRequest"),
+       required: true},
+    responses:
+      [created: {"Provider created", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :update,
+    operation_id: "updateProvider",
+    summary: "Update a Provider",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider update", "application/json", ProviderSchemas.ref("UpdateProviderRequest"),
+       required: true},
+    responses:
+      [ok: {"Provider updated", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :check,
+    operation_id: "checkProvider",
+    summary: "Check a Provider connection",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider check", "application/json", ProviderSchemas.ref("CheckProviderRequest"),
+       required: true},
+    responses:
+      [ok: {"Provider checked", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :target_capabilities,
+    operation_id: "getProviderTargetCapabilities",
+    summary: "Get Target capabilities from a Provider",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider revision", "application/json", ProviderSchemas.ref("ProviderRevisionRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"Target capabilities", "application/json",
+           ProviderSchemas.ref("TargetCapabilitiesResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :enable,
+    operation_id: "enableProvider",
+    summary: "Enable a checked Provider",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider revision", "application/json", ProviderSchemas.ref("ProviderRevisionRequest"),
+       required: true},
+    responses:
+      [ok: {"Provider enabled", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :disable,
+    operation_id: "disableProvider",
+    summary: "Disable a Provider",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider revision", "application/json", ProviderSchemas.ref("ProviderRevisionRequest"),
+       required: true},
+    responses:
+      [ok: {"Provider disabled", "application/json", ProviderSchemas.ref("ProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),

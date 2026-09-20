@@ -35,4 +35,14 @@ defmodule OpsondeWeb.ConnCase do
     Opsonde.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  def build_json_conn(body \\ nil) do
+    conn =
+      Phoenix.ConnTest.build_conn()
+      |> Plug.Conn.put_req_header("accept", "application/json")
+
+    if is_nil(body),
+      do: conn,
+      else: Plug.Conn.put_req_header(conn, "content-type", "application/json")
+  end
 end

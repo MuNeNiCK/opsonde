@@ -1,11 +1,74 @@
 defmodule OpsondeWeb.API.V1.AIUsageRoleAssignmentController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Providers
   alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.AIUsageRoleAssignmentJSON
+  alias OpsondeWeb.API.V1.{AIUsageRoleAssignmentJSON, ProviderSchemas}
+
+  tags ["AI usage roles"]
+
+  operation :index,
+    operation_id: "listAIUsageRoleAssignments",
+    summary: "List AI usage-role assignments",
+    parameters: OpsondeWeb.API.Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"AI usage-role assignment page", "application/json",
+           ProviderSchemas.ref("AIUsageRoleAssignmentPage")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :create,
+    operation_id: "createAIUsageRoleAssignment",
+    summary: "Assign an AI Provider role",
+    request_body:
+      {"AI usage-role assignment", "application/json",
+       ProviderSchemas.ref("CreateAIUsageRoleAssignmentRequest"), required: true},
+    responses:
+      [
+        created:
+          {"AI usage-role assignment created", "application/json",
+           ProviderSchemas.ref("AIUsageRoleAssignmentResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :update,
+    operation_id: "updateAIUsageRoleAssignment",
+    summary: "Update an AI usage-role assignment",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"AI usage-role assignment update", "application/json",
+       ProviderSchemas.ref("UpdateAIUsageRoleAssignmentRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"AI usage-role assignment updated", "application/json",
+           ProviderSchemas.ref("AIUsageRoleAssignmentResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),

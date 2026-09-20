@@ -1,11 +1,61 @@
 defmodule OpsondeWeb.API.V1.OIDCController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
   alias Opsonde.Accounts.OIDCProvider
   alias OpsondeWeb.API.Response
+  alias OpsondeWeb.API.V1.AccountSchemas
+
+  tags ["OIDC"]
+
+  operation :status,
+    operation_id: "getOIDCStatus",
+    summary: "Get OIDC availability",
+    security: [],
+    responses:
+      [ok: {"OIDC status", "application/json", AccountSchemas.ref("OIDCStatusResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([:internal_server_error])
+
+  operation :show_provider,
+    operation_id: "getOIDCProvider",
+    summary: "Get OIDC provider configuration",
+    responses:
+      [ok: {"OIDC provider", "application/json", AccountSchemas.ref("OIDCProviderResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([:unauthorized, :forbidden, :internal_server_error])
+
+  operation :configure_provider,
+    operation_id: "configureOIDCProvider",
+    summary: "Configure the OIDC provider",
+    request_body:
+      {"OIDC provider", "application/json", AccountSchemas.ref("ConfigureOIDCProviderRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"OIDC provider configured", "application/json",
+           AccountSchemas.ref("OIDCProviderResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :create_link_request,
+    operation_id: "createOIDCLinkRequest",
+    summary: "Start linking an OIDC identity",
+    responses:
+      [created: {"OIDC link started", "application/json", AccountSchemas.ref("OIDCLinkResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :internal_server_error
+        ])
 
   def status(conn, _params) do
     enabled = Accounts.oidc_available?()

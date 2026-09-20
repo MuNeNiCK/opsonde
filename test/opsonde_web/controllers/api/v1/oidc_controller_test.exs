@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.OIDCControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.Accounts
   alias Opsonde.Accounts.UserIdentity
 
@@ -57,13 +59,16 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
   test "admin configures optional OIDC without exposing its secret" do
     token = bootstrap_and_sign_in!()
 
+    provider = get_json("/api/v1/oidc/provider", token)
+
     assert %{
              "data" => %{
                "enabled" => false,
                "callback_uri" => "http://localhost:4000/auth/user/oidc/callback"
              }
-           } =
-             get_json("/api/v1/oidc/provider", token) |> json_response(200)
+           } = json_response(provider, 200)
+
+    assert_operation_response(provider)
 
     configured =
       put_json(
@@ -89,7 +94,11 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
              }
            } = json_response(configured, 200)
 
+    assert_operation_response(configured)
+
     refute configured.resp_body =~ "do-not-return"
+
+    status = get_json("/api/v1/oidc")
 
     assert %{
              "data" => %{
@@ -97,8 +106,9 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
                "authorization_url" => authorization_url,
                "callback_uri" => callback_uri
              }
-           } =
-             get_json("/api/v1/oidc") |> json_response(200)
+           } = json_response(status, 200)
+
+    assert_operation_response(status)
 
     assert authorization_url == "http://localhost:4000/auth/user/oidc"
     assert callback_uri == "http://localhost:4000/auth/user/oidc/callback"
@@ -233,8 +243,7 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
   defp put_json(path, body, token), do: request(:put, path, body, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end

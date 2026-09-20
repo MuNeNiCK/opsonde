@@ -1,11 +1,79 @@
 defmodule OpsondeWeb.API.V1.AccountController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
   alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.AccountJSON
+  alias OpsondeWeb.API.V1.{AccountJSON, AccountSchemas}
+
+  tags ["Accounts"]
+
+  operation :bootstrap,
+    operation_id: "bootstrapAccount",
+    summary: "Create the initial administrator",
+    security: [],
+    request_body:
+      {"Initial administrator", "application/json", AccountSchemas.ref("BootstrapAccountRequest"),
+       required: true},
+    responses:
+      [
+        created:
+          {"Administrator created", "application/json", AccountSchemas.ref("AccountResponse")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :index,
+    operation_id: "listAccounts",
+    summary: "List accounts",
+    parameters: OpsondeWeb.API.Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Account page", "application/json", AccountSchemas.ref("AccountPage")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :create,
+    operation_id: "createAccount",
+    summary: "Create an account",
+    request_body:
+      {"Account", "application/json", AccountSchemas.ref("CreateAccountRequest"), required: true},
+    responses:
+      [created: {"Account created", "application/json", AccountSchemas.ref("AccountResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
+  operation :update_role,
+    operation_id: "updateAccountRole",
+    summary: "Update an account role",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Role update", "application/json", AccountSchemas.ref("UpdateAccountRoleRequest"),
+       required: true},
+    responses:
+      [ok: {"Account updated", "application/json", AccountSchemas.ref("AccountResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
 
   def bootstrap(
         conn,

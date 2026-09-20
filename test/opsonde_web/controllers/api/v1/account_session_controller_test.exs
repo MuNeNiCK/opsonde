@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.Accounts
 
   @password "correct horse battery staple"
@@ -24,6 +26,8 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
              }
            } = json_response(bootstrap, 201)
 
+    assert_operation_response(bootstrap)
+
     refute bootstrap.resp_body =~ @password
     refute bootstrap.resp_body =~ "hashed_password"
 
@@ -31,6 +35,8 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
 
     assert %{"data" => %{"token" => token, "account" => %{"id" => ^admin_id}}} =
              json_response(session, 201)
+
+    assert_operation_response(session)
 
     assert is_binary(token)
     assert get_resp_header(session, "cache-control") == ["no-store"]
@@ -40,10 +46,13 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
     assert %{"data" => %{"account" => %{"id" => ^admin_id, "role" => "admin"}}} =
              json_response(current, 200)
 
+    assert_operation_response(current)
+
     assert is_binary(current_request_id(current))
 
     logout = delete_json("/api/v1/session", token)
     assert response(logout, 204) == ""
+    assert_operation_response(logout)
 
     assert %{"error" => %{"code" => "unauthenticated"}} =
              get_json("/api/v1/session", token) |> json_response(401)
@@ -258,6 +267,28 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
     bad_body = post_json("/api/v1/accounts", %{}, admin_token)
     assert %{"error" => %{"code" => "bad_request"}} = json_response(bad_body, 400)
 
+    invalid_role =
+      post_json(
+        "/api/v1/accounts",
+        %{
+          "account" => %{
+            "email" => "invalid-role@example.com",
+            "password" => @password,
+            "role" => "owner"
+          }
+        },
+        admin_token
+      )
+
+    assert %{
+             "error" => %{
+               "code" => "validation_failed",
+               "details" => %{"fields" => ["role"]}
+             }
+           } = json_response(invalid_role, 422)
+
+    assert_operation_response(invalid_role)
+
     invalid_cursor = get_json("/api/v1/accounts?after=not-a-keyset", admin_token)
 
     assert %{"error" => %{"code" => "invalid_pagination"}} =
@@ -292,8 +323,7 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
   defp delete_json(path, token), do: request(:delete, path, nil, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end

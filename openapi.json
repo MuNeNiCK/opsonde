@@ -2,6 +2,310 @@
   "components": {
     "responses": {},
     "schemas": {
+      "AIUsageRoleAssignmentPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AIUsageRoleAssignment"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
+      "CLISessionDecisionRequest": {
+        "properties": {
+          "request": {
+            "properties": {
+              "start_token": {
+                "minLength": 1,
+                "type": "string",
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "start_token"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "ProviderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Provider"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "UpdateAIUsageRoleAssignmentRequest": {
+        "properties": {
+          "assignment": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "priority": {
+                "maximum": 10000,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "assignment"
+        ],
+        "type": "object"
+      },
+      "Provider": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "check": {
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "enum": [
+                  "invalid_configuration",
+                  "authentication",
+                  "unreachable",
+                  "capability",
+                  "provider_failure"
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              "checked_at": {
+                "format": "date-time",
+                "nullable": true,
+                "type": "string"
+              },
+              "checked_revision": {
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              "message": {
+                "nullable": true,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed"
+                ],
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "category",
+              "message",
+              "checked_revision",
+              "checked_at"
+            ],
+            "type": "object"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ai",
+              "signal",
+              "target",
+              "inventory",
+              "notification"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "adapter_type",
+          "configuration",
+          "revision",
+          "enabled",
+          "check",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CreateCLISessionRequest": {
+        "properties": {
+          "request": {
+            "properties": {
+              "code_challenge": {
+                "maxLength": 43,
+                "minLength": 43,
+                "type": "string",
+                "writeOnly": true
+              },
+              "redirect_uri": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "redirect_uri",
+              "code_challenge"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "ExchangeCLISessionRequest": {
+        "properties": {
+          "request": {
+            "properties": {
+              "code": {
+                "minLength": 1,
+                "type": "string",
+                "writeOnly": true
+              },
+              "verifier": {
+                "minLength": 1,
+                "type": "string",
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "code",
+              "verifier"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "AIUsageRoleAssignment": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "priority": {
+            "maximum": 10000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "resolver",
+              "reviewer"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider_id",
+          "role",
+          "priority",
+          "enabled",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "Error": {
         "additionalProperties": false,
         "properties": {
@@ -28,15 +332,404 @@
         ],
         "type": "object"
       },
-      "ErrorResponse": {
+      "OIDCLinkResponse": {
         "additionalProperties": false,
         "properties": {
-          "error": {
-            "$ref": "#/components/schemas/Error"
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "authorization_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "authorization_url",
+              "expires_at"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "error"
+          "data"
+        ],
+        "type": "object"
+      },
+      "OIDCProviderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/OIDCProvider"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateSessionRequest": {
+        "properties": {
+          "session": {
+            "properties": {
+              "email": {
+                "format": "email",
+                "type": "string"
+              },
+              "password": {
+                "type": "string",
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "email",
+              "password"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
+      "CLISessionRequestResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "authorization_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "authorization_url",
+              "expires_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateAccountRequest": {
+        "properties": {
+          "account": {
+            "properties": {
+              "email": {
+                "format": "email",
+                "type": "string"
+              },
+              "password": {
+                "minLength": 12,
+                "type": "string",
+                "writeOnly": true
+              },
+              "role": {
+                "enum": [
+                  "admin",
+                  "operator",
+                  "viewer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "email",
+              "password",
+              "role"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "type": "object"
+      },
+      "AIUsageRoleAssignmentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AIUsageRoleAssignment"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProviderRevisionRequest": {
+        "properties": {
+          "provider": {
+            "properties": {
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "BootstrapAccountRequest": {
+        "properties": {
+          "account": {
+            "properties": {
+              "email": {
+                "format": "email",
+                "type": "string"
+              },
+              "password": {
+                "minLength": 12,
+                "type": "string",
+                "writeOnly": true
+              },
+              "password_confirmation": {
+                "minLength": 12,
+                "type": "string",
+                "writeOnly": true
+              }
+            },
+            "required": [
+              "email",
+              "password",
+              "password_confirmation"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "type": "object"
+      },
+      "CheckProviderRequest": {
+        "properties": {
+          "provider": {
+            "properties": {
+              "check_input": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "UpdateAccountRoleRequest": {
+        "properties": {
+          "account": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "admin",
+                  "operator",
+                  "viewer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "role"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "type": "object"
+      },
+      "CLISessionApprovalResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/Account"
+              },
+              "redirect_uri": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "redirect_uri",
+              "account"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "OIDCProvider": {
+        "additionalProperties": false,
+        "properties": {
+          "callback_uri": {
+            "format": "uri",
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id_token_alg": {
+            "enum": [
+              "RS256",
+              "PS256",
+              "ES256",
+              "ES384",
+              "ES512",
+              "EdDSA",
+              "Ed25519",
+              "Ed448"
+            ],
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "issuer": {
+            "format": "uri",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "callback_uri"
+        ],
+        "type": "object"
+      },
+      "OIDCStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "authorization_url": {
+                "format": "uri",
+                "nullable": true,
+                "type": "string"
+              },
+              "callback_uri": {
+                "format": "uri",
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled",
+              "authorization_url",
+              "callback_uri"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ConfigureOIDCProviderRequest": {
+        "properties": {
+          "oidc_provider": {
+            "properties": {
+              "client_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "client_secret": {
+                "minLength": 1,
+                "type": "string",
+                "writeOnly": true
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "id_token_alg": {
+                "enum": [
+                  "RS256",
+                  "PS256",
+                  "ES256",
+                  "ES384",
+                  "ES512",
+                  "EdDSA",
+                  "Ed25519",
+                  "Ed448"
+                ],
+                "type": "string"
+              },
+              "issuer": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "client_id",
+              "client_secret"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "oidc_provider"
         ],
         "type": "object"
       },
@@ -50,6 +743,382 @@
         },
         "required": [
           "next"
+        ],
+        "type": "object"
+      },
+      "AccountPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Account"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
+      "CurrentSessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/Account"
+              }
+            },
+            "required": [
+              "account"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "UpdateProviderRequest": {
+        "properties": {
+          "provider": {
+            "properties": {
+              "configuration": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "credentials": {
+                "additionalProperties": true,
+                "type": "object",
+                "writeOnly": true
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "AccountResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Account"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateAIUsageRoleAssignmentRequest": {
+        "properties": {
+          "assignment": {
+            "properties": {
+              "priority": {
+                "maximum": 10000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "provider_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "resolver",
+                  "reviewer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_id",
+              "role",
+              "priority"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "assignment"
+        ],
+        "type": "object"
+      },
+      "Account": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "admin",
+              "operator",
+              "viewer"
+            ],
+            "type": "string"
+          },
+          "role_version": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "role_version",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/Account"
+              },
+              "token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "token",
+              "account"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "CreateProviderRequest": {
+        "properties": {
+          "provider": {
+            "properties": {
+              "adapter_type": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "configuration": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "credentials": {
+                "additionalProperties": true,
+                "type": "object",
+                "writeOnly": true
+              },
+              "kind": {
+                "enum": [
+                  "ai",
+                  "signal",
+                  "target",
+                  "inventory",
+                  "notification"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "adapter_type",
+              "configuration",
+              "credentials"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "ExchangeCLISessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/Account"
+              },
+              "token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "token",
+              "account"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TargetCapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "effects": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "capability": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "input_schema": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "operation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "capability",
+                    "operation",
+                    "description",
+                    "input_schema"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "observations": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "capability": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "input_schema": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "operation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "capability",
+                    "operation",
+                    "description",
+                    "input_schema"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "observations",
+              "effects"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProviderPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/Provider"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
+      "CLISessionDenialResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "redirect_uri": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "redirect_uri"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       }
@@ -68,6 +1137,1230 @@
   },
   "openapi": "3.0.0",
   "paths": {
+    "/api/v1/accounts": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAccounts",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPage"
+                }
+              }
+            },
+            "description": "Account page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List accounts",
+        "tags": [
+          "Accounts"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createAccount",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAccountRequest"
+              }
+            }
+          },
+          "description": "Account",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            },
+            "description": "Account created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Create an account",
+        "tags": [
+          "Accounts"
+        ]
+      }
+    },
+    "/api/v1/accounts/bootstrap": {
+      "post": {
+        "callbacks": {},
+        "operationId": "bootstrapAccount",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapAccountRequest"
+              }
+            }
+          },
+          "description": "Initial administrator",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            },
+            "description": "Administrator created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "security": [],
+        "summary": "Create the initial administrator",
+        "tags": [
+          "Accounts"
+        ]
+      }
+    },
+    "/api/v1/accounts/{id}/role": {
+      "patch": {
+        "callbacks": {},
+        "operationId": "updateAccountRole",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRoleRequest"
+              }
+            }
+          },
+          "description": "Role update",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountResponse"
+                }
+              }
+            },
+            "description": "Account updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Update an account role",
+        "tags": [
+          "Accounts"
+        ]
+      }
+    },
+    "/api/v1/ai-usage-role-assignments": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAIUsageRoleAssignments",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIUsageRoleAssignmentPage"
+                }
+              }
+            },
+            "description": "AI usage-role assignment page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List AI usage-role assignments",
+        "tags": [
+          "AI usage roles"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createAIUsageRoleAssignment",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAIUsageRoleAssignmentRequest"
+              }
+            }
+          },
+          "description": "AI usage-role assignment",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIUsageRoleAssignmentResponse"
+                }
+              }
+            },
+            "description": "AI usage-role assignment created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Assign an AI Provider role",
+        "tags": [
+          "AI usage roles"
+        ]
+      }
+    },
+    "/api/v1/ai-usage-role-assignments/{id}": {
+      "patch": {
+        "callbacks": {},
+        "operationId": "updateAIUsageRoleAssignment",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAIUsageRoleAssignmentRequest"
+              }
+            }
+          },
+          "description": "AI usage-role assignment update",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIUsageRoleAssignmentResponse"
+                }
+              }
+            },
+            "description": "AI usage-role assignment updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Update an AI usage-role assignment",
+        "tags": [
+          "AI usage roles"
+        ]
+      }
+    },
+    "/api/v1/cli/session-requests": {
+      "post": {
+        "callbacks": {},
+        "operationId": "createCLISessionRequest",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCLISessionRequest"
+              }
+            }
+          },
+          "description": "CLI session request",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CLISessionRequestResponse"
+                }
+              }
+            },
+            "description": "CLI session request created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "security": [],
+        "summary": "Start a CLI browser session request",
+        "tags": [
+          "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/cli/session-requests/{id}/approve": {
+      "post": {
+        "callbacks": {},
+        "operationId": "approveCLISessionRequest",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CLISessionDecisionRequest"
+              }
+            }
+          },
+          "description": "CLI session approval",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CLISessionApprovalResponse"
+                }
+              }
+            },
+            "description": "CLI session request approved"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Approve a CLI browser session request",
+        "tags": [
+          "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/cli/session-requests/{id}/deny": {
+      "post": {
+        "callbacks": {},
+        "operationId": "denyCLISessionRequest",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CLISessionDecisionRequest"
+              }
+            }
+          },
+          "description": "CLI session denial",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CLISessionDenialResponse"
+                }
+              }
+            },
+            "description": "CLI session request denied"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Deny a CLI browser session request",
+        "tags": [
+          "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/cli/session-requests/{id}/exchange": {
+      "post": {
+        "callbacks": {},
+        "operationId": "exchangeCLISessionRequest",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExchangeCLISessionRequest"
+              }
+            }
+          },
+          "description": "CLI session exchange",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeCLISessionResponse"
+                }
+              }
+            },
+            "description": "CLI session created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "security": [],
+        "summary": "Exchange an approved CLI browser grant",
+        "tags": [
+          "CLI sessions"
+        ]
+      }
+    },
+    "/api/v1/oidc": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getOIDCStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OIDCStatusResponse"
+                }
+              }
+            },
+            "description": "OIDC status"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "security": [],
+        "summary": "Get OIDC availability",
+        "tags": [
+          "OIDC"
+        ]
+      }
+    },
+    "/api/v1/oidc/link-requests": {
+      "post": {
+        "callbacks": {},
+        "operationId": "createOIDCLinkRequest",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OIDCLinkResponse"
+                }
+              }
+            },
+            "description": "OIDC link started"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Start linking an OIDC identity",
+        "tags": [
+          "OIDC"
+        ]
+      }
+    },
+    "/api/v1/oidc/provider": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getOIDCProvider",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OIDCProviderResponse"
+                }
+              }
+            },
+            "description": "OIDC provider"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get OIDC provider configuration",
+        "tags": [
+          "OIDC"
+        ]
+      },
+      "put": {
+        "callbacks": {},
+        "operationId": "configureOIDCProvider",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureOIDCProviderRequest"
+              }
+            }
+          },
+          "description": "OIDC provider",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OIDCProviderResponse"
+                }
+              }
+            },
+            "description": "OIDC provider configured"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Configure the OIDC provider",
+        "tags": [
+          "OIDC"
+        ]
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "callbacks": {},
@@ -90,6 +2383,983 @@
         "summary": "Get the OpenAPI specification",
         "tags": [
           "OpenAPI"
+        ]
+      }
+    },
+    "/api/v1/providers": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listProviders",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPage"
+                }
+              }
+            },
+            "description": "Provider page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Providers",
+        "tags": [
+          "Providers"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createProvider",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProviderRequest"
+              }
+            }
+          },
+          "description": "Provider",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Create a Provider",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getProvider",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a Provider",
+        "tags": [
+          "Providers"
+        ]
+      },
+      "patch": {
+        "callbacks": {},
+        "operationId": "updateProvider",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProviderRequest"
+              }
+            }
+          },
+          "description": "Provider update",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Update a Provider",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}/check": {
+      "post": {
+        "callbacks": {},
+        "operationId": "checkProvider",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckProviderRequest"
+              }
+            }
+          },
+          "description": "Provider check",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider checked"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Check a Provider connection",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}/disable": {
+      "post": {
+        "callbacks": {},
+        "operationId": "disableProvider",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderRevisionRequest"
+              }
+            }
+          },
+          "description": "Provider revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider disabled"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Disable a Provider",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}/enable": {
+      "post": {
+        "callbacks": {},
+        "operationId": "enableProvider",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderRevisionRequest"
+              }
+            }
+          },
+          "description": "Provider revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResponse"
+                }
+              }
+            },
+            "description": "Provider enabled"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Enable a checked Provider",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}/target-capabilities": {
+      "post": {
+        "callbacks": {},
+        "operationId": "getProviderTargetCapabilities",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderRevisionRequest"
+              }
+            }
+          },
+          "description": "Provider revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Target capabilities"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get Target capabilities from a Provider",
+        "tags": [
+          "Providers"
+        ]
+      }
+    },
+    "/api/v1/session": {
+      "delete": {
+        "callbacks": {},
+        "operationId": "deleteCurrentSession",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "Session revoked"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Revoke the current session",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "get": {
+        "callbacks": {},
+        "operationId": "getCurrentSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentSessionResponse"
+                }
+              }
+            },
+            "description": "Current session"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get the current session",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions": {
+      "post": {
+        "callbacks": {},
+        "operationId": "createSession",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "description": "Credentials",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Session created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "security": [],
+        "summary": "Create a password session",
+        "tags": [
+          "Sessions"
         ]
       }
     }

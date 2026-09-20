@@ -397,7 +397,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     request(
       :post,
       "/api/v1/sessions",
-      %{"session" => %{"email" => email, "password" => @password}},
+      %{"session" => %{"email" => to_string(email), "password" => @password}},
       nil
     )
     |> json_response(201)
@@ -408,8 +408,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   defp post_json(path, body, token), do: request(:post, path, body, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end

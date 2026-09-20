@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.Accounts.OIDCRequest
 
   @password "correct horse battery staple"
@@ -20,6 +22,8 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
     %{"data" => %{"id" => id, "authorization_url" => authorization_url}} =
       json_response(created, 201)
 
+    assert_operation_response(created)
+
     authorization_uri = URI.parse(authorization_url)
     assert authorization_uri.path == "/cli-login/#{id}"
     assert %{"token" => start_token} = URI.decode_query(authorization_uri.fragment)
@@ -36,6 +40,8 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
     %{"data" => %{"redirect_uri" => redirect_uri, "account" => %{"id" => user_id}}} =
       json_response(approved, 200)
 
+    assert_operation_response(approved)
+
     callback = URI.parse(redirect_uri)
     assert callback.scheme == "http"
     assert callback.host == "127.0.0.1"
@@ -48,6 +54,8 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
 
     assert %{"data" => %{"token" => session_token, "account" => %{"id" => ^user_id}}} =
              json_response(exchanged, 201)
+
+    assert_operation_response(exchanged)
 
     assert %{"data" => %{"account" => %{"id" => ^user_id}}} =
              get_json("/api/v1/session", session_token) |> json_response(200)
@@ -125,8 +133,7 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
   defp post_json(path, body, token \\ nil), do: request(:post, path, body, token)
 
   defp request(method, path, body, token) do
-    build_conn()
-    |> put_req_header("accept", "application/json")
+    build_json_conn(body)
     |> maybe_authorize(token)
     |> dispatch_request(method, path, body)
   end
