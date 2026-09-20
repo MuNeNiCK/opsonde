@@ -107,7 +107,11 @@ export function TargetPage() {
           <p className="mt-1 text-sm text-muted-foreground">{t("targets.topologyDescription")}</p>
         </div>
         {activeTargets.length > 0 ? (
-          <TargetTopology targets={activeTargets} relationships={snapshot.relationships} />
+          <TargetTopology
+            targets={activeTargets}
+            relationships={snapshot.relationships}
+            methods={snapshot.methods}
+          />
         ) : (
           <Card>
             <CardContent className="py-10 text-center text-sm text-muted-foreground">

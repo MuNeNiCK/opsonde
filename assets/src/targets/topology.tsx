@@ -13,13 +13,17 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Link2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/components/theme-provider";
 import { Badge } from "@/components/ui/badge";
-import type { Target, TargetRelationship } from "@/targets/data";
+import { Button } from "@/components/ui/button";
+import type { AccessMethod, Target, TargetRelationship } from "@/targets/data";
 
 type TargetNodeData = {
   target: Target;
+  methods: AccessMethod[];
 };
 
 type TargetNode = Node<TargetNodeData, "target">;
@@ -29,19 +33,24 @@ type Topology = {
   edges: Edge[];
 };
 
-const nodeWidth = 220;
-const nodeHeight = 82;
+const nodeWidth = 320;
+const nodeHeight = 156;
 const nodeTypes = { target: TargetNodeCard };
 
 export function TargetTopology({
   targets,
   relationships,
+  methods,
 }: {
   targets: Target[];
   relationships: TargetRelationship[];
+  methods: AccessMethod[];
 }) {
   const { resolvedTheme } = useTheme();
-  const topology = useMemo(() => layoutTargets(targets, relationships), [relationships, targets]);
+  const topology = useMemo(
+    () => layoutTargets(targets, relationships, methods),
+    [methods, relationships, targets],
+  );
 
   return (
     <div className="h-[28rem] overflow-hidden rounded-lg border bg-card">
@@ -68,29 +77,69 @@ export function TargetTopology({
 }
 
 function TargetNodeCard({ data }: NodeProps<TargetNode>) {
+  const { t } = useTranslation();
+  const visibleMethods = data.methods.slice(0, 2);
   return (
     <>
       <Handle type="target" position={Position.Top} className="opacity-0" />
-      <Link
-        to={`/targets/${data.target.id}`}
-        className="block h-full rounded-lg border bg-card p-3 text-card-foreground shadow-sm transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
+      <div className="h-full rounded-lg border bg-card p-3 text-card-foreground shadow-sm transition-colors hover:border-primary">
         <span className="flex items-start justify-between gap-2">
-          <span className="truncate text-sm font-semibold">{data.target.name}</span>
-          <Badge variant="outline" className="max-w-24 truncate">
+          <Link
+            to={`/targets/${data.target.id}`}
+            className="min-w-0 break-words text-sm font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {data.target.name}
+          </Link>
+          <Badge variant="outline" className="shrink-0">
             {data.target.platform}
           </Badge>
         </span>
-        <span className="mt-2 block truncate text-xs text-muted-foreground">
-          {data.target.kind}
-        </span>
-      </Link>
+        <span className="mt-1 block text-xs text-muted-foreground">{data.target.kind}</span>
+        <div className="mt-2 space-y-1 text-xs">
+          {visibleMethods.map((method) => (
+            <div key={method.id} className="flex min-w-0 items-center justify-between gap-2">
+              <span className="truncate font-mono" title={method.endpoint}>
+                {endpointHost(method.endpoint)}
+              </span>
+              <Badge variant="secondary" className="shrink-0">
+                {method.method}
+              </Badge>
+            </div>
+          ))}
+          {data.methods.length === 0 && (
+            <span className="text-muted-foreground">{t("targets.noAccessMethods")}</span>
+          )}
+          {data.methods.length > visibleMethods.length && (
+            <span className="text-muted-foreground">
+              +{data.methods.length - visibleMethods.length}
+            </span>
+          )}
+        </div>
+        <Button asChild size="xs" variant="ghost" className="mt-2 -ml-2">
+          <Link to={`/targets/${data.target.id}?action=relationship`}>
+            <Link2 />
+            {t("targets.addRelationship")}
+          </Link>
+        </Button>
+      </div>
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
     </>
   );
 }
 
-function layoutTargets(targets: Target[], relationships: TargetRelationship[]): Topology {
+function endpointHost(endpoint: string) {
+  try {
+    return new URL(endpoint).hostname || endpoint;
+  } catch {
+    return endpoint;
+  }
+}
+
+function layoutTargets(
+  targets: Target[],
+  relationships: TargetRelationship[],
+  methods: AccessMethod[],
+): Topology {
   const targetIds = new Set(targets.map((target) => target.id));
   const visibleRelationships = relationships.filter(
     (relationship) =>
@@ -120,7 +169,12 @@ function layoutTargets(targets: Target[], relationships: TargetRelationship[]): 
         x: graph.node(target.id).x - nodeWidth / 2,
         y: graph.node(target.id).y - nodeHeight / 2,
       },
-      data: { target },
+      data: {
+        target,
+        methods: methods
+          .filter((method) => method.active && method.target_id === target.id)
+          .sort((left, right) => left.priority - right.priority),
+      },
       style: { width: nodeWidth, height: nodeHeight },
     })),
     edges: visibleRelationships.map((relationship) => ({

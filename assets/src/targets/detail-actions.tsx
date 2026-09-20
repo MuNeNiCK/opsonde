@@ -17,17 +17,19 @@ export function TargetDetailActions({
   target,
   targets,
   providers,
+  initialAction,
   onComplete,
   onError,
 }: {
   target: Target;
   targets: Target[];
   providers: Provider[];
+  initialAction?: Action;
   onComplete: (message: string) => Promise<void>;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
-  const [action, setAction] = useState<Action | null>(null);
+  const [action, setAction] = useState<Action | null>(initialAction ?? null);
   const [pending, setPending] = useState(false);
   const enabledProviders = providers.filter(
     (provider) =>

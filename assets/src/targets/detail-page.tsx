@@ -9,7 +9,7 @@ import {
   ShieldBan,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ import { TargetDetailActions } from "@/targets/detail-actions";
 export function TargetDetailPage() {
   const { targetId = "" } = useParams();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
@@ -131,6 +132,7 @@ export function TargetDetailPage() {
           target={target}
           targets={snapshot.targets}
           providers={snapshot.providers}
+          initialAction={searchParams.get("action") === "relationship" ? "relationship" : undefined}
           onComplete={complete}
           onError={setError}
         />
