@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Cable, DatabaseZap, Plus, Search } from "lucide-react";
+import { Cable, DatabaseZap, Link2, Plus, Search } from "lucide-react";
+import { type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
+import { apiClient } from "@/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,13 @@ export function TargetPage() {
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
+  const [editingRelationships, setEditingRelationships] = useState(false);
+  const [draftRelationship, setDraftRelationship] = useState<{
+    source: string;
+    target: string;
+  } | null>(null);
+  const [relationshipKind, setRelationshipKind] = useState("hosted_by");
+  const [relationshipPending, setRelationshipPending] = useState(false);
   const canManage = account?.role === "admin";
 
   useEffect(() => {
@@ -49,6 +58,34 @@ export function TargetPage() {
       )
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [activeTargets, query, snapshot]);
+
+  async function createRelationship(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draftRelationship) return;
+    setRelationshipPending(true);
+    setError("");
+    try {
+      await apiClient.POST("/api/v1/target-relationships", {
+        body: {
+          relationship: {
+            source_target_id: draftRelationship.source,
+            destination_target_id: draftRelationship.target,
+            kind: relationshipKind,
+            facts: {},
+            valid_until: null,
+          },
+        },
+      });
+      setSnapshot(await loadTargetSnapshot());
+      setDraftRelationship(null);
+      setEditingRelationships(false);
+      setRelationshipKind("hosted_by");
+    } catch {
+      setError(t("targets.requestFailed"));
+    } finally {
+      setRelationshipPending(false);
+    }
+  }
 
   if (!snapshot) {
     return (
@@ -102,20 +139,77 @@ export function TargetPage() {
       )}
 
       <section className="space-y-3">
-        <div>
-          <h2 className="text-xl font-semibold">{t("targets.topology")}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t("targets.topologyDescription")}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">{t("targets.topology")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t(
+                editingRelationships
+                  ? "targets.connectRelationshipInstruction"
+                  : "targets.topologyDescription",
+              )}
+            </p>
+          </div>
+          {canManage && activeTargets.length > 1 && (
+            <Button
+              variant={editingRelationships ? "default" : "outline"}
+              onClick={() => {
+                setEditingRelationships((current) => !current);
+                setDraftRelationship(null);
+              }}
+            >
+              <Link2 />
+              {t(editingRelationships ? "common.cancel" : "targets.addRelationship")}
+            </Button>
+          )}
         </div>
         {activeTargets.length > 0 ? (
           <TargetTopology
             targets={activeTargets}
             relationships={snapshot.relationships}
             methods={snapshot.methods}
+            editMode={editingRelationships}
+            draft={draftRelationship}
+            onConnect={(source, target) => setDraftRelationship({ source, target })}
           />
         ) : (
           <Card>
             <CardContent className="py-10 text-center text-sm text-muted-foreground">
               {t("targets.noTargets")}
+            </CardContent>
+          </Card>
+        )}
+        {draftRelationship && (
+          <Card>
+            <CardContent className="pt-6">
+              <form className="flex flex-wrap items-end gap-4" onSubmit={createRelationship}>
+                <div className="min-w-64 flex-1">
+                  <p className="text-sm font-medium">
+                    {activeTargets.find((target) => target.id === draftRelationship.source)?.name}
+                    {" → "}
+                    {activeTargets.find((target) => target.id === draftRelationship.target)?.name}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("targets.relationshipDirection")}
+                  </p>
+                </div>
+                <div className="min-w-56 space-y-2">
+                  <label htmlFor="topology-relationship-kind" className="text-sm font-medium">
+                    {t("targets.relationshipKind")}
+                  </label>
+                  <Input
+                    id="topology-relationship-kind"
+                    value={relationshipKind}
+                    onChange={(event) => setRelationshipKind(event.target.value)}
+                    required
+                    maxLength={80}
+                  />
+                </div>
+                <Button type="submit" disabled={relationshipPending}>
+                  {relationshipPending ? <Spinner /> : <Plus />}
+                  {t("targets.saveRelationship")}
+                </Button>
+              </form>
             </CardContent>
           </Card>
         )}

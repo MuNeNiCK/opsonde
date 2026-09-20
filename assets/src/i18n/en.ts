@@ -715,6 +715,10 @@ const en = {
       topology: "Infrastructure topology",
       topologyDescription:
         "Relationships show how infrastructure layers depend on and support each other.",
+      connectRelationshipInstruction:
+        "Drag from the lower connection point of the source Target to the upper point of its destination.",
+      relationshipDirection: "The arrow records source → destination.",
+      saveRelationship: "Save relationship",
       inventory: "Target list",
       inventoryTableDescription: "Search and open the registered infrastructure Targets.",
       addBoundary: "Add management boundary",
