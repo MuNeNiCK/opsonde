@@ -201,36 +201,57 @@ defmodule Opsonde.CaseLifecycleTest do
                actor: context.operator
              )
 
-    cancelled =
-      Cases.request_case_cancellation!(handed_off.id, handed_off.revision,
-        actor: context.next_operator
-      )
-
-    assert cancelled.cancel_requested
-    assert cancelled.revision == 4
-
     recovered =
-      Cases.record_case_source_recovery!(cancelled.id, cancelled.revision,
+      Cases.record_case_source_recovery!(handed_off.id, handed_off.revision,
         actor: context.next_operator
       )
 
     assert recovered.alert_state == :recovered
     assert %DateTime{} = recovered.source_recovered_at
-    assert recovered.revision == 5
+    assert recovered.revision == 4
 
     retried_recovery =
-      Cases.record_case_source_recovery!(cancelled.id, cancelled.revision,
+      Cases.record_case_source_recovery!(handed_off.id, handed_off.revision,
         actor: context.next_operator
       )
 
     assert retried_recovery.revision == recovered.revision
 
+    cancelled =
+      Cases.request_case_cancellation!(recovered.id, recovered.revision,
+        actor: context.next_operator
+      )
+
+    assert cancelled.cancel_requested
+    assert cancelled.status == :cancelled
+    assert cancelled.stop_reason == "Resolution cancelled by an operator"
+    assert cancelled.revision == 5
+
+    cancelled_run = Cases.list_resolution_runs!(actor: context.viewer) |> hd()
+    refute cancelled_run.active
+    assert cancelled_run.status == :cancelled
+    assert %DateTime{} = cancelled_run.ended_at
+
+    retried_cancel =
+      Cases.request_case_cancellation!(recovered.id, recovered.revision,
+        actor: context.next_operator
+      )
+
+    assert retried_cancel.revision == cancelled.revision
+
+    assert {:error, _error} =
+             Cases.record_case_source_recovery(
+               cancelled.id,
+               cancelled.revision,
+               actor: context.next_operator
+             )
+
     assert Enum.map(Cases.list_case_events!(actor: context.viewer), & &1.event_type) == [
              "case_opened",
              "case_claimed",
              "case_handed_off",
-             "cancellation_requested",
-             "source_recovered"
+             "source_recovered",
+             "case_cancelled"
            ]
   end
 
@@ -320,6 +341,39 @@ defmodule Opsonde.CaseLifecycleTest do
     assert resumed_event.data["prior_generation"] == 1
     assert resumed_event.data["new_generation"] == 2
     assert resumed_event.data["reason"] == "extend one turn"
+  end
+
+  test "cancelling an attention Case retires its active run", context do
+    incident = open_case!(:manual, "web", "cancel-attention", :not_applicable, context.operator)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        run.id,
+        run.revision,
+        "cancel-attention:pause",
+        "Operator review is required",
+        %{"action" => "provide_human_input"},
+        "Review or cancel",
+        authorize?: false
+      )
+
+    cancelled =
+      Cases.request_case_cancellation!(attention.id, attention.revision, actor: context.operator)
+
+    assert cancelled.status == :cancelled
+    assert cancelled.cancel_requested
+    assert cancelled.required_human_input == nil
+    assert cancelled.pending_intent == %{}
+
+    retired = Cases.get_resolution_run!(run.id, actor: context.viewer)
+    refute retired.active
+    assert retired.status == :cancelled
+    assert %DateTime{} = retired.ended_at
+
+    assert {:error, _error} = Cases.active_resolution_run(incident.id, authorize?: false)
   end
 
   test "viewer mutation and direct internal writes are forbidden", context do

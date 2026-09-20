@@ -448,6 +448,7 @@ const en = {
         effect_budget_charged: "Change budget reserved",
         verification_budget_charged: "Verification budget reserved",
         case_resolved: "Case resolved",
+        case_cancelled: "Case cancelled",
         related_target_traversed: "Related Target investigated",
       },
       failure: {

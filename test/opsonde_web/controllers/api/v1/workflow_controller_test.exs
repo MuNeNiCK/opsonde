@@ -177,7 +177,13 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         token!(context.next_operator.email)
       )
 
-    assert %{"data" => %{"revision" => 4, "cancel_requested" => true}} =
+    assert %{
+             "data" => %{
+               "revision" => 4,
+               "cancel_requested" => true,
+               "status" => "cancelled"
+             }
+           } =
              json_response(cancelled, 200)
 
     assert_operation_response(cancelled)
@@ -187,7 +193,9 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{
              "data" => %{
                "case" => %{"id" => case_id, "revision" => 4},
-               "resolution_runs" => [%{"generation" => 1}],
+               "resolution_runs" => [
+                 %{"generation" => 1, "status" => "cancelled", "active" => false}
+               ],
                "proposals" => [],
                "operations" => [],
                "verification_attempts" => []

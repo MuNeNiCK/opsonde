@@ -440,6 +440,7 @@ const ja = {
         effect_budget_charged: "変更上限を予約",
         verification_budget_charged: "検証上限を予約",
         case_resolved: "ケース解決",
+        case_cancelled: "ケースを中止",
         related_target_traversed: "関連Targetを調査",
       },
       failure: {

@@ -80,16 +80,42 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
     transition_once(arguments.id, key, fn incident ->
       with :ok <- ensure_mutable(incident) do
-        update_with_event(
-          incident,
-          arguments.expected_revision,
-          nil,
-          actor,
-          "cancellation_requested",
-          key,
-          %{cancel_requested: true},
-          %{}
-        )
+        cancel(incident, arguments.expected_revision, actor, key)
+      end
+    end)
+  end
+
+  defp cancel(incident, expected_revision, actor, key) do
+    now = DateTime.utc_now()
+
+    Ash.transact([Case, ResolutionRun, CaseEvent], fn ->
+      with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
+           {:ok, updated} <-
+             Cases.update_case_record(
+               incident,
+               expected_revision,
+               %{
+                 status: :cancelled,
+                 cancel_requested: true,
+                 stop_reason: "Resolution cancelled by an operator",
+                 pending_intent: %{},
+                 required_human_input: nil
+               },
+               actor: actor,
+               authorize?: false
+             ),
+           {:ok, cancelled_run} <-
+             Cases.retire_resolution_run(
+               run,
+               run.revision,
+               %{status: :cancelled, ended_at: now},
+               authorize?: false
+             ),
+           {:ok, _event} <-
+             create_event(updated, cancelled_run, actor, "case_cancelled", key, %{
+               "prior_status" => to_string(incident.status)
+             }) do
+        updated
       end
     end)
   end
