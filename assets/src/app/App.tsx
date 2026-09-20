@@ -24,6 +24,20 @@ const SetupPage = lazy(() =>
 const TargetPage = lazy(() =>
   import("@/targets/page").then((module) => ({ default: module.TargetPage })),
 );
+const TargetDetailPage = lazy(() =>
+  import("@/targets/detail-page").then((module) => ({ default: module.TargetDetailPage })),
+);
+const TargetCreatePage = lazy(() =>
+  import("@/targets/create-page").then((module) => ({ default: module.TargetCreatePage })),
+);
+const TargetConnectionsPage = lazy(() =>
+  import("@/targets/connections-page").then((module) => ({
+    default: module.TargetConnectionsPage,
+  })),
+);
+const TargetImportPage = lazy(() =>
+  import("@/targets/import-page").then((module) => ({ default: module.TargetImportPage })),
+);
 const AuditPage = lazy(() =>
   import("@/audits/page").then((module) => ({ default: module.AuditPage })),
 );
@@ -95,6 +109,10 @@ function AppRoutes() {
           <Route path="cases/signals" element={<SignalDiagnosticsPage />} />
           <Route path="cases/:caseId" element={<CaseDetailPage />} />
           <Route path="targets" element={<TargetPage />} />
+          <Route path="targets/new" element={<TargetCreatePage />} />
+          <Route path="targets/connections" element={<TargetConnectionsPage />} />
+          <Route path="targets/imports" element={<TargetImportPage />} />
+          <Route path="targets/:targetId" element={<TargetDetailPage />} />
           <Route path="providers" element={<Navigate to="/settings#providers" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />

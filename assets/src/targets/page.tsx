@@ -1,111 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Cable, DatabaseZap, Plus, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData, collectPages } from "@/api/client";
-import type { components } from "@/api/schema";
+import { Link } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { InventoryImportSection } from "@/targets/inventory-import-section";
-import { TargetProviderSection } from "@/providers/target-section";
-import { TargetRegisterSection } from "@/targets/register-section";
-
-type Provider = components["schemas"]["Provider"];
-type ManagementBoundary = components["schemas"]["ManagementBoundary"];
-type Target = components["schemas"]["Target"];
-type ExternalIdentity = components["schemas"]["ExternalIdentity"];
-type AccessMethod = components["schemas"]["AccessMethod"];
-type TargetRelationship = components["schemas"]["TargetRelationship"];
-type TargetPolicy = components["schemas"]["TargetPolicy"];
-type InventoryImport = components["schemas"]["InventoryImport"];
-type TargetSnapshot = {
-  providers: Provider[];
-  boundaries: ManagementBoundary[];
-  targets: Target[];
-  identities: ExternalIdentity[];
-  methods: AccessMethod[];
-  relationships: TargetRelationship[];
-  policies: TargetPolicy[];
-  imports: InventoryImport[];
-};
-
-async function loadSnapshot(): Promise<TargetSnapshot> {
-  const [providers, boundaries, targets, identities, methods, relationships, policies, imports] =
-    await Promise.all([
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/providers", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/management-boundaries", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/external-identities", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/access-methods", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/target-relationships", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/target-policies", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/inventory-imports", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-    ]);
-  return { providers, boundaries, targets, identities, methods, relationships, policies, imports };
-}
+import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
 
 export function TargetPage() {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
-  const refresh = useCallback(async () => {
-    setSnapshot(await loadSnapshot());
-  }, []);
-
   useEffect(() => {
     let active = true;
-    loadSnapshot()
-      .then((next) => {
-        if (active) setSnapshot(next);
-      })
+    loadTargetSnapshot()
+      .then((next) => active && setSnapshot(next))
       .catch((failure: unknown) => {
         if (active)
           setError(failure instanceof Error ? failure.message : t("targets.requestFailed"));
@@ -114,6 +31,21 @@ export function TargetPage() {
       active = false;
     };
   }, [t]);
+
+  const targets = useMemo(() => {
+    if (!snapshot) return [];
+    const search = query.trim().toLocaleLowerCase();
+    return snapshot.targets
+      .filter((target) => target.active)
+      .filter(
+        (target) =>
+          !search ||
+          [target.name, target.kind, target.platform].some((value) =>
+            value.toLocaleLowerCase().includes(search),
+          ),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [query, snapshot]);
 
   if (!snapshot) {
     return (
@@ -125,10 +57,34 @@ export function TargetPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-10 p-6 lg:p-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("targets.title")}</h1>
-        <p className="mt-2 text-muted-foreground">{t("targets.description")}</p>
+    <main className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("targets.title")}</h1>
+          <p className="mt-2 text-muted-foreground">{t("targets.inventoryDescription")}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/targets/connections">
+              <Cable />
+              {t("targets.manageConnections")}
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/targets/imports">
+              <DatabaseZap />
+              {t("targets.inventoryImport")}
+            </Link>
+          </Button>
+          {canManage && (
+            <Button asChild>
+              <Link to="/targets/new">
+                <Plus />
+                {t("targets.addTarget")}
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -142,31 +98,71 @@ export function TargetPage() {
         </Alert>
       )}
 
-      <TargetProviderSection
-        providers={snapshot.providers}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
-      <TargetRegisterSection
-        providers={snapshot.providers}
-        boundaries={snapshot.boundaries}
-        targets={snapshot.targets}
-        identities={snapshot.identities}
-        methods={snapshot.methods}
-        relationships={snapshot.relationships}
-        policies={snapshot.policies}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
-      <InventoryImportSection
-        providers={snapshot.providers}
-        imports={snapshot.imports}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
+      <div className="relative max-w-xl">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("targets.searchPlaceholder")}
+          aria-label={t("targets.searchPlaceholder")}
+        />
+      </div>
+
+      {targets.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            {t(query ? "targets.noSearchResults" : "targets.noTargets")}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {targets.map((target) => {
+            const methods = snapshot.methods.filter(
+              (item) => item.target_id === target.id && item.active,
+            );
+            const policies = snapshot.policies.filter(
+              (item) => item.target_id === target.id && item.enabled,
+            );
+            const relationships = snapshot.relationships.filter(
+              (item) =>
+                item.active &&
+                (item.source_target_id === target.id || item.destination_target_id === target.id),
+            );
+            return (
+              <Link
+                key={target.id}
+                to={"/targets/" + target.id}
+                className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Card className="h-full transition-colors group-hover:border-primary/50">
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-3">
+                      <CardTitle className="text-base">{target.name}</CardTitle>
+                      <Badge variant="outline">{target.platform}</Badge>
+                    </div>
+                    <CardDescription>{target.kind}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-3 gap-3 text-sm">
+                    <Metric label={t("targets.accessMethods")} value={methods.length} />
+                    <Metric label={t("targets.layerRelationships")} value={relationships.length} />
+                    <Metric label={t("targets.policies")} value={policies.length} />
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </main>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-medium">{value}</p>
+    </div>
   );
 }

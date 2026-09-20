@@ -17,8 +17,10 @@ import { targetAdapter, targetAdapterOptions } from "@/targets/adapters";
 type Props = {
   providers: Provider[];
   canManage: boolean;
+  createKind: "target" | "inventory" | null;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
+  onCreated: () => void;
 };
 
 const selectClassName =
@@ -35,7 +37,14 @@ function firstFingerprintEndpoint(provider: Provider) {
   return Object.keys(fingerprints)[0] ?? "";
 }
 
-export function TargetProviderSection({ providers, canManage, onRefresh, onError }: Props) {
+export function TargetProviderSection({
+  providers,
+  canManage,
+  createKind,
+  onRefresh,
+  onError,
+  onCreated,
+}: Props) {
   const { t } = useTranslation();
   const [adapterType, setAdapterType] = useState("linux-ssh");
   const [authMethod, setAuthMethod] = useState("password");
@@ -112,7 +121,10 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
       });
     });
 
-    if (created) formElement.reset();
+    if (created) {
+      formElement.reset();
+      onCreated();
+    }
   }
 
   async function createInventoryProvider(event: FormEvent<HTMLFormElement>) {
@@ -147,7 +159,10 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
         },
       });
     });
-    if (created) formElement.reset();
+    if (created) {
+      formElement.reset();
+      onCreated();
+    }
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
@@ -195,66 +210,100 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
         <p className="mt-1 text-sm text-muted-foreground">{t("targets.connectionsDescription")}</p>
       </div>
 
-      {canManage && (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("targets.addConnection")}</CardTitle>
-              <CardDescription>{t("targets.secretDescription")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-4 md:grid-cols-2" onSubmit={createTargetProvider}>
-                <Field label={t("targets.name")} name="name" required />
-                <div className="space-y-2">
-                  <Label htmlFor="target-adapter">{t("targets.connectionType")}</Label>
-                  <select
-                    id="target-adapter"
-                    name="adapter_type"
-                    className={selectClassName}
-                    value={adapterType}
-                    onChange={(event) => setAdapterType(event.target.value)}
-                  >
-                    {targetAdapterOptions.map((option) => (
-                      <option key={option.type} value={option.type}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Field
-                  label={t("targets.endpoint")}
-                  name="endpoint"
-                  placeholder="ssh://host:22"
-                  required
-                />
-                {selectedAdapter.family === "ssh" && (
-                  <>
-                    <Field
-                      label={t("targets.fingerprint")}
-                      name="fingerprint"
-                      placeholder="SHA256:…"
-                      required
-                    />
-                    <Field
-                      label={t("targets.username")}
-                      name="username"
-                      autoComplete="username"
-                      required
-                    />
-                    <div className="space-y-2">
-                      <Label htmlFor="target-auth-method">{t("targets.authentication")}</Label>
-                      <select
-                        id="target-auth-method"
-                        name="auth_method"
-                        className={selectClassName}
-                        value={authMethod}
-                        onChange={(event) => setAuthMethod(event.target.value)}
-                      >
-                        <option value="password">{t("targets.password")}</option>
-                        <option value="public_key">{t("targets.privateKey")}</option>
-                      </select>
-                    </div>
-                    {authMethod === "password" ? (
+      {canManage && createKind && (
+        <div>
+          {createKind === "target" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("targets.addConnection")}</CardTitle>
+                <CardDescription>{t("targets.secretDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="grid gap-4 md:grid-cols-2" onSubmit={createTargetProvider}>
+                  <Field label={t("targets.name")} name="name" required />
+                  <div className="space-y-2">
+                    <Label htmlFor="target-adapter">{t("targets.connectionType")}</Label>
+                    <select
+                      id="target-adapter"
+                      name="adapter_type"
+                      className={selectClassName}
+                      value={adapterType}
+                      onChange={(event) => setAdapterType(event.target.value)}
+                    >
+                      {targetAdapterOptions.map((option) => (
+                        <option key={option.type} value={option.type}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Field
+                    label={t("targets.endpoint")}
+                    name="endpoint"
+                    placeholder="ssh://host:22"
+                    required
+                  />
+                  {selectedAdapter.family === "ssh" && (
+                    <>
+                      <Field
+                        label={t("targets.fingerprint")}
+                        name="fingerprint"
+                        placeholder="SHA256:…"
+                        required
+                      />
+                      <Field
+                        label={t("targets.username")}
+                        name="username"
+                        autoComplete="username"
+                        required
+                      />
+                      <div className="space-y-2">
+                        <Label htmlFor="target-auth-method">{t("targets.authentication")}</Label>
+                        <select
+                          id="target-auth-method"
+                          name="auth_method"
+                          className={selectClassName}
+                          value={authMethod}
+                          onChange={(event) => setAuthMethod(event.target.value)}
+                        >
+                          <option value="password">{t("targets.password")}</option>
+                          <option value="public_key">{t("targets.privateKey")}</option>
+                        </select>
+                      </div>
+                      {authMethod === "password" ? (
+                        <Field
+                          label={t("targets.password")}
+                          name="password"
+                          type="password"
+                          autoComplete="off"
+                          required
+                        />
+                      ) : (
+                        <Area label={t("targets.privateKey")} name="private_key" required />
+                      )}
+                      {adapterType === "linux-ssh" && (
+                        <div className="space-y-2">
+                          <Label htmlFor="target-privilege">{t("targets.privilege")}</Label>
+                          <select
+                            id="target-privilege"
+                            name="privilege"
+                            className={selectClassName}
+                          >
+                            <option value="none">none</option>
+                            <option value="sudo">sudo</option>
+                          </select>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {selectedAdapter.family === "restconf" && (
+                    <>
+                      <Field
+                        label={t("targets.username")}
+                        name="username"
+                        autoComplete="username"
+                        required
+                      />
                       <Field
                         label={t("targets.password")}
                         name="password"
@@ -262,98 +311,71 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                         autoComplete="off"
                         required
                       />
-                    ) : (
-                      <Area label={t("targets.privateKey")} name="private_key" required />
-                    )}
-                    {adapterType === "linux-ssh" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="target-privilege">{t("targets.privilege")}</Label>
-                        <select id="target-privilege" name="privilege" className={selectClassName}>
-                          <option value="none">none</option>
-                          <option value="sudo">sudo</option>
-                        </select>
-                      </div>
-                    )}
-                  </>
-                )}
-                {selectedAdapter.family === "restconf" && (
-                  <>
-                    <Field
-                      label={t("targets.username")}
-                      name="username"
-                      autoComplete="username"
-                      required
-                    />
-                    <Field
-                      label={t("targets.password")}
-                      name="password"
-                      type="password"
-                      autoComplete="off"
-                      required
-                    />
+                      <Area label={t("targets.caCertificate")} name="ca_certificate" required />
+                    </>
+                  )}
+                  {selectedAdapter.family === "kubernetes" && (
+                    <>
+                      <Field
+                        label={t("targets.namespace")}
+                        name="namespace"
+                        defaultValue="default"
+                        required
+                      />
+                      <Area label={t("targets.kubeconfig")} name="kubeconfig" required />
+                    </>
+                  )}
+                  <Button
+                    type="submit"
+                    className="md:col-span-2 md:w-fit"
+                    disabled={pending !== null}
+                  >
+                    {pending === "create-target-provider" ? <Spinner /> : <Plus />}
+                    {t("targets.addAndCheck")}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+          {createKind === "inventory" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("targets.addNetBox")}</CardTitle>
+                <CardDescription>{t("targets.netBoxDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="grid gap-4 md:grid-cols-2" onSubmit={createInventoryProvider}>
+                  <Field label={t("targets.name")} name="name" required />
+                  <Field label={t("targets.baseUrl")} name="base_url" type="url" required />
+                  <Field
+                    label={t("targets.token")}
+                    name="token"
+                    type="password"
+                    autoComplete="off"
+                    required
+                  />
+                  <div className="space-y-2">
+                    <Label htmlFor="netbox-resource">{t("targets.resource")}</Label>
+                    <select id="netbox-resource" name="resource" className={selectClassName}>
+                      <option value="devices">devices</option>
+                      <option value="virtual_machines">virtual_machines</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
                     <Area label={t("targets.caCertificate")} name="ca_certificate" required />
-                  </>
-                )}
-                {selectedAdapter.family === "kubernetes" && (
-                  <>
-                    <Field
-                      label={t("targets.namespace")}
-                      name="namespace"
-                      defaultValue="default"
-                      required
-                    />
-                    <Area label={t("targets.kubeconfig")} name="kubeconfig" required />
-                  </>
-                )}
-                <Button
-                  type="submit"
-                  className="md:col-span-2 md:w-fit"
-                  disabled={pending !== null}
-                >
-                  {pending === "create-target-provider" ? <Spinner /> : <Plus />}
-                  {t("targets.addAndCheck")}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("targets.addNetBox")}</CardTitle>
-              <CardDescription>{t("targets.netBoxDescription")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-4 md:grid-cols-2" onSubmit={createInventoryProvider}>
-                <Field label={t("targets.name")} name="name" required />
-                <Field label={t("targets.baseUrl")} name="base_url" type="url" required />
-                <Field
-                  label={t("targets.token")}
-                  name="token"
-                  type="password"
-                  autoComplete="off"
-                  required
-                />
-                <div className="space-y-2">
-                  <Label htmlFor="netbox-resource">{t("targets.resource")}</Label>
-                  <select id="netbox-resource" name="resource" className={selectClassName}>
-                    <option value="devices">devices</option>
-                    <option value="virtual_machines">virtual_machines</option>
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <Area label={t("targets.caCertificate")} name="ca_certificate" required />
-                </div>
-                <Button
-                  type="submit"
-                  className="md:col-span-2 md:w-fit"
-                  disabled={pending !== null}
-                >
-                  {pending === "create-inventory-provider" ? <Spinner /> : <Plus />}
-                  {t("targets.addAndCheck")}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="md:col-span-2 md:w-fit"
+                    disabled={pending !== null}
+                  >
+                    {pending === "create-inventory-provider" ? <Spinner /> : <Plus />}
+                    {t("targets.addAndCheck")}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
