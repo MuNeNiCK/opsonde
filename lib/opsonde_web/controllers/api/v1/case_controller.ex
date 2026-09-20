@@ -35,7 +35,36 @@ defmodule OpsondeWeb.API.V1.CaseController do
   operation :index,
     operation_id: "listCases",
     summary: "List Cases",
-    parameters: Schemas.pagination_parameters(),
+    parameters:
+      Schemas.pagination_parameters() ++
+        [
+          query: [
+            in: :query,
+            schema: %OpenApiSpex.Schema{type: :string, minLength: 1, maxLength: 200}
+          ],
+          status: [
+            in: :query,
+            schema: %OpenApiSpex.Schema{
+              type: :string,
+              enum: ~w(running needs_attention resolved cancelled)
+            }
+          ],
+          alert_state: [
+            in: :query,
+            schema: %OpenApiSpex.Schema{
+              type: :string,
+              enum: ~w(firing recovered not_applicable)
+            }
+          ],
+          sort: [
+            in: :query,
+            schema: %OpenApiSpex.Schema{
+              type: :string,
+              enum: ~w(updated_desc updated_asc severity_desc),
+              default: "updated_desc"
+            }
+          ]
+        ],
     responses:
       [ok: {"Case page", "application/json", WorkflowSchemas.ref("CasePage")}] ++ @list_errors
 
@@ -149,7 +178,15 @@ defmodule OpsondeWeb.API.V1.CaseController do
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
-         {:ok, cases} <- Cases.page_cases(page: page, actor: conn.assigns.current_user) do
+         {:ok, cases} <-
+           Cases.page_cases(
+             params["query"],
+             params["status"],
+             params["alert_state"],
+             params["sort"] || "updated_desc",
+             page: page,
+             actor: conn.assigns.current_user
+           ) do
       Response.page(conn, cases, &WorkflowJSON.case_record/1)
     end
   end

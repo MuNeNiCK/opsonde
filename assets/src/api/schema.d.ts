@@ -8437,6 +8437,10 @@ export interface operations {
             query?: {
                 limit?: number;
                 after?: string;
+                query?: string;
+                status?: "running" | "needs_attention" | "resolved" | "cancelled";
+                alert_state?: "firing" | "recovered" | "not_applicable";
+                sort?: "updated_desc" | "updated_asc" | "severity_desc";
             };
             header?: never;
             path?: never;

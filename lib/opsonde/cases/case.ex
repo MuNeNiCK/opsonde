@@ -31,7 +31,27 @@ defmodule Opsonde.Cases.Case do
 
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [updated_at: :desc, id: :desc])
+
+      argument :query, :ci_string, constraints: [min_length: 1, max_length: 200]
+
+      argument :status, :atom,
+        constraints: [one_of: [:running, :needs_attention, :resolved, :cancelled]]
+
+      argument :alert_state, :atom, constraints: [one_of: [:firing, :recovered, :not_applicable]]
+
+      argument :sort, :atom,
+        allow_nil?: false,
+        default: :updated_desc,
+        constraints: [one_of: [:updated_desc, :updated_asc, :severity_desc]]
+
+      filter expr(
+               (is_nil(^arg(:query)) or contains(title, ^arg(:query)) or
+                  contains(source, ^arg(:query)) or contains(source_ref, ^arg(:query))) and
+                 (is_nil(^arg(:status)) or status == ^arg(:status)) and
+                 (is_nil(^arg(:alert_state)) or alert_state == ^arg(:alert_state))
+             )
+
+      prepare Opsonde.Cases.Case.Preparations.Queue
     end
 
     read :by_trigger do
@@ -566,6 +586,19 @@ defmodule Opsonde.Cases.Case do
     has_many :resolution_runs, Opsonde.Cases.ResolutionRun
     has_many :events, Opsonde.Cases.CaseEvent
     has_many :reports, Opsonde.Reports.Report
+  end
+
+  calculations do
+    calculate :severity_rank,
+              :integer,
+              expr(
+                cond do
+                  severity == :critical -> 4
+                  severity == :error -> 3
+                  severity == :warning -> 2
+                  true -> 1
+                end
+              )
   end
 
   identities do

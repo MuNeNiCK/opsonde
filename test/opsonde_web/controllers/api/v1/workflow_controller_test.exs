@@ -36,6 +36,32 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     }
   end
 
+  test "Case queue search, filters, and sorting are applied before pagination", context do
+    older = open_case!(context.operator_token, "queue-older", "warning")
+    newer = open_case!(context.operator_token, "queue-newer", "critical")
+
+    searched = get_json("/api/v1/cases?query=QUEUE-OLDER", context.viewer_token)
+
+    assert %{"data" => [%{"id" => searched_id}], "page" => %{"next" => nil}} =
+             json_response(searched, 200)
+
+    assert searched_id == older["id"]
+    assert_operation_response(searched)
+
+    sorted = get_json("/api/v1/cases?sort=severity_desc", context.viewer_token)
+
+    assert [%{"id" => first_id}, %{"id" => second_id}] = json_response(sorted, 200)["data"]
+    assert [first_id, second_id] == [newer["id"], older["id"]]
+    assert_operation_response(sorted)
+
+    filtered = get_json("/api/v1/cases?status=resolved", context.viewer_token)
+    assert %{"data" => [], "page" => %{"next" => nil}} = json_response(filtered, 200)
+    assert_operation_response(filtered)
+
+    invalid = get_json("/api/v1/cases?status=unknown", context.viewer_token)
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+  end
+
   test "authority and Case lifecycle remain revisioned and reconnectable", context do
     current = get_data!("/api/v1/authority-setting", context.viewer_token)
     assert current["authority_mode"] == "readonly"
@@ -765,7 +791,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     )
   end
 
-  defp open_case!(token, source_ref) do
+  defp open_case!(token, source_ref, severity \\ "warning") do
     response =
       post_json(
         "/api/v1/cases",
@@ -775,7 +801,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
             "source" => "api",
             "source_ref" => source_ref,
             "title" => "Investigate #{source_ref}",
-            "severity" => "warning",
+            "severity" => severity,
             "alert_state" => "not_applicable",
             "initial_context" => %{},
             "report_language" => "en"

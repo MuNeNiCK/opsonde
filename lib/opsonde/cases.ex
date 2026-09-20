@@ -29,7 +29,11 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Case do
       define :list_cases, action: :read
-      define :page_cases, action: :page
+
+      define :page_cases,
+        action: :page,
+        args: [:query, :status, :alert_state, :sort]
+
       define :get_case, action: :read, get_by: [:id]
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]

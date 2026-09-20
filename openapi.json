@@ -12859,6 +12859,61 @@
               "minLength": 1,
               "type": "string"
             }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "running",
+                "needs_attention",
+                "resolved",
+                "cancelled"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "alert_state",
+            "required": false,
+            "schema": {
+              "enum": [
+                "firing",
+                "recovered",
+                "not_applicable"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "updated_desc",
+              "enum": [
+                "updated_desc",
+                "updated_asc",
+                "severity_desc"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
