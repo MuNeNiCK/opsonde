@@ -38,6 +38,18 @@
     },
     {
       "allow_nil?": false,
+      "default": "\"RS256\"",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "id_token_alg",
+      "type": "text"
+    },
+    {
+      "allow_nil?": false,
       "default": "true",
       "generated?": false,
       "precision": null,
@@ -115,7 +127,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "E232FB64F272D31AD67CBAED6E91B939A9B90CEAC44C40BAE768DA6EA86F0D3D",
+  "hash": "6887393FB69E9774F45147FB14A0489A7831EAE30E29EE6AC16B309515F97F39",
   "identities": [
     {
       "all_tenants?": false,
