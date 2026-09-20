@@ -66,6 +66,7 @@ defmodule Opsonde.Cases.Operation do
         :target_revision,
         :access_method_revision,
         :provider_revision,
+        :request_kind,
         :capability,
         :operation,
         :selectors,
@@ -157,7 +158,7 @@ defmodule Opsonde.Cases.Operation do
     attribute :authority_mode, :atom,
       allow_nil?: false,
       public?: true,
-      constraints: [one_of: [:ask, :auto, :full_access]]
+      constraints: [one_of: [:readonly, :ask, :auto, :full_access]]
 
     attribute :proposal_revision, :integer,
       allow_nil?: false,
@@ -185,6 +186,11 @@ defmodule Opsonde.Cases.Operation do
       allow_nil?: false,
       public?: true,
       constraints: [min: 1]
+
+    attribute :request_kind, :atom,
+      allow_nil?: false,
+      public?: true,
+      constraints: [one_of: [:observation, :effect]]
 
     attribute :capability, :string,
       allow_nil?: false,

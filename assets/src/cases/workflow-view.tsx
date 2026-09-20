@@ -281,6 +281,8 @@ function projectWorkflow(props: Props): { current: StageKey; stages: Stage[] } {
   const runTurns = inRun(turns);
   const runProposals = inRun(snapshot.proposals);
   const runOperations = inRun(snapshot.operations);
+  const observationOperations = runOperations.filter((item) => item.request_kind === "observation");
+  const effectOperations = runOperations.filter((item) => item.request_kind === "effect");
   const runVerifications = inRun(snapshot.verification_attempts);
   const runEvidence = inRun(evidence);
   const runApprovals = inRun(approvals);
@@ -297,10 +299,14 @@ function projectWorkflow(props: Props): { current: StageKey; stages: Stage[] } {
   } else {
     const activity: Array<{ stage: StageKey; at: string }> = [
       ...runTurns.map((item) => ({ stage: "investigate" as const, at: item.updated_at })),
+      ...observationOperations.map((item) => ({
+        stage: "investigate" as const,
+        at: item.updated_at,
+      })),
       ...runProposals.map((item) => ({ stage: "review" as const, at: item.updated_at })),
       ...runReviews.map((item) => ({ stage: "review" as const, at: item.decided_at })),
       ...runApprovals.map((item) => ({ stage: "review" as const, at: item.decided_at })),
-      ...runOperations.map((item) => ({ stage: "remediate" as const, at: item.updated_at })),
+      ...effectOperations.map((item) => ({ stage: "remediate" as const, at: item.updated_at })),
       ...runVerifications.map((item) => ({
         stage: "verify" as const,
         at: item.completed_at ?? item.accepted_at,
@@ -312,9 +318,9 @@ function projectWorkflow(props: Props): { current: StageKey; stages: Stage[] } {
 
   const occurred: Record<StageKey, boolean> = {
     alert: true,
-    investigate: runTurns.length > 0 || runEvidence.length > 0,
+    investigate: runTurns.length > 0 || runEvidence.length > 0 || observationOperations.length > 0,
     review: runProposals.length > 0 || runReviews.length > 0 || runApprovals.length > 0,
-    remediate: runOperations.length > 0,
+    remediate: effectOperations.length > 0,
     verify:
       runVerifications.length > 0 ||
       runEvidence.some((item) =>

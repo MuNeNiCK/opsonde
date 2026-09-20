@@ -4,7 +4,10 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
+  alias Opsonde.Providers.Target
   alias Opsonde.Targets.IOSXE
+
+  @native "native.restconf"
 
   @configuration_keys ~w(ca_certificate connect_timeout_ms request_timeout_ms max_body_bytes)
   @credential_keys ~w(username password)
@@ -71,9 +74,31 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
     do: {:error, :invalid_configuration, "IOS XE RESTCONF check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, IOSXE.capabilities()}
+  def capabilities(_state, _invocation) do
+    capabilities = IOSXE.capabilities()
+
+    {:ok,
+     %{
+       capabilities
+       | observations: capabilities.observations ++ [native_observation()],
+         effects: capabilities.effects ++ [native_effect()]
+     }}
+  end
 
   @impl Opsonde.Providers.Target
+  def observe(%State{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
+         {:ok, method, path, body} <- native_request(target_request, "request.observe"),
+         true <- method in [:get, :head],
+         {:ok, response} <-
+           request(state, endpoint, method, path, body, cancelled?(invocation), :read) do
+      IOSXE.observation(%{"response" => response})
+    else
+      false -> {:error, :failed, "RESTCONF observation must use GET or HEAD"}
+      {:error, category, message} -> IOSXE.read_error(category, message)
+    end
+  end
+
   def observe(%State{} = state, request, invocation) do
     with {:ok, endpoint} <- endpoint(request.connection.endpoint),
          {:ok, operation} <- IOSXE.observation_request(request),
@@ -85,6 +110,19 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%State{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
+         {:ok, method, path, body} <- native_request(target_request, "request.execute"),
+         true <- method in [:post, :put, :patch, :delete],
+         {:ok, response} <-
+           request(state, endpoint, method, path, body, cancelled?(invocation), :effect) do
+      IOSXE.applied(%{"response" => response})
+    else
+      false -> {:error, :failed, "RESTCONF effect requires a mutating HTTP method"}
+      {:error, category, message} -> IOSXE.effect_error(category, message)
+    end
+  end
+
   def effect(%State{} = state, request, invocation) do
     with {:ok, endpoint} <- endpoint(request.connection.endpoint),
          {:ok, operation} <- IOSXE.effect_request(request) do
@@ -95,6 +133,19 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(%State{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
+         {:ok, method, path, body} <- native_request(target_request, "request.observe"),
+         true <- method in [:get, :head],
+         {:ok, response} <-
+           request(state, endpoint, method, path, body, cancelled?(invocation), :read) do
+      IOSXE.verification(%{"response" => response}, target_request.expected)
+    else
+      false -> {:error, :failed, "RESTCONF verification must use GET or HEAD"}
+      {:error, category, message} -> IOSXE.read_error(category, message)
+    end
+  end
+
   def verify(%State{} = state, request, invocation) do
     with {:ok, endpoint} <- endpoint(request.connection.endpoint),
          {:ok, name, expected} <- IOSXE.verification_request(request),
@@ -345,6 +396,89 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
 
   defp matches(observed, expected, _field) when observed == expected, do: :ok
   defp matches(observed, _expected, field), do: {:stale, observed, field}
+
+  defp native_request(request, operation) do
+    case request do
+      %{
+        capability: @native,
+        operation: ^operation,
+        selectors: selectors,
+        parameters: %{"method" => method, "path" => path} = parameters
+      }
+      when selectors == %{} and is_binary(method) and is_binary(path) ->
+        method = method |> String.downcase() |> String.to_existing_atom()
+        body = Map.get(parameters, "body")
+
+        if valid_native_path?(path) and method in [:get, :head, :post, :put, :patch, :delete] and
+             (is_nil(body) or is_map(body)),
+           do: {:ok, method, path, body},
+           else: {:error, :failed, "RESTCONF native request is invalid"}
+
+      _request ->
+        {:error, :failed, "RESTCONF native request is invalid"}
+    end
+  rescue
+    ArgumentError -> {:error, :failed, "RESTCONF native request method is invalid"}
+  end
+
+  defp valid_native_path?(path),
+    do:
+      byte_size(path) in 1..2_048 and String.starts_with?(path, "/restconf/") and
+        not String.contains?(path, ["..", "#"])
+
+  defp native_observation do
+    output = native_output_schema()
+
+    %Target.Operation{
+      capability: @native,
+      operation: "request.observe",
+      description: "Send one exact non-mutating RESTCONF request and return its response",
+      input_schema: native_schema(["get", "head"]),
+      output_schema: output,
+      verification_schema: Map.put(output, "minProperties", 1),
+      native?: true
+    }
+  end
+
+  defp native_effect do
+    %Target.Operation{
+      capability: @native,
+      operation: "request.execute",
+      description: "Send one exact mutating RESTCONF request after authority review",
+      input_schema: native_schema(["post", "put", "patch", "delete"]),
+      native?: true
+    }
+  end
+
+  defp native_schema(methods) do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{"type" => "object", "maxProperties" => 0},
+        "parameters" => %{
+          "type" => "object",
+          "properties" => %{
+            "method" => %{"type" => "string", "enum" => methods},
+            "path" => %{"type" => "string", "minLength" => 1, "maxLength" => 2_048},
+            "body" => %{"type" => ["object", "null"]}
+          },
+          "required" => ["method", "path"],
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
+  end
+
+  defp native_output_schema do
+    %{
+      "type" => "object",
+      "properties" => %{"response" => %{"type" => "object"}},
+      "required" => ["response"],
+      "additionalProperties" => false
+    }
+  end
 
   defp endpoint(value) when is_binary(value) do
     case URI.parse(value) do

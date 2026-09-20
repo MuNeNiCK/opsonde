@@ -352,14 +352,6 @@ defmodule Opsonde.Cases.Case do
       run Opsonde.Cases.Case.Actions.TargetDiscoveryRoute
     end
 
-    action :route_observation, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
-      transaction? false
-      argument :turn_id, :uuid, allow_nil?: false
-      argument :invocation, :map, allow_nil?: false, default: %{}
-      run Opsonde.Cases.Case.Actions.ObservationRoute
-    end
-
     action :route_related_target, :struct do
       constraints instance_of: Opsonde.Cases.BudgetResult
       transaction? false
@@ -398,7 +390,6 @@ defmodule Opsonde.Cases.Case do
              :require_attention,
              :resume_after_target_registration,
              :route_target_discovery,
-             :route_observation,
              :route_related_target,
              :route_downstream_decision
            ]) do

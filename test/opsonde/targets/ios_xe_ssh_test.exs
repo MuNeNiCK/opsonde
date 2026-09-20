@@ -6,7 +6,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
   alias Opsonde.Targets.PolicyRequest
 
   @password "correct horse battery staple"
-  @capabilities ["observe.system", "observe.interface", "effect.interface"]
+  @capabilities ["observe.system", "observe.interface", "effect.interface", "native.cli"]
 
   defmodule CLI do
     @behaviour :ssh_server_channel
@@ -241,10 +241,28 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              )
 
     assert Enum.map(observations, & &1.operation) ==
-             ["ios_xe.system.inspect", "ios_xe.interface.inspect"]
+             ["ios_xe.system.inspect", "ios_xe.interface.inspect", "cli.observe"]
 
     assert Enum.map(effects, & &1.operation) ==
-             ["ios_xe.interface.description.set", "ios_xe.interface.admin_state.set"]
+             [
+               "ios_xe.interface.description.set",
+               "ios_xe.interface.admin_state.set",
+               "cli.execute"
+             ]
+
+    assert %Target.Observation{facts: %{"output" => native_output}} =
+             request(
+               context,
+               :observation,
+               "native.cli",
+               "cli.observe",
+               %{},
+               %{"commands" => ["show version"]}
+             )
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert native_output =~ "Cisco IOS XE Software, Version 17.15.01"
 
     system = observe!(context, "observe.system", "ios_xe.system.inspect", %{})
     assert system.facts == %{"hostname" => "router-one", "version" => "17.15.01"}

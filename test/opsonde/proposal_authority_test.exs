@@ -11,6 +11,7 @@ defmodule Opsonde.ProposalAuthorityTest do
   }
 
   alias Opsonde.Providers.AI
+  alias Opsonde.Providers.Target, as: ProviderTarget
 
   @password "correct horse battery staple"
 
@@ -96,6 +97,55 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
     refute_receive {:effect, _, _}
+  end
+
+  test "Readonly observation uses the same approval and durable Operation path", context do
+    {incident, run, proposal} = proposal!("readonly-observation", context, :observation)
+
+    assert {:ok, authorized} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert authorized.status == :authorized
+
+    assert [approval] = Cases.list_approvals!(actor: context.admin)
+    assert approval.source == :readonly
+    assert approval.decision == :approved
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.request_kind == :observation
+
+    observed_at = DateTime.utc_now()
+
+    assert :ok =
+             Opsonde.Cases.OperationDelivery.run(operation.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn ->
+                   {:ok,
+                    %ProviderTarget.Observation{
+                      facts: %{"status" => "degraded", "detail" => "disk latency"},
+                      observed_at: observed_at
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:observe, _state, %{operation: "service.inspect"}}
+    refute_receive {:effect, _, _}
+    assert Cases.verification_attempts_for_case!(incident.id, actor: context.admin) == []
+
+    [evidence] =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.filter(&(&1.source_ref == operation.id))
+
+    assert evidence.kind == "observation"
+
+    assert evidence.content["facts"] == %{
+             "status" => "degraded",
+             "detail" => "disk latency"
+           }
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.pending_intent["action"] == "resolve_turn"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
   end
 
   test "Ask approval is exact, immutable, retryable and only exposes a dispatch reference",
@@ -641,7 +691,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  defp proposal!(suffix, context) do
+  defp proposal!(suffix, context, request_kind \\ :effect) do
     incident =
       Cases.open_case!(
         :manual,
@@ -683,7 +733,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         authorize?: false
       )
 
-    intent = proposal_intent(evidence.id, context)
+    intent = proposal_intent(evidence.id, context, request_kind)
 
     turn =
       Cases.complete_turn!(
@@ -710,8 +760,9 @@ defmodule Opsonde.ProposalAuthorityTest do
     {incident, run, proposal}
   end
 
-  defp proposal_intent(evidence_id, context) do
+  defp proposal_intent(evidence_id, context, :effect) do
     tool = %{
+      "request_kind" => "effect",
       "id" => "effect-tool",
       "target_id" => context.target.id,
       "target_revision" => context.target.revision,
@@ -725,6 +776,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     %{
       "type" => "proposal",
+      "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
       "target_revision" => tool["target_revision"],
@@ -755,6 +807,41 @@ defmodule Opsonde.ProposalAuthorityTest do
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }
+    }
+  end
+
+  defp proposal_intent(evidence_id, context, :observation) do
+    tool = %{
+      "request_kind" => "observation",
+      "id" => "observation-tool",
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "access_method_id" => context.method.id,
+      "access_method_revision" => context.method.revision,
+      "provider_id" => context.provider.id,
+      "provider_revision" => context.provider.revision,
+      "capability" => "observe.service",
+      "operation" => "service.inspect"
+    }
+
+    %{
+      "type" => "proposal",
+      "request_kind" => "observation",
+      "tool_id" => tool["id"],
+      "target_id" => tool["target_id"],
+      "target_revision" => tool["target_revision"],
+      "access_method_id" => tool["access_method_id"],
+      "access_method_revision" => tool["access_method_revision"],
+      "capability" => tool["capability"],
+      "operation" => tool["operation"],
+      "selectors" => %{"service" => "api"},
+      "parameters" => %{"service" => "api"},
+      "reason" => "Inspect the unhealthy API service",
+      "evidence_ids" => [evidence_id],
+      "expected_result" => %{},
+      "tool" => tool,
+      "verification_intent" => %{},
+      "verification_tool" => %{}
     }
   end
 

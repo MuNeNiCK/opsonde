@@ -18,14 +18,18 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
     case Budget.consume(
            case_id: proposal.case_id,
            resolution_run_id: proposal.resolution_run_id,
-           kind: :effect,
+           kind: budget_kind(proposal.request_kind),
            amount: 1,
-           ledger_key: Budget.key("proposal:effect", proposal.id),
+           ledger_key: Budget.key("proposal:#{proposal.request_kind}", proposal.id),
            actor: nil,
-           event_type: "effect_budget_charged",
+           event_type: "#{proposal.request_kind}_budget_charged",
            event_data: %{"proposal_id" => proposal.id},
-           pending_intent: %{"action" => "review_effect_limit", "proposal_id" => proposal.id},
-           required_human_input: "Increase the effect limit or handle the Proposal manually",
+           pending_intent: %{
+             "action" => "review_#{proposal.request_kind}_limit",
+             "proposal_id" => proposal.id
+           },
+           required_human_input:
+             "Increase the Target request limit or handle the Proposal manually",
            operation: fn incident, run -> accept_locked(proposal.id, incident, run) end,
            duplicate: fn _incident, _run -> required_existing(proposal.id) end
          ) do
@@ -34,7 +38,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         {:ok, operation}
 
       {:ok, %{status: :exhausted}} ->
-        {:error, "Effect budget exhausted"}
+        {:error, "Target request budget exhausted"}
 
       other ->
         other
@@ -88,7 +92,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
 
   defp request(proposal) do
     %PolicyRequest{
-      kind: :effect,
+      kind: proposal.request_kind,
       authority_mode: proposal.authority_mode,
       target_id: proposal.target_id,
       target_revision: proposal.target_revision,
@@ -131,6 +135,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         target_revision: proposal.target_revision,
         access_method_revision: proposal.access_method_revision,
         provider_revision: proposal.provider_revision,
+        request_kind: proposal.request_kind,
         capability: proposal.capability,
         operation: proposal.operation,
         selectors: proposal.selectors,
@@ -165,6 +170,9 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
       not_found_error?: false
     )
   end
+
+  defp budget_kind(:observation), do: :target_request
+  defp budget_kind(:effect), do: :effect
 
   defp lock(resource, id) do
     resource

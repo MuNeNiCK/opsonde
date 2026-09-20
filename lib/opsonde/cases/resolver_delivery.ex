@@ -385,21 +385,19 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp intent(%AI.ObservationChoice{} = value, request) do
-    with {:ok, tool} <- observation_tool(request, value.tool_id) do
-      {:ok, value |> typed_intent() |> Map.put("tool", tool_snapshot(tool))}
-    end
-  end
-
   defp intent(%AI.Proposal{} = value, request) do
-    with {:ok, effect_tool} <- proposal_tool(request, value.tool_id),
-         {:ok, verification_tool} <-
-           verification_tool(request, value.verification_intent.tool_id) do
-      {:ok,
-       value
-       |> typed_intent()
-       |> Map.put("tool", tool_snapshot(effect_tool))
-       |> Map.put("verification_tool", tool_snapshot(verification_tool))}
+    with {:ok, request_tool} <- proposal_tool(request, value.tool_id) do
+      snapshot = value |> typed_intent() |> Map.put("tool", tool_snapshot(request_tool))
+
+      case value.verification_intent do
+        %AI.VerificationIntent{tool_id: tool_id} ->
+          with {:ok, verification_tool} <- verification_tool(request, tool_id) do
+            {:ok, Map.put(snapshot, "verification_tool", tool_snapshot(verification_tool))}
+          end
+
+        nil ->
+          {:ok, Map.put(snapshot, "verification_tool", %{})}
+      end
     end
   end
 

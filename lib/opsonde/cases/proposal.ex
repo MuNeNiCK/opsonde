@@ -47,6 +47,7 @@ defmodule Opsonde.Cases.Proposal do
         :target_revision,
         :access_method_revision,
         :provider_revision,
+        :request_kind,
         :tool_id,
         :capability,
         :operation,
@@ -202,6 +203,12 @@ defmodule Opsonde.Cases.Proposal do
       constraints min: 1
     end
 
+    attribute :request_kind, :atom do
+      allow_nil? false
+      public? true
+      constraints one_of: [:observation, :effect]
+    end
+
     attribute :tool_id, :string do
       allow_nil? false
       public? true
@@ -239,7 +246,7 @@ defmodule Opsonde.Cases.Proposal do
     attribute :evidence_ids, {:array, :uuid} do
       allow_nil? false
       public? true
-      constraints min_length: 1, max_length: 100
+      constraints min_length: 0, max_length: 100
     end
 
     attribute :expected_result, :map do

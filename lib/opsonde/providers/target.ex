@@ -17,7 +17,12 @@ defmodule Opsonde.Providers.Target do
     @moduledoc false
     @enforce_keys [:capability, :operation, :description, :input_schema]
     defstruct @enforce_keys ++
-                [output_schema: nil, verification_schema: nil, evidence_requirements: []]
+                [
+                  output_schema: nil,
+                  verification_schema: nil,
+                  evidence_requirements: [],
+                  native?: false
+                ]
 
     @type t :: %__MODULE__{
             capability: String.t(),
@@ -26,7 +31,8 @@ defmodule Opsonde.Providers.Target do
             input_schema: map(),
             output_schema: map() | nil,
             verification_schema: map() | nil,
-            evidence_requirements: [EvidenceRequirement.t()]
+            evidence_requirements: [EvidenceRequirement.t()],
+            native?: boolean()
           }
   end
 
@@ -59,7 +65,9 @@ defmodule Opsonde.Providers.Target do
       :authorization_digest
     ]
 
-    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, max_attempts: 1]
+    defstruct @enforce_keys ++
+                [selectors: %{}, parameters: %{}, max_attempts: 1, authority_mode: nil]
+
     @type t :: %__MODULE__{}
   end
 
@@ -87,7 +95,7 @@ defmodule Opsonde.Providers.Target do
       :idempotency_key
     ]
 
-    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}]
+    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, authority_mode: nil]
     @type t :: %__MODULE__{}
   end
 

@@ -323,7 +323,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   end
 
   test "public Provider path exposes bounded namespace operations and observations", context do
-    assert %Target.Capabilities{observations: observations, effects: [effect]} =
+    assert %Target.Capabilities{observations: observations, effects: effects} =
              Providers.target_capabilities!(
                context.provider.id,
                context.provider.revision,
@@ -336,7 +336,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
              "kubernetes.deployment.inspect",
              "kubernetes.pod.logs",
              "kubernetes.events.list",
-             "kubernetes.pods.watch"
+             "kubernetes.pods.watch",
+             "request.observe"
            ]
 
     tools = Map.new(observations, &{&1.operation, &1})
@@ -356,7 +357,9 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       "available_replicas" => 1
     })
 
+    [effect, native_effect] = effects
     assert effect.operation == "kubernetes.deployment.scale"
+    assert native_effect.operation == "request.execute"
 
     assert effect.evidence_requirements == [
              %Target.EvidenceRequirement{

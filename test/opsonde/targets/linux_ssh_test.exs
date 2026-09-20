@@ -12,7 +12,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     "observe.processes",
     "observe.service",
     "observe.journal",
-    "effect.service"
+    "effect.service",
+    "native.ssh"
   ]
 
   setup_all do
@@ -102,7 +103,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
   end
 
   test "public capabilities and observations accept bounded unknown Linux workloads", context do
-    assert %Target.Capabilities{observations: observations, effects: [effect]} =
+    assert %Target.Capabilities{observations: observations, effects: effects} =
              Providers.target_capabilities!(
                context.provider.id,
                context.provider.revision,
@@ -114,7 +115,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              "linux.identity.inspect",
              "linux.process.list",
              "linux.service.inspect",
-             "linux.journal.read"
+             "linux.journal.read",
+             "command.observe"
            ]
 
     tools = Map.new(observations, &{&1.operation, &1})
@@ -141,7 +143,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert_schema_rejects!(service_tool.verification_schema, %{"active_state" => "inactive"})
 
-    assert effect.operation == "linux.service.restart"
+    [effect, _native_effect] = effects
+    assert Enum.map(effects, & &1.operation) == ["linux.service.restart", "command.execute"]
 
     assert effect.evidence_requirements == [
              %Target.EvidenceRequirement{
@@ -150,6 +153,17 @@ defmodule Opsonde.Targets.LinuxSSHTest do
                observation: "linux.service.inspect"
              }
            ]
+
+    assert %Target.Observation{facts: %{"exit_status" => 0} = native_facts} =
+             observe!(
+               context,
+               "native.ssh",
+               "command.observe",
+               %{},
+               %{"command" => "uname -a"}
+             )
+
+    assert native_facts["stdout"] == %{"encoding" => "utf-8", "value" => "Linux fixture\n"}
 
     assert get_in(effect.input_schema, [
              "properties",
@@ -351,6 +365,9 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       Agent.update(commands, &[command | &1])
 
       cond do
+        command == "uname -a" ->
+          {:ok, "Linux fixture\n"}
+
         command == "printf 'Kernel='; uname -srm; printf 'MachineId='; cat /etc/machine-id" ->
           {:ok, "Kernel=Linux 6.8.0 x86_64\nMachineId=machine-01\n"}
 

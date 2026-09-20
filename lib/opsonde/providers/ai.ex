@@ -80,9 +80,10 @@ defmodule Opsonde.Providers.AI do
   def proposal_requirements_match?(_tool, _request, _evidence_ids, _parameters), do: false
 
   defp proposal_requirements_available?(tool, request) do
-    Enum.all?(tool.evidence_requirements, fn requirement ->
-      matching_evidence(requirement, tool, request, nil) != []
-    end)
+    tool.request_kind == :observation or
+      Enum.all?(tool.evidence_requirements, fn requirement ->
+        matching_evidence(requirement, tool, request, nil) != []
+      end)
   end
 
   defp matching_evidence(requirement, tool, request, evidence_ids) do
@@ -205,13 +206,6 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
-  defmodule ObservationChoice do
-    @moduledoc false
-    @enforce_keys [:tool_id, :selectors, :parameters, :reason]
-    defstruct @enforce_keys
-    @type t :: %__MODULE__{}
-  end
-
   defmodule ProposalTool do
     @moduledoc false
 
@@ -223,6 +217,7 @@ defmodule Opsonde.Providers.AI do
       :access_method_revision,
       :provider_id,
       :provider_revision,
+      :request_kind,
       :capability,
       :operation,
       :description,
@@ -249,17 +244,16 @@ defmodule Opsonde.Providers.AI do
       :target_revision,
       :access_method_id,
       :access_method_revision,
+      :request_kind,
       :capability,
       :operation,
       :selectors,
       :parameters,
       :reason,
-      :evidence_ids,
-      :expected_result,
-      :verification_intent
+      :evidence_ids
     ]
 
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [expected_result: %{}, verification_intent: nil]
     @type t :: %__MODULE__{}
   end
 

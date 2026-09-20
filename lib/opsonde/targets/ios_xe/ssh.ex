@@ -4,8 +4,11 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
+  alias Opsonde.Providers.Target
   alias Opsonde.Targets.IOSXE
   alias Opsonde.Transports.SSH, as: Transport
+
+  @native "native.cli"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-ssh"
@@ -30,9 +33,33 @@ defmodule Opsonde.Targets.IOSXE.SSH do
     do: {:error, :invalid_configuration, "IOS XE SSH check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, IOSXE.capabilities()}
+  def capabilities(_state, _invocation) do
+    capabilities = IOSXE.capabilities()
+
+    {:ok,
+     %{
+       capabilities
+       | observations: capabilities.observations ++ [native_observation()],
+         effects: capabilities.effects ++ [native_effect()]
+     }}
+  end
 
   @impl Opsonde.Providers.Target
+  def observe(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, commands} <- native_commands(request, "cli.observe"),
+         true <- Enum.all?(commands, &readonly_cli?/1),
+         {:ok, output} <-
+           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
+      IOSXE.observation(%{"output" => output}, [evidence(output)])
+    else
+      false ->
+        {:error, :failed, "CLI request is not provably non-mutating; submit it as an effect"}
+
+      {:error, category, message} ->
+        IOSXE.read_error(category, message)
+    end
+  end
+
   def observe(%Transport.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.observation_request(request),
          {:ok, facts, output} <-
@@ -49,6 +76,17 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, commands} <- native_commands(request, "cli.execute"),
+         {:ok, output} <-
+           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)),
+         :ok <- accepted(output) do
+      IOSXE.applied(%{"output" => output})
+    else
+      {:error, category, message} -> IOSXE.effect_error(category, message)
+    end
+  end
+
   def effect(%Transport.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.effect_request(request) do
       apply_operation(
@@ -63,6 +101,18 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, commands} <- native_commands(request, "cli.observe"),
+         true <- Enum.all?(commands, &readonly_cli?/1),
+         {:ok, output} <-
+           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
+      IOSXE.verification(%{"output" => output}, request.expected, [evidence(output)])
+    else
+      false -> {:error, :failed, "CLI verification must be non-mutating"}
+      {:error, category, message} -> IOSXE.read_error(category, message)
+    end
+  end
+
   def verify(%Transport.Config{} = state, request, invocation) do
     with {:ok, name, expected} <- IOSXE.verification_request(request),
          {:ok, facts, output} <-
@@ -215,6 +265,82 @@ defmodule Opsonde.Targets.IOSXE.SSH do
        ),
        do: {:error, :rejected, "IOS XE SSH command was rejected"},
        else: :ok
+  end
+
+  defp native_commands(request, operation) do
+    case request do
+      %{
+        capability: @native,
+        operation: ^operation,
+        selectors: selectors,
+        parameters: %{"commands" => commands}
+      }
+      when selectors == %{} and is_list(commands) and length(commands) in 1..50 ->
+        if Enum.all?(commands, &(is_binary(&1) and byte_size(&1) in 1..1_024)),
+          do: {:ok, commands},
+          else: {:error, :failed, "IOS XE CLI commands are invalid"}
+
+      _request ->
+        {:error, :failed, "IOS XE native CLI request is invalid"}
+    end
+  end
+
+  defp readonly_cli?(command) do
+    command = command |> String.trim() |> String.downcase()
+    String.starts_with?(command, "show ") or command == "show"
+  end
+
+  defp native_observation do
+    output = %{
+      "type" => "object",
+      "properties" => %{"output" => %{"type" => "string", "maxLength" => 65_536}},
+      "required" => ["output"],
+      "additionalProperties" => false
+    }
+
+    %Target.Operation{
+      capability: @native,
+      operation: "cli.observe",
+      description: "Run exact non-mutating IOS XE CLI commands and return raw output",
+      input_schema: native_schema(),
+      output_schema: output,
+      verification_schema: Map.put(output, "minProperties", 1),
+      native?: true
+    }
+  end
+
+  defp native_effect do
+    %Target.Operation{
+      capability: @native,
+      operation: "cli.execute",
+      description: "Run exact IOS XE CLI commands after authority review",
+      input_schema: native_schema(),
+      native?: true
+    }
+  end
+
+  defp native_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{"type" => "object", "maxProperties" => 0},
+        "parameters" => %{
+          "type" => "object",
+          "properties" => %{
+            "commands" => %{
+              "type" => "array",
+              "minItems" => 1,
+              "maxItems" => 50,
+              "items" => %{"type" => "string", "minLength" => 1, "maxLength" => 1_024}
+            }
+          },
+          "required" => ["commands"],
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
   end
 
   defp script(commands),

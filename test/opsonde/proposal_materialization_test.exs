@@ -227,6 +227,7 @@ defmodule Opsonde.ProposalMaterializationTest do
   defp proposal_intent(evidence_id, context) do
     %{
       "type" => "proposal",
+      "request_kind" => "effect",
       "tool_id" => "effect-tool",
       "target_id" => context.target.id,
       "target_revision" => context.target.revision,
@@ -240,6 +241,7 @@ defmodule Opsonde.ProposalMaterializationTest do
       "evidence_ids" => [evidence_id],
       "expected_result" => %{"service" => "running"},
       "tool" => %{
+        "request_kind" => "effect",
         "id" => "effect-tool",
         "target_id" => context.target.id,
         "target_revision" => context.target.revision,

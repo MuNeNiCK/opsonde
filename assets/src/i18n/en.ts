@@ -362,16 +362,16 @@ const en = {
       resume: "Resume",
       advancedLimits: "Advanced authority and limits",
       advancedLimitsDescription: "The previous generation values are selected by default.",
-      reviewProposal: "Review proposed change",
+      reviewProposal: "Review exact request",
       requiredDecision: "Decision required",
       caseControls: "Assignment and cancellation",
       cancelConfirmation:
         "Requesting cancellation stops further resolution work. Existing evidence and completed effects remain in this Case.",
       confirmCancel: "Confirm cancellation",
-      rejectConfirmation: "Reject this proposed change and return the decision to the Resolver?",
+      rejectConfirmation: "Reject this exact request and return the decision to the Resolver?",
       confirmReject: "Confirm rejection",
       approveConfirmation:
-        "Approve this exact change for execution through the displayed Target and Access Method?",
+        "Approve this exact request through the displayed Target and Access Method?",
       confirmApprove: "Confirm approval",
       caseDiagnostics: "Case diagnostics",
       technicalDetails: "Technical details",
@@ -381,8 +381,8 @@ const en = {
       resolution: "Resolution runs",
       runGeneration: "Generation {{generation}}",
       proposals: "Proposals",
-      noProposals: "No effects have been proposed.",
-      effectsAndVerification: "Effects and verification",
+      noProposals: "No Target requests have been proposed.",
+      effectsAndVerification: "Target requests and verification",
       effectRequest: "Exact request",
       effectResult: "Operation result",
       expectedResult: "Expected result",
@@ -437,7 +437,7 @@ const en = {
           review: {
             label: "Reviewing",
             description:
-              "A Reviewer, operator, or authority policy is evaluating the proposed change.",
+              "A Reviewer, operator, or authority policy is evaluating the exact Target request.",
           },
           remediate: {
             label: "Remediating",
@@ -499,25 +499,26 @@ const en = {
         caseOpened: "An investigation was opened.",
         resolving: "Opsonde is investigating the Target and selecting the next recovery step.",
         resolvingTarget: "Opsonde is matching the monitoring identity to a registered Target.",
-        waitingApproval: "Opsonde has prepared an exact change and is waiting for a decision.",
+        waitingApproval:
+          "Opsonde has prepared an exact Target request and is waiting for a decision.",
         verifying: "Opsonde is checking the Target and monitoring source before closing the Case.",
         paused: "Automated resolution stopped at a finite boundary and needs operator input.",
         resolved: "Recovery was independently verified and this Case is complete.",
         cancelled: "Resolution was cancelled. The recorded investigation remains available.",
-        reviewProposal: "Review and decide the proposed change.",
+        reviewProposal: "Review and decide the exact Target request.",
         resumeRequired: "Review the blocker and resume with the current safe defaults.",
         recoveryNeedsResume:
           "The source recovered after automated work paused. Resume once to verify the Target before closing the Case.",
         stoppedAtBoundary:
           "Automated resolution stopped at a configured boundary. Review the diagnostics and resume or cancel the Case.",
         preflightBlocked:
-          "The proposed change did not pass its safety check. Review the diagnostics before deciding what to do next.",
+          "The Target request did not pass its safety check. Review the diagnostics before deciding what to do next.",
         waitForVerification: "No operator action is required while recovery is verified.",
         claimOptional: "Claim the Case if you will coordinate the response.",
         noAction: "Opsonde is continuing automatically; monitor its progress.",
       },
       progress: {
-        proposal: "Change proposed",
+        proposal: "Target request proposed",
         source_change: "Source changed",
         human_input: "Operator input required",
         hypothesis: "Hypothesis updated",
@@ -588,9 +589,8 @@ const en = {
       intentType: {
         target_search: "Search Targets",
         target_selection: "Select Target",
-        observation_choice: "Observe Target",
         target_traversal: "Investigate a related Target",
-        proposal: "Propose a change",
+        proposal: "Propose a Target request",
         recovery: "Conclude recovery",
         handoff: "Handoff to an operator",
       },

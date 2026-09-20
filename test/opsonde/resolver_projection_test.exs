@@ -150,7 +150,11 @@ defmodule Opsonde.ResolverProjectionTest do
     assert observation.operation == "system.inspect"
     assert observation.description == "Inspect using [REDACTED]"
 
-    assert [%AI.ProposalTool{} = proposal] = request.proposal_tools
+    assert [%AI.ProposalTool{} = observation_request, %AI.ProposalTool{} = proposal] =
+             request.proposal_tools
+
+    assert observation_request.request_kind == :observation
+    assert proposal.request_kind == :effect
     assert proposal.provider_id == context.provider.id
     assert proposal.provider_revision == context.provider.revision
     assert proposal.capability == "effect.service"
@@ -216,7 +220,8 @@ defmodule Opsonde.ResolverProjectionTest do
     assert [%AI.ObservationTool{id: observation_tool_id}] =
              before_observation.observation_tools
 
-    assert before_observation.proposal_tools == []
+    assert [%AI.ProposalTool{request_kind: :observation}] =
+             before_observation.proposal_tools
 
     evidence =
       Cases.append_evidence!(
@@ -239,7 +244,9 @@ defmodule Opsonde.ResolverProjectionTest do
     assert {:ok, after_observation} =
              ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
 
-    assert [%AI.ProposalTool{} = proposal] = after_observation.proposal_tools
+    assert [_observation_request, %AI.ProposalTool{} = proposal] =
+             after_observation.proposal_tools
+
     assert proposal.operation == "service.restart"
     assert proposal.evidence_requirements == effect.evidence_requirements
     assert Enum.any?(after_observation.evidence, &(&1.id == evidence.id))

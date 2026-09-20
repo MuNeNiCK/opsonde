@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
+  alias Opsonde.Providers.Target
   alias Opsonde.Targets.IOSXE
   alias Opsonde.Transports.{NETCONF, SSH}
 
@@ -12,6 +13,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
   @native_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
+  @native "native.netconf"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-netconf"
@@ -42,9 +44,35 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
     do: {:error, :invalid_configuration, "IOS XE NETCONF check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, IOSXE.capabilities()}
+  def capabilities(_state, _invocation) do
+    capabilities = IOSXE.capabilities()
+
+    {:ok,
+     %{
+       capabilities
+       | observations: capabilities.observations ++ [native_observation()],
+         effects: capabilities.effects ++ [native_effect()]
+     }}
+  end
 
   @impl Opsonde.Providers.Target
+  def observe(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, body} <- native_body(target_request, "rpc.observe"),
+         true <- readonly_rpc?(body),
+         {:ok, reply} <-
+           native_rpc(
+             state,
+             target_request.connection.endpoint,
+             body,
+             cancelled?(invocation)
+           ) do
+      IOSXE.observation(%{"reply" => reply})
+    else
+      false -> {:error, :failed, "NETCONF observation must contain get or get-config"}
+      {:error, category, message} -> IOSXE.read_error(category, message)
+    end
+  end
+
   def observe(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.observation_request(request),
          {:ok, facts} <-
@@ -61,6 +89,21 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, body} <- native_body(target_request, "rpc.execute"),
+         {:ok, reply} <-
+           native_rpc(
+             state,
+             target_request.connection.endpoint,
+             body,
+             cancelled?(invocation)
+           ) do
+      IOSXE.applied(%{"reply" => reply})
+    else
+      {:error, category, message} -> IOSXE.effect_error(category, message)
+    end
+  end
+
   def effect(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.effect_request(request) do
       apply_operation(
@@ -75,6 +118,23 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+    with {:ok, body} <- native_body(target_request, "rpc.observe"),
+         true <- readonly_rpc?(body),
+         {:ok, reply} <-
+           native_rpc(
+             state,
+             target_request.connection.endpoint,
+             body,
+             cancelled?(invocation)
+           ) do
+      IOSXE.verification(%{"reply" => reply}, target_request.expected)
+    else
+      false -> {:error, :failed, "NETCONF verification must contain get or get-config"}
+      {:error, category, message} -> IOSXE.read_error(category, message)
+    end
+  end
+
   def verify(%SSH.Config{} = state, request, invocation) do
     with {:ok, name, expected} <- IOSXE.verification_request(request),
          {:ok, facts} <-
@@ -167,6 +227,94 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
          :ok <- valid_reply(root) do
       {:ok, root}
     end
+  end
+
+  defp native_rpc(state, endpoint, body, cancelled?) do
+    with {:ok, %NETCONF.Result{reply: reply}} <-
+           NETCONF.request(state, endpoint, rpc(body), cancelled?),
+         {:ok, root} <- parse(reply),
+         :ok <- valid_reply(root) do
+      {:ok, reply}
+    end
+  end
+
+  defp native_body(request, operation) do
+    case request do
+      %{
+        capability: @native,
+        operation: ^operation,
+        selectors: selectors,
+        parameters: %{"body" => body}
+      }
+      when selectors == %{} and is_binary(body) and byte_size(body) in 1..60_000 ->
+        {:ok, body}
+
+      _request ->
+        {:error, :failed, "NETCONF native RPC request is invalid"}
+    end
+  end
+
+  defp readonly_rpc?(body) do
+    with {:ok, {_rpc, _attributes, children}} <- parse(rpc(body)),
+         [{name, _attributes, _children}] <- Enum.reject(children, &is_binary/1) do
+      local_name(name) in ["get", "get-config"]
+    else
+      _invalid -> false
+    end
+  end
+
+  defp native_observation do
+    output = native_output_schema()
+
+    %Target.Operation{
+      capability: @native,
+      operation: "rpc.observe",
+      description: "Send one exact non-mutating NETCONF RPC body and return the raw reply",
+      input_schema: native_schema(),
+      output_schema: output,
+      verification_schema: Map.put(output, "minProperties", 1),
+      native?: true
+    }
+  end
+
+  defp native_effect do
+    %Target.Operation{
+      capability: @native,
+      operation: "rpc.execute",
+      description: "Send one exact NETCONF RPC body after authority review",
+      input_schema: native_schema(),
+      native?: true
+    }
+  end
+
+  defp native_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{"type" => "object", "maxProperties" => 0},
+        "parameters" => %{
+          "type" => "object",
+          "properties" => %{
+            "body" => %{"type" => "string", "minLength" => 1, "maxLength" => 60_000}
+          },
+          "required" => ["body"],
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
+  end
+
+  defp native_output_schema do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "reply" => %{"type" => "string", "minLength" => 1, "maxLength" => 60_000}
+      },
+      "required" => ["reply"],
+      "additionalProperties" => false
+    }
   end
 
   defp parse(xml) do

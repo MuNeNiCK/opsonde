@@ -603,6 +603,7 @@ defmodule Opsonde.AI.ReqLLMTest do
                 target_revision: 4,
                 access_method_id: "access-1",
                 access_method_revision: 3,
+                request_kind: :effect,
                 capability: "effect.command",
                 operation: "service.restart",
                 verification_intent: %AI.VerificationIntent{tool_id: "observe-tool"}
@@ -816,6 +817,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       target_revision: 1,
       access_method_id: "access-1",
       access_method_revision: 1,
+      request_kind: :effect,
       capability: "effect.command",
       operation: "service.restart",
       selectors: %{"service" => "api"},
@@ -859,6 +861,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       access_method_revision: 3,
       provider_id: "target-provider",
       provider_revision: 2,
+      request_kind: :effect,
       capability: "effect.command",
       operation: "service.restart",
       description: "Restart one service",

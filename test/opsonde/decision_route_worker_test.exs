@@ -197,6 +197,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
 
     %{
       "type" => "proposal",
+      "request_kind" => "effect",
       "tool_id" => "effect-tool",
       "target_id" => target_id,
       "target_revision" => 1,
@@ -210,6 +211,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       "evidence_ids" => [evidence_id],
       "expected_result" => %{"service" => "running"},
       "tool" => %{
+        "request_kind" => "effect",
         "id" => "effect-tool",
         "target_id" => target_id,
         "target_revision" => 1,

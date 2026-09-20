@@ -157,7 +157,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
   end
 
-  test "generic adapter exposes effects only and uses the registered method through policy",
+  test "generic adapter exposes reviewed observation and effect requests through one method",
        context do
     admin = Accounts.bootstrap!("generic-ssh-admin@example.com", @password, @password)
 
@@ -182,10 +182,12 @@ defmodule Opsonde.Targets.GenericSSHTest do
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
-    assert %Target.Capabilities{observations: [], effects: [tool]} =
+    assert %Target.Capabilities{observations: [observation], effects: [tool]} =
              Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
 
-    assert tool.capability == "effect.command"
+    assert observation.capability == "native.ssh"
+    assert observation.operation == "command.observe"
+    assert tool.capability == "native.ssh"
     assert tool.operation == "command.execute"
 
     target =
@@ -201,7 +203,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
         context.endpoint,
         provider.revision,
         100,
-        ["effect.command"],
+        ["native.ssh"],
         actor: admin
       )
 
@@ -218,7 +220,22 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert policy_error(readonly_error).category == :forbidden
-    assert commands(context) == []
+
+    observation_clearance =
+      Targets.clear_target_request!(
+        request(target, method, :observation, :readonly, "uname -a"),
+        actor: operator
+      )
+
+    assert %Target.Observation{facts: observation_facts} =
+             Targets.dispatch_target_observation!(observation_clearance, %{}, actor: operator)
+
+    assert observation_facts["stdout"] == %{
+             "encoding" => "utf-8",
+             "value" => "ran:uname -a"
+           }
+
+    assert commands(context) == ["uname -a"]
 
     stale_clearance =
       Targets.clear_target_request!(
@@ -235,13 +252,13 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert policy_error(stale_error).category == :stale_context
-    assert commands(context) == []
+    assert commands(context) == ["uname -a"]
 
     Targets.create_target_policy!(
       target.id,
       "blocked-command",
       [:effect],
-      ["effect.command"],
+      ["native.ssh"],
       ["command.execute"],
       %{},
       %{"command" => %{"eq" => "never-policy"}},
@@ -256,7 +273,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert policy_error(denied_error).category == :denied
-    assert commands(context) == []
+    assert commands(context) == ["uname -a"]
 
     effect_clearance =
       Targets.clear_target_request!(
@@ -271,7 +288,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert details["stdout"] == %{"encoding" => "utf-8", "value" => "ran:apply"}
-    assert commands(context) == ["apply"]
+    assert commands(context) == ["uname -a", "apply"]
 
     verification_clearance =
       Targets.clear_target_request!(
@@ -283,7 +300,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
              Targets.dispatch_target_verification!(verification_clearance, %{}, actor: operator)
 
     assert facts["stdout"] == %{"encoding" => "utf-8", "value" => "ran:verify"}
-    assert commands(context) == ["apply", "verify"]
+    assert commands(context) == ["uname -a", "apply", "verify"]
   end
 
   defp configuration(context, overrides \\ %{}) do
@@ -319,8 +336,9 @@ defmodule Opsonde.Targets.GenericSSHTest do
       target_revision: target.revision,
       access_method_id: method.id,
       access_method_revision: method.revision,
-      capability: "effect.command",
-      operation: "command.execute",
+      capability: "native.ssh",
+      operation:
+        if(kind in [:observation, :verification], do: "command.observe", else: "command.execute"),
       selectors: %{},
       parameters: %{"command" => command},
       operation_id: if(kind in [:effect, :verification], do: "operation-#{command}"),

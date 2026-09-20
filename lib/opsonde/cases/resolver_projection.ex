@@ -268,12 +268,17 @@ defmodule Opsonde.Cases.ResolverProjection do
           do: operation_tools(:observation, target, method, vocabulary.observations),
           else: []
 
-      method_proposals =
-        if proposal?,
-          do: operation_tools(:proposal, target, method, vocabulary.effects),
+      observation_requests =
+        if observation?,
+          do: operation_tools(:request_observation, target, method, vocabulary.observations),
           else: []
 
-      {observations ++ method_observations, proposals ++ method_proposals}
+      effect_requests =
+        if proposal?,
+          do: operation_tools(:request_effect, target, method, vocabulary.effects),
+          else: []
+
+      {observations ++ method_observations, proposals ++ observation_requests ++ effect_requests}
     end)
   end
 
@@ -306,10 +311,20 @@ defmodule Opsonde.Cases.ResolverProjection do
             })
           )
 
-        :proposal ->
+        :request_observation ->
           struct!(
             AI.ProposalTool,
-            Map.put(common_fields, :evidence_requirements, operation.evidence_requirements)
+            common_fields
+            |> Map.put(:request_kind, :observation)
+            |> Map.put(:evidence_requirements, [])
+          )
+
+        :request_effect ->
+          struct!(
+            AI.ProposalTool,
+            common_fields
+            |> Map.put(:request_kind, :effect)
+            |> Map.put(:evidence_requirements, operation.evidence_requirements)
           )
       end
     end)

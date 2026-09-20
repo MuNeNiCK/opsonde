@@ -2395,6 +2395,7 @@
           },
           "authority_mode": {
             "enum": [
+              "readonly",
               "ask",
               "auto",
               "full_access"
@@ -2459,6 +2460,13 @@
             "nullable": true,
             "type": "string"
           },
+          "request_kind": {
+            "enum": [
+              "observation",
+              "effect"
+            ],
+            "type": "string"
+          },
           "resolution_run_id": {
             "format": "uuid",
             "type": "string"
@@ -2508,6 +2516,7 @@
           "status",
           "case_generation",
           "authority_mode",
+          "request_kind",
           "capability",
           "operation",
           "selectors",
@@ -3464,7 +3473,7 @@
               "type": "string"
             },
             "maxItems": 100,
-            "minItems": 1,
+            "minItems": 0,
             "type": "array"
           },
           "expected_result": {
@@ -3524,6 +3533,13 @@
           "reason": {
             "maxLength": 500,
             "minLength": 1,
+            "type": "string"
+          },
+          "request_kind": {
+            "enum": [
+              "observation",
+              "effect"
+            ],
             "type": "string"
           },
           "resolution_run_id": {
@@ -3596,6 +3612,7 @@
           "target_revision",
           "access_method_revision",
           "provider_revision",
+          "request_kind",
           "tool_id",
           "capability",
           "operation",
@@ -5327,6 +5344,7 @@
           "source": {
             "enum": [
               "human",
+              "readonly",
               "full_access",
               "reviewer"
             ],

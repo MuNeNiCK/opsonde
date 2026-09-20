@@ -75,7 +75,7 @@ defmodule Opsonde.Cases.Approval do
     attribute :source, :atom do
       allow_nil? false
       public? true
-      constraints one_of: [:human, :full_access, :reviewer]
+      constraints one_of: [:human, :readonly, :full_access, :reviewer]
     end
 
     attribute :proposal_digest, :string do

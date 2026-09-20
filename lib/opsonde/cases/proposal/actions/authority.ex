@@ -53,7 +53,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp route_locked(%{status: :proposed} = proposal, incident, run) do
     with :ok <- valid_context(proposal, incident, run) do
       case proposal.authority_mode do
-        :readonly -> recommend(proposal, incident, run)
+        :readonly -> route_readonly(proposal, incident, run)
         :ask -> await_human(proposal, incident)
         :auto -> await_reviewer(proposal, incident)
         :full_access -> authorize_full_access(proposal, incident, run)
@@ -119,6 +119,31 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
         "view_recommendation",
         "Review the recommendation and handle the effect outside Opsonde"
       )
+    end
+  end
+
+  defp route_readonly(%{request_kind: :effect} = proposal, incident, run),
+    do: recommend(proposal, incident, run)
+
+  defp route_readonly(%{request_kind: :observation} = proposal, incident, run) do
+    with {:ok, actor} <- current_owner(incident),
+         {:ok, clearance} <- revalidate(proposal, actor),
+         {:ok, approval} <-
+           create_approval(
+             proposal,
+             actor,
+             :approved,
+             :readonly,
+             "Readonly mode authorized the exact observation request",
+             clearance
+           ),
+         {:ok, authorized} <- transition(proposal, :authorized),
+         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
+         :ok <- schedule_acceptance(authorized) do
+      authorized
+    else
+      {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
+      {:error, _error} = error -> error
     end
   end
 

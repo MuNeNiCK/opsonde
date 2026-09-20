@@ -1982,7 +1982,7 @@ export interface components {
             /** Format: uuid */
             approval_id: string;
             /** @enum {string} */
-            authority_mode: "ask" | "auto" | "full_access";
+            authority_mode: "readonly" | "ask" | "auto" | "full_access";
             capability: string;
             case_generation: number;
             /** Format: uuid */
@@ -2005,6 +2005,8 @@ export interface components {
             /** Format: uuid */
             provider_id: string;
             reference: string | null;
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
             /** Format: uuid */
             resolution_run_id: string;
             result_details: {
@@ -2290,6 +2292,8 @@ export interface components {
             provider_id: string;
             provider_revision: number;
             reason: string;
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
             /** Format: uuid */
             resolution_run_id: string;
             revision: number;
@@ -2755,7 +2759,7 @@ export interface components {
             /** Format: uuid */
             resolution_run_id: string;
             /** @enum {string} */
-            source: "human" | "full_access" | "reviewer";
+            source: "human" | "readonly" | "full_access" | "reviewer";
         };
         CLISessionDenialResponse: {
             data: {

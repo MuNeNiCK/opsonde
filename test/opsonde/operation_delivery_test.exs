@@ -950,7 +950,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert get_in(source_content, ["attributes", "annotations", "description"]) ==
              "Restore the service to running"
 
-    assert request.proposal_tools == []
+    assert [%AI.ProposalTool{request_kind: :observation}] = request.proposal_tools
     assert [%AI.ObservationTool{operation: "service.inspect"}] = request.observation_tools
   end
 
@@ -1101,6 +1101,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
   defp proposal_intent(evidence_id, context) do
     tool = %{
+      "request_kind" => "effect",
       "id" => "effect-tool",
       "target_id" => context.target.id,
       "target_revision" => context.target.revision,
@@ -1114,6 +1115,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     %{
       "type" => "proposal",
+      "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
       "target_revision" => tool["target_revision"],

@@ -6,9 +6,9 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
+  alias Opsonde.Targets.NativeShell
 
-  @capability "effect.command"
-  @operation "command.execute"
+  @capability "native.ssh"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "generic-ssh"
@@ -34,27 +34,31 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
+    {observation, effect} = NativeShell.operations(@capability, "SSH")
+
     {:ok,
      %Target.Capabilities{
-       observations: [],
-       effects: [
-         %Target.Operation{
-           capability: @capability,
-           operation: @operation,
-           description: "Execute one exact command as an effect and return raw SSH output",
-           input_schema: command_schema()
-         }
-       ]
+       observations: [observation],
+       effects: [effect]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def observe(_state, _request, _invocation),
-    do: {:error, :failed, "Generic SSH commands require effect authorization"}
+  def observe(state, request, invocation) do
+    with {:ok, command} <- NativeShell.observation_command(request, @capability),
+         {:ok, result} <-
+           Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
+      {:ok,
+       %Target.Observation{
+         facts: NativeShell.facts(result),
+         observed_at: DateTime.utc_now()
+       }}
+    end
+  end
 
   @impl Opsonde.Providers.Target
   def effect(state, request, invocation) do
-    with {:ok, command} <- exact_command(request),
+    with {:ok, command} <- NativeShell.effect_command(request, @capability),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       effect_result(result)
@@ -63,29 +67,18 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def verify(state, request, invocation) do
-    with {:ok, command} <- exact_command(request),
+    with {:ok, command} <- NativeShell.command(request, @capability, "command.observe"),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       verification_result(result)
     end
   end
 
-  defp exact_command(%{
-         capability: @capability,
-         operation: @operation,
-         selectors: selectors,
-         parameters: %{"command" => command}
-       })
-       when selectors == %{} and is_binary(command) and byte_size(command) in 1..4_096,
-       do: {:ok, command}
-
-  defp exact_command(_request), do: {:error, :failed, "Generic SSH request is invalid"}
-
   defp effect_result({:ok, result}) do
     {:ok,
      %Target.EffectResult{
        status: if(result.exit_status == 0, do: :applied, else: :failed),
-       details: evidence(result)
+       details: NativeShell.facts(result)
      }}
   end
 
@@ -106,7 +99,7 @@ defmodule Opsonde.Targets.Generic.SSH do
      %Target.Verification{
        status: :unknown,
        observed_at: DateTime.utc_now(),
-       facts: evidence(result)
+       facts: NativeShell.facts(result)
      }}
   end
 
@@ -121,39 +114,6 @@ defmodule Opsonde.Targets.Generic.SSH do
        do: {:error, :retryable, message}
 
   defp verification_result({:error, _category, message}), do: {:error, :failed, message}
-
-  defp evidence(result) do
-    %{
-      "stdout" => encode(result.stdout),
-      "stderr" => encode(result.stderr),
-      "exit_status" => result.exit_status
-    }
-  end
-
-  defp encode(value) do
-    if String.valid?(value),
-      do: %{"encoding" => "utf-8", "value" => value},
-      else: %{"encoding" => "base64", "value" => Base.encode64(value)}
-  end
-
-  defp command_schema do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "selectors" => %{"type" => "object", "maxProperties" => 0},
-        "parameters" => %{
-          "type" => "object",
-          "properties" => %{
-            "command" => %{"type" => "string", "minLength" => 1, "maxLength" => 4_096}
-          },
-          "required" => ["command"],
-          "additionalProperties" => false
-        }
-      },
-      "required" => ["selectors", "parameters"],
-      "additionalProperties" => false
-    }
-  end
 
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end

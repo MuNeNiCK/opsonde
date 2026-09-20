@@ -9,6 +9,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
   @configuration_keys ~w(namespace request_timeout_ms)
   @credential_keys ~w(kubeconfig)
   @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
+  @native "native.kubernetes_api"
 
   defmodule State do
     @moduledoc false
@@ -71,6 +72,8 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
+    {native_observation, native_effect} = native_operations()
+
     {:ok,
      %Target.Capabilities{
        observations: [
@@ -109,7 +112,8 @@ defmodule Opsonde.Targets.Kubernetes.API do
            "Watch bounded Pod changes from a resource version",
            watch_schema(),
            watch_output_schema()
-         )
+         ),
+         native_observation
        ],
        effects: [
          %{
@@ -131,12 +135,27 @@ defmodule Opsonde.Targets.Kubernetes.API do
                  observation: "kubernetes.deployment.inspect"
                }
              ]
-         }
+         },
+         native_effect
        ]
      }}
   end
 
   @impl Opsonde.Providers.Target
+  def observe(%State{} = state, %{capability: @native} = request, invocation) do
+    with :ok <- endpoint(state, request.connection.endpoint),
+         {:ok, operation} <- native_observation_operation(state, request),
+         {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
+      {:ok,
+       %Target.Observation{
+         facts: %{"response" => response},
+         observed_at: DateTime.utc_now()
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
   def observe(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation, decoder} <- observation_operation(state, request),
@@ -149,6 +168,16 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%State{} = state, %{capability: @native} = request, invocation) do
+    with :ok <- endpoint(state, request.connection.endpoint),
+         {:ok, operation} <- native_effect_operation(state, request),
+         result <- run(state, operation, cancelled?(invocation), :effect) do
+      effect_result(result)
+    else
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
   def effect(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation} <- effect_operation(state, request),
@@ -160,6 +189,23 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(%State{} = state, %{capability: @native} = request, invocation) do
+    with :ok <- endpoint(state, request.connection.endpoint),
+         {:ok, operation} <- native_observation_operation(state, request),
+         {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
+      facts = %{"response" => response}
+
+      {:ok,
+       %Target.Verification{
+         status: expected_status(facts, request.expected),
+         observed_at: DateTime.utc_now(),
+         facts: facts
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
   def verify(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation, :deployment} <- observation_operation(state, request),
@@ -252,6 +298,152 @@ defmodule Opsonde.Targets.Kubernetes.API do
       _request ->
         invalid_request()
     end
+  end
+
+  defp native_observation_operation(state, request) do
+    with {:ok, action, api_version, kind, name, query, _body} <-
+           native_request(request, "request.observe"),
+         true <- action in ["get", "list"],
+         {:ok, operation} <- native_read_operation(state, action, api_version, kind, name) do
+      {:ok, add_query(operation, query)}
+    else
+      false -> invalid_request()
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  defp native_effect_operation(state, request) do
+    with {:ok, action, api_version, kind, name, _query, body} <-
+           native_request(request, "request.execute") do
+      path = [namespace: state.namespace, name: name]
+
+      case action do
+        "create" when is_map(body) ->
+          {:ok, K8s.Client.create(body)}
+
+        "update" when is_map(body) ->
+          {:ok, K8s.Client.update(body)}
+
+        "patch" when is_binary(name) and is_map(body) ->
+          {:ok, K8s.Client.patch(api_version, kind, path, body, :merge)}
+
+        "delete" when is_binary(name) ->
+          {:ok, K8s.Client.delete(api_version, kind, path)}
+
+        _invalid ->
+          invalid_request()
+      end
+    end
+  end
+
+  defp native_read_operation(state, "get", api_version, kind, name) when is_binary(name),
+    do: {:ok, K8s.Client.get(api_version, kind, namespace: state.namespace, name: name)}
+
+  defp native_read_operation(state, "list", api_version, kind, nil),
+    do: {:ok, K8s.Client.list(api_version, kind, namespace: state.namespace)}
+
+  defp native_read_operation(_state, _action, _api_version, _kind, _name), do: invalid_request()
+
+  defp add_query(operation, query) do
+    Enum.reduce(query, operation, fn {key, value}, current ->
+      K8s.Operation.put_query_param(current, key, value)
+    end)
+  end
+
+  defp native_request(request, operation) do
+    case request do
+      %{
+        capability: @native,
+        operation: ^operation,
+        selectors: selectors,
+        parameters:
+          %{
+            "action" => action,
+            "api_version" => api_version,
+            "kind" => kind
+          } = parameters
+      }
+      when selectors == %{} and is_binary(action) and is_binary(api_version) and is_binary(kind) ->
+        name = Map.get(parameters, "name")
+        query = Map.get(parameters, "query", %{})
+        body = Map.get(parameters, "body")
+
+        if byte_size(api_version) in 1..120 and byte_size(kind) in 1..120 and
+             (is_nil(name) or (is_binary(name) and Regex.match?(@name_pattern, name))) and
+             is_map(query) and
+             Enum.all?(query, fn {key, value} -> is_binary(key) and is_binary(value) end) and
+             (is_nil(body) or is_map(body)),
+           do: {:ok, action, api_version, kind, name, query, body},
+           else: invalid_request()
+
+      _request ->
+        invalid_request()
+    end
+  end
+
+  defp native_operations do
+    output = %{
+      "type" => "object",
+      "properties" => %{"response" => %{"type" => "object"}},
+      "required" => ["response"],
+      "additionalProperties" => false
+    }
+
+    observation = %Target.Operation{
+      capability: @native,
+      operation: "request.observe",
+      description: "Run one exact Kubernetes get or list request",
+      input_schema: native_schema(["get", "list"]),
+      output_schema: output,
+      verification_schema: Map.put(output, "minProperties", 1),
+      native?: true
+    }
+
+    effect = %Target.Operation{
+      capability: @native,
+      operation: "request.execute",
+      description:
+        "Run one exact Kubernetes create, update, patch, or delete request after review",
+      input_schema: native_schema(["create", "update", "patch", "delete"]),
+      native?: true
+    }
+
+    {observation, effect}
+  end
+
+  defp native_schema(actions) do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{"type" => "object", "maxProperties" => 0},
+        "parameters" => %{
+          "type" => "object",
+          "properties" => %{
+            "action" => %{"type" => "string", "enum" => actions},
+            "api_version" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+            "kind" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+            "name" => %{"type" => ["string", "null"], "maxLength" => 253},
+            "query" => %{
+              "type" => "object",
+              "additionalProperties" => %{"type" => "string", "maxLength" => 2_048}
+            },
+            "body" => %{"type" => ["object", "null"]}
+          },
+          "required" => ["action", "api_version", "kind"],
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
+  end
+
+  defp expected_status(_facts, expected) when expected == %{}, do: :unknown
+
+  defp expected_status(facts, expected) when is_map(expected) do
+    if Enum.all?(expected, fn {key, value} -> facts[key] == value end),
+      do: :verified,
+      else: :not_verified
   end
 
   defp effect_operation(state, request) do

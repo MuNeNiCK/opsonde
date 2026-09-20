@@ -189,6 +189,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_proposal_tool?(%AI.ProposalTool{} = tool),
     do:
       valid_exact_tool?(tool) and nonempty?(tool.description) and
+        tool.request_kind in [:observation, :effect] and
         valid_input_schema?(tool.input_schema) and
         valid_evidence_requirements?(tool.evidence_requirements)
 
@@ -298,18 +299,6 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
-  defp validate_resolver_intent(%AI.ObservationChoice{} = choice, request) do
-    tool = Enum.find(request.observation_tools, &(&1.id == choice.tool_id))
-
-    if request.budget.remaining_target_requests > 0 and not is_nil(tool) and
-         valid_tool_input?(choice.selectors, choice.parameters, tool.input_schema) and
-         bounded_string?(choice.reason, 500) do
-      :ok
-    else
-      {:error, ai_error(:invalid_output, "AI observation choice is invalid")}
-    end
-  end
-
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and bounded_string?(search.query, 200) and
          bounded_string?(search.reason, 500) do
@@ -359,11 +348,11 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.Proposal{} = proposal, request) do
-    evidence_ids = AI.proposal_evidence_ids(request)
-
     case Enum.find(request.proposal_tools, &(&1.id == proposal.tool_id)) do
       %AI.ProposalTool{} = tool ->
-        if request.budget.remaining_effects > 0 and
+        evidence_ids = request_evidence_ids(tool, request)
+
+        if request_budget_available?(tool, request) and
              valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
              AI.proposal_requirements_match?(
                tool,
@@ -371,15 +360,10 @@ defmodule Opsonde.Providers.AI.Validator do
                proposal.evidence_ids,
                proposal.parameters
              ) and
-             exact_proposal?(proposal, tool) and is_map(proposal.expected_result) and
-             valid_verification_intent?(
-               proposal.verification_intent,
-               request.observation_tools
-             ) and
+             exact_proposal?(proposal, tool) and
+             valid_request_verification?(proposal, tool, request.observation_tools) and
              bounded_string?(proposal.reason, 500) and
-             nonempty_list?(proposal.evidence_ids) and
-             unique?(proposal.evidence_ids) and
-             Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) do
+             valid_request_evidence_ids?(proposal, evidence_ids) do
           :ok
         else
           {:error, ai_error(:invalid_output, "AI Proposal is invalid")}
@@ -432,14 +416,12 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_review_proposal?(%AI.Proposal{} = proposal, evidence_ids) do
     nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and
       positive?(proposal.target_revision) and nonempty?(proposal.access_method_id) and
-      positive?(proposal.access_method_revision) and nonempty?(proposal.capability) and
+      positive?(proposal.access_method_revision) and
+      proposal.request_kind in [:observation, :effect] and nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and
       bounded_string?(proposal.reason, 500) and is_map(proposal.selectors) and
-      nonempty_list?(proposal.evidence_ids) and
-      unique?(proposal.evidence_ids) and
-      Enum.all?(proposal.evidence_ids, &(&1 in evidence_ids)) and
-      is_map(proposal.expected_result) and
-      valid_verification_intent?(proposal.verification_intent)
+      valid_request_evidence_ids?(proposal, evidence_ids) and
+      valid_review_verification?(proposal)
   end
 
   defp valid_review_proposal?(_proposal, _evidence_ids), do: false
@@ -479,11 +461,50 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_preselection_tools?(_request), do: true
 
   defp exact_proposal?(proposal, tool) do
-    proposal.target_id == tool.target_id and proposal.target_revision == tool.target_revision and
+    proposal.request_kind == tool.request_kind and proposal.target_id == tool.target_id and
+      proposal.target_revision == tool.target_revision and
       proposal.access_method_id == tool.access_method_id and
       proposal.access_method_revision == tool.access_method_revision and
       proposal.capability == tool.capability and proposal.operation == tool.operation
   end
+
+  defp request_budget_available?(%{request_kind: :observation}, request),
+    do: request.budget.remaining_target_requests > 0
+
+  defp request_budget_available?(%{request_kind: :effect}, request),
+    do: request.budget.remaining_effects > 0
+
+  defp request_evidence_ids(%{request_kind: :observation}, request),
+    do: available_evidence_ids(request)
+
+  defp request_evidence_ids(%{request_kind: :effect}, request),
+    do: AI.proposal_evidence_ids(request)
+
+  defp valid_request_evidence_ids?(%{request_kind: :observation, evidence_ids: ids}, available),
+    do: is_list(ids) and unique?(ids) and Enum.all?(ids, &(&1 in available))
+
+  defp valid_request_evidence_ids?(%{request_kind: :effect, evidence_ids: ids}, available),
+    do: nonempty_list?(ids) and unique?(ids) and Enum.all?(ids, &(&1 in available))
+
+  defp valid_request_verification?(
+         %AI.Proposal{request_kind: :observation} = proposal,
+         _tool,
+         _tools
+       ),
+       do: proposal.expected_result == %{} and is_nil(proposal.verification_intent)
+
+  defp valid_request_verification?(%AI.Proposal{request_kind: :effect} = proposal, _tool, tools),
+    do:
+      is_map(proposal.expected_result) and
+        valid_verification_intent?(proposal.verification_intent, tools)
+
+  defp valid_review_verification?(%AI.Proposal{request_kind: :observation} = proposal),
+    do: proposal.expected_result == %{} and is_nil(proposal.verification_intent)
+
+  defp valid_review_verification?(%AI.Proposal{request_kind: :effect} = proposal),
+    do:
+      is_map(proposal.expected_result) and
+        valid_verification_intent?(proposal.verification_intent)
 
   defp valid_verification_intent?(%AI.VerificationIntent{} = intent, tools) do
     case Enum.find(tools, &(&1.id == intent.tool_id)) do

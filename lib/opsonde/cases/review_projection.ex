@@ -106,6 +106,7 @@ defmodule Opsonde.Cases.ReviewProjection do
       target_revision: proposal.target_revision,
       access_method_id: proposal.access_method_id,
       access_method_revision: proposal.access_method_revision,
+      request_kind: proposal.request_kind,
       capability: proposal.capability,
       operation: proposal.operation,
       selectors: proposal.selectors,
@@ -113,12 +114,18 @@ defmodule Opsonde.Cases.ReviewProjection do
       reason: proposal.reason,
       evidence_ids: proposal.evidence_ids,
       expected_result: proposal.expected_result,
-      verification_intent: %AI.VerificationIntent{
-        tool_id: proposal.verification_intent["tool_id"],
-        selectors: proposal.verification_intent["selectors"],
-        parameters: proposal.verification_intent["parameters"],
-        expected_result: proposal.verification_intent["expected_result"]
-      }
+      verification_intent: verification_intent(proposal)
+    }
+  end
+
+  defp verification_intent(%{request_kind: :observation}), do: nil
+
+  defp verification_intent(proposal) do
+    %AI.VerificationIntent{
+      tool_id: proposal.verification_intent["tool_id"],
+      selectors: proposal.verification_intent["selectors"],
+      parameters: proposal.verification_intent["parameters"],
+      expected_result: proposal.verification_intent["expected_result"]
     }
   end
 

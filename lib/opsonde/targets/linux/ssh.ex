@@ -6,12 +6,14 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
+  alias Opsonde.Targets.NativeShell
 
   @identity {"observe.identity", "linux.identity.inspect"}
   @processes {"observe.processes", "linux.process.list"}
   @service {"observe.service", "linux.service.inspect"}
   @journal {"observe.journal", "linux.journal.read"}
   @restart {"effect.service", "linux.service.restart"}
+  @native "native.ssh"
   @unit_pattern ~r/^[A-Za-z0-9_.@:-]+\.service$/
   @digest_pattern ~r/^[a-f0-9]{64}$/
   @service_fields %{
@@ -68,6 +70,8 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
+    {native_observation, native_effect} = NativeShell.operations(@native, "Linux shell")
+
     {:ok,
      %Target.Capabilities{
        observations: [
@@ -95,7 +99,8 @@ defmodule Opsonde.Targets.Linux.SSH do
            "Read bounded recent journal entries for one systemd service",
            journal_schema(),
            journal_output_schema()
-         )
+         ),
+         native_observation
        ],
        effects: [
          %{
@@ -112,13 +117,15 @@ defmodule Opsonde.Targets.Linux.SSH do
                  observation: "linux.service.inspect"
                }
              ]
-         }
+         },
+         native_effect
        ]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, request, invocation) do
+  def observe(%State{} = state, %{capability: capability} = request, invocation)
+      when capability != @native do
     with {:ok, command, decoder} <- observation_command(state, request),
          {:ok, result} <- execute(state, request, command, invocation),
          {:ok, facts} <- decode_observation(decoder, result) do
@@ -133,8 +140,23 @@ defmodule Opsonde.Targets.Linux.SSH do
     end
   end
 
+  def observe(%State{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, command} <- NativeShell.observation_command(request, @native),
+         {:ok, result} <- execute(state, request, command, invocation) do
+      {:ok,
+       %Target.Observation{
+         facts: NativeShell.facts(result),
+         observed_at: DateTime.utc_now(),
+         evidence: [evidence(result)]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, request, invocation) do
+  def effect(%State{} = state, %{capability: capability} = request, invocation)
+      when capability != @native do
     with {:ok, command} <- restart_command(state, request),
          result <- execute_raw(state, request, command, invocation) do
       effect_result(result)
@@ -143,8 +165,19 @@ defmodule Opsonde.Targets.Linux.SSH do
     end
   end
 
+  def effect(%State{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, command} <- NativeShell.effect_command(request, @native) do
+      state
+      |> execute_raw(request, command, invocation)
+      |> effect_result()
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, request, invocation) do
+  def verify(%State{} = state, %{capability: capability} = request, invocation)
+      when capability != @native do
     with {:ok, command, :service} <- observation_command(state, request),
          {:ok, expected} <- verification_expected(request.expected),
          {:ok, result} <- execute(state, request, command, invocation),
@@ -167,6 +200,30 @@ defmodule Opsonde.Targets.Linux.SSH do
       {:error, category, message} -> read_error(category, message)
       _error -> {:error, :failed, "Linux verification request is invalid"}
     end
+  end
+
+  def verify(%State{} = state, %{capability: @native} = request, invocation) do
+    with {:ok, command} <- NativeShell.command(request, @native, "command.observe"),
+         {:ok, result} <- execute(state, request, command, invocation),
+         facts <- NativeShell.facts(result) do
+      {:ok,
+       %Target.Verification{
+         status: expected_status(facts, request.expected),
+         observed_at: DateTime.utc_now(),
+         facts: facts,
+         evidence: [evidence(result)]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  defp expected_status(_facts, expected) when expected == %{}, do: :unknown
+
+  defp expected_status(facts, expected) when is_map(expected) do
+    if Enum.all?(expected, fn {key, value} -> facts[key] == value end),
+      do: :verified,
+      else: :not_verified
   end
 
   defp observation_command(state, request) do

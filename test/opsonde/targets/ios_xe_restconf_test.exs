@@ -205,15 +205,17 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
 
     assert Enum.map(observations, & &1.operation) == [
              "ios_xe.system.inspect",
-             "ios_xe.interface.inspect"
+             "ios_xe.interface.inspect",
+             "request.observe"
            ]
 
     assert Enum.map(effects, & &1.operation) == [
              "ios_xe.interface.description.set",
-             "ios_xe.interface.admin_state.set"
+             "ios_xe.interface.admin_state.set",
+             "request.execute"
            ]
 
-    assert Enum.map(effects, & &1.evidence_requirements) == [
+    assert Enum.map(Enum.take(effects, 2), & &1.evidence_requirements) == [
              [
                %Target.EvidenceRequirement{
                  parameter: "expected_description",

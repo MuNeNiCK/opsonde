@@ -425,15 +425,23 @@ defmodule Opsonde.ResolverDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
-                   [tool] = request.observation_tools
+                   tool = Enum.find(request.proposal_tools, &(&1.request_kind == :observation))
 
                    {:ok,
                     %AI.ResolverDecision{
-                      intent: %AI.ObservationChoice{
+                      intent: %AI.Proposal{
                         tool_id: tool.id,
+                        target_id: tool.target_id,
+                        target_revision: tool.target_revision,
+                        access_method_id: tool.access_method_id,
+                        access_method_revision: tool.access_method_revision,
+                        request_kind: :observation,
+                        capability: tool.capability,
+                        operation: tool.operation,
                         selectors: %{"path" => "/var/log/messages"},
                         parameters: %{"path" => "/var/log/messages"},
-                        reason: "Inspect the current error source"
+                        reason: "Inspect the current error source",
+                        evidence_ids: []
                       },
                       usage: %AI.Usage{input_tokens: 2, output_tokens: 3}
                     }}
@@ -442,7 +450,8 @@ defmodule Opsonde.ResolverDeliveryTest do
              )
 
     observation_intent = Cases.get_turn!(observation_turn.id, authorize?: false).result["intent"]
-    assert observation_intent["type"] == "observation_choice"
+    assert observation_intent["type"] == "proposal"
+    assert observation_intent["request_kind"] == "observation"
     assert observation_intent["selectors"] == %{"path" => "/var/log/messages"}
     assert observation_intent["tool"]["target_id"] == target.id
     assert observation_intent["tool"]["target_revision"] == target.revision
@@ -491,7 +500,9 @@ defmodule Opsonde.ResolverDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
-                   [proposal_tool] = request.proposal_tools
+                   proposal_tool =
+                     Enum.find(request.proposal_tools, &(&1.request_kind == :effect))
+
                    [observation_tool] = request.observation_tools
 
                    {:ok,
@@ -502,6 +513,7 @@ defmodule Opsonde.ResolverDeliveryTest do
                         target_revision: proposal_tool.target_revision,
                         access_method_id: proposal_tool.access_method_id,
                         access_method_revision: proposal_tool.access_method_revision,
+                        request_kind: :effect,
                         capability: proposal_tool.capability,
                         operation: proposal_tool.operation,
                         selectors: %{"service" => "api"},

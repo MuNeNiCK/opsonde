@@ -285,7 +285,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         resolution_run_id: Schemas.uuid(),
         actor_id: Schemas.uuid(),
         decision: enum(~w(approved rejected)),
-        source: enum(~w(human full_access reviewer)),
+        source: enum(~w(human readonly full_access reviewer)),
         proposal_revision: positive_integer(),
         case_generation: positive_integer(),
         reason: string(1, 1_000),
@@ -341,13 +341,14 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         target_revision: positive_integer(),
         access_method_revision: positive_integer(),
         provider_revision: positive_integer(),
+        request_kind: enum(~w(observation effect)),
         tool_id: string(1, 200),
         capability: string(1, 120),
         operation: string(1, 120),
         selectors: map(),
         parameters: map(),
         reason: string(1, 500),
-        evidence_ids: array(Schemas.uuid(), 1, 100),
+        evidence_ids: array(Schemas.uuid(), 0, 100),
         expected_result: map(),
         verification_intent: map(),
         verification_tool: map(),
@@ -359,7 +360,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision tool_id capability operation selectors parameters reason evidence_ids expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind tool_id capability operation selectors parameters reason evidence_ids expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
       false
     )
   end
@@ -391,7 +392,8 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         provider_id: Schemas.uuid(),
         status: enum(~w(queued dispatching applied failed partial unknown)),
         case_generation: positive_integer(),
-        authority_mode: enum(~w(ask auto full_access)),
+        authority_mode: authority_mode(),
+        request_kind: enum(~w(observation effect)),
         capability: string(1, 120),
         operation: string(1, 120),
         selectors: map(),
@@ -406,7 +408,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at completed_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at completed_at revision inserted_at updated_at)a,
       false
     )
   end

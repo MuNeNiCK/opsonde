@@ -738,6 +738,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
   defp proposal_intent(evidence_id, setup) do
     tool = %{
+      "request_kind" => "effect",
       "id" => "effect-tool",
       "target_id" => setup.target.id,
       "target_revision" => setup.target.revision,
@@ -751,6 +752,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     %{
       "type" => "proposal",
+      "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
       "target_revision" => tool["target_revision"],

@@ -133,10 +133,6 @@ defmodule Opsonde.Cases do
         action: :route_target_discovery,
         args: [:turn_id]
 
-      define :route_observation,
-        action: :route_observation,
-        args: [:turn_id, :invocation]
-
       define :route_related_target,
         action: :route_related_target,
         args: [:turn_id]

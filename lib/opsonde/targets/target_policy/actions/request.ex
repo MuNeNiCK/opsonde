@@ -169,6 +169,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       capability: clearance.capability,
       operation: clearance.operation,
       authorization_digest: clearance.digest,
+      authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
       parameters: clearance.parameters,
       max_attempts: clearance.max_attempts
@@ -191,6 +192,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       capability: clearance.capability,
       operation: clearance.operation,
       authorization_digest: clearance.digest,
+      authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
       parameters: clearance.parameters,
       operation_id: clearance.operation_id,

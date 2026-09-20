@@ -31,9 +31,6 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   defp dispatch(type, turn_id) when type in ["target_search", "target_selection"],
     do: Cases.route_target_discovery(turn_id, authorize?: false)
 
-  defp dispatch("observation_choice", turn_id),
-    do: Cases.route_observation(turn_id, %{}, authorize?: false)
-
   defp dispatch("target_traversal", turn_id),
     do: Cases.route_related_target(turn_id, authorize?: false)
 
@@ -59,7 +56,6 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
               "target_search",
               "target_selection",
               "target_traversal",
-              "observation_choice",
               "proposal",
               "recovery_conclusion",
               "handoff"

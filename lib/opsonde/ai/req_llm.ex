@@ -272,13 +272,14 @@ defmodule Opsonde.AI.ReqLLM do
 
     context(
       "You are the Opsonde Resolver. Select exactly one intent offered by the supplied " <>
-        "output schema: Target search or selection, observation, Target traversal, " <>
+        "output schema: Target search or selection, Target request, Target traversal, " <>
         "proposal, recovery, or handoff. Never execute a tool. Never invent an identifier. " <>
         "Recovery is a terminal intent: choose it when the monitoring source is recovered " <>
         "or not applicable and supplied target_verification Evidence has status verified " <>
         "and proves restored health. Cite that Evidence. A verified target_verification " <>
         "proves only the expected fields for its Operation; it does not establish that every " <>
-        "condition in the Case is resolved. Propose an effect only for an " <>
+        "condition in the Case is resolved. A proposal may be an observation or an effect; " <>
+        "every Target request is reviewed after you return it. Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
@@ -287,8 +288,8 @@ defmodule Opsonde.AI.ReqLLM do
         "evidence and preserve uncertainty. Proposal tools may be withheld until a current " <>
         "observation establishes their preconditions. If supplied Evidence shows an " <>
         "unresolved condition, no proposal tool is available, and a suitable observation " <>
-        "tool is supplied, choose that observation before handoff. Select the narrowest " <>
-        "observation whose output directly examines the unresolved condition. Fill its " <>
+        "tool is supplied, choose that observation request before handoff. Select the narrowest " <>
+        "request whose output directly examines the unresolved condition. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
         "Choose handoff only when no offered intent can make safe progress and a required value " <>
         "is absent from the supplied input. Write the " <>
@@ -366,25 +367,6 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp intent(%{"type" => "observation", "tool_input" => tool_input} = value, request)
-       when is_map(tool_input) do
-    with {:ok, tool_id} <- string(tool_input, "tool_id"),
-         %AI.ObservationTool{} <- Enum.find(request.observation_tools, &(&1.id == tool_id)),
-         {:ok, selectors} <- map(tool_input, "selectors"),
-         {:ok, parameters} <- map(tool_input, "parameters"),
-         {:ok, reason} <- string(value, "reason") do
-      {:ok,
-       %AI.ObservationChoice{
-         tool_id: tool_id,
-         selectors: selectors,
-         parameters: parameters,
-         reason: reason
-       }}
-    else
-      _error -> invalid_output()
-    end
-  end
-
   defp intent(%{"type" => "target_traversal"} = value, request) do
     with {:ok, relationship_id} <- string(value, "relationship_id"),
          %AI.TargetRelation{} = relationship <-
@@ -414,8 +396,7 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, parameters} <- map(action, "parameters"),
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
-         {:ok, expected_result} <- decoded_map(value, "expected_result_json"),
-         {:ok, verification} <- verification_intent(value["verification"], request) do
+         {:ok, expected_result, verification} <- request_verification(value, tool, request) do
       {:ok,
        %AI.Proposal{
          tool_id: tool.id,
@@ -423,6 +404,7 @@ defmodule Opsonde.AI.ReqLLM do
          target_revision: tool.target_revision,
          access_method_id: tool.access_method_id,
          access_method_revision: tool.access_method_revision,
+         request_kind: tool.request_kind,
          capability: tool.capability,
          operation: tool.operation,
          selectors: selectors,
@@ -472,6 +454,16 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp verification_intent(_value, _request), do: invalid_output()
+
+  defp request_verification(_value, %{request_kind: :observation}, _request),
+    do: {:ok, %{}, nil}
+
+  defp request_verification(value, %{request_kind: :effect}, request) do
+    with {:ok, expected_result} <- decoded_map(value, "expected_result_json"),
+         {:ok, verification} <- verification_intent(value["verification"], request) do
+      {:ok, expected_result, verification}
+    end
+  end
 
   defp verification_tool(request, tool_id),
     do: Enum.find(request.observation_tools, &(&1.id == tool_id))
@@ -528,7 +520,6 @@ defmodule Opsonde.AI.ReqLLM do
         [
           target_search_schema(request),
           target_selection_schema(request),
-          observation_schema(request),
           target_traversal_schema(request),
           proposal_schema(request),
           recovery_schema(request),
@@ -567,16 +558,6 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp observation_schema(%{budget: %{remaining_target_requests: remaining}} = request)
-       when remaining > 0 do
-    case tool_input_variants(request.observation_tools) do
-      [] -> nil
-      variants -> intent_schema("observation", %{"tool_input" => %{"anyOf" => variants}})
-    end
-  end
-
-  defp observation_schema(_request), do: nil
-
   defp target_traversal_schema(%{budget: %{remaining_related_targets: remaining}} = request)
        when remaining > 0 do
     relationship_ids = Enum.map(request.target_relations, & &1.id)
@@ -592,8 +573,24 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp target_traversal_schema(_request), do: nil
 
-  defp proposal_schema(%{budget: %{remaining_effects: remaining}} = request) when remaining > 0 do
-    action_variants = tool_input_variants(request.proposal_tools)
+  defp proposal_schema(request) do
+    observation_variants =
+      request.proposal_tools
+      |> Enum.filter(&(&1.request_kind == :observation))
+      |> then(fn tools ->
+        if request.budget.remaining_target_requests > 0,
+          do: tool_input_variants(tools),
+          else: []
+      end)
+
+    effect_variants =
+      request.proposal_tools
+      |> Enum.filter(&(&1.request_kind == :effect))
+      |> then(fn tools ->
+        if request.budget.remaining_effects > 0,
+          do: tool_input_variants(tools),
+          else: []
+      end)
 
     verification_variants =
       request.observation_tools
@@ -602,19 +599,33 @@ defmodule Opsonde.AI.ReqLLM do
         "expected_result_json" => json_object_string_schema()
       })
 
-    evidence_ids = AI.proposal_evidence_ids(request)
+    observation_evidence_ids = available_evidence_ids(request)
+    effect_evidence_ids = AI.proposal_evidence_ids(request)
 
-    if action_variants != [] and verification_variants != [] and evidence_ids != [] do
-      intent_schema("proposal", %{
-        "action" => %{"anyOf" => action_variants},
-        "evidence_ids" => identifier_array_schema(evidence_ids),
-        "expected_result_json" => json_object_string_schema(),
-        "verification" => %{"anyOf" => verification_variants}
-      })
+    observation_schema =
+      if observation_variants != [] do
+        intent_schema("proposal", %{
+          "action" => %{"anyOf" => observation_variants},
+          "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0)
+        })
+      end
+
+    effect_schema =
+      if effect_variants != [] and verification_variants != [] and effect_evidence_ids != [] do
+        intent_schema("proposal", %{
+          "action" => %{"anyOf" => effect_variants},
+          "evidence_ids" => identifier_array_schema(effect_evidence_ids),
+          "expected_result_json" => json_object_string_schema(),
+          "verification" => %{"anyOf" => verification_variants}
+        })
+      end
+
+    case Enum.reject([observation_schema, effect_schema], &is_nil/1) do
+      [] -> nil
+      [single] -> single
+      variants -> %{"anyOf" => variants}
     end
   end
-
-  defp proposal_schema(_request), do: nil
 
   defp recovery_schema(%{alert_state: state} = request)
        when state in [:recovered, :not_applicable] do
@@ -683,6 +694,12 @@ defmodule Opsonde.AI.ReqLLM do
       "items" => enum_schema(values),
       "minItems" => 1
     }
+
+  defp evidence_array_schema([], 0),
+    do: %{"type" => "array", "items" => %{"type" => "string"}, "maxItems" => 0}
+
+  defp evidence_array_schema(values, minimum),
+    do: Map.put(identifier_array_schema(values), "minItems", minimum)
 
   defp json_object_string_schema,
     do: %{

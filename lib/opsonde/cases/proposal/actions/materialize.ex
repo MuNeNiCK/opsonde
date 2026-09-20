@@ -29,12 +29,18 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     with :ok <- ensure_running(incident, run),
          {:ok, proposal} <- proposal_data(turn),
          {:ok, actor} <- current_actor(incident),
-         :ok <- valid_evidence(proposal.intent["evidence_ids"], incident.id, run.id),
+         :ok <-
+           valid_evidence(
+             request_kind(proposal.intent),
+             proposal.intent["evidence_ids"],
+             incident.id,
+             run.id
+           ),
          reserved_operation_id <- Ash.UUID.generate(),
          operation_key <- Budget.key("proposal:operation", turn.id),
          request <-
            policy_request(proposal.intent, incident, reserved_operation_id, operation_key),
-         {:ok, preflight} <- preflight(request, actor, proposal.effect_tool),
+         {:ok, preflight} <- preflight(request, actor, proposal.request_tool),
          attrs <-
            attributes(
              proposal,
@@ -65,16 +71,16 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
          }
        })
        when is_binary(result_digest) and is_map(resolver) do
-    effect_tool = map(intent["tool"])
+    request_tool = map(intent["tool"])
     verification_intent = map(intent["verification_intent"])
     verification_tool = map(intent["verification_tool"])
 
-    if valid_intent?(intent, effect_tool, verification_intent, verification_tool) and
+    if valid_intent?(intent, request_tool, verification_intent, verification_tool) and
          valid_resolver?(resolver) do
       {:ok,
        %{
          intent: intent,
-         effect_tool: effect_tool,
+         request_tool: request_tool,
          verification_intent: verification_intent,
          verification_tool: verification_tool,
          resolver: resolver,
@@ -87,7 +93,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp proposal_data(_turn), do: {:error, "Completed Turn does not contain a Proposal"}
 
-  defp valid_intent?(intent, effect_tool, verification_intent, verification_tool) do
+  defp valid_intent?(intent, request_tool, verification_intent, verification_tool) do
     values = [
       intent["tool_id"],
       intent["target_id"],
@@ -95,8 +101,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       intent["capability"],
       intent["operation"],
       intent["reason"],
-      effect_tool["provider_id"],
-      verification_intent["tool_id"]
+      request_tool["provider_id"]
     ]
 
     Enum.all?(values, &nonempty?/1) and
@@ -104,19 +109,29 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       positive?(intent["target_revision"]) and
       positive?(intent["access_method_revision"]) and
       is_map(intent["selectors"]) and is_map(intent["parameters"]) and
-      is_map(intent["expected_result"]) and
-      exact_effect_tool?(intent, effect_tool) and
-      exact_verification?(verification_intent, verification_tool)
+      request_kind(intent) in [:observation, :effect] and
+      exact_request_tool?(intent, request_tool) and
+      valid_verification?(request_kind(intent), intent, verification_intent, verification_tool)
   end
 
-  defp exact_effect_tool?(intent, tool) do
+  defp exact_request_tool?(intent, tool) do
     intent["tool_id"] == tool["id"] and intent["target_id"] == tool["target_id"] and
       intent["target_revision"] == tool["target_revision"] and
       intent["access_method_id"] == tool["access_method_id"] and
       intent["access_method_revision"] == tool["access_method_revision"] and
+      intent["request_kind"] == tool["request_kind"] and
       intent["capability"] == tool["capability"] and
       intent["operation"] == tool["operation"] and positive?(tool["provider_revision"])
   end
+
+  defp valid_verification?(:observation, intent, verification_intent, verification_tool),
+    do:
+      intent["expected_result"] == %{} and verification_intent == %{} and verification_tool == %{}
+
+  defp valid_verification?(:effect, intent, verification_intent, verification_tool),
+    do:
+      is_map(intent["expected_result"]) and
+        exact_verification?(verification_intent, verification_tool)
 
   defp exact_verification?(intent, tool) do
     intent["tool_id"] == tool["id"] and
@@ -150,7 +165,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp current_actor(_incident), do: {:error, "Case has no Proposal owner"}
 
-  defp valid_evidence(ids, case_id, run_id) when is_list(ids) and ids != [] do
+  defp valid_evidence(kind, ids, case_id, run_id)
+       when is_list(ids) and (kind == :observation or ids != []) do
     if length(ids) == MapSet.size(MapSet.new(ids)) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
@@ -163,12 +179,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     end
   end
 
-  defp valid_evidence(_ids, _case_id, _run_id),
+  defp valid_evidence(_kind, _ids, _case_id, _run_id),
     do: {:error, "Proposal must cite Evidence"}
 
   defp policy_request(intent, incident, operation_id, operation_key) do
     %PolicyRequest{
-      kind: :effect,
+      kind: request_kind(intent),
       authority_mode: incident.authority_mode,
       target_id: intent["target_id"],
       target_revision: intent["target_revision"],
@@ -184,11 +200,11 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     }
   end
 
-  defp preflight(request, actor, effect_tool) do
+  defp preflight(request, actor, request_tool) do
     case Targets.clear_target_request(request, actor: actor) do
       {:ok, %RequestClearance{} = clearance} ->
-        if clearance.provider_id == effect_tool["provider_id"] and
-             clearance.provider_revision == effect_tool["provider_revision"] do
+        if clearance.provider_id == request_tool["provider_id"] and
+             clearance.provider_revision == request_tool["provider_revision"] do
           {:ok,
            %{
              status: :cleared,
@@ -233,7 +249,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp attributes(proposal, turn, incident, run, actor, operation_id, operation_key, preflight) do
     intent = proposal.intent
-    effect_tool = proposal.effect_tool
+    request_tool = proposal.request_tool
 
     %{
       case_id: incident.id,
@@ -242,13 +258,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       proposed_for_id: actor.id,
       target_id: intent["target_id"],
       access_method_id: intent["access_method_id"],
-      provider_id: effect_tool["provider_id"],
+      provider_id: request_tool["provider_id"],
       status: if(preflight.status == :cleared, do: :proposed, else: :blocked),
       authority_mode: incident.authority_mode,
       case_generation: run.generation,
       target_revision: intent["target_revision"],
       access_method_revision: intent["access_method_revision"],
-      provider_revision: effect_tool["provider_revision"],
+      provider_revision: request_tool["provider_revision"],
+      request_kind: request_kind(intent),
       tool_id: intent["tool_id"],
       capability: intent["capability"],
       operation: intent["operation"],
@@ -270,6 +287,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       revision: 1
     }
   end
+
+  defp request_kind(%{"request_kind" => "observation"}), do: :observation
+  defp request_kind(%{"request_kind" => "effect"}), do: :effect
+  defp request_kind(_intent), do: nil
 
   defp proposal_digest(attributes) do
     attributes

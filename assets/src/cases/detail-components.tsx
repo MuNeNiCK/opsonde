@@ -60,16 +60,24 @@ export function ProposalCard({
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm">{proposal.reason}</p>
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div
+          className={
+            proposal.request_kind === "effect" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4"
+          }
+        >
           <DataBlock
             title={t("cases.effectRequest")}
             value={{ selectors: proposal.selectors, parameters: proposal.parameters }}
           />
-          <DataBlock title={t("cases.expectedResult")} value={proposal.expected_result} />
-          <DataBlock
-            title={t("cases.verification")}
-            value={{ intent: proposal.verification_intent, tool: proposal.verification_tool }}
-          />
+          {proposal.request_kind === "effect" && (
+            <>
+              <DataBlock title={t("cases.expectedResult")} value={proposal.expected_result} />
+              <DataBlock
+                title={t("cases.verification")}
+                value={{ intent: proposal.verification_intent, tool: proposal.verification_tool }}
+              />
+            </>
+          )}
         </div>
         {proposal.preflight_reason && (
           <Alert variant="destructive">

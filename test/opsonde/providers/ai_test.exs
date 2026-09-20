@@ -145,15 +145,23 @@ defmodule Opsonde.Providers.AITest do
              )
   end
 
-  test "Resolver returns exactly one observation, proposal, recovery or handoff intent",
+  test "Resolver returns exactly one Target request, recovery or handoff intent",
        context do
     request = resolver_request(context.provider.revision)
 
-    observation = %AI.ObservationChoice{
-      tool_id: "inspect-system",
+    observation = %AI.Proposal{
+      tool_id: "inspect-system-request",
+      target_id: "target-1",
+      target_revision: 1,
+      access_method_id: "access-method-observe",
+      access_method_revision: 1,
+      request_kind: :observation,
+      capability: "observe.command",
+      operation: "system.inspect",
       selectors: %{},
       parameters: %{},
-      reason: "Collect current system state"
+      reason: "Collect current system state",
+      evidence_ids: ["evidence-1"]
     }
 
     assert %AI.ResolverDecision{intent: ^observation} =
@@ -349,19 +357,34 @@ defmodule Opsonde.Providers.AITest do
 
     request = resolver_request(context.provider.revision)
     [observation_tool] = request.observation_tools
-    [proposal_tool] = request.proposal_tools
+
+    observation_request_tool =
+      Enum.find(request.proposal_tools, &(&1.request_kind == :observation))
+
+    proposal_tool = Enum.find(request.proposal_tools, &(&1.request_kind == :effect))
 
     request = %{
       request
       | observation_tools: [%{observation_tool | input_schema: schema}],
-        proposal_tools: [%{proposal_tool | input_schema: schema}]
+        proposal_tools: [
+          %{observation_request_tool | input_schema: schema},
+          %{proposal_tool | input_schema: schema}
+        ]
     }
 
-    valid_observation = %AI.ObservationChoice{
-      tool_id: observation_tool.id,
+    valid_observation = %AI.Proposal{
+      tool_id: observation_request_tool.id,
+      target_id: observation_request_tool.target_id,
+      target_revision: observation_request_tool.target_revision,
+      access_method_id: observation_request_tool.access_method_id,
+      access_method_revision: observation_request_tool.access_method_revision,
+      request_kind: :observation,
+      capability: observation_request_tool.capability,
+      operation: observation_request_tool.operation,
       selectors: %{"service" => "api"},
       parameters: %{},
-      reason: "Inspect the named service"
+      reason: "Inspect the named service",
+      evidence_ids: ["evidence-1"]
     }
 
     assert %AI.ResolverDecision{intent: ^valid_observation} =
@@ -485,7 +508,7 @@ defmodule Opsonde.Providers.AITest do
   test "Resolver proposals copy required values from cited observation evidence" do
     request = resolver_request(1)
     [observation_tool] = request.observation_tools
-    [proposal_tool] = request.proposal_tools
+    proposal_tool = Enum.find(request.proposal_tools, &(&1.request_kind == :effect))
 
     observation_tool = %{
       observation_tool
@@ -931,6 +954,20 @@ defmodule Opsonde.Providers.AITest do
       ],
       proposal_tools: [
         %AI.ProposalTool{
+          id: "inspect-system-request",
+          target_id: "target-1",
+          target_revision: 1,
+          access_method_id: "access-method-observe",
+          access_method_revision: 1,
+          provider_id: "target-provider",
+          provider_revision: 1,
+          request_kind: :observation,
+          capability: "observe.command",
+          operation: "system.inspect",
+          description: "Inspect system state",
+          input_schema: %{}
+        },
+        %AI.ProposalTool{
           id: "restart-service",
           target_id: "target-1",
           target_revision: 1,
@@ -938,6 +975,7 @@ defmodule Opsonde.Providers.AITest do
           access_method_revision: 1,
           provider_id: "target-provider",
           provider_revision: 1,
+          request_kind: :effect,
           capability: "effect.command",
           operation: "service.restart",
           description: "Restart one service",
@@ -1015,6 +1053,7 @@ defmodule Opsonde.Providers.AITest do
       target_revision: 1,
       access_method_id: "access-method-effect",
       access_method_revision: 1,
+      request_kind: :effect,
       capability: "effect.command",
       operation: "service.restart",
       selectors: %{service: "api"},
