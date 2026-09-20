@@ -11,13 +11,20 @@ config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
 
 config :opsonde, :oidc_redirect_base_url, "http://localhost:4000/auth"
 
+ai_concurrency = 10
+
 config :opsonde, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [resolver: 10, operations: 10, notifications: 5, audits: 5],
+  queues: [resolver: ai_concurrency, operations: 10, notifications: 5, audits: 5],
   lifeline: [rescue_after: {2, :hours}],
   pruner: [max_age: {1, :day}],
   repo: Opsonde.Repo
+
+config :req_llm,
+  stream_pool_protocols: [:http1],
+  stream_pool_size: ai_concurrency,
+  stream_pool_count: 1
 
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new

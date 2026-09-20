@@ -30,7 +30,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     defp respond(conn, _request, {:sleep, milliseconds}) do
       Process.sleep(milliseconds)
-      json(conn, openai_response(handoff()))
+      json(conn, openai_text_response(wire_decision(handoff())))
     end
 
     defp respond(conn, request, {:decision, decision}) do
@@ -352,6 +352,33 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :cancelled, _message} =
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
+  end
+
+  test "buffered AI calls support the resolver queue concurrency", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{
+        "model" => "test-model:cloud",
+        "timeout_ms" => 8_000
+      })
+
+    set_mode(context.agent, {:sleep, 5_500})
+
+    results =
+      1..10
+      |> Task.async_stream(
+        fn _index -> Adapter.resolve(state, resolver_request(), %{}) end,
+        max_concurrency: 10,
+        ordered: false,
+        timeout: 10_000
+      )
+      |> Enum.to_list()
+
+    assert Enum.all?(results, fn
+             {:ok, {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}}} -> true
+             _other -> false
+           end)
+
+    assert length(requests(context.agent)) == 10
   end
 
   test "multilingual output stays within the byte-bounded AI contract", context do

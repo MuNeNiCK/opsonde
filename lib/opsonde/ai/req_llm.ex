@@ -200,6 +200,8 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
+    options = Keyword.put(options, :req_http_options, finch: [pool_timeout: state.timeout])
+
     state.model
     |> ReqLLM.generate_text(messages, options)
     |> normalize_req_llm_result()
