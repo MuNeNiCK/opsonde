@@ -490,12 +490,14 @@ defmodule Opsonde.Targets.Kubernetes.API do
   defp effect_result({:error, _category, message}), do: {:error, :failed, message}
 
   defp verification_expected(expected) when is_map(expected) do
-    allowed =
-      ~w(uid resource_version generation replicas ready_replicas available_replicas observed_generation)
+    case expected do
+      %{"replicas" => replicas}
+      when map_size(expected) == 1 and is_integer(replicas) and replicas in 0..100 ->
+        {:ok, expected}
 
-    if Enum.all?(Map.keys(expected), &(&1 in allowed)),
-      do: {:ok, expected},
-      else: {:error, :failed, "Kubernetes verification expectation is invalid"}
+      _invalid ->
+        {:error, :failed, "Kubernetes verification expectation is invalid"}
+    end
   end
 
   defp verification_expected(_expected),
@@ -690,9 +692,12 @@ defmodule Opsonde.Targets.Kubernetes.API do
       })
 
   defp deployment_verification_schema do
-    deployment_output_schema()
-    |> Map.put("properties", Map.drop(deployment_output_schema()["properties"], ["name"]))
-    |> Map.put("minProperties", 1)
+    %{
+      "type" => "object",
+      "properties" => %{"replicas" => integer(0, 100)},
+      "required" => ["replicas"],
+      "additionalProperties" => false
+    }
   end
 
   defp logs_output_schema,

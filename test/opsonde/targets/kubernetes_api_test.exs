@@ -342,10 +342,19 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     tools = Map.new(observations, &{&1.operation, &1})
     deployment_tool = tools["kubernetes.deployment.inspect"]
 
-    assert MapSet.new(Map.keys(deployment_tool.verification_schema["properties"])) ==
-             MapSet.new(
-               ~w(uid resource_version generation replicas ready_replicas available_replicas observed_generation)
-             )
+    assert Map.keys(deployment_tool.verification_schema["properties"]) == ["replicas"]
+    assert deployment_tool.verification_schema["required"] == ["replicas"]
+    assert_schema_accepts!(deployment_tool.verification_schema, %{"replicas" => 1})
+
+    assert_schema_rejects!(deployment_tool.verification_schema, %{
+      "replicas" => 1,
+      "ready_replicas" => 1
+    })
+
+    assert_schema_rejects!(deployment_tool.verification_schema, %{
+      "replicas" => 1,
+      "available_replicas" => 1
+    })
 
     assert effect.operation == "kubernetes.deployment.scale"
 
@@ -452,7 +461,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         "kubernetes.deployment.inspect",
         %{"name" => "app"},
         %{},
-        %{"uid" => before.facts["uid"], "replicas" => 2}
+        %{"replicas" => 2}
       )
 
     verification_clearance =
@@ -462,6 +471,27 @@ defmodule Opsonde.Targets.KubernetesAPITest do
              Targets.dispatch_target_verification!(verification_clearance, %{},
                actor: context.operator
              )
+
+    request_count = length(requests(context))
+
+    invalid_verification =
+      policy_request(
+        context,
+        :verification,
+        "observe.workload",
+        "kubernetes.deployment.inspect",
+        %{"name" => "app"},
+        %{},
+        %{"replicas" => 2, "ready_replicas" => 2}
+      )
+
+    invalid_clearance =
+      Targets.clear_target_request!(invalid_verification, actor: context.operator)
+
+    assert {:error, _error} =
+             Targets.dispatch_target_verification(invalid_clearance, %{}, actor: context.operator)
+
+    assert length(requests(context)) == request_count
 
     stale = scale_request(context, before.facts["uid"], before.facts["resource_version"], 0)
     stale_clearance = Targets.clear_target_request!(stale, actor: context.operator)
@@ -507,7 +537,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         "kubernetes.deployment.inspect",
         %{"name" => "app"},
         %{},
-        %{"uid" => current.facts["uid"], "replicas" => 3}
+        %{"replicas" => 3}
       )
 
     reconciled_clearance = Targets.clear_target_request!(reconciled, actor: context.operator)
@@ -721,6 +751,11 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   defp assert_schema_accepts!(schema, facts) do
     assert {:ok, root} = JSV.build(schema, warnings: :silent)
     assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
+  end
+
+  defp assert_schema_rejects!(schema, facts) do
+    assert {:ok, root} = JSV.build(schema, warnings: :silent)
+    assert {:error, _error} = JSV.validate(facts, root, cast: false)
   end
 
   defp target_error(%{errors: errors}) do
