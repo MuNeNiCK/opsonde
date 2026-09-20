@@ -598,7 +598,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate an immutable Case Report */
+        /** Generate a Case Report */
         post: operations["generateCaseReport"];
         delete?: never;
         options?: never;

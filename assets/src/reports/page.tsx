@@ -12,6 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { NotificationProviderSection } from "@/providers/notification-section";
 
 type CaseRecord = components["schemas"]["Case"];
@@ -66,6 +74,7 @@ export function ReportPage() {
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<"generate" | "deliver" | "destinations" | null>(null);
   const [selectedReportId, setSelectedReportId] = useState("");
+  const [detailReportId, setDetailReportId] = useState("");
   const canAct = account?.role === "admin" || account?.role === "operator";
   const canManageProviders = account?.role === "admin";
   const refresh = useCallback(async () => setSnapshot(await loadSnapshot()), []);
@@ -175,6 +184,19 @@ export function ReportPage() {
     setPanel("deliver");
     window.requestAnimationFrame(() => document.getElementById("report-action")?.scrollIntoView());
   }
+
+  function toggleReportDetails(reportId: string) {
+    if (detailReportId === reportId) {
+      setDetailReportId("");
+      return;
+    }
+    setDetailReportId(reportId);
+    window.requestAnimationFrame(() =>
+      document.getElementById(`report-detail-${reportId}`)?.scrollIntoView({ block: "nearest" }),
+    );
+  }
+
+  const detailReport = snapshot.reports.find((report) => report.id === detailReportId);
 
   return (
     <div className="space-y-10 p-6 lg:p-8">
@@ -314,59 +336,158 @@ export function ReportPage() {
           <h2 className="text-xl font-semibold">{t("reports.history")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t("reports.historyDescription")}</p>
         </div>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {snapshot.reports.map((report) => (
-            <Card key={report.id} id={`report-${report.id}`}>
-              <CardHeader>
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <CardTitle>{caseTitle(report.case_id)}</CardTitle>
-                    <CardDescription>
-                      {formatDate(report.generated_at, i18n.resolvedLanguage)} · r
-                      {report.case_revision}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <Badge variant="outline">{report.language}</Badge>
-                    <Badge variant="secondary">{t(`cases.status.${report.outcome}`)}</Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <ReportSummary content={report.content} />
-                <div className="flex flex-wrap gap-2">
-                  <Button asChild size="sm" variant="outline">
-                    <Link to={`/cases/${report.case_id}`}>{t("reports.openCase")}</Link>
-                  </Button>
-                  {targetForCase(report.case_id) && (
-                    <Button asChild size="sm" variant="outline">
-                      <Link to={`/targets/${targetForCase(report.case_id)}`}>
-                        {targetName(targetForCase(report.case_id) as string)}
+        <div className="rounded-lg border bg-card">
+          <Table className="min-w-[68rem]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("reports.columns.case")}</TableHead>
+                <TableHead>{t("reports.columns.generated")}</TableHead>
+                <TableHead>{t("reports.columns.outcome")}</TableHead>
+                <TableHead>{t("reports.columns.records")}</TableHead>
+                <TableHead>{t("reports.columns.format")}</TableHead>
+                <TableHead>{t("reports.columns.delivery")}</TableHead>
+                <TableHead className="text-right">{t("reports.columns.actions")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.reports.map((report) => {
+                const targetId = targetForCase(report.case_id);
+                const deliveries = snapshot.deliveries
+                  .filter((delivery) => delivery.report_id === report.id)
+                  .sort((left, right) => left.enqueued_at.localeCompare(right.enqueued_at));
+                const latestDelivery = deliveries.at(-1);
+                return (
+                  <TableRow
+                    key={report.id}
+                    id={`report-${report.id}`}
+                    data-state={detailReportId === report.id ? "selected" : undefined}
+                  >
+                    <TableCell className="min-w-80 whitespace-normal">
+                      <Link to={`/cases/${report.case_id}`} className="font-medium hover:underline">
+                        {caseTitle(report.case_id)}
                       </Link>
-                    </Button>
-                  )}
-                  {canAct && (
-                    <Button size="sm" onClick={() => openDelivery(report.id)}>
-                      {t("reports.deliver")}
-                    </Button>
-                  )}
-                </div>
-                <details>
-                  <summary className="cursor-pointer text-sm font-medium">
-                    {t("reports.technicalDetails")}
-                  </summary>
-                  <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
-                    SHA-256 {report.content_digest}
-                  </p>
-                  <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
-                    {JSON.stringify(report.content, null, 2)}
-                  </pre>
-                </details>
-              </CardContent>
-            </Card>
-          ))}
-          {snapshot.reports.length === 0 && <Empty text={t("reports.noReports")} />}
+                      {targetId && (
+                        <Link
+                          to={`/targets/${targetId}`}
+                          className="mt-1 block text-xs text-muted-foreground hover:underline"
+                        >
+                          {targetName(targetId)}
+                        </Link>
+                      )}
+                    </TableCell>
+                    <TableCell>{formatDate(report.generated_at, i18n.resolvedLanguage)}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{t(`cases.status.${report.outcome}`)}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {t("reports.recordCounts", {
+                        operations: arrayLength(report.content.operations),
+                        verifications: arrayLength(report.content.verifications),
+                      })}
+                    </TableCell>
+                    <TableCell>
+                      <span className="uppercase">{report.language}</span> · r{report.case_revision}
+                    </TableCell>
+                    <TableCell>
+                      {latestDelivery ? (
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              latestDelivery.status === "failed" ||
+                              latestDelivery.status === "unknown"
+                                ? "destructive"
+                                : "outline"
+                            }
+                          >
+                            {t(`reports.deliveryStatus.${latestDelivery.status}`)}
+                          </Badge>
+                          {deliveries.length > 1 && (
+                            <span className="text-xs text-muted-foreground">
+                              ×{deliveries.length}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">{t("reports.notDelivered")}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => toggleReportDetails(report.id)}
+                        >
+                          {t(
+                            detailReportId === report.id
+                              ? "reports.hideDetails"
+                              : "reports.viewDetails",
+                          )}
+                        </Button>
+                        {canAct && (
+                          <Button size="sm" onClick={() => openDelivery(report.id)}>
+                            {t("reports.deliver")}
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {snapshot.reports.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                    {t("reports.noReports")}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </div>
+        {detailReport && (
+          <Card id={`report-detail-${detailReport.id}`}>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle>{caseTitle(detailReport.case_id)}</CardTitle>
+                  <CardDescription>
+                    {formatDate(detailReport.generated_at, i18n.resolvedLanguage)} · r
+                    {detailReport.case_revision}
+                  </CardDescription>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => setDetailReportId("")}>
+                  <X /> {t("common.close")}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ReportSummary content={detailReport.content} />
+              <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm" variant="outline">
+                  <Link to={`/cases/${detailReport.case_id}`}>{t("reports.openCase")}</Link>
+                </Button>
+                {targetForCase(detailReport.case_id) && (
+                  <Button asChild size="sm" variant="outline">
+                    <Link to={`/targets/${targetForCase(detailReport.case_id)}`}>
+                      {targetName(targetForCase(detailReport.case_id) as string)}
+                    </Link>
+                  </Button>
+                )}
+              </div>
+              <details>
+                <summary className="cursor-pointer text-sm font-medium">
+                  {t("reports.technicalDetails")}
+                </summary>
+                <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
+                  SHA-256 {detailReport.content_digest}
+                </p>
+                <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+                  {JSON.stringify(detailReport.content, null, 2)}
+                </pre>
+              </details>
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       <section className="space-y-4">
@@ -492,13 +613,6 @@ function Loading() {
       <Spinner />
       <span>{t("common.loading")}</span>
     </div>
-  );
-}
-function Empty({ text }: { text: string }) {
-  return (
-    <Card className="xl:col-span-2">
-      <CardContent className="py-8 text-center text-sm text-muted-foreground">{text}</CardContent>
-    </Card>
   );
 }
 function formValue(form: FormData, name: string) {

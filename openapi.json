@@ -9530,7 +9530,7 @@
             "description": "Request could not be completed"
           }
         },
-        "summary": "Generate an immutable Case Report",
+        "summary": "Generate a Case Report",
         "tags": [
           "Reports"
         ]

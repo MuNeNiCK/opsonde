@@ -39,7 +39,7 @@ defmodule OpsondeWeb.API.V1.ReportController do
 
   operation :generate,
     operation_id: "generateCaseReport",
-    summary: "Generate an immutable Case Report",
+    summary: "Generate a Case Report",
     parameters: Schemas.id_parameter(:case_id),
     request_body:
       {"Case revision", "application/json", OutcomeSchemas.ref("GenerateReportRequest"),

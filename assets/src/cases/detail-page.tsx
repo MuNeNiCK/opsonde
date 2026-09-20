@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, CheckCircle2, CircleAlert, History, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CircleAlert,
+  History,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Wrench,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -7,7 +16,13 @@ import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
 import { ProposalCard, ResumeCard } from "@/cases/detail-components";
-import { formatDate, formValue, parseAuthorityMode, translatedToken } from "@/cases/detail-utils";
+import {
+  formatDate,
+  formValue,
+  parseAuthorityMode,
+  summarizeValue,
+  translatedToken,
+} from "@/cases/detail-utils";
 import { CaseWorkflowView } from "@/cases/workflow-view";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormSelect } from "@/components/form-select";
@@ -259,10 +274,6 @@ export function CaseDetailPage() {
     );
   }
 
-  const latestOperation = [...detail.snapshot.operations]
-    .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-    .at(-1);
-
   const workflow = (
     <CaseWorkflowView
       snapshot={detail.snapshot}
@@ -317,7 +328,6 @@ export function CaseDetailPage() {
             incident={incident}
             report={exactReport}
             targetName={selectedTarget?.name ?? t("cases.unresolved")}
-            latestOperation={latestOperation}
             verificationCount={detail.snapshot.verification_attempts.length}
             progressVisible={showProgress}
             onToggleProgress={() => setShowProgress((visible) => !visible)}
@@ -447,14 +457,12 @@ export function CaseDetailPage() {
   );
 }
 
-type Operation = CaseSnapshot["operations"][number];
 type Report = CaseSnapshot["reports"][number];
 
 function CompletedCaseSummary({
   incident,
   report,
   targetName,
-  latestOperation,
   verificationCount,
   progressVisible,
   onToggleProgress,
@@ -462,12 +470,12 @@ function CompletedCaseSummary({
   incident: CaseSnapshot["case"];
   report: Report;
   targetName: string;
-  latestOperation?: Operation;
   verificationCount: number;
   progressVisible: boolean;
   onToggleProgress: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const narrative = completedNarrative(report.content);
 
   return (
     <Card>
@@ -494,25 +502,84 @@ function CompletedCaseSummary({
           </Button>
         </div>
 
-        <dl className="grid gap-5 border-t pt-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid overflow-hidden rounded-lg border lg:grid-cols-3 lg:divide-x">
+          <section className="space-y-3 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Search className="size-4 text-muted-foreground" aria-hidden="true" />
+              <h3>{t("cases.completionSummary.cause")}</h3>
+            </div>
+            <p className="text-sm leading-relaxed">
+              {narrative.cause ?? t("cases.completionSummary.causeUnavailable")}
+            </p>
+          </section>
+
+          <section className="space-y-3 border-t p-4 lg:border-t-0">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Wrench className="size-4 text-muted-foreground" aria-hidden="true" />
+              <h3>{t("cases.completionSummary.actions")}</h3>
+            </div>
+            {narrative.operations.length > 0 ? (
+              <ul className="space-y-3">
+                {narrative.operations.map((operation, index) => (
+                  <li key={`${operation.capability}-${operation.operation}-${index}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium">
+                        {operation.capability} / {operation.operation}
+                      </p>
+                      {operation.status && (
+                        <Badge variant="secondary">
+                          {translatedToken(t, "operationStatus", operation.status)}
+                        </Badge>
+                      )}
+                    </div>
+                    {operation.input && (
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {operation.input}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t("cases.completionSummary.noRemediation")}
+              </p>
+            )}
+          </section>
+
+          <section className="space-y-3 border-t p-4 lg:border-t-0">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ShieldCheck className="size-4 text-muted-foreground" aria-hidden="true" />
+              <h3>{t("cases.completionSummary.recoveryEvidence")}</h3>
+            </div>
+            <p className="text-sm leading-relaxed">
+              {narrative.conclusion ?? t("cases.completionSummary.conclusionUnavailable")}
+            </p>
+            {narrative.verifications.length > 0 && (
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {narrative.verifications.map((verification, index) => (
+                  <li key={`${verification.status}-${index}`}>
+                    {verification.status
+                      ? translatedToken(t, "verificationStatus", verification.status)
+                      : t("cases.completionSummary.verified")}
+                    {verification.facts ? ` · ${verification.facts}` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              {t("cases.completionSummary.monitoringState", {
+                state: t(`cases.alert.${incident.alert_state}`),
+              })}
+            </p>
+          </section>
+        </div>
+
+        <dl className="grid gap-5 border-t pt-5 sm:grid-cols-3">
           <SummaryField label={t("cases.completionSummary.target")} value={targetName} />
-          <SummaryField
-            label={t("cases.completionSummary.remediation")}
-            value={
-              latestOperation
-                ? `${latestOperation.capability} / ${latestOperation.operation}`
-                : t("cases.completionSummary.noRemediation")
-            }
-            detail={
-              latestOperation
-                ? translatedToken(t, "operationStatus", latestOperation.status)
-                : undefined
-            }
-          />
           <SummaryField
             label={t("cases.completionSummary.verification")}
             value={t("cases.completionSummary.verificationCount", { count: verificationCount })}
-            detail={t(`cases.alert.${incident.alert_state}`)}
           />
           <SummaryField
             label={t("cases.completionSummary.completedAt")}
@@ -525,6 +592,69 @@ function CompletedCaseSummary({
       </CardContent>
     </Card>
   );
+}
+
+type SummaryRecord = Record<string, unknown>;
+
+function completedNarrative(content: SummaryRecord) {
+  const proposals = recordList(content.proposals);
+  const operations = recordList(content.operations).map((operation) => ({
+    capability: stringField(operation.capability) ?? "Operation",
+    operation: stringField(operation.operation) ?? "unknown",
+    status: stringField(operation.status),
+    input: summarizeOperationInput(operation),
+  }));
+  const verifications = recordList(content.verifications).map((verification) => ({
+    status: stringField(verification.status),
+    facts: summarizeVerificationFacts(verification.facts),
+  }));
+  const recoveryTurn = recordList(content.resolver_turns)
+    .map((turn) => objectField(turn.decision))
+    .findLast((decision) => decision?.type === "recovery_conclusion");
+
+  return {
+    cause: proposals.map((proposal) => stringField(proposal.reason)).findLast(Boolean) ?? null,
+    operations,
+    verifications,
+    conclusion: recoveryTurn ? stringField(recoveryTurn.reason) : null,
+  };
+}
+
+function recordList(value: unknown): SummaryRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is SummaryRecord => typeof item === "object" && item !== null)
+    : [];
+}
+
+function objectField(value: unknown): SummaryRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as SummaryRecord)
+    : null;
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function summarizeOperationInput(operation: SummaryRecord) {
+  const selectors = objectField(operation.selectors);
+  const parameters = objectField(operation.parameters);
+  const input = {
+    ...(selectors && Object.keys(selectors).length > 0 ? { selectors } : {}),
+    ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
+  };
+
+  return Object.keys(input).length > 0 ? summarizeValue(input, "") : null;
+}
+
+function summarizeVerificationFacts(value: unknown) {
+  const facts = objectField(value);
+  if (!facts) return null;
+  const preferred = ["active_state", "sub_state", "status", "state", "health", "ready", "phase"];
+  const selected = Object.fromEntries(
+    preferred.filter((key) => facts[key] !== undefined).map((key) => [key, facts[key]]),
+  );
+  return summarizeValue(Object.keys(selected).length > 0 ? selected : facts, "");
 }
 
 function SummaryField({ label, value, detail }: { label: string; value: string; detail?: string }) {
