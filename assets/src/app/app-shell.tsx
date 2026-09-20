@@ -1,5 +1,5 @@
 import { BookOpenCheck, Boxes, FileText, RadioTower, Settings, ShieldCheck } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
@@ -51,10 +51,13 @@ export function AppShell() {
   const { account, signOut } = useAuthentication();
   const { t, i18n } = useTranslation();
   const location = useLocation();
+  const previousPathname = useRef(location.pathname);
   const initials = account?.email.slice(0, 2).toUpperCase() ?? "OP";
   const setLanguage = (language: string) => void i18n.changeLanguage(language);
 
   useEffect(() => {
+    if (previousPathname.current === location.pathname) return;
+    previousPathname.current = location.pathname;
     const frame = window.requestAnimationFrame(() => {
       document.getElementById("main-content")?.focus();
     });
