@@ -2,6 +2,7 @@ import {
   BookOpenCheck,
   Bot,
   Boxes,
+  Check,
   FileText,
   Globe2,
   Moon,
@@ -24,8 +25,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -165,21 +164,16 @@ export function AppShell() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-36">
-                <DropdownMenuRadioGroup
-                  value={resolvedTheme}
-                  onValueChange={(value) => {
-                    if (value === "light" || value === "dark") setTheme(value);
-                  }}
-                >
-                  <DropdownMenuRadioItem value="light">
-                    <Sun />
-                    {t("common.light")}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">
-                    <Moon />
-                    {t("common.dark")}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                <DropdownMenuItem onClick={() => setTheme("light")}>
+                  <Sun />
+                  {t("common.light")}
+                  {resolvedTheme === "light" && <Check className="ml-auto" />}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme("dark")}>
+                  <Moon />
+                  {t("common.dark")}
+                  {resolvedTheme === "dark" && <Check className="ml-auto" />}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <DropdownMenu>
@@ -194,16 +188,14 @@ export function AppShell() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-36">
-                <DropdownMenuRadioGroup
-                  value={normalizeLocale(i18n.resolvedLanguage)}
-                  onValueChange={(value) => void i18n.changeLanguage(value)}
-                >
-                  {supportedLocales.map(({ value, label }) => (
-                    <DropdownMenuRadioItem key={value} value={value}>
-                      {label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
+                {supportedLocales.map(({ value, label }) => (
+                  <DropdownMenuItem key={value} onClick={() => void i18n.changeLanguage(value)}>
+                    {label}
+                    {normalizeLocale(i18n.resolvedLanguage) === value && (
+                      <Check className="ml-auto" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
