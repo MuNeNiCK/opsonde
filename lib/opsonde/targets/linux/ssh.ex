@@ -26,7 +26,6 @@ defmodule Opsonde.Targets.Linux.SSH do
     "ExecMainPID" => "main_pid",
     "DefinitionSHA256" => "definition_sha256"
   }
-  @verifiable_fields ~w(load_state active_state sub_state unit_file_state need_daemon_reload definition_sha256)
 
   defmodule State do
     @moduledoc false
@@ -318,11 +317,9 @@ defmodule Opsonde.Targets.Linux.SSH do
   end
 
   defp verification_expected(expected) when is_map(expected) do
-    if Enum.all?(expected, fn {key, value} ->
-         key in @verifiable_fields and is_binary(value) and byte_size(value) in 1..1_024
-       end),
-       do: {:ok, expected},
-       else: {:error, :failed, "Linux verification expectation is invalid"}
+    if expected == %{"active_state" => "active"},
+      do: {:ok, expected},
+      else: {:error, :failed, "Linux verification expectation is invalid"}
   end
 
   defp verification_expected(_expected),
@@ -415,10 +412,18 @@ defmodule Opsonde.Targets.Linux.SSH do
   end
 
   defp service_verification_schema do
-    @verifiable_fields
-    |> Map.new(&{&1, fact_string(1_024, 1)})
-    |> facts_schema()
-    |> Map.put("minProperties", 1)
+    %{
+      "type" => "object",
+      "properties" => %{
+        "active_state" => %{
+          "type" => "string",
+          "enum" => ["active"],
+          "description" => "The canonical successful postcondition for linux.service.restart"
+        }
+      },
+      "required" => ["active_state"],
+      "additionalProperties" => false
+    }
   end
 
   defp journal_output_schema do

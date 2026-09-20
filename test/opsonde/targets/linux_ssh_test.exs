@@ -123,10 +123,23 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert Map.has_key?(service_tool.output_schema["properties"], "active_state")
     assert Map.has_key?(service_tool.output_schema["properties"], "sub_state")
 
-    assert MapSet.new(Map.keys(service_tool.verification_schema["properties"])) ==
-             MapSet.new(
-               ~w(load_state active_state sub_state unit_file_state need_daemon_reload definition_sha256)
-             )
+    assert service_tool.verification_schema["properties"] == %{
+             "active_state" => %{
+               "type" => "string",
+               "enum" => ["active"],
+               "description" => "The canonical successful postcondition for linux.service.restart"
+             }
+           }
+
+    assert service_tool.verification_schema["required"] == ["active_state"]
+    assert_schema_accepts!(service_tool.verification_schema, %{"active_state" => "active"})
+
+    assert_schema_rejects!(service_tool.verification_schema, %{
+      "active_state" => "active",
+      "sub_state" => "active"
+    })
+
+    assert_schema_rejects!(service_tool.verification_schema, %{"active_state" => "inactive"})
 
     assert effect.operation == "linux.service.restart"
 
@@ -211,7 +224,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         "linux.service.inspect",
         %{"unit" => unit},
         %{},
-        %{"active_state" => "active", "sub_state" => "running"}
+        %{"active_state" => "active"}
       )
 
     verification_clearance =
@@ -224,7 +237,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert facts["definition_sha256"] == @definition
 
-    not_verified = %{verification | expected: %{"active_state" => "inactive"}}
+    not_verified = %{verification | selectors: %{"unit" => "inactive.service"}}
     not_verified_clearance = Targets.clear_target_request!(not_verified, actor: context.operator)
 
     assert %Target.Verification{status: :not_verified} =
@@ -327,6 +340,11 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
   end
 
+  defp assert_schema_rejects!(schema, facts) do
+    assert {:ok, root} = JSV.build(schema, warnings: :silent)
+    assert {:error, _error} = JSV.validate(facts, root, cast: false)
+  end
+
   defp executor(commands) do
     fn command ->
       command = to_string(command)
@@ -349,6 +367,11 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
         String.contains?(command, "systemctl restart") ->
           {:ok, ""}
+
+        String.contains?(command, "systemctl show") and
+            String.contains?(command, "inactive.service") ->
+          {:ok,
+           "Id=inactive.service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=enabled\nFragmentPath=/etc/systemd/system/inactive.service\nDropInPaths=\nNeedDaemonReload=no\nExecMainPID=0\nDefinitionSHA256=#{@definition}\n"}
 
         String.contains?(command, "systemctl show") ->
           unit =
