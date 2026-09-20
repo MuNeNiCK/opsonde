@@ -13,7 +13,7 @@ defmodule Opsonde.AI.ReqLLM do
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
-  @resolver_reason_codepoints 125
+  @resolver_reason_codepoints 500
   @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
@@ -293,7 +293,7 @@ defmodule Opsonde.AI.ReqLLM do
         "Choose handoff only when no offered intent can make safe progress and a required value " <>
         "is absent from the supplied input. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
-        "the user payload. Keep reason concise and at most 500 UTF-8 bytes. Return exactly " <>
+        "the user payload. Keep reason concise and at most 500 characters. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
         "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
         "in the user payload.",

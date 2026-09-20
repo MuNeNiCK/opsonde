@@ -264,7 +264,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert schema["properties"]["reason"]["type"] == "string"
 
       if Map.has_key?(schema["properties"]["reason"], "maxLength") do
-        assert schema["properties"]["reason"]["maxLength"] == 125
+        assert schema["properties"]["reason"]["maxLength"] == 500
       end
 
       refute Map.has_key?(schema["properties"], "arguments_json")
@@ -382,7 +382,7 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "multilingual output stays within the byte-bounded AI contract", context do
-    reason = String.duplicate("界", 125)
+    reason = String.duplicate("界", 500)
     required_input = String.duplicate("界", 250)
 
     set_mode(context.agent, {
@@ -403,7 +403,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [resolver_request] = requests(context.agent)
     resolver_schema = output_schema(resolver_request)
-    assert resolver_schema["properties"]["reason"]["maxLength"] == 125
+    assert resolver_schema["properties"]["reason"]["maxLength"] == 500
 
     set_mode(context.agent, {
       :decision,
@@ -418,7 +418,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {
       :decision,
-      %{"type" => "handoff", "reason" => String.duplicate("界", 167), "required_input" => "x"}
+      %{"type" => "handoff", "reason" => String.duplicate("界", 501), "required_input" => "x"}
     })
 
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
