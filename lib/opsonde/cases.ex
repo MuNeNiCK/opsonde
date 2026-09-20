@@ -242,8 +242,8 @@ defmodule Opsonde.Cases do
         action: :review_source_context,
         args: [:case_id]
 
-      define :recovery_continuity_evidence,
-        action: :recovery_continuity,
+      define :target_continuity_evidence,
+        action: :target_continuity,
         args: [:case_id]
 
       define :evidence_by_idempotency,

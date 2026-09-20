@@ -16,7 +16,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, target} <- selected_target(incident),
-         {:ok, continuity} <- recovery_continuity(incident, target, evidence),
+         {:ok, continuity} <- target_continuity(incident, target, evidence),
          {:ok, relations} <- relations(target, incident, run),
          {:ok, tools} <- tools(target, run, invocation),
          request <-
@@ -72,10 +72,9 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp recovery_continuity(%{alert_state: state} = incident, target, evidence)
-       when state in [:recovered, :not_applicable] and not is_nil(target) do
+  defp target_continuity(incident, target, evidence) when not is_nil(target) do
     with {:ok, candidates} <-
-           Cases.recovery_continuity_evidence(incident.id, authorize?: false) do
+           Cases.target_continuity_evidence(incident.id, authorize?: false) do
       latest =
         Enum.find(candidates, fn candidate ->
           candidate.content["target_id"] == target.id
@@ -85,7 +84,7 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp recovery_continuity(_incident, _target, evidence), do: {:ok, evidence}
+  defp target_continuity(_incident, _target, evidence), do: {:ok, evidence}
 
   defp prepend_verified_continuity(
          evidence,

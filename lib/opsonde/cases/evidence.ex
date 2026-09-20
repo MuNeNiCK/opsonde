@@ -49,7 +49,7 @@ defmodule Opsonde.Cases.Evidence do
               )
     end
 
-    read :recovery_continuity do
+    read :target_continuity do
       argument :case_id, :uuid, allow_nil?: false
 
       filter expr(case_id == ^arg(:case_id) and kind == "target_verification")
@@ -120,7 +120,7 @@ defmodule Opsonde.Cases.Evidence do
     policy action([
              :projection_window,
              :review_source_context,
-             :recovery_continuity,
+             :target_continuity,
              :by_idempotency,
              :create_record,
              :append

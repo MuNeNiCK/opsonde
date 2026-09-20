@@ -8,6 +8,7 @@ defmodule Opsonde.OperationDeliveryTest do
     OperationDelivery,
     OperationWorker,
     ResolverDelivery,
+    ResolverProjection,
     VerificationDelivery,
     VerificationWorker
   }
@@ -784,6 +785,110 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert Enum.count(Cases.list_operations!(actor: context.admin), &(&1.case_id == incident.id)) ==
              1
+  end
+
+  test "a resumed firing Case receives verified continuity without stale observations",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal} =
+      authorized_proposal!("resume-investigation", context,
+        trigger_kind: :signal,
+        alert_state: :firing
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+             )
+
+    pending_case = Cases.get_case!(incident.id, authorize?: false)
+    verification_id = pending_case.pending_intent["verification_evidence_id"]
+    current_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        pending_case.id,
+        pending_case.revision,
+        current_run.id,
+        current_run.revision,
+        "resume-firing-after-verification",
+        "Resolver delivery failed after verification",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue investigation after verified Target progress",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    capabilities = %Target.Capabilities{
+      observations: [
+        %Target.Operation{
+          capability: "observe.service",
+          operation: "service.inspect",
+          description: "Inspect service state",
+          input_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "selectors" => %{"type" => "object"},
+              "parameters" => %{"type" => "object"}
+            },
+            "required" => ["selectors", "parameters"]
+          },
+          output_schema: %{"type" => "object"},
+          verification_schema: %{"type" => "object"}
+        }
+      ],
+      effects: []
+    }
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               resumed_turn.id,
+               %AI.Selection{
+                 role: :resolver,
+                 provider_id: context.resolver_provider.id,
+                 provider_revision: context.resolver_provider.revision,
+                 source: :assignment
+               },
+               invocation({:ok, capabilities})
+             )
+
+    assert request.alert_state == :firing
+    assert [%AI.Evidence{id: ^verification_id, kind: "target_verification"}] = request.evidence
+    assert request.proposal_tools == []
+    assert [%AI.ObservationTool{operation: "service.inspect"}] = request.observation_tools
   end
 
   test "remaining symptoms create a new Proposal without replaying the prior Operation",

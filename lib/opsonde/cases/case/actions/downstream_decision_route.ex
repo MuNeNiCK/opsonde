@@ -272,7 +272,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp validate_continuity_verification(evidence_ids, incident) do
     with {:ok, candidates} <-
-           Cases.recovery_continuity_evidence(incident.id, authorize?: false),
+           Cases.target_continuity_evidence(incident.id, authorize?: false),
          %{} = latest <-
            Enum.find(candidates, &(&1.content["target_id"] == incident.selected_target_id)),
          true <-

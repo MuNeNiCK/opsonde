@@ -234,13 +234,22 @@ defmodule Opsonde.AI.ReqLLM do
         "proposal, recovery, or handoff. Never execute a tool. Never invent an identifier. " <>
         "Recovery is a terminal intent: choose it when the monitoring source is recovered " <>
         "or not applicable and supplied target_verification Evidence has status verified " <>
-        "and proves restored health. Cite that Evidence. Propose an effect only for an " <>
+        "and proves restored health. Cite that Evidence. A verified target_verification " <>
+        "proves only the expected fields for its Operation; it does not establish that every " <>
+        "condition in the Case is resolved. Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
         "tool's verification_schema in the user payload. Base every intent only on supplied " <>
-        "evidence and preserve uncertainty. Write the " <>
+        "evidence and preserve uncertainty. Proposal tools may be withheld until a current " <>
+        "observation establishes their preconditions. If supplied Evidence shows an " <>
+        "unresolved condition, no proposal tool is available, and a suitable observation " <>
+        "tool is supplied, choose that observation before handoff. Select the narrowest " <>
+        "observation whose output directly examines the unresolved condition. Fill its " <>
+        "selectors and parameters from matching values in the supplied objective or Evidence. " <>
+        "Choose handoff only when no offered intent can make safe progress and a required value " <>
+        "is absent from the supplied input. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
         "the user payload. Keep reason concise and at most 500 UTF-8 bytes. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
