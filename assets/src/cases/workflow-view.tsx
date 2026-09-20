@@ -5,13 +5,14 @@ import {
   CircleAlert,
   CircleDashed,
   FileText,
+  ListTree,
   Search,
   ShieldCheck,
   Stethoscope,
-  TerminalSquare,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
@@ -69,6 +70,22 @@ export function CaseWorkflowView(props: Props) {
   const { t, i18n } = useTranslation();
   const projection = projectWorkflow(props);
   const log = buildLog(props, t);
+  const logContainer = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+
+  useEffect(() => {
+    const node = logContainer.current;
+    if (!node || !followLatest.current) return;
+    window.requestAnimationFrame(() =>
+      node.scrollTo({ top: node.scrollHeight, behavior: "smooth" }),
+    );
+  }, [log.length]);
+
+  function trackLogPosition() {
+    const node = logContainer.current;
+    if (!node) return;
+    followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+  }
 
   return (
     <section className="space-y-4" aria-labelledby="case-workflow-title">
@@ -109,26 +126,27 @@ export function CaseWorkflowView(props: Props) {
         </CardContent>
       </Card>
 
-      <Card className="gap-0 overflow-hidden border-zinc-800 bg-zinc-950 py-0 text-zinc-100 shadow-sm dark:bg-black">
-        <CardHeader className="border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
-          <CardTitle className="flex items-center justify-between gap-3 text-sm text-zinc-100">
-            <span className="flex items-center gap-3">
-              <span className="flex gap-1.5" aria-hidden="true">
-                <span className="size-2.5 rounded-full bg-red-400" />
-                <span className="size-2.5 rounded-full bg-amber-400" />
-                <span className="size-2.5 rounded-full bg-emerald-400" />
-              </span>
-              <TerminalSquare className="size-4 text-zinc-400" />
+      <Card className="gap-0 overflow-hidden py-0">
+        <CardHeader className="border-b bg-muted/30 px-4 py-3">
+          <CardTitle className="flex items-center justify-between gap-3 text-sm">
+            <span className="flex items-center gap-2">
+              <ListTree className="size-4 text-muted-foreground" />
               {t("cases.workflow.logTitle")}
             </span>
-            <span className="font-mono text-xs font-normal text-zinc-500">
+            <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
               {t("cases.workflow.logCount", { count: log.length })}
             </span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="max-h-[32rem] overflow-auto px-0 font-mono text-xs">
+        <CardContent
+          ref={logContainer}
+          className="max-h-[32rem] overflow-auto px-0 text-sm"
+          onScroll={trackLogPosition}
+        >
           {log.length === 0 ? (
-            <p className="px-4 py-8 text-center text-zinc-500">{t("cases.workflow.noLogs")}</p>
+            <p className="px-4 py-8 text-center text-muted-foreground">
+              {t("cases.workflow.noLogs")}
+            </p>
           ) : (
             log.map((entry, index) => (
               <ExecutionLogRow
@@ -232,20 +250,24 @@ function ExecutionLogRow({
 }) {
   const { t } = useTranslation();
   return (
-    <details className="group border-b border-zinc-800/80 last:border-b-0" open={latest}>
-      <summary className="grid cursor-pointer list-none grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-3 px-4 py-2.5 hover:bg-zinc-900/80">
-        <ChevronRight className="mt-0.5 size-3.5 text-zinc-500 transition-transform group-open:rotate-90" />
-        <time className="whitespace-nowrap text-zinc-500">{formatLogTime(entry.at, locale)}</time>
+    <details className="group border-b last:border-b-0" open={latest}>
+      <summary className="grid cursor-pointer list-none grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-3 px-4 py-3 hover:bg-muted/40">
+        <ChevronRight className="mt-0.5 size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
+        <time className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+          {formatLogTime(entry.at, locale)}
+        </time>
         <span className="min-w-0">
-          <span className={entry.failed ? "text-red-300" : "text-cyan-300"}>
+          <span className={entry.failed ? "text-destructive" : "font-medium text-primary"}>
             [{t(`cases.workflow.stages.${entry.stage}.label`)}]
           </span>{" "}
-          <span className="text-zinc-400">{entry.source}</span>{" "}
-          <span className={entry.failed ? "text-red-200" : "text-zinc-100"}>{entry.summary}</span>
+          <span className="text-muted-foreground">{entry.source}</span>{" "}
+          <span className={entry.failed ? "text-destructive" : "text-foreground"}>
+            {entry.summary}
+          </span>
         </span>
       </summary>
       {entry.details !== undefined && (
-        <pre className="overflow-x-auto border-t border-zinc-800/70 bg-black/40 px-10 py-3 text-[11px] leading-relaxed text-zinc-400">
+        <pre className="overflow-x-auto border-t bg-muted/25 px-10 py-3 font-mono text-xs leading-relaxed text-muted-foreground">
           {JSON.stringify(entry.details, null, 2)}
         </pre>
       )}

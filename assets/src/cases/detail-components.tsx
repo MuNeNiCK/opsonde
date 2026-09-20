@@ -1,5 +1,5 @@
-import { Children, useState, type FormEvent, type ReactNode } from "react";
-import { CircleAlert, RefreshCw, ShieldCheck } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { CircleAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
@@ -10,91 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type Proposal = components["schemas"]["Proposal"];
-
-export function PrimaryAction({
-  incident,
-  awaitingProposal,
-  canOperate,
-  pending,
-  claim,
-}: {
-  incident: CaseSnapshot["case"];
-  awaitingProposal?: Proposal;
-  canOperate: boolean;
-  pending: string | null;
-  claim: () => void;
-}) {
-  const { t } = useTranslation();
-
-  if (!canOperate || ["resolved", "cancelled"].includes(incident.status)) return null;
-
-  if (awaitingProposal) {
-    return (
-      <Button asChild size="sm">
-        <a href={"#proposal-" + awaitingProposal.id}>{t("cases.reviewProposal")}</a>
-      </Button>
-    );
-  }
-
-  if (incident.status === "needs_attention") {
-    return (
-      <Button asChild size="sm">
-        <a href="#resume-resolution">{t("cases.resume")}</a>
-      </Button>
-    );
-  }
-
-  if (incident.alert_state === "firing" && incident.current_owner_id === null) {
-    return (
-      <Button size="sm" disabled={pending !== null} onClick={claim}>
-        {pending === "claim" && <Spinner />}
-        {t("cases.claim")}
-      </Button>
-    );
-  }
-
-  return null;
-}
-
-export function ContextCard({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="[&_svg]:size-4">{icon}</span>
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
-export function StateIcon({ state }: { state: CaseSnapshot["case"]["status"] }) {
-  if (state === "resolved") {
-    return <ShieldCheck className="mt-1 size-6 shrink-0 text-emerald-600" aria-hidden="true" />;
-  }
-
-  if (state === "needs_attention" || state === "cancelled") {
-    return <CircleAlert className="mt-1 size-6 shrink-0 text-destructive" aria-hidden="true" />;
-  }
-
-  return <RefreshCw className="mt-1 size-6 shrink-0 text-primary" aria-hidden="true" />;
-}
 
 export function ProposalCard({
   proposal,
@@ -332,14 +252,6 @@ export function NumberField({
     </div>
   );
 }
-export function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-words">{value}</dd>
-    </div>
-  );
-}
 export function DataBlock({ title, value }: { title?: string; value: unknown }) {
   const { t } = useTranslation();
   return (
@@ -354,57 +266,6 @@ export function DataBlock({ title, value }: { title?: string; value: unknown }) 
           {JSON.stringify(value, null, 2)}
         </pre>
       </details>
-    </div>
-  );
-}
-export function Empty({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-export function RecordCard({
-  title,
-  empty,
-  children,
-}: {
-  title: string;
-  empty: string;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {Children.count(children) > 0 ? (
-          children
-        ) : (
-          <p className="text-sm text-muted-foreground">{empty}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-export function HistoryRow({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <div>
-        <p className="font-medium">{title}</p>
-        {subtitle && <p className="break-words text-sm text-muted-foreground">{subtitle}</p>}
-      </div>
-      {children}
-      <Separator />
     </div>
   );
 }

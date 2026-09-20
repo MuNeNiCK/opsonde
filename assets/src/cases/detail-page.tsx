@@ -1,36 +1,19 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, CircleAlert, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleAlert, History, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
-import {
-  ContextCard,
-  DataBlock,
-  Empty,
-  HistoryRow,
-  Metric,
-  PrimaryAction,
-  ProposalCard,
-  RecordCard,
-  ResumeCard,
-  StateIcon,
-} from "@/cases/detail-components";
-import {
-  describeSituation,
-  formatDate,
-  formValue,
-  parseAuthorityMode,
-  translatedToken,
-} from "@/cases/detail-utils";
+import { ProposalCard, ResumeCard } from "@/cases/detail-components";
+import { formatDate, formValue, parseAuthorityMode, translatedToken } from "@/cases/detail-utils";
 import { CaseWorkflowView } from "@/cases/workflow-view";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
@@ -148,12 +131,13 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
 
 export function CaseDetailPage() {
   const { caseId = "" } = useParams();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { account } = useAuthentication();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [confirmCancellation, setConfirmCancellation] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
   const canOperate = account?.role === "admin" || account?.role === "operator";
   const caseStatus = detail?.snapshot.case.status;
 
@@ -211,10 +195,10 @@ export function CaseDetailPage() {
     (proposal) => proposal.status === "awaiting_human",
   );
   const selectedTarget = detail.targets.find((target) => target.id === incident.selected_target_id);
-  const accessMethods = detail.methods
-    .filter((method) => method.target_id === incident.selected_target_id && method.active)
-    .sort((left, right) => left.priority - right.priority);
-  const situation = describeSituation(incident, awaitingProposal, t);
+  const exactReport = detail.snapshot.reports.find(
+    (report) => report.case_revision === incident.revision,
+  );
+  const complete = incident.status === "resolved" && exactReport !== undefined;
   const targetName = (id: string | null) =>
     id ? (detail.targets.find((target) => target.id === id)?.name ?? id) : t("cases.unresolved");
   const providerName = (id: string) => detail.providers.find((item) => item.id === id)?.name ?? id;
@@ -275,6 +259,22 @@ export function CaseDetailPage() {
     );
   }
 
+  const latestOperation = [...detail.snapshot.operations]
+    .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+    .at(-1);
+
+  const workflow = (
+    <CaseWorkflowView
+      snapshot={detail.snapshot}
+      timeline={detail.timeline}
+      turns={detail.turns}
+      evidence={detail.evidence}
+      approvals={detail.approvals}
+      reviews={detail.reviews}
+      reports={detail.snapshot.reports}
+    />
+  );
+
   return (
     <div className="space-y-8 p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -311,395 +311,228 @@ export function CaseDetailPage() {
         </Alert>
       )}
 
-      <CaseWorkflowView
-        snapshot={detail.snapshot}
-        timeline={detail.timeline}
-        turns={detail.turns}
-        evidence={detail.evidence}
-        approvals={detail.approvals}
-        reviews={detail.reviews}
-        reports={detail.snapshot.reports}
-      />
+      {complete ? (
+        <>
+          <CompletedCaseSummary
+            incident={incident}
+            report={exactReport}
+            targetName={selectedTarget?.name ?? t("cases.unresolved")}
+            latestOperation={latestOperation}
+            verificationCount={detail.snapshot.verification_attempts.length}
+            progressVisible={showProgress}
+            onToggleProgress={() => setShowProgress((visible) => !visible)}
+          />
+          {showProgress && workflow}
+        </>
+      ) : (
+        <>
+          {workflow}
 
-      <Card className="overflow-hidden">
-        <CardContent className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:p-6">
-          <div className="space-y-5">
-            <div className="flex items-start gap-3">
-              <StateIcon state={incident.status} />
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  {t("cases.whatHappened")}
-                </p>
-                <p className="mt-1 text-lg font-semibold">{situation.happened}</p>
-                <p className="mt-2 text-sm text-muted-foreground">{situation.doing}</p>
-              </div>
-            </div>
-            {situation.blocker && (
-              <Alert variant={incident.status === "needs_attention" ? "destructive" : "default"}>
-                <CircleAlert />
-                <AlertDescription>
-                  <p>{situation.blocker}</p>
-                  {situation.blockerDiagnostic && (
-                    <details className="mt-2 text-xs">
-                      <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-                      <p className="mt-1">{situation.blockerDiagnostic}</p>
-                    </details>
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-          <div className="space-y-3 rounded-lg border bg-muted/35 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {t("cases.nextAction")}
-            </p>
-            <p className="text-sm font-medium">{situation.action}</p>
-            <PrimaryAction
-              incident={incident}
-              awaitingProposal={awaitingProposal}
-              canOperate={canOperate}
-              pending={pending}
-              claim={() => void lifecycle("claim")}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        <ContextCard title={t("cases.affectedTarget")} icon={<Wrench />}>
-          <p className="font-medium">{selectedTarget?.name ?? t("cases.unresolved")}</p>
-          {selectedTarget ? (
-            <p className="mt-1 text-sm text-muted-foreground">
-              {selectedTarget.kind} · {selectedTarget.platform}
-            </p>
-          ) : (
-            <p className="mt-1 text-sm text-muted-foreground">{t("cases.targetPending")}</p>
-          )}
-        </ContextCard>
-        <ContextCard title={t("cases.accessPaths")} icon={<ShieldCheck />}>
-          {accessMethods.length > 0 ? (
-            <div className="space-y-2">
-              {accessMethods.map((method, index) => (
-                <div key={method.id} className="text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{method.name}</span>
-                    {index === 0 && <Badge variant="outline">{t("cases.preferred")}</Badge>}
-                  </div>
-                  <p className="break-all text-muted-foreground">
-                    {method.method} · {method.endpoint}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("cases.noAccessPaths")}</p>
-          )}
-        </ContextCard>
-        <ContextCard title={t("cases.caseControl")} icon={<ShieldCheck />}>
-          <dl className="grid grid-cols-2 gap-3 text-sm">
-            <Metric
-              label={t("cases.owner")}
-              value={
-                detail.accounts.find((item) => item.id === incident.current_owner_id)?.email ??
-                (incident.current_owner_id === null
-                  ? t("cases.unclaimed")
-                  : incident.current_owner_id === account?.id
-                    ? t("cases.ownerYou")
-                    : t("cases.ownerAssigned"))
-              }
-            />
-            <Metric
-              label={t("cases.alertState")}
-              value={t("cases.alert." + incident.alert_state)}
-            />
-            <Metric
-              label={t("cases.authority")}
-              value={t("setup.modes." + incident.authority_mode + ".name")}
-            />
-            <Metric
-              label={t("cases.generation")}
-              value={latestRun ? String(latestRun.generation) : t("cases.notStarted")}
-            />
-          </dl>
-        </ContextCard>
-      </section>
-
-      {incident.status === "needs_attention" && latestRun && canOperate && (
-        <ResumeCard
-          incident={incident}
-          run={latestRun}
-          pending={pending === "resume"}
-          onSubmit={resume}
-        />
-      )}
-
-      <section className="space-y-4">
-        <h2 className="text-xl font-semibold">{t("cases.resolution")}</h2>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {detail.snapshot.resolution_runs.map((run) => (
-            <Card key={run.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle>{t("cases.runGeneration", { generation: run.generation })}</CardTitle>
-                  <Badge variant={run.active ? "default" : "secondary"}>
-                    {t(`cases.runStatus.${run.status}`)}
-                  </Badge>
-                </div>
-                <CardDescription>
-                  {formatDate(run.started_at, i18n.resolvedLanguage)} ·{" "}
-                  {t(`setup.modes.${run.authority_mode}.name`)}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                  {Object.entries(run.counters).map(([key, value]) => (
-                    <Metric key={key} label={t(`cases.counters.${key}`)} value={String(value)} />
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-xl font-semibold">{t("cases.proposals")}</h2>
-        <div className="space-y-4">
-          {detail.snapshot.proposals.map((proposal) => (
-            <ProposalCard
-              key={proposal.id}
-              proposal={proposal}
-              target={targetName(proposal.target_id)}
-              method={methodName(proposal.access_method_id)}
-              provider={providerName(proposal.provider_id)}
-              canOperate={canOperate}
-              pending={pending}
-              decide={(decision, reason) =>
-                mutate(`proposal-${proposal.id}`, () =>
-                  apiClient.POST("/api/v1/proposals/{id}/decision", {
-                    params: { path: { id: proposal.id } },
-                    body: {
-                      proposal: {
-                        expected_revision: proposal.revision,
-                        proposal_digest: proposal.proposal_digest,
-                        decision,
-                        reason,
+          {awaitingProposal && (
+            <section className="space-y-3" aria-labelledby="case-required-decision">
+              <h2 id="case-required-decision" className="text-xl font-semibold">
+                {t("cases.requiredDecision")}
+              </h2>
+              <ProposalCard
+                proposal={awaitingProposal}
+                target={targetName(awaitingProposal.target_id)}
+                method={methodName(awaitingProposal.access_method_id)}
+                provider={providerName(awaitingProposal.provider_id)}
+                canOperate={canOperate}
+                pending={pending}
+                decide={(decision, reason) =>
+                  mutate(`proposal-${awaitingProposal.id}`, () =>
+                    apiClient.POST("/api/v1/proposals/{id}/decision", {
+                      params: { path: { id: awaitingProposal.id } },
+                      body: {
+                        proposal: {
+                          expected_revision: awaitingProposal.revision,
+                          proposal_digest: awaitingProposal.proposal_digest,
+                          decision,
+                          reason,
+                        },
                       },
-                    },
-                  }),
-                )
-              }
-            />
-          ))}
-          {detail.snapshot.proposals.length === 0 && <Empty>{t("cases.noProposals")}</Empty>}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-xl font-semibold">{t("cases.effectsAndVerification")}</h2>
-        <div className="space-y-4">
-          {detail.snapshot.operations.map((operation) => {
-            const attempt = detail.snapshot.verification_attempts.find(
-              (item) => item.operation_id === operation.id,
-            );
-            return (
-              <Card key={operation.id}>
-                <CardHeader>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <CardTitle>
-                      {operation.capability} / {operation.operation}
-                    </CardTitle>
-                    <Badge variant="secondary">
-                      {translatedToken(t, "operationStatus", operation.status)}
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    {targetName(operation.target_id)} · {methodName(operation.access_method_id)}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-5 lg:grid-cols-2">
-                  <DataBlock
-                    title={t("cases.effectRequest")}
-                    value={{ selectors: operation.selectors, parameters: operation.parameters }}
-                  />
-                  <DataBlock
-                    title={t("cases.effectResult")}
-                    value={{
-                      category: operation.outcome_category,
-                      reference: operation.reference,
-                      details: operation.result_details,
-                    }}
-                  />
-                  {attempt && (
-                    <>
-                      <DataBlock
-                        title={`${t("cases.verification")} · ${attempt.status}`}
-                        value={{
-                          capability: attempt.capability,
-                          operation: attempt.operation,
-                          selectors: attempt.selectors,
-                          parameters: attempt.parameters,
-                          expected: attempt.expected,
-                        }}
-                      />
-                      <DataBlock
-                        title={t("cases.verificationResult")}
-                        value={{
-                          category: attempt.outcome_category,
-                          facts: attempt.facts,
-                          evidence: attempt.provider_evidence,
-                          observed_at: attempt.observed_at,
-                        }}
-                      />
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-          {detail.snapshot.operations.length === 0 && <Empty>{t("cases.noEffects")}</Empty>}
-        </div>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-2">
-        <RecordCard title={t("cases.turns")} empty={t("cases.noTurns")}>
-          {[...detail.turns].reverse().map((turn) => (
-            <HistoryRow
-              key={turn.id}
-              title={t("cases.turnTitle", { ordinal: turn.ordinal })}
-              subtitle={translatedToken(t, "progress", turn.progress_kind ?? turn.status)}
-            >
-              {turn.failure_message && (
-                <p className="text-sm text-destructive">
-                  {translatedToken(t, "failure", turn.failure_category ?? "failed")}
-                </p>
-              )}
-              <DataBlock
-                value={{
-                  intent: turn.intent,
-                  outcome: turn.outcome,
-                  decision: turn.decision,
-                  failure_category: turn.failure_category,
-                  failure_message: turn.failure_message,
-                }}
+                    }),
+                  )
+                }
               />
-            </HistoryRow>
-          ))}
-        </RecordCard>
-        <RecordCard title={t("cases.evidence")} empty={t("cases.noEvidence")}>
-          {[...detail.evidence].reverse().map((item) => (
-            <HistoryRow
-              key={item.id}
-              title={translatedToken(t, "evidenceKind", item.kind) + " · " + item.source}
-              subtitle={`${item.source_ref} · ${formatDate(item.observed_at, i18n.resolvedLanguage)}`}
-            >
-              <DataBlock value={item.content} />
-            </HistoryRow>
-          ))}
-        </RecordCard>
-        <RecordCard title={t("cases.authorityOutcomes")} empty={t("cases.noAuthorityOutcomes")}>
-          {[...detail.approvals].reverse().map((item) => (
-            <HistoryRow
-              key={item.id}
-              title={
-                translatedToken(t, "decisionSource", item.source) +
-                " · " +
-                translatedToken(t, "decision", item.decision)
-              }
-              subtitle={item.reason}
-            />
-          ))}
-          {[...detail.reviews].reverse().map((item) => (
-            <HistoryRow
-              key={item.id}
-              title={t("cases.reviewer") + " · " + translatedToken(t, "decision", item.verdict)}
-              subtitle={`${item.selection_source} · ${item.reason}`}
-            />
-          ))}
-        </RecordCard>
-        <RecordCard title={t("cases.timeline")} empty={t("cases.noTimeline")}>
-          {[...detail.timeline].reverse().map((item) => (
-            <HistoryRow
-              key={item.id}
-              title={translatedToken(t, "event", item.type)}
-              subtitle={formatDate(item.inserted_at, i18n.resolvedLanguage)}
-            />
-          ))}
-        </RecordCard>
-      </section>
+            </section>
+          )}
 
-      {canOperate && !["resolved", "cancelled"].includes(incident.status) && (
-        <details className="rounded-lg border bg-card p-4">
-          <summary className="cursor-pointer font-medium">{t("cases.caseControls")}</summary>
-          <div className="mt-4 space-y-5">
-            {account?.role === "admin" && detail.accounts.length > 0 && (
-              <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
-                <div className="min-w-64 space-y-2">
-                  <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
-                  <FormSelect
-                    id="handoff-owner"
-                    name="owner_id"
-                    defaultValue={incident.current_owner_id ?? account.id}
-                    options={detail.accounts
-                      .filter((item) => item.role !== "viewer")
-                      .map((item) => ({ value: item.id, label: item.email }))}
-                  />
-                </div>
-                <Button type="submit" size="sm" variant="outline" disabled={pending !== null}>
-                  {pending === "handoff" && <Spinner />}
-                  {t("cases.handoff")}
-                </Button>
-              </form>
-            )}
-            <Separator />
-            {!confirmCancellation ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={pending !== null || incident.cancel_requested}
-                onClick={() => setConfirmCancellation(true)}
-              >
-                {t("cases.cancel")}
-              </Button>
-            ) : (
-              <Alert variant="destructive">
-                <CircleAlert />
-                <AlertDescription>
-                  <p>{t("cases.cancelConfirmation")}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={pending !== null}
-                      onClick={() => void lifecycle("cancel")}
-                    >
-                      {pending === "cancel" && <Spinner />}
-                      {t("cases.confirmCancel")}
+          {incident.status === "needs_attention" && latestRun && canOperate && (
+            <ResumeCard
+              incident={incident}
+              run={latestRun}
+              pending={pending === "resume"}
+              onSubmit={resume}
+            />
+          )}
+
+          {canOperate && !["resolved", "cancelled"].includes(incident.status) && (
+            <details className="rounded-lg border p-4">
+              <summary className="cursor-pointer font-medium">{t("cases.caseControls")}</summary>
+              <div className="mt-4 space-y-5">
+                {incident.current_owner_id === null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pending !== null}
+                    onClick={() => void lifecycle("claim")}
+                  >
+                    {pending === "claim" && <Spinner />}
+                    {t("cases.claim")}
+                  </Button>
+                )}
+                {account?.role === "admin" && detail.accounts.length > 0 && (
+                  <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
+                    <div className="min-w-64 space-y-2">
+                      <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
+                      <FormSelect
+                        id="handoff-owner"
+                        name="owner_id"
+                        defaultValue={incident.current_owner_id ?? account.id}
+                        options={detail.accounts
+                          .filter((item) => item.role !== "viewer")
+                          .map((item) => ({ value: item.id, label: item.email }))}
+                      />
+                    </div>
+                    <Button type="submit" size="sm" variant="outline" disabled={pending !== null}>
+                      {pending === "handoff" && <Spinner />}
+                      {t("cases.handoff")}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setConfirmCancellation(false)}
-                    >
-                      {t("common.cancel")}
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-        </details>
+                  </form>
+                )}
+                <Separator />
+                {!confirmCancellation ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={pending !== null || incident.cancel_requested}
+                    onClick={() => setConfirmCancellation(true)}
+                  >
+                    {t("cases.cancel")}
+                  </Button>
+                ) : (
+                  <Alert variant="destructive">
+                    <CircleAlert />
+                    <AlertDescription>
+                      <p>{t("cases.cancelConfirmation")}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={pending !== null}
+                          onClick={() => void lifecycle("cancel")}
+                        >
+                          {pending === "cancel" && <Spinner />}
+                          {t("cases.confirmCancel")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setConfirmCancellation(false)}
+                        >
+                          {t("common.cancel")}
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            </details>
+          )}
+        </>
       )}
+    </div>
+  );
+}
 
-      <details className="rounded-lg border bg-card p-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          {t("cases.caseDiagnostics")}
-        </summary>
-        <p className="mt-3 font-mono text-xs text-muted-foreground">{incident.id}</p>
-        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs">
-          {JSON.stringify(detail.snapshot, null, 2)}
-        </pre>
-      </details>
+type Operation = CaseSnapshot["operations"][number];
+type Report = CaseSnapshot["reports"][number];
+
+function CompletedCaseSummary({
+  incident,
+  report,
+  targetName,
+  latestOperation,
+  verificationCount,
+  progressVisible,
+  onToggleProgress,
+}: {
+  incident: CaseSnapshot["case"];
+  report: Report;
+  targetName: string;
+  latestOperation?: Operation;
+  verificationCount: number;
+  progressVisible: boolean;
+  onToggleProgress: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+
+  return (
+    <Card>
+      <CardContent className="space-y-6 p-5 lg:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <h2 className="text-xl font-semibold">{t("cases.completionSummary.title")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("cases.completionSummary.description")}
+              </p>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={onToggleProgress}>
+            <History />
+            {t(
+              progressVisible
+                ? "cases.completionSummary.hideProgress"
+                : "cases.completionSummary.showProgress",
+            )}
+          </Button>
+        </div>
+
+        <dl className="grid gap-5 border-t pt-5 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryField label={t("cases.completionSummary.target")} value={targetName} />
+          <SummaryField
+            label={t("cases.completionSummary.remediation")}
+            value={
+              latestOperation
+                ? `${latestOperation.capability} / ${latestOperation.operation}`
+                : t("cases.completionSummary.noRemediation")
+            }
+            detail={
+              latestOperation
+                ? translatedToken(t, "operationStatus", latestOperation.status)
+                : undefined
+            }
+          />
+          <SummaryField
+            label={t("cases.completionSummary.verification")}
+            value={t("cases.completionSummary.verificationCount", { count: verificationCount })}
+            detail={t(`cases.alert.${incident.alert_state}`)}
+          />
+          <SummaryField
+            label={t("cases.completionSummary.completedAt")}
+            value={formatDate(report.generated_at, i18n.resolvedLanguage)}
+            detail={t("cases.completionSummary.report", {
+              language: report.language.toUpperCase(),
+            })}
+          />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SummaryField({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
+      {detail && <dd className="mt-1 text-xs text-muted-foreground">{detail}</dd>}
     </div>
   );
 }
