@@ -58,6 +58,7 @@ defmodule Opsonde.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:ash_state_machine, "~> 0.2.13"},
       {:req_llm, "~> 1.24"},
       {:req, "~> 0.7"},
       {:saxy, "~> 1.6"},

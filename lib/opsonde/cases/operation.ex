@@ -3,7 +3,8 @@ defmodule Opsonde.Cases.Operation do
     otp_app: :opsonde,
     domain: Opsonde.Cases,
     authorizers: [Ash.Policy.Authorizer],
-    data_layer: AshPostgres.DataLayer
+    data_layer: AshPostgres.DataLayer,
+    extensions: [AshStateMachine]
 
   postgres do
     table "operations"
@@ -13,6 +14,21 @@ defmodule Opsonde.Cases.Operation do
       index [:case_id]
       index [:resolution_run_id]
       index [:target_id]
+    end
+  end
+
+  state_machine do
+    state_attribute :status
+    initial_states [:queued]
+    default_initial_state :queued
+
+    transitions do
+      transition :mark_dispatching, from: :queued, to: :dispatching
+      transition :record_no_send, from: :queued, to: :failed
+
+      transition :record_outcome,
+        from: :dispatching,
+        to: [:applied, :failed, :partial, :unknown]
     end
   end
 
@@ -42,7 +58,6 @@ defmodule Opsonde.Cases.Operation do
         :target_id,
         :access_method_id,
         :provider_id,
-        :status,
         :case_generation,
         :authority_mode,
         :proposal_revision,
@@ -58,8 +73,7 @@ defmodule Opsonde.Cases.Operation do
         :idempotency_key,
         :authorization_digest,
         :policy_context,
-        :accepted_at,
-        :revision
+        :accepted_at
       ]
 
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
@@ -71,9 +85,8 @@ defmodule Opsonde.Cases.Operation do
       accept [:dispatch_started_at]
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      filter expr(status == :queued)
       validate Opsonde.Validations.CurrentRevision
-      change set_attribute(:status, :dispatching)
+      change transition_state(:dispatching)
       change optimistic_lock(:revision)
     end
 
@@ -81,12 +94,11 @@ defmodule Opsonde.Cases.Operation do
       accept [:status, :outcome_category, :reference, :result_details, :completed_at]
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      filter expr(status == :dispatching)
       validate Opsonde.Validations.CurrentRevision
-      validate attribute_in(:status, [:applied, :failed, :partial, :unknown])
       validate present(:completed_at)
       validate present(:outcome_category)
       validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
+      change Opsonde.Cases.Operation.Changes.TransitionOutcome
       change optimistic_lock(:revision)
     end
 
@@ -94,12 +106,11 @@ defmodule Opsonde.Cases.Operation do
       accept [:outcome_category, :result_details, :completed_at]
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      filter expr(status == :queued)
       validate Opsonde.Validations.CurrentRevision
       validate present(:completed_at)
       validate present(:outcome_category)
       validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
-      change set_attribute(:status, :failed)
+      change transition_state(:failed)
       change optimistic_lock(:revision)
     end
 
@@ -140,11 +151,6 @@ defmodule Opsonde.Cases.Operation do
 
   attributes do
     uuid_primary_key :id, writable?: true
-
-    attribute :status, :atom,
-      allow_nil?: false,
-      public?: true,
-      constraints: [one_of: [:queued, :dispatching, :applied, :failed, :partial, :unknown]]
 
     attribute :case_generation, :integer, allow_nil?: false, public?: true, constraints: [min: 1]
 

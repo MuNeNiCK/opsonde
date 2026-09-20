@@ -123,7 +123,6 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         target_id: proposal.target_id,
         access_method_id: proposal.access_method_id,
         provider_id: proposal.provider_id,
-        status: :queued,
         case_generation: proposal.case_generation,
         authority_mode: proposal.authority_mode,
         proposal_revision: proposal.revision,
@@ -144,8 +143,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
               %{"id" => id, "revision" => revision}
             end)
         },
-        accepted_at: DateTime.utc_now(),
-        revision: 1
+        accepted_at: DateTime.utc_now()
       },
       authorize?: false
     )

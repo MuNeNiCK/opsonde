@@ -1,5 +1,6 @@
 [
   import_deps: [
+    :ash_state_machine,
     :oban,
     :open_api_spex,
     :ash_authentication,

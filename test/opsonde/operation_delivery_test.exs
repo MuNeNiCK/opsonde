@@ -98,6 +98,75 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:effect, _, _}
   end
 
+  test "Operation actions enforce only the declared state transitions", context do
+    {_incident, _run, proposal} = authorized_proposal!("state-machine", context)
+    queued = Cases.accept_operation!(proposal.id, authorize?: false)
+    completed_at = DateTime.utc_now()
+
+    assert {:error, error} =
+             Cases.record_operation_outcome(
+               queued,
+               queued.revision,
+               %{
+                 status: :applied,
+                 outcome_category: "target_applied",
+                 result_details: %{},
+                 completed_at: completed_at
+               },
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~
+             "from queued to applied in action record_outcome"
+
+    assert Cases.get_operation!(queued.id, authorize?: false).status == :queued
+
+    claim = Cases.claim_operation_dispatch!(queued.id, authorize?: false)
+    dispatching = claim.operation
+    assert dispatching.status == :dispatching
+
+    assert {:error, error} =
+             Cases.record_operation_no_send(
+               dispatching,
+               dispatching.revision,
+               %{
+                 outcome_category: "cancelled_before_dispatch",
+                 result_details: %{},
+                 completed_at: completed_at
+               },
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~
+             "from dispatching to failed in action record_no_send"
+
+    applied =
+      Cases.record_operation_outcome!(
+        dispatching,
+        dispatching.revision,
+        %{
+          status: :applied,
+          outcome_category: "target_applied",
+          result_details: %{},
+          completed_at: completed_at
+        },
+        authorize?: false
+      )
+
+    assert {:error, error} =
+             Cases.mark_operation_dispatching(
+               applied,
+               applied.revision,
+               %{dispatch_started_at: DateTime.utc_now()},
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~
+             "from applied to dispatching in action mark_dispatching"
+
+    assert Cases.get_operation!(applied.id, authorize?: false).status == :applied
+  end
+
   test "revoked approval authority creates no Operation, job or budget charge", context do
     {incident, run, proposal} = authorized_proposal!("revoked", context)
     Accounts.change_role!(context.operator, :viewer, actor: context.admin)
