@@ -138,8 +138,9 @@ defmodule Opsonde.MixProject do
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",
-        "format",
+        "format --check-formatted",
         "openapi.spec.json --spec OpsondeWeb.ApiSpec --pretty=true --vendor-extensions=false --start-app=false --check=true --filename openapi.json",
+        "cmd --cd assets corepack pnpm run check:api",
         "cmd --cd assets corepack pnpm run check",
         "assets.build",
         "test"

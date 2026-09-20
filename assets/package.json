@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vp dev",
     "generate:api": "openapi-typescript ../openapi.json -o src/api/schema.d.ts",
+    "check:api": "openapi-typescript ../openapi.json -o src/api/schema.d.ts --check",
     "build": "tsc -b && vp build",
     "check": "vp check",
     "lint": "vp lint",
