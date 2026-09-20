@@ -1,12 +1,110 @@
 defmodule OpsondeWeb.API.V1.InventoryImportController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Providers.Inventory
   alias Opsonde.Targets
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.InventoryImportJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{InventoryImportJSON, InventorySchemas}
+
+  @list_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @show_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :not_found,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @write_errors Schemas.errors([
+                  :bad_request,
+                  :unauthorized,
+                  :forbidden,
+                  :not_found,
+                  :conflict,
+                  :unprocessable_entity,
+                  :internal_server_error
+                ])
+
+  tags ["Inventory imports"]
+
+  operation :index,
+    operation_id: "listInventoryImports",
+    summary: "List inventory imports",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Inventory import page", "application/json",
+           InventorySchemas.ref("InventoryImportPage")}
+      ] ++ @list_errors
+
+  operation :show,
+    operation_id: "getInventoryImport",
+    summary: "Get an inventory import",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [
+        ok:
+          {"Inventory import", "application/json",
+           InventorySchemas.ref("InventoryImportResponse")}
+      ] ++ @show_errors
+
+  operation :rows,
+    operation_id: "listInventoryImportRows",
+    summary: "List inventory import rows",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Inventory import row page", "application/json",
+           InventorySchemas.ref("InventoryImportRowPage")}
+      ] ++ @show_errors
+
+  operation :preview_manual,
+    operation_id: "previewManualInventory",
+    summary: "Preview a manual CSV inventory import",
+    request_body:
+      {"Manual inventory preview", "application/json",
+       InventorySchemas.ref("ManualInventoryPreviewRequest"), required: true},
+    responses:
+      [
+        created:
+          {"Inventory preview created", "application/json",
+           InventorySchemas.ref("InventoryImportResponse")}
+      ] ++ @write_errors
+
+  operation :preview_provider,
+    operation_id: "previewProviderInventory",
+    summary: "Preview inventory from an Inventory Provider",
+    request_body:
+      {"Provider inventory preview", "application/json",
+       InventorySchemas.ref("ProviderInventoryPreviewRequest"), required: true},
+    responses:
+      [
+        created:
+          {"Inventory preview created", "application/json",
+           InventorySchemas.ref("InventoryImportResponse")}
+      ] ++ @write_errors
+
+  operation :apply_import,
+    operation_id: "applyInventoryImport",
+    summary: "Apply a reviewed inventory preview",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Inventory import revision and digest", "application/json",
+       InventorySchemas.ref("ApplyInventoryImportRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Inventory import applied", "application/json",
+           InventorySchemas.ref("InventoryImportResponse")}
+      ] ++ @write_errors
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),

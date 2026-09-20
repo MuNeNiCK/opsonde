@@ -10,6 +10,10 @@ defmodule OpsondeWeb.OpenAPISpecTest do
     OpsondeWeb.API.V1.ProviderController,
     OpsondeWeb.API.V1.SessionController
   ]
+  @target_inventory_controllers [
+    OpsondeWeb.API.V1.InventoryImportController,
+    OpsondeWeb.API.V1.TargetSetupController
+  ]
 
   test "the application serves the resolved specification" do
     document =
@@ -28,7 +32,7 @@ defmodule OpsondeWeb.OpenAPISpecTest do
   test "route coverage exposes operations that still need domain contracts" do
     missing = api_routes() -- documented_operations()
 
-    assert {:post, "/api/v1/targets"} in missing
+    assert {:post, "/api/v1/cases"} in missing
     refute {:get, "/api/v1/openapi.json"} in missing
   end
 
@@ -72,6 +76,23 @@ defmodule OpsondeWeb.OpenAPISpecTest do
     assert schemas["CreateProviderRequest"].properties.provider.properties.credentials.writeOnly
 
     assert schemas["ConfigureOIDCProviderRequest"].properties.oidc_provider.properties.client_secret.writeOnly
+  end
+
+  test "Target and Inventory routes have complete operations and relationship fields" do
+    routes =
+      OpsondeWeb.Router
+      |> Phoenix.Router.routes()
+      |> Enum.filter(&(&1.plug in @target_inventory_controllers))
+      |> Enum.map(&{&1.verb, normalize_path(&1.path)})
+
+    assert routes -- documented_operations() == []
+
+    relationship = OpsondeWeb.ApiSpec.spec().components.schemas["TargetRelationship"]
+
+    assert Map.keys(relationship.properties) |> Enum.sort() ==
+             ~w(active destination_target_id facts id inserted_at kind revision source_target_id updated_at valid_until)a
+
+    assert relationship.additionalProperties == false
   end
 
   defp api_routes do

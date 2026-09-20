@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
+  import OpenApiSpex.TestAssertions
+
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Targets.{PolicyError, PolicyRequest}
 
@@ -204,11 +206,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert %{"data" => first_targets, "page" => %{"next" => cursor}} =
              json_response(target_page, 200)
 
+    assert_operation_response(target_page)
+
     assert length(first_targets) == 3
     assert is_binary(cursor)
 
     method_page = get_json("/api/v1/access-methods", context.viewer_token)
     assert %{"data" => methods} = json_response(method_page, 200)
+    assert_operation_response(method_page)
 
     assert Enum.sort(Enum.map(methods, & &1["name"])) ==
              ~w(generic-ssh ios-netconf ios-ssh linux-ssh)
@@ -231,6 +236,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       )
 
     assert %{"data" => %{"revision" => 2}} = json_response(updated, 200)
+    assert_operation_response(updated)
 
     stale =
       patch_json(
@@ -275,8 +281,9 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
       assert %{"error" => %{"code" => "forbidden"}} = json_response(forbidden, 403)
 
-      assert %{"data" => %{"id" => id}} =
-               get_json("/api/v1/targets/#{target["id"]}", token) |> json_response(200)
+      shown = get_json("/api/v1/targets/#{target["id"]}", token)
+      assert %{"data" => %{"id" => id}} = json_response(shown, 200)
+      assert_operation_response(shown)
 
       assert id == target["id"]
     end
@@ -299,6 +306,15 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert preview["row_count"] == 1
     assert preview["error_count"] == 0
 
+    imports = get_json("/api/v1/inventory-imports", context.viewer_token)
+    assert %{"data" => [%{"id" => import_id}]} = json_response(imports, 200)
+    assert import_id == preview["id"]
+    assert_operation_response(imports)
+
+    shown = get_json("/api/v1/inventory-imports/#{preview["id"]}", context.viewer_token)
+    assert %{"data" => %{"id" => ^import_id}} = json_response(shown, 200)
+    assert_operation_response(shown)
+
     rows = get_json("/api/v1/inventory-imports/#{preview["id"]}/rows", context.viewer_token)
 
     assert %{
@@ -311,6 +327,8 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
              ],
              "page" => %{"next" => nil}
            } = json_response(rows, 200)
+
+    assert_operation_response(rows)
 
     wrong_digest =
       post_json(
@@ -340,6 +358,8 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
     assert %{"data" => %{"status" => "applied", "revision" => 2}} =
              json_response(applied, 200)
+
+    assert_operation_response(applied)
 
     assert %{"data" => targets} =
              get_json("/api/v1/targets", context.viewer_token) |> json_response(200)
@@ -377,6 +397,49 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       refute response.resp_body =~ "inventory-provider-secret"
       refute response.resp_body =~ "credentials"
     end
+  end
+
+  test "contract rejects malformed Target and inventory inputs before domain actions", context do
+    invalid_id = get_json("/api/v1/targets/not-a-uuid", context.viewer_token)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"fields" => ["id"]}}} =
+             json_response(invalid_id, 422)
+
+    assert_operation_response(invalid_id)
+
+    target = create_target!(context.admin_token, "revision-contract", "host", "linux", nil)
+
+    invalid_revision =
+      patch_json(
+        "/api/v1/targets/#{target["id"]}",
+        %{"target" => %{"expected_revision" => 0, "name" => "invalid"}},
+        context.admin_token
+      )
+
+    assert %{
+             "error" => %{
+               "code" => "validation_failed",
+               "details" => %{"fields" => ["expected_revision"]}
+             }
+           } = json_response(invalid_revision, 422)
+
+    assert_operation_response(invalid_revision)
+
+    invalid_preview =
+      post_json(
+        "/api/v1/inventory-imports/manual-preview",
+        %{"inventory_import" => %{"source" => "netbox", "csv" => ""}},
+        context.admin_token
+      )
+
+    assert %{
+             "error" => %{
+               "code" => "validation_failed",
+               "details" => %{"fields" => ["csv"]}
+             }
+           } = json_response(invalid_preview, 422)
+
+    assert_operation_response(invalid_preview)
   end
 
   defp create_target!(token, name, kind, platform, boundary_id) do
@@ -431,7 +494,10 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   end
 
   defp post_data!(path, body, token) do
-    post_json(path, body, token)
+    response = post_json(path, body, token)
+    assert_operation_response(response)
+
+    response
     |> json_response(201)
     |> Map.fetch!("data")
   end

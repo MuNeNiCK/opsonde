@@ -1,11 +1,11 @@
 defmodule OpsondeWeb.API.V1.TargetSetupController do
-  use OpsondeWeb, :controller
+  use OpsondeWeb, :api_controller
 
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Targets
-  alias OpsondeWeb.API.{Pagination, Response}
-  alias OpsondeWeb.API.V1.TargetSetupJSON
+  alias OpsondeWeb.API.{Pagination, Response, Schemas}
+  alias OpsondeWeb.API.V1.{TargetSchemas, TargetSetupJSON}
 
   @boundary_fields ~w(name kind facts)
   @target_fields ~w(name kind platform facts management_boundary_id)
@@ -13,6 +13,330 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   @access_method_fields ~w(target_id provider_id name platform method endpoint provider_revision priority capabilities)
   @relationship_fields ~w(source_target_id destination_target_id kind facts valid_until)
   @policy_fields ~w(name request_kinds capabilities operations selector_match parameter_match reason)
+
+  @list_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @show_errors Schemas.errors([
+                 :unauthorized,
+                 :forbidden,
+                 :not_found,
+                 :unprocessable_entity,
+                 :internal_server_error
+               ])
+  @write_errors Schemas.errors([
+                  :bad_request,
+                  :unauthorized,
+                  :forbidden,
+                  :not_found,
+                  :conflict,
+                  :unprocessable_entity,
+                  :internal_server_error
+                ])
+
+  tags ["Targets"]
+
+  operation :boundaries_index,
+    operation_id: "listManagementBoundaries",
+    summary: "List management boundaries",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Management boundary page", "application/json",
+           TargetSchemas.ref("ManagementBoundaryPage")}
+      ] ++
+        @list_errors
+
+  operation :boundaries_create,
+    operation_id: "createManagementBoundary",
+    summary: "Create a management boundary",
+    request_body:
+      {"Management boundary", "application/json",
+       TargetSchemas.ref("CreateManagementBoundaryRequest"), required: true},
+    responses:
+      [
+        created:
+          {"Management boundary created", "application/json",
+           TargetSchemas.ref("ManagementBoundaryResponse")}
+      ] ++ @write_errors
+
+  operation :boundaries_update,
+    operation_id: "updateManagementBoundary",
+    summary: "Update a management boundary",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Management boundary update", "application/json",
+       TargetSchemas.ref("UpdateManagementBoundaryRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Management boundary updated", "application/json",
+           TargetSchemas.ref("ManagementBoundaryResponse")}
+      ] ++ @write_errors
+
+  operation :boundaries_deactivate,
+    operation_id: "deactivateManagementBoundary",
+    summary: "Deactivate a management boundary",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Management boundary revision", "application/json",
+       TargetSchemas.ref("DeactivateManagementBoundaryRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Management boundary deactivated", "application/json",
+           TargetSchemas.ref("ManagementBoundaryResponse")}
+      ] ++ @write_errors
+
+  operation :targets_index,
+    operation_id: "listTargets",
+    summary: "List Targets",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Target page", "application/json", TargetSchemas.ref("TargetPage")}] ++
+        @list_errors
+
+  operation :targets_show,
+    operation_id: "getTarget",
+    summary: "Get a Target",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Target", "application/json", TargetSchemas.ref("TargetResponse")}] ++
+        @show_errors
+
+  operation :targets_create,
+    operation_id: "createTarget",
+    summary: "Create a Target",
+    request_body:
+      {"Target", "application/json", TargetSchemas.ref("CreateTargetRequest"), required: true},
+    responses:
+      [created: {"Target created", "application/json", TargetSchemas.ref("TargetResponse")}] ++
+        @write_errors
+
+  operation :targets_update,
+    operation_id: "updateTarget",
+    summary: "Update a Target",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target update", "application/json", TargetSchemas.ref("UpdateTargetRequest"),
+       required: true},
+    responses:
+      [ok: {"Target updated", "application/json", TargetSchemas.ref("TargetResponse")}] ++
+        @write_errors
+
+  operation :targets_deactivate,
+    operation_id: "deactivateTarget",
+    summary: "Deactivate a Target",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target revision", "application/json", TargetSchemas.ref("DeactivateTargetRequest"),
+       required: true},
+    responses:
+      [ok: {"Target deactivated", "application/json", TargetSchemas.ref("TargetResponse")}] ++
+        @write_errors
+
+  operation :identities_index,
+    operation_id: "listExternalIdentities",
+    summary: "List external identities",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"External identity page", "application/json",
+           TargetSchemas.ref("ExternalIdentityPage")}
+      ] ++ @list_errors
+
+  operation :identities_create,
+    operation_id: "createExternalIdentity",
+    summary: "Create an external identity",
+    request_body:
+      {"External identity", "application/json",
+       TargetSchemas.ref("CreateExternalIdentityRequest"), required: true},
+    responses:
+      [
+        created:
+          {"External identity created", "application/json",
+           TargetSchemas.ref("ExternalIdentityResponse")}
+      ] ++ @write_errors
+
+  operation :identities_update,
+    operation_id: "updateExternalIdentity",
+    summary: "Update an external identity",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"External identity update", "application/json",
+       TargetSchemas.ref("UpdateExternalIdentityRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"External identity updated", "application/json",
+           TargetSchemas.ref("ExternalIdentityResponse")}
+      ] ++ @write_errors
+
+  operation :identities_deactivate,
+    operation_id: "deactivateExternalIdentity",
+    summary: "Deactivate an external identity",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"External identity revision", "application/json",
+       TargetSchemas.ref("DeactivateExternalIdentityRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"External identity deactivated", "application/json",
+           TargetSchemas.ref("ExternalIdentityResponse")}
+      ] ++ @write_errors
+
+  operation :access_methods_index,
+    operation_id: "listAccessMethods",
+    summary: "List Access Methods",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Access Method page", "application/json", TargetSchemas.ref("AccessMethodPage")}] ++
+        @list_errors
+
+  operation :access_methods_create,
+    operation_id: "createAccessMethod",
+    summary: "Create an Access Method",
+    request_body:
+      {"Access Method", "application/json", TargetSchemas.ref("CreateAccessMethodRequest"),
+       required: true},
+    responses:
+      [
+        created:
+          {"Access Method created", "application/json", TargetSchemas.ref("AccessMethodResponse")}
+      ] ++ @write_errors
+
+  operation :access_methods_update,
+    operation_id: "updateAccessMethod",
+    summary: "Update an Access Method",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Access Method update", "application/json", TargetSchemas.ref("UpdateAccessMethodRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"Access Method updated", "application/json", TargetSchemas.ref("AccessMethodResponse")}
+      ] ++ @write_errors
+
+  operation :access_methods_deactivate,
+    operation_id: "deactivateAccessMethod",
+    summary: "Deactivate an Access Method",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Access Method revision", "application/json",
+       TargetSchemas.ref("DeactivateAccessMethodRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Access Method deactivated", "application/json",
+           TargetSchemas.ref("AccessMethodResponse")}
+      ] ++ @write_errors
+
+  operation :relationships_index,
+    operation_id: "listTargetRelationships",
+    summary: "List Target relationships",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Target relationship page", "application/json",
+           TargetSchemas.ref("TargetRelationshipPage")}
+      ] ++ @list_errors
+
+  operation :relationships_create,
+    operation_id: "createTargetRelationship",
+    summary: "Create a Target relationship",
+    request_body:
+      {"Target relationship", "application/json",
+       TargetSchemas.ref("CreateTargetRelationshipRequest"), required: true},
+    responses:
+      [
+        created:
+          {"Target relationship created", "application/json",
+           TargetSchemas.ref("TargetRelationshipResponse")}
+      ] ++ @write_errors
+
+  operation :relationships_update,
+    operation_id: "updateTargetRelationship",
+    summary: "Update a Target relationship",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target relationship update", "application/json",
+       TargetSchemas.ref("UpdateTargetRelationshipRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Target relationship updated", "application/json",
+           TargetSchemas.ref("TargetRelationshipResponse")}
+      ] ++ @write_errors
+
+  operation :relationships_deactivate,
+    operation_id: "deactivateTargetRelationship",
+    summary: "Deactivate a Target relationship",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target relationship revision", "application/json",
+       TargetSchemas.ref("DeactivateTargetRelationshipRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Target relationship deactivated", "application/json",
+           TargetSchemas.ref("TargetRelationshipResponse")}
+      ] ++ @write_errors
+
+  operation :policies_index,
+    operation_id: "listTargetPolicies",
+    summary: "List Target policies",
+    parameters: Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Target policy page", "application/json", TargetSchemas.ref("TargetPolicyPage")}] ++
+        @list_errors
+
+  operation :policies_create,
+    operation_id: "createTargetPolicy",
+    summary: "Create a Target policy",
+    request_body:
+      {"Target policy", "application/json", TargetSchemas.ref("CreateTargetPolicyRequest"),
+       required: true},
+    responses:
+      [
+        created:
+          {"Target policy created", "application/json", TargetSchemas.ref("TargetPolicyResponse")}
+      ] ++ @write_errors
+
+  operation :policies_update,
+    operation_id: "updateTargetPolicy",
+    summary: "Update a Target policy",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target policy update", "application/json", TargetSchemas.ref("UpdateTargetPolicyRequest"),
+       required: true},
+    responses:
+      [
+        ok:
+          {"Target policy updated", "application/json", TargetSchemas.ref("TargetPolicyResponse")}
+      ] ++
+        @write_errors
+
+  operation :policies_deactivate,
+    operation_id: "deactivateTargetPolicy",
+    summary: "Deactivate a Target policy",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Target policy revision", "application/json",
+       TargetSchemas.ref("DeactivateTargetPolicyRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Target policy deactivated", "application/json",
+           TargetSchemas.ref("TargetPolicyResponse")}
+      ] ++ @write_errors
 
   def boundaries_index(conn, params) do
     page(conn, params, &Targets.page_management_boundaries/1, &TargetSetupJSON.boundary/1)
