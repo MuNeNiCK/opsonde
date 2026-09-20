@@ -72,6 +72,7 @@ defmodule Opsonde.MixProject do
       {:argon2_elixir, "~> 4.0"},
       {:simple_sat, "~> 0.1"},
       {:attesto_client, "~> 2.5"},
+      {:attesto, "~> 2.1"},
       {:open_api_spex, "~> 3.22"},
       {:ash_authentication, "~> 4.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
