@@ -152,30 +152,15 @@ export function AppShell() {
         <header className="flex h-14 items-center justify-between border-b px-4">
           <SidebarTrigger aria-label={t("common.toggleNavigation")} />
           <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  id="application-theme"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={t("common.theme")}
-                >
-                  {resolvedTheme === "dark" ? <Moon /> : <Sun />}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-36">
-                <DropdownMenuItem onClick={() => setTheme("light")}>
-                  <Sun />
-                  {t("common.light")}
-                  {resolvedTheme === "light" && <Check className="ml-auto" />}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setTheme("dark")}>
-                  <Moon />
-                  {t("common.dark")}
-                  {resolvedTheme === "dark" && <Check className="ml-auto" />}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              id="application-theme"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t("common.theme")}
+              onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+            >
+              {resolvedTheme === "dark" ? <Moon /> : <Sun />}
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -189,7 +174,11 @@ export function AppShell() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-36">
                 {supportedLocales.map(({ value, label }) => (
-                  <DropdownMenuItem key={value} onClick={() => void i18n.changeLanguage(value)}>
+                  <DropdownMenuItem
+                    key={value}
+                    closeOnClick
+                    onClick={() => void i18n.changeLanguage(value)}
+                  >
                     {label}
                     {normalizeLocale(i18n.resolvedLanguage) === value && (
                       <Check className="ml-auto" />
