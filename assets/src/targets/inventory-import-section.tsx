@@ -3,6 +3,7 @@ import { FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,9 +23,6 @@ type Props = {
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
 };
-
-const selectClassName =
-  "flex h-10 w-full min-w-0 rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 function value(form: FormData, name: string) {
   const entry = form.get(name);
@@ -210,18 +208,16 @@ export function InventoryImportSection({
               <form className="grid min-w-0 gap-4 md:grid-cols-2" onSubmit={previewProvider}>
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="import-provider">{t("targets.connection")}</Label>
-                  <select
+                  <FormSelect
                     id="import-provider"
                     name="provider_id"
-                    className={selectClassName}
                     required
-                  >
-                    {inventoryProviders.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
+                    defaultValue={inventoryProviders[0]?.id}
+                    options={inventoryProviders.map((provider) => ({
+                      value: provider.id,
+                      label: provider.name,
+                    }))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="provider-source">{t("targets.source")}</Label>
@@ -229,10 +225,15 @@ export function InventoryImportSection({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="provider-resource">{t("targets.resource")}</Label>
-                  <select id="provider-resource" name="resource" className={selectClassName}>
-                    <option value="devices">devices</option>
-                    <option value="virtual_machines">virtual_machines</option>
-                  </select>
+                  <FormSelect
+                    id="provider-resource"
+                    name="resource"
+                    defaultValue="devices"
+                    options={[
+                      { value: "devices", label: "devices" },
+                      { value: "virtual_machines", label: "virtual_machines" },
+                    ]}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="provider-page-size">{t("targets.pageSize")}</Label>

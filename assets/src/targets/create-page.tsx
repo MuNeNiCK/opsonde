@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -190,20 +191,14 @@ export function TargetCreatePage() {
               </datalist>
               <div className="space-y-2">
                 <Label htmlFor="target-create-boundary">{t("targets.boundary")}</Label>
-                <select
+                <FormSelect
                   id="target-create-boundary"
                   name="management_boundary_id"
-                  className={selectClass}
-                >
-                  <option value="">{t("targets.noBoundary")}</option>
-                  {boundaries
-                    ?.filter((item) => item.active)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                </select>
+                  placeholder={t("targets.noBoundary")}
+                  options={(boundaries ?? [])
+                    .filter((item) => item.active)
+                    .map((item) => ({ value: item.id, label: item.name }))}
+                />
               </div>
               <div className="md:col-span-2 flex flex-wrap gap-2">
                 <Button type="submit" disabled={pending || boundaries === null}>
@@ -231,9 +226,6 @@ function loadBoundaries() {
       .then(apiData),
   );
 }
-
-const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35";
 
 function value(form: FormData, name: string) {
   const entry = form.get(name);

@@ -1,7 +1,8 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { Cable, Fingerprint, Link2, Plus, ShieldBan, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData } from "@/api/client";
+import { FormSelect, type FormSelectOption } from "@/components/form-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -159,14 +160,16 @@ export function TargetDetailActions({
             className="grid gap-4 md:grid-cols-2"
             onSubmit={(event) => void submit(event, createAccessMethod)}
           >
-            <Select label={t("targets.connection")} name="provider_id" required>
-              <option value="">{t("targets.chooseConnection")}</option>
-              {enabledProviders.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name} · {provider.adapter_type}
-                </option>
-              ))}
-            </Select>
+            <LabeledSelect
+              label={t("targets.connection")}
+              name="provider_id"
+              required
+              placeholder={t("targets.chooseConnection")}
+              options={enabledProviders.map((provider) => ({
+                value: provider.id,
+                label: `${provider.name} · ${provider.adapter_type}`,
+              }))}
+            />
             <Field label={t("targets.name")} name="name" required />
             <Field
               label={t("targets.endpoint")}
@@ -209,16 +212,15 @@ export function TargetDetailActions({
               )
             }
           >
-            <Select label={t("targets.destinationTarget")} name="destination_target_id" required>
-              <option value="">{t("targets.chooseTarget")}</option>
-              {targets
+            <LabeledSelect
+              label={t("targets.destinationTarget")}
+              name="destination_target_id"
+              required
+              placeholder={t("targets.chooseTarget")}
+              options={targets
                 .filter((item) => item.active && item.id !== target.id)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-            </Select>
+                .map((item) => ({ value: item.id, label: item.name }))}
+            />
             <Field
               label={t("targets.relationshipKind")}
               name="kind"
@@ -262,11 +264,16 @@ export function TargetDetailActions({
             }
           >
             <Field label={t("targets.name")} name="name" required />
-            <Select label={t("targets.requestKinds")} name="request_kinds">
-              <option value="both">{t("targets.observationAndEffect")}</option>
-              <option value="observation">observation</option>
-              <option value="effect">effect</option>
-            </Select>
+            <LabeledSelect
+              label={t("targets.requestKinds")}
+              name="request_kinds"
+              defaultValue="both"
+              options={[
+                { value: "both", label: t("targets.observationAndEffect") },
+                { value: "observation", label: "observation" },
+                { value: "effect", label: "effect" },
+              ]}
+            />
             <Field
               label={t("targets.capabilitiesOptional")}
               name="capabilities"
@@ -319,28 +326,33 @@ function Field({
   );
 }
 
-function Select({
+function LabeledSelect({
   label,
   name,
-  children,
-  ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement> & {
+  options,
+  placeholder,
+  defaultValue,
+  required,
+}: {
   label: string;
   name: string;
-  children: ReactNode;
+  options: FormSelectOption[];
+  placeholder?: string;
+  defaultValue?: string;
+  required?: boolean;
 }) {
   const id = "target-action-" + name;
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
-      <select
+      <FormSelect
         id={id}
         name={name}
-        className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35"
-        {...props}
-      >
-        {children}
-      </select>
+        options={options}
+        placeholder={placeholder}
+        defaultValue={defaultValue}
+        required={required}
+      />
     </div>
   );
 }

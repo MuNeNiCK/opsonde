@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,9 +27,6 @@ type Snapshot = {
   providers: Provider[];
   targets: Target[];
 };
-const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-
 async function loadSnapshot(): Promise<Snapshot> {
   const [cases, reports, deliveries, providers, targets] = await Promise.all([
     collectPages((after) =>
@@ -239,14 +237,16 @@ export function ReportPage() {
                 <form className="space-y-4" onSubmit={generate}>
                   <div className="space-y-2">
                     <Label htmlFor="report-case">{t("reports.case")}</Label>
-                    <select id="report-case" name="case_id" className={selectClass} required>
-                      <option value="">{t("reports.chooseCase")}</option>
-                      {reportable.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.title} · {item.report_language} · r{item.revision}
-                        </option>
-                      ))}
-                    </select>
+                    <FormSelect
+                      id="report-case"
+                      name="case_id"
+                      required
+                      placeholder={t("reports.chooseCase")}
+                      options={reportable.map((item) => ({
+                        value: item.id,
+                        label: `${item.title} · ${item.report_language} · r${item.revision}`,
+                      }))}
+                    />
                   </div>
                   <Button type="submit" disabled={pending !== null || reportable.length === 0}>
                     {pending === "generate" && <Spinner />}
@@ -265,37 +265,31 @@ export function ReportPage() {
                 <form className="space-y-4" onSubmit={deliver}>
                   <div className="space-y-2">
                     <Label htmlFor="delivery-report">{t("reports.report")}</Label>
-                    <select
+                    <FormSelect
                       id="delivery-report"
                       name="report_id"
-                      className={selectClass}
                       value={selectedReportId}
-                      onChange={(event) => setSelectedReportId(event.target.value)}
+                      onValueChange={(value) => setSelectedReportId(value ?? "")}
                       required
-                    >
-                      <option value="">{t("reports.chooseReport")}</option>
-                      {snapshot.reports.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {caseTitle(item.case_id)} · {item.language} · {item.outcome}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder={t("reports.chooseReport")}
+                      options={snapshot.reports.map((item) => ({
+                        value: item.id,
+                        label: `${caseTitle(item.case_id)} · ${item.language} · ${item.outcome}`,
+                      }))}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="delivery-provider">{t("reports.destination")}</Label>
-                    <select
+                    <FormSelect
                       id="delivery-provider"
                       name="provider_id"
-                      className={selectClass}
                       required
-                    >
-                      <option value="">{t("reports.chooseDestination")}</option>
-                      {notificationProviders.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder={t("reports.chooseDestination")}
+                      options={notificationProviders.map((item) => ({
+                        value: item.id,
+                        label: item.name,
+                      }))}
+                    />
                   </div>
                   <Button
                     type="submit"

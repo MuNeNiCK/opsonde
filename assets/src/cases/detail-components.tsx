@@ -3,6 +3,7 @@ import { CircleAlert, RefreshCw, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,9 +95,6 @@ export function StateIcon({ state }: { state: CaseSnapshot["case"]["status"] }) 
 
   return <RefreshCw className="mt-1 size-6 shrink-0 text-primary" aria-hidden="true" />;
 }
-
-export const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function ProposalCard({
   proposal,
@@ -275,18 +273,15 @@ export function ResumeCard({
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="space-y-2">
                 <Label htmlFor="resume-mode">{t("cases.authority")}</Label>
-                <select
+                <FormSelect
                   id="resume-mode"
                   name="authority_mode"
-                  className={selectClass}
                   defaultValue={incident.authority_mode}
-                >
-                  {["readonly", "ask", "auto", "full_access"].map((mode) => (
-                    <option key={mode} value={mode}>
-                      {t("setup.modes." + mode + ".name")}
-                    </option>
-                  ))}
-                </select>
+                  options={["readonly", "ask", "auto", "full_access"].map((mode) => ({
+                    value: mode,
+                    label: t("setup.modes." + mode + ".name"),
+                  }))}
+                />
               </div>
               {Object.entries(run.limits).map(([name, value]) => (
                 <NumberField

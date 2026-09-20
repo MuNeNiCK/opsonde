@@ -17,7 +17,6 @@ import {
   RecordCard,
   ResumeCard,
   StateIcon,
-  selectClass,
 } from "@/cases/detail-components";
 import {
   describeSituation,
@@ -27,6 +26,7 @@ import {
   translatedToken,
 } from "@/cases/detail-utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -625,20 +625,14 @@ export function CaseDetailPage() {
               <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
                 <div className="min-w-64 space-y-2">
                   <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
-                  <select
+                  <FormSelect
                     id="handoff-owner"
                     name="owner_id"
-                    className={selectClass}
                     defaultValue={incident.current_owner_id ?? account.id}
-                  >
-                    {detail.accounts
+                    options={detail.accounts
                       .filter((item) => item.role !== "viewer")
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.email}
-                        </option>
-                      ))}
-                  </select>
+                      .map((item) => ({ value: item.id, label: item.email }))}
+                  />
                 </div>
                 <Button type="submit" size="sm" variant="outline" disabled={pending !== null}>
                   {pending === "handoff" && <Spinner />}

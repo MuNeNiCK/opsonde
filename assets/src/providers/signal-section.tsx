@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,9 +19,6 @@ type Props = {
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
 };
-
-const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function SignalProviderSection({ providers, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
@@ -108,10 +106,15 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
               <Field id="signal-name" name="name" label={t("cases.name")} />
               <div className="space-y-2">
                 <Label htmlFor="signal-adapter">{t("cases.signalType")}</Label>
-                <select id="signal-adapter" name="adapter_type" className={selectClass}>
-                  <option value="alertmanager-webhook">Alertmanager Webhook</option>
-                  <option value="zabbix-webhook">Zabbix Webhook</option>
-                </select>
+                <FormSelect
+                  id="signal-adapter"
+                  name="adapter_type"
+                  defaultValue="alertmanager-webhook"
+                  options={[
+                    { value: "alertmanager-webhook", label: "Alertmanager Webhook" },
+                    { value: "zabbix-webhook", label: "Zabbix Webhook" },
+                  ]}
+                />
               </div>
               <Field id="signal-source" name="source" label={t("cases.source")} />
               <Field

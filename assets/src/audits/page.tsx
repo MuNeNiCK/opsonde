@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
+import { FormMultiSelect, FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,9 +26,6 @@ type Snapshot = {
   targets: Target[];
   boundaries: ManagementBoundary[];
 };
-
-const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 async function loadSnapshot(): Promise<Snapshot> {
   const [schedules, runs, targets, boundaries] = await Promise.all([
@@ -202,65 +200,53 @@ export function AuditPage() {
               />
               <div className="space-y-2">
                 <Label htmlFor="audit-language">{t("audits.reportLanguage")}</Label>
-                <select
+                <FormSelect
                   id="audit-language"
                   name="report_language"
-                  className={selectClass}
                   defaultValue={i18n.resolvedLanguage === "ja" ? "ja" : "en"}
-                >
-                  <option value="en">English</option>
-                  <option value="ja">日本語</option>
-                </select>
+                  options={[
+                    { value: "en", label: "English" },
+                    { value: "ja", label: "日本語" },
+                  ]}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="audit-scope">{t("audits.scope")}</Label>
-                <select
+                <FormSelect
                   id="audit-scope"
-                  className={selectClass}
                   value={scope}
-                  onChange={(event) => setScope(event.target.value as "targets" | "boundary")}
-                >
-                  <option value="targets">{t("audits.selectedTargets")}</option>
-                  <option value="boundary">{t("audits.managementBoundary")}</option>
-                </select>
+                  onValueChange={(value) => value && setScope(value as "targets" | "boundary")}
+                  options={[
+                    { value: "targets", label: t("audits.selectedTargets") },
+                    { value: "boundary", label: t("audits.managementBoundary") },
+                  ]}
+                />
               </div>
               {scope === "targets" ? (
                 <div className="space-y-2">
                   <Label htmlFor="audit-targets">{t("audits.targets")}</Label>
-                  <select
+                  <FormMultiSelect
                     id="audit-targets"
                     name="target_ids"
-                    className={`${selectClass} h-28`}
-                    multiple
                     required
-                  >
-                    {snapshot.targets
+                    placeholder={t("audits.targets")}
+                    options={snapshot.targets
                       .filter((target) => target.active)
-                      .map((target) => (
-                        <option key={target.id} value={target.id}>
-                          {target.name}
-                        </option>
-                      ))}
-                  </select>
+                      .map((target) => ({ value: target.id, label: target.name }))}
+                  />
                 </div>
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="audit-boundary">{t("audits.managementBoundary")}</Label>
-                  <select
+                  <FormSelect
                     id="audit-boundary"
                     name="management_boundary_id"
-                    className={selectClass}
                     required
-                  >
-                    <option value="">{t("audits.chooseBoundary")}</option>
-                    {snapshot.boundaries
+                    placeholder={t("audits.chooseBoundary")}
+                    options={snapshot.boundaries
                       .filter((item) => item.active)
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                  </select>
+                      .map((item) => ({ value: item.id, label: item.name }))}
+                  />
                 </div>
               )}
               <div className="md:col-span-2">

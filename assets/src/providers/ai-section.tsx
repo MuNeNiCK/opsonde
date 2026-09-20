@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, X } from "luci
 import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,10 +22,6 @@ type Props = {
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
 };
-
-function selectClassName() {
-  return "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-}
 
 function configurationValue(provider: Provider, key: string) {
   const value = provider.configuration[key];
@@ -390,20 +387,27 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
             >
               <div className="space-y-2">
                 <Label htmlFor="role-provider">{t("setup.connection")}</Label>
-                <select id="role-provider" name="provider_id" className={selectClassName()}>
-                  {aiProviders.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
+                <FormSelect
+                  id="role-provider"
+                  name="provider_id"
+                  defaultValue={aiProviders[0]?.id}
+                  options={aiProviders.map((provider) => ({
+                    value: provider.id,
+                    label: provider.name,
+                  }))}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="role-name">{t("setup.role")}</Label>
-                <select id="role-name" name="role" className={selectClassName()}>
-                  <option value="resolver">Resolver</option>
-                  <option value="reviewer">Reviewer</option>
-                </select>
+                <FormSelect
+                  id="role-name"
+                  name="role"
+                  defaultValue="resolver"
+                  options={[
+                    { value: "resolver", label: "Resolver" },
+                    { value: "reviewer", label: "Reviewer" },
+                  ]}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="role-priority">{t("setup.priority")}</Label>
@@ -495,16 +499,16 @@ function AIProviderFields({
       </div>
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-service`}>{t("setup.service")}</Label>
-        <select
+        <FormSelect
           id={`${idPrefix}-service`}
           name="service"
-          className={selectClassName()}
           defaultValue={value("provider") || "openai"}
-        >
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="ollama">Ollama</option>
-        </select>
+          options={[
+            { value: "openai", label: "OpenAI" },
+            { value: "anthropic", label: "Anthropic" },
+            { value: "ollama", label: "Ollama" },
+          ]}
+        />
       </div>
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-model`}>{t("setup.model")}</Label>

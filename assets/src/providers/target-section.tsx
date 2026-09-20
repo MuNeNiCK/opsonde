@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, Network, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { targetAdapter, targetAdapterOptions } from "@/targets/adapters";
 
 type Provider = components["schemas"]["Provider"];
-import { targetAdapter, targetAdapterOptions } from "@/targets/adapters";
 
 type Props = {
   providers: Provider[];
@@ -22,9 +23,6 @@ type Props = {
   onError: (message: string) => void;
   onCreated: () => void;
 };
-
-const selectClassName =
-  "flex h-10 w-full min-w-0 rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 function value(form: FormData, name: string) {
   const entry = form.get(name);
@@ -228,19 +226,16 @@ export function TargetProviderSection({
                   <Field label={t("targets.name")} name="name" required />
                   <div className="space-y-2">
                     <Label htmlFor="target-adapter">{t("targets.connectionType")}</Label>
-                    <select
+                    <FormSelect
                       id="target-adapter"
                       name="adapter_type"
-                      className={selectClassName}
                       value={adapterType}
-                      onChange={(event) => setAdapterType(event.target.value)}
-                    >
-                      {targetAdapterOptions.map((option) => (
-                        <option key={option.type} value={option.type}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                      onValueChange={(value) => value && setAdapterType(value)}
+                      options={targetAdapterOptions.map((option) => ({
+                        value: option.type,
+                        label: option.label,
+                      }))}
+                    />
                   </div>
                   <Field
                     label={t("targets.endpoint")}
@@ -278,16 +273,16 @@ export function TargetProviderSection({
                       />
                       <div className="space-y-2">
                         <Label htmlFor="target-auth-method">{t("targets.authentication")}</Label>
-                        <select
+                        <FormSelect
                           id="target-auth-method"
                           name="auth_method"
-                          className={selectClassName}
                           value={authMethod}
-                          onChange={(event) => setAuthMethod(event.target.value)}
-                        >
-                          <option value="password">{t("targets.password")}</option>
-                          <option value="public_key">{t("targets.privateKey")}</option>
-                        </select>
+                          onValueChange={(value) => value && setAuthMethod(value)}
+                          options={[
+                            { value: "password", label: t("targets.password") },
+                            { value: "public_key", label: t("targets.privateKey") },
+                          ]}
+                        />
                       </div>
                       {authMethod === "password" ? (
                         <Field
@@ -303,14 +298,15 @@ export function TargetProviderSection({
                       {adapterType === "linux-ssh" && (
                         <div className="space-y-2">
                           <Label htmlFor="target-privilege">{t("targets.privilege")}</Label>
-                          <select
+                          <FormSelect
                             id="target-privilege"
                             name="privilege"
-                            className={selectClassName}
-                          >
-                            <option value="none">none</option>
-                            <option value="sudo">sudo</option>
-                          </select>
+                            defaultValue="none"
+                            options={[
+                              { value: "none", label: "none" },
+                              { value: "sudo", label: "sudo" },
+                            ]}
+                          />
                         </div>
                       )}
                     </>
@@ -375,10 +371,15 @@ export function TargetProviderSection({
                   />
                   <div className="space-y-2">
                     <Label htmlFor="netbox-resource">{t("targets.resource")}</Label>
-                    <select id="netbox-resource" name="resource" className={selectClassName}>
-                      <option value="devices">devices</option>
-                      <option value="virtual_machines">virtual_machines</option>
-                    </select>
+                    <FormSelect
+                      id="netbox-resource"
+                      name="resource"
+                      defaultValue="devices"
+                      options={[
+                        { value: "devices", label: "devices" },
+                        { value: "virtual_machines", label: "virtual_machines" },
+                      ]}
+                    />
                   </div>
                   <div className="md:col-span-2">
                     <Area label={t("targets.caCertificate")} name="ca_certificate" required />

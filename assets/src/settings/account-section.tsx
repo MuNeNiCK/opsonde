@@ -3,6 +3,7 @@ import { CheckCircle2, Plus, Save, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,10 +16,6 @@ type Account = components["schemas"]["Account"];
 type Role = Account["role"];
 
 const roles: Role[] = ["admin", "operator", "viewer"];
-
-function selectClassName() {
-  return "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-}
 
 export function AccountSection({ currentAccountId }: { currentAccountId: string }) {
   const { t } = useTranslation();
@@ -156,18 +153,15 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
             </div>
             <div className="space-y-2">
               <Label htmlFor="account-role">{t("setup.accounts.role")}</Label>
-              <select
+              <FormSelect
                 id="account-role"
                 name="role"
-                className={selectClassName()}
                 defaultValue="operator"
-              >
-                {roles.map((role) => (
-                  <option key={role} value={role}>
-                    {t(`setup.accounts.roles.${role}`)}
-                  </option>
-                ))}
-              </select>
+                options={roles.map((role) => ({
+                  value: role,
+                  label: t(`setup.accounts.roles.${role}`),
+                }))}
+              />
             </div>
             <div className="flex items-end">
               <Button type="submit" disabled={pending !== null}>
@@ -215,19 +209,16 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
                       <Label htmlFor={`account-role-${account.id}`}>
                         {t("setup.accounts.role")}
                       </Label>
-                      <select
+                      <FormSelect
                         id={`account-role-${account.id}`}
                         name="role"
-                        className={selectClassName()}
                         defaultValue={account.role}
                         disabled={current || pending !== null}
-                      >
-                        {roles.map((role) => (
-                          <option key={role} value={role}>
-                            {t(`setup.accounts.roles.${role}`)}
-                          </option>
-                        ))}
-                      </select>
+                        options={roles.map((role) => ({
+                          value: role,
+                          label: t(`setup.accounts.roles.${role}`),
+                        }))}
+                      />
                     </div>
                     <Button type="submit" variant="outline" disabled={current || pending !== null}>
                       {pending === account.id ? <Spinner /> : <Save />}

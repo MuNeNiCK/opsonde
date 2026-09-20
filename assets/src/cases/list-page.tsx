@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,8 +21,6 @@ type QueueSort = "updated_desc" | "updated_asc" | "severity_desc";
 
 const pollIntervalMs = 5_000;
 const pageSize = 50;
-const selectClass =
-  "flex h-9 rounded-md border border-input bg-card px-3 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35";
 export function CaseListPage() {
   const { t, i18n } = useTranslation();
   const { account } = useAuthentication();
@@ -249,48 +248,57 @@ export function CaseListPage() {
                 {t("cases.searchAction")}
               </Button>
             </form>
-            <select
-              className={selectClass}
+            <FormSelect
+              id="case-status-filter"
+              className="w-auto min-w-44"
               value={status}
-              onChange={(event) => {
+              onValueChange={(value) => {
+                if (!value) return;
                 resetToFirstPage();
-                setStatus(event.target.value as QueueStatus);
+                setStatus(value as QueueStatus);
               }}
-              aria-label={t("cases.filterStatus")}
-            >
-              <option value="all">{t("cases.allStatuses")}</option>
-              <option value="running">{t("cases.status.running")}</option>
-              <option value="needs_attention">{t("cases.status.needs_attention")}</option>
-              <option value="resolved">{t("cases.status.resolved")}</option>
-              <option value="cancelled">{t("cases.status.cancelled")}</option>
-            </select>
-            <select
-              className={selectClass}
+              ariaLabel={t("cases.filterStatus")}
+              options={[
+                { value: "all", label: t("cases.allStatuses") },
+                { value: "running", label: t("cases.status.running") },
+                { value: "needs_attention", label: t("cases.status.needs_attention") },
+                { value: "resolved", label: t("cases.status.resolved") },
+                { value: "cancelled", label: t("cases.status.cancelled") },
+              ]}
+            />
+            <FormSelect
+              id="case-alert-filter"
+              className="w-auto min-w-44"
               value={alertState}
-              onChange={(event) => {
+              onValueChange={(value) => {
+                if (!value) return;
                 resetToFirstPage();
-                setAlertState(event.target.value as AlertState);
+                setAlertState(value as AlertState);
               }}
-              aria-label={t("cases.filterAlert")}
-            >
-              <option value="all">{t("cases.allAlerts")}</option>
-              <option value="firing">{t("cases.alert.firing")}</option>
-              <option value="recovered">{t("cases.alert.recovered")}</option>
-              <option value="not_applicable">{t("cases.alert.not_applicable")}</option>
-            </select>
-            <select
-              className={selectClass}
+              ariaLabel={t("cases.filterAlert")}
+              options={[
+                { value: "all", label: t("cases.allAlerts") },
+                { value: "firing", label: t("cases.alert.firing") },
+                { value: "recovered", label: t("cases.alert.recovered") },
+                { value: "not_applicable", label: t("cases.alert.not_applicable") },
+              ]}
+            />
+            <FormSelect
+              id="case-sort"
+              className="w-auto min-w-44"
               value={sort}
-              onChange={(event) => {
+              onValueChange={(value) => {
+                if (!value) return;
                 resetToFirstPage();
-                setSort(event.target.value as QueueSort);
+                setSort(value as QueueSort);
               }}
-              aria-label={t("cases.sort")}
-            >
-              <option value="updated_desc">{t("cases.sortNewest")}</option>
-              <option value="updated_asc">{t("cases.sortOldest")}</option>
-              <option value="severity_desc">{t("cases.sortSeverity")}</option>
-            </select>
+              ariaLabel={t("cases.sort")}
+              options={[
+                { value: "updated_desc", label: t("cases.sortNewest") },
+                { value: "updated_asc", label: t("cases.sortOldest") },
+                { value: "severity_desc", label: t("cases.sortSeverity") },
+              ]}
+            />
           </div>
         </div>
 
