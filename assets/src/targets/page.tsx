@@ -6,10 +6,11 @@ import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
+import { TargetTopology } from "@/targets/topology";
 
 export function TargetPage() {
   const { t } = useTranslation();
@@ -31,11 +32,14 @@ export function TargetPage() {
     };
   }, [t]);
 
+  const activeTargets = useMemo(
+    () => snapshot?.targets.filter((target) => target.active) ?? [],
+    [snapshot],
+  );
   const targets = useMemo(() => {
     if (!snapshot) return [];
     const search = query.trim().toLocaleLowerCase();
-    return snapshot.targets
-      .filter((target) => target.active)
+    return activeTargets
       .filter(
         (target) =>
           !search ||
@@ -44,7 +48,7 @@ export function TargetPage() {
           ),
       )
       .sort((left, right) => left.name.localeCompare(right.name));
-  }, [query, snapshot]);
+  }, [activeTargets, query, snapshot]);
 
   if (!snapshot) {
     return (
@@ -97,71 +101,98 @@ export function TargetPage() {
         </Alert>
       )}
 
-      <div className="relative max-w-xl">
-        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("targets.searchPlaceholder")}
-          aria-label={t("targets.searchPlaceholder")}
-        />
-      </div>
-
-      {targets.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            {t(query ? "targets.noSearchResults" : "targets.noTargets")}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {targets.map((target) => {
-            const methods = snapshot.methods.filter(
-              (item) => item.target_id === target.id && item.active,
-            );
-            const policies = snapshot.policies.filter(
-              (item) => item.target_id === target.id && item.enabled,
-            );
-            const relationships = snapshot.relationships.filter(
-              (item) =>
-                item.active &&
-                (item.source_target_id === target.id || item.destination_target_id === target.id),
-            );
-            return (
-              <Link
-                key={target.id}
-                to={"/targets/" + target.id}
-                className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Card className="h-full transition-colors group-hover:border-primary/50">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3">
-                      <CardTitle className="text-base">{target.name}</CardTitle>
-                      <Badge variant="outline">{target.platform}</Badge>
-                    </div>
-                    <CardDescription>{target.kind}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-3 gap-3 text-sm">
-                    <Metric label={t("targets.accessMethods")} value={methods.length} />
-                    <Metric label={t("targets.layerRelationships")} value={relationships.length} />
-                    <Metric label={t("targets.policies")} value={policies.length} />
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-xl font-semibold">{t("targets.topology")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t("targets.topologyDescription")}</p>
         </div>
-      )}
-    </div>
-  );
-}
+        {activeTargets.length > 0 ? (
+          <TargetTopology targets={activeTargets} relationships={snapshot.relationships} />
+        ) : (
+          <Card>
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              {t("targets.noTargets")}
+            </CardContent>
+          </Card>
+        )}
+      </section>
 
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 font-medium">{value}</p>
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">{t("targets.inventory")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("targets.inventoryTableDescription")}
+          </p>
+        </div>
+        <div className="relative max-w-xl">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("targets.searchPlaceholder")}
+            aria-label={t("targets.searchPlaceholder")}
+          />
+        </div>
+
+        {targets.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              {t(query ? "targets.noSearchResults" : "targets.noTargets")}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full min-w-[54rem] text-sm">
+              <thead className="border-b bg-muted/40 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3">{t("targets.name")}</th>
+                  <th className="px-4 py-3">{t("targets.kind")}</th>
+                  <th className="px-4 py-3">{t("targets.platform")}</th>
+                  <th className="px-4 py-3 text-right">{t("targets.accessMethods")}</th>
+                  <th className="px-4 py-3 text-right">{t("targets.layerRelationships")}</th>
+                  <th className="px-4 py-3 text-right">{t("targets.policies")}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {targets.map((target) => {
+                  const methods = snapshot.methods.filter(
+                    (item) => item.target_id === target.id && item.active,
+                  ).length;
+                  const policies = snapshot.policies.filter(
+                    (item) => item.target_id === target.id && item.enabled,
+                  ).length;
+                  const relationships = snapshot.relationships.filter(
+                    (item) =>
+                      item.active &&
+                      (item.source_target_id === target.id ||
+                        item.destination_target_id === target.id),
+                  ).length;
+                  return (
+                    <tr key={target.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-3">
+                        <Link
+                          to={`/targets/${target.id}`}
+                          className="font-medium text-foreground hover:text-primary hover:underline"
+                        >
+                          {target.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{target.kind}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline">{target.platform}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">{methods}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{relationships}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{policies}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

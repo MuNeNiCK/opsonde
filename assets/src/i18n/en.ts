@@ -684,6 +684,11 @@ const en = {
       inventoryTitle: "Target inventory",
       inventoryDescription:
         "Model each layer independently, then connect layers with relationships.",
+      topology: "Infrastructure topology",
+      topologyDescription:
+        "Relationships show how infrastructure layers depend on and support each other.",
+      inventory: "Target list",
+      inventoryTableDescription: "Search and open the registered infrastructure Targets.",
       addBoundary: "Add management boundary",
       boundaryDescription: "Group Targets that share an operational boundary.",
       addTarget: "Add Target",
