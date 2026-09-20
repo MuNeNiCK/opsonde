@@ -631,6 +631,9 @@ const ja = {
       connectionType: "接続方式",
       endpoint: "エンドポイント",
       fingerprint: "ホスト鍵フィンガープリント",
+      legacyAlgorithms: "旧式SSHアルゴリズム（任意）",
+      legacyAlgorithmsDescription:
+        "機器が必要とする場合だけ有効にします。許可するアルゴリズム名をカンマで区切ります。",
       username: "ユーザー名",
       authentication: "認証方式",
       password: "パスワード",

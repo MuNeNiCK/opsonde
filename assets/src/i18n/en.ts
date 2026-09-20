@@ -640,6 +640,9 @@ const en = {
       connectionType: "Connection type",
       endpoint: "Endpoint",
       fingerprint: "Host key fingerprint",
+      legacyAlgorithms: "Legacy SSH algorithms (optional)",
+      legacyAlgorithmsDescription:
+        "Enable only when the device requires them. Separate allowed algorithm names with commas.",
       username: "Username",
       authentication: "Authentication",
       password: "Password",

@@ -81,6 +81,11 @@ export function TargetProviderSection({
       configuration = {
         host_key_fingerprints: { [endpoint]: value(form, "fingerprint") },
       };
+      const legacyAlgorithms = value(form, "legacy_algorithms")
+        .split(",")
+        .map((algorithm) => algorithm.trim())
+        .filter(Boolean);
+      if (legacyAlgorithms.length > 0) configuration.legacy_algorithms = legacyAlgorithms;
       if (adapterType === "linux-ssh") configuration.privilege = value(form, "privilege");
       credentials = { username: value(form, "username"), auth_method: authMethod };
       credentials[authMethod === "password" ? "password" : "private_key"] = value(
@@ -251,6 +256,20 @@ export function TargetProviderSection({
                         placeholder="SHA256:…"
                         required
                       />
+                      <div className="space-y-2">
+                        <Label htmlFor="target-legacy_algorithms">
+                          {t("targets.legacyAlgorithms")}
+                        </Label>
+                        <Input
+                          id="target-legacy_algorithms"
+                          name="legacy_algorithms"
+                          maxLength={160}
+                          placeholder="ssh-rsa, diffie-hellman-group14-sha1"
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          {t("targets.legacyAlgorithmsDescription")}
+                        </p>
+                      </div>
                       <Field
                         label={t("targets.username")}
                         name="username"
