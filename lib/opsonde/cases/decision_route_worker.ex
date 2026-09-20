@@ -8,10 +8,12 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.Budget
+  alias Opsonde.Reports.GenerationWorker
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"turn_id" => turn_id}}) when is_binary(turn_id) do
     case route(turn_id) do
+      {:ok, %{status: :resolved} = incident} -> enqueue_report(incident)
       {:ok, _result} -> :ok
       {:error, error} -> require_attention(turn_id, error)
     end
@@ -38,6 +40,16 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   defp dispatch(type, turn_id)
        when type in ["proposal", "recovery_conclusion", "handoff"],
        do: Cases.route_downstream_decision(turn_id, authorize?: false)
+
+  defp enqueue_report(incident) do
+    %{"case_id" => incident.id, "case_revision" => incident.revision}
+    |> GenerationWorker.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
 
   defp decision_type(%{
          status: :completed,

@@ -1,9 +1,10 @@
 defmodule Opsonde.OperationDeliveryTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Reports, Targets}
 
   alias Opsonde.Cases.{
+    DecisionRouteWorker,
     OperationAcceptanceWorker,
     OperationDelivery,
     OperationWorker,
@@ -14,6 +15,7 @@ defmodule Opsonde.OperationDeliveryTest do
   }
 
   alias Opsonde.Providers.{AI, Target}
+  alias Opsonde.Reports.GenerationWorker
 
   @password "correct horse battery staple"
 
@@ -571,7 +573,7 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
-  test "verified Evidence lets a Resolver conclusion resolve a manual Case exactly once",
+  test "verified Evidence resolves once and produces one immutable Report across replay",
        context do
     {incident, run, proposal} = authorized_proposal!("manual-recovery", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -613,12 +615,24 @@ defmodule Opsonde.OperationDeliveryTest do
         authorize?: false
       ).value
 
-    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
-    replayed = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    route_job = %Oban.Job{args: %{"turn_id" => completed.id}}
+    assert :ok = DecisionRouteWorker.perform(route_job)
+    assert :ok = DecisionRouteWorker.perform(route_job)
+
+    resolved = Cases.get_case!(incident.id, authorize?: false)
+    assert [report_job] = report_jobs(resolved.id)
+    assert report_job.args["case_revision"] == resolved.revision
+
+    assert :ok = GenerationWorker.perform(report_job)
+    assert :ok = GenerationWorker.perform(report_job)
+
+    assert [report] = Reports.list_reports!(actor: context.admin)
 
     assert resolved.status == :resolved
-    assert replayed.id == resolved.id
     assert resolved.alert_state == :not_applicable
+    assert report.case_id == resolved.id
+    assert report.case_revision == resolved.revision
+    assert report.outcome == :resolved
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
     refute Cases.get_resolution_run!(run.id, authorize?: false).active
     refute_receive {:effect, _, _}
@@ -1243,5 +1257,14 @@ defmodule Opsonde.OperationDeliveryTest do
       ),
       :count
     )
+  end
+
+  defp report_jobs(case_id) do
+    from(job in Oban.Job,
+      where:
+        job.worker == ^Oban.Worker.to_string(GenerationWorker) and
+          fragment("?->>'case_id'", job.args) == ^case_id
+    )
+    |> Opsonde.Repo.all()
   end
 end

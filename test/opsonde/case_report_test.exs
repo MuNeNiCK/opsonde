@@ -4,6 +4,7 @@ defmodule Opsonde.CaseReportTest do
   alias Opsonde.{Accounts, Cases, Reports}
   alias Opsonde.Cases.{Case, Operation, VerificationAttempt}
   alias Opsonde.Reports.Report.Content
+  alias Opsonde.Reports.GenerationWorker
 
   @password "correct horse battery staple"
 
@@ -162,6 +163,27 @@ defmodule Opsonde.CaseReportTest do
     report = Reports.generate_report!(resolved.id, resolved.revision, actor: context.operator)
     assert report.content["labels"]["summary"] == "Summary"
     assert report.content["outcome_label"] == "Resolved"
+  end
+
+  test "a final automatic Report failure is persisted without claiming completion", context do
+    incident = open!("failed-report", :en, context.operator)
+
+    assert {:error, _error} =
+             GenerationWorker.perform(%Oban.Job{
+               args: %{"case_id" => incident.id, "case_revision" => incident.revision},
+               attempt: 3,
+               max_attempts: 3
+             })
+
+    assert Reports.list_reports!(actor: context.admin) == []
+
+    assert [event] =
+             Cases.list_case_events!(actor: context.admin)
+             |> Enum.filter(
+               &(&1.case_id == incident.id and &1.event_type == "report_generation_failed")
+             )
+
+    assert event.resolution_run_id == nil
   end
 
   test "projection preserves multiple operation outcomes and raw uncertainty", _context do
