@@ -65,7 +65,6 @@ export function TargetTopology({
         maxZoom={1.8}
         nodesDraggable={false}
         nodesConnectable={false}
-        elementsSelectable={false}
         edgesFocusable={false}
         proOptions={{ hideAttribution: true }}
       >
