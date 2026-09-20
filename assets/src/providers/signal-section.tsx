@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
@@ -20,6 +21,92 @@ type Props = {
   onError: (message: string) => void;
 };
 
+export function SignalProviderCreateForm({
+  onCreated,
+  onError,
+}: {
+  onCreated: () => void;
+  onError: (message: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [pending, setPending] = useState(false);
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const adapterType = formValue(form, "adapter_type");
+    const timezone = formValue(form, "timezone");
+    const configuration: Record<string, string> = { source: formValue(form, "source") };
+    if (adapterType === "zabbix-webhook" && timezone) configuration.timezone = timezone;
+
+    setPending(true);
+    onError("");
+    try {
+      await apiClient.POST("/api/v1/providers", {
+        body: {
+          provider: {
+            name: formValue(form, "name"),
+            kind: "signal",
+            adapter_type: adapterType,
+            configuration,
+            credentials: { secret: formValue(form, "secret") },
+          },
+        },
+      });
+      onCreated();
+    } catch {
+      onError(t("cases.requestFailed"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("cases.signalConnections")}</CardTitle>
+        <CardDescription>{t("cases.signalSecret")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
+          <Field id="signal-name" name="name" label={t("cases.name")} />
+          <div className="space-y-2">
+            <Label htmlFor="signal-adapter">{t("cases.signalType")}</Label>
+            <FormSelect
+              id="signal-adapter"
+              name="adapter_type"
+              defaultValue="alertmanager-webhook"
+              options={[
+                { value: "alertmanager-webhook", label: "Alertmanager Webhook" },
+                { value: "zabbix-webhook", label: "Zabbix Webhook" },
+              ]}
+            />
+          </div>
+          <Field id="signal-source" name="source" label={t("cases.source")} />
+          <Field
+            id="signal-timezone"
+            name="timezone"
+            label={t("cases.timezone")}
+            required={false}
+            placeholder="Asia/Tokyo"
+          />
+          <Field
+            id="signal-secret"
+            name="secret"
+            type="password"
+            label={t("cases.webhookSecret")}
+            minLength={16}
+          />
+          <Button className="self-end md:w-fit" type="submit" disabled={pending}>
+            {pending ? <Spinner /> : <Plus />}
+            {t("cases.addSignal")}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SignalProviderSection({ providers, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
@@ -38,34 +125,6 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
     } finally {
       setPending(null);
     }
-  }
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const name = formValue(form, "name");
-    const adapterType = formValue(form, "adapter_type");
-    const source = formValue(form, "source");
-    const secret = formValue(form, "secret");
-    const timezone = formValue(form, "timezone");
-    const configuration: Record<string, string> = { source };
-    if (adapterType === "zabbix-webhook" && timezone) configuration.timezone = timezone;
-
-    const created = await mutate("create", () =>
-      apiClient.POST("/api/v1/providers", {
-        body: {
-          provider: {
-            name,
-            kind: "signal",
-            adapter_type: adapterType,
-            configuration,
-            credentials: { secret },
-          },
-        },
-      }),
-    );
-    if (created) formElement.reset();
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
@@ -90,55 +149,20 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
 
   return (
     <section id="signals" className="scroll-mt-6 space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("cases.signalConnections")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("cases.signalDescription")}</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("cases.signalConnections")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("cases.signalDescription")}</p>
+        </div>
+        {canManage && (
+          <Button asChild>
+            <Link to="/signals/new">
+              <Plus />
+              {t("cases.addSignal")}
+            </Link>
+          </Button>
+        )}
       </div>
-
-      {canManage && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("cases.addSignal")}</CardTitle>
-            <CardDescription>{t("cases.signalSecret")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
-              <Field id="signal-name" name="name" label={t("cases.name")} />
-              <div className="space-y-2">
-                <Label htmlFor="signal-adapter">{t("cases.signalType")}</Label>
-                <FormSelect
-                  id="signal-adapter"
-                  name="adapter_type"
-                  defaultValue="alertmanager-webhook"
-                  options={[
-                    { value: "alertmanager-webhook", label: "Alertmanager Webhook" },
-                    { value: "zabbix-webhook", label: "Zabbix Webhook" },
-                  ]}
-                />
-              </div>
-              <Field id="signal-source" name="source" label={t("cases.source")} />
-              <Field
-                id="signal-timezone"
-                name="timezone"
-                label={t("cases.timezone")}
-                required={false}
-                placeholder="Asia/Tokyo"
-              />
-              <Field
-                id="signal-secret"
-                name="secret"
-                type="password"
-                label={t("cases.webhookSecret")}
-                minLength={16}
-              />
-              <Button className="self-end md:w-fit" type="submit" disabled={pending !== null}>
-                {pending === "create" ? <Spinner /> : <Plus />}
-                {t("cases.addSignal")}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      )}
 
       <div className="grid gap-4 xl:grid-cols-2">
         {signalProviders.map((provider) => {

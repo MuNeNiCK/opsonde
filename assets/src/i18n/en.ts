@@ -67,7 +67,7 @@ const en = {
     },
     setup: {
       title: "Settings",
-      description: "Manage accounts, authentication, and standing authority.",
+      description: "Manage operator accounts and authentication.",
       checklist: "Operational readiness",
       readOnly: "Your account can view these settings. An administrator must change them.",
       ready: "Ready",
@@ -86,6 +86,8 @@ const en = {
       aiTitle: "AI connections and roles",
       aiDescription: "Register the connection Opsonde may use, verify it, then assign its roles.",
       addAI: "Add AI connection",
+      backToAI: "Back to AI",
+      aiCreated: "The AI connection was created. Check it before enabling it.",
       secretDescription:
         "Credentials are write-only. To replace a connection, enter its credential again; saved values are never displayed.",
       name: "Name",
@@ -257,6 +259,8 @@ const en = {
       signalConnections: "Signal connections",
       signalDescription: "Connect monitoring systems to the common incoming Signal path.",
       addSignal: "Add Signal connection",
+      backToSignals: "Back to Signals",
+      signalCreated: "The Signal connection was created. Check it before enabling it.",
       signalSecret:
         "The webhook secret is write-only and must contain at least 16 characters. Create a replacement connection to change it.",
       name: "Name",

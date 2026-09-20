@@ -25,8 +25,14 @@ const SetupPage = lazy(() =>
 const AIProviderPage = lazy(() =>
   import("@/providers/pages").then((module) => ({ default: module.AIProviderPage })),
 );
+const AIProviderCreatePage = lazy(() =>
+  import("@/providers/pages").then((module) => ({ default: module.AIProviderCreatePage })),
+);
 const SignalProviderPage = lazy(() =>
   import("@/providers/pages").then((module) => ({ default: module.SignalProviderPage })),
+);
+const SignalProviderCreatePage = lazy(() =>
+  import("@/providers/pages").then((module) => ({ default: module.SignalProviderCreatePage })),
 );
 const OnboardingPage = lazy(() =>
   import("@/settings/onboarding-page").then((module) => ({ default: module.OnboardingPage })),
@@ -137,9 +143,9 @@ function AppRoutes() {
                 ? "pages.case"
                 : path === "/cases" || path === "/"
                   ? "pages.cases"
-                  : path === "/ai"
+                  : path.startsWith("/ai")
                     ? "pages.ai"
-                    : path === "/signals"
+                    : path.startsWith("/signals")
                       ? "pages.signals"
                       : path.startsWith("/targets")
                         ? "pages.targets"
@@ -183,7 +189,9 @@ function AppRoutes() {
           <Route path="targets/imports" element={<TargetImportPage />} />
           <Route path="targets/:targetId" element={<TargetDetailPage />} />
           <Route path="ai" element={<AIProviderPage />} />
+          <Route path="ai/new" element={<AIProviderCreatePage />} />
           <Route path="signals" element={<SignalProviderPage />} />
+          <Route path="signals/new" element={<SignalProviderCreatePage />} />
           <Route path="providers" element={<Navigate to="/ai" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />

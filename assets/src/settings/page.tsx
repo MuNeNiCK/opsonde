@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bot, Check, CircleDashed, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
-import { AuthoritySetup } from "@/settings/authority-section";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,11 +18,6 @@ export function SetupPage() {
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
-
-  const refresh = useCallback(async () => {
-    const next = await loadSettingsSnapshot();
-    setSnapshot(next);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -128,13 +122,6 @@ export function SetupPage() {
 
       {canManage && account && <AccountSection currentAccountId={account.id} />}
       <OIDCSetup canManage={canManage} onError={setError} />
-      <AuthoritySetup
-        key={snapshot.authority.setting_revision}
-        setting={snapshot.authority}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
     </div>
   );
 }

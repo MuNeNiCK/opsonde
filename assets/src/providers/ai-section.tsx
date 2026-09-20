@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
@@ -33,37 +34,19 @@ function configurationNumber(provider: Provider, key: string, fallback: number) 
   return typeof value === "number" ? value : fallback;
 }
 
-export function ProviderSetup({ providers, assignments, canManage, onRefresh, onError }: Props) {
+export function AIProviderCreateForm({
+  onCreated,
+  onError,
+}: {
+  onCreated: () => void;
+  onError: (message: string) => void;
+}) {
   const { t } = useTranslation();
-  const [pending, setPending] = useState<string | null>(null);
-  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
-  const [localError, setLocalError] = useState("");
-  const [success, setSuccess] = useState("");
-  const aiProviders = providers.filter((provider) => provider.kind === "ai");
-
-  async function mutate(key: string, action: () => Promise<unknown>) {
-    setPending(key);
-    onError("");
-    setLocalError("");
-    setSuccess("");
-    try {
-      await action();
-      await onRefresh();
-      return true;
-    } catch {
-      const message = t("setup.requestFailed");
-      setLocalError(message);
-      onError(message);
-      return false;
-    } finally {
-      setPending(null);
-    }
-  }
+  const [pending, setPending] = useState(false);
 
   async function createProvider(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
+    const form = new FormData(event.currentTarget);
     const name = form.get("name");
     const service = form.get("service");
     const model = form.get("model");
@@ -92,23 +75,73 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
       max_tokens: Number(maxTokens),
     };
     if (endpoint) configuration.endpoint = endpoint;
-    const credentials = apiKey ? { api_key: apiKey } : {};
 
-    const created = await mutate("create-provider", () =>
-      apiClient.POST("/api/v1/providers", {
+    setPending(true);
+    onError("");
+    try {
+      await apiClient.POST("/api/v1/providers", {
         body: {
           provider: {
             name,
             kind: "ai",
             adapter_type: "req-llm",
             configuration,
-            credentials,
+            credentials: apiKey ? { api_key: apiKey } : {},
           },
         },
-      }),
-    );
+      });
+      onCreated();
+    } catch {
+      onError(t("setup.requestFailed"));
+    } finally {
+      setPending(false);
+    }
+  }
 
-    if (created) formElement.reset();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("setup.connection")}</CardTitle>
+        <CardDescription>{t("setup.secretDescription")}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
+          <AIProviderFields idPrefix="provider" />
+          <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending}>
+            {pending ? <Spinner /> : <Plus />}
+            {t("setup.addConnection")}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ProviderSetup({ providers, assignments, canManage, onRefresh, onError }: Props) {
+  const { t } = useTranslation();
+  const [pending, setPending] = useState<string | null>(null);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState("");
+  const [success, setSuccess] = useState("");
+  const aiProviders = providers.filter((provider) => provider.kind === "ai");
+
+  async function mutate(key: string, action: () => Promise<unknown>) {
+    setPending(key);
+    onError("");
+    setLocalError("");
+    setSuccess("");
+    try {
+      await action();
+      await onRefresh();
+      return true;
+    } catch {
+      const message = t("setup.requestFailed");
+      setLocalError(message);
+      onError(message);
+      return false;
+    } finally {
+      setPending(null);
+    }
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
@@ -228,9 +261,19 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
 
   return (
     <section id="ai" className="scroll-mt-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("setup.aiTitle")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("setup.aiTitle")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
+        </div>
+        {canManage && (
+          <Button asChild>
+            <Link to="/ai/new">
+              <Plus />
+              {t("setup.addAI")}
+            </Link>
+          </Button>
+        )}
       </div>
 
       {localError && (
@@ -243,24 +286,6 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
           <CheckCircle2 />
           <AlertDescription>{success}</AlertDescription>
         </Alert>
-      )}
-
-      {canManage && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("setup.addAI")}</CardTitle>
-            <CardDescription>{t("setup.secretDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
-              <AIProviderFields idPrefix="provider" />
-              <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending !== null}>
-                {pending === "create-provider" ? <Spinner /> : <Plus />}
-                {t("setup.addConnection")}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
       )}
 
       <div className="grid gap-4 xl:grid-cols-2">

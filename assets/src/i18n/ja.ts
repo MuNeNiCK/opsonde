@@ -67,7 +67,7 @@ const ja = {
     },
     setup: {
       title: "設定",
-      description: "アカウント、認証、新しいケースに適用する常設権限を管理します。",
+      description: "運用者アカウントと認証を管理します。",
       checklist: "運用準備状況",
       readOnly: "このアカウントでは設定を参照できます。変更には管理者が必要です。",
       ready: "準備完了",
@@ -86,6 +86,8 @@ const ja = {
       aiTitle: "AI接続と役割",
       aiDescription: "Opsondeが利用できる接続を登録・確認し、役割を割り当てます。",
       addAI: "AI接続を追加",
+      backToAI: "AIへ戻る",
+      aiCreated: "AI接続を作成しました。有効化する前に接続確認してください。",
       secretDescription:
         "認証情報は書き込み専用です。接続を置き換える場合は認証情報を再入力してください。保存値は再表示されません。",
       name: "名前",
@@ -251,6 +253,8 @@ const ja = {
       signalConnections: "Signal接続",
       signalDescription: "監視基盤を共通のSignal受信経路へ接続します。",
       addSignal: "Signal接続を追加",
+      backToSignals: "Signalへ戻る",
+      signalCreated: "Signal接続を作成しました。有効化する前に接続確認してください。",
       signalSecret:
         "Webhook secretは書き込み専用で、16文字以上必要です。変更する場合は接続を置き換えます。",
       name: "名前",
