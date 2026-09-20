@@ -390,8 +390,11 @@ export function CaseDetailPage() {
               label={t("cases.owner")}
               value={
                 detail.accounts.find((item) => item.id === incident.current_owner_id)?.email ??
-                incident.current_owner_id ??
-                t("cases.unclaimed")
+                (incident.current_owner_id === null
+                  ? t("cases.unclaimed")
+                  : incident.current_owner_id === account?.id
+                    ? t("cases.ownerYou")
+                    : t("cases.ownerAssigned"))
               }
             />
             <Metric
