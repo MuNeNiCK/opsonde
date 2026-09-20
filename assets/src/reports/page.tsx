@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -17,18 +17,20 @@ type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
 type Report = components["schemas"]["Report"];
 type Provider = components["schemas"]["Provider"];
+type Target = components["schemas"]["Target"];
 
 type Snapshot = {
   cases: CaseRecord[];
   reports: Report[];
   deliveries: Delivery[];
   providers: Provider[];
+  targets: Target[];
 };
 const selectClass =
   "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 async function loadSnapshot(): Promise<Snapshot> {
-  const [cases, reports, deliveries, providers] = await Promise.all([
+  const [cases, reports, deliveries, providers, targets] = await Promise.all([
     collectPages((after) =>
       apiClient
         .GET("/api/v1/cases", { params: { query: { limit: 100, after: after ?? undefined } } })
@@ -49,8 +51,13 @@ async function loadSnapshot(): Promise<Snapshot> {
         .GET("/api/v1/providers", { params: { query: { limit: 100, after: after ?? undefined } } })
         .then(apiData),
     ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
   ]);
-  return { cases, reports, deliveries, providers };
+  return { cases, reports, deliveries, providers, targets };
 }
 
 export function ReportPage() {
@@ -59,6 +66,8 @@ export function ReportPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [panel, setPanel] = useState<"generate" | "deliver" | "destinations" | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState("");
   const canAct = account?.role === "admin" || account?.role === "operator";
   const canManageProviders = account?.role === "admin";
   const refresh = useCallback(async () => setSnapshot(await loadSnapshot()), []);
@@ -93,12 +102,13 @@ export function ReportPage() {
     const caseId = formValue(form, "case_id");
     const incident = snapshot?.cases.find((item) => item.id === caseId);
     if (!incident) return;
-    await mutate("generate", () =>
+    const succeeded = await mutate("generate", () =>
       apiClient.POST("/api/v1/cases/{case_id}/reports", {
         params: { path: { case_id: incident.id } },
         body: { report: { expected_case_revision: incident.revision } },
       }),
     );
+    if (succeeded) setPanel(null);
   }
 
   async function deliver(event: FormEvent<HTMLFormElement>) {
@@ -107,7 +117,7 @@ export function ReportPage() {
     const report = snapshot?.reports.find((item) => item.id === formValue(form, "report_id"));
     const provider = snapshot?.providers.find((item) => item.id === formValue(form, "provider_id"));
     if (!report || !provider) return;
-    await mutate("deliver", () =>
+    const succeeded = await mutate("deliver", () =>
       apiClient.POST("/api/v1/deliveries", {
         body: {
           delivery: {
@@ -120,6 +130,10 @@ export function ReportPage() {
         },
       }),
     );
+    if (succeeded) {
+      setPanel(null);
+      setSelectedReportId("");
+    }
   }
 
   async function mutate(key: string, action: () => Promise<unknown>) {
@@ -128,8 +142,10 @@ export function ReportPage() {
     try {
       await action();
       await refresh();
+      return true;
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : t("reports.requestFailed"));
+      return false;
     } finally {
       setPending(null);
     }
@@ -151,6 +167,17 @@ export function ReportPage() {
   };
   const providerName = (id: string) =>
     snapshot.providers.find((item) => item.id === id)?.name ?? id;
+  const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
+  const targetForCase = (id: string) => {
+    const incident = snapshot.cases.find((item) => item.id === id);
+    return incident?.selected_target_id ?? incident?.initial_target_id ?? null;
+  };
+
+  function openDelivery(reportId = "") {
+    setSelectedReportId(reportId);
+    setPanel("deliver");
+    window.requestAnimationFrame(() => document.getElementById("report-action")?.scrollIntoView());
+  }
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-10 p-6 lg:p-8">
@@ -159,10 +186,27 @@ export function ReportPage() {
           <h1 className="text-2xl font-semibold tracking-tight">{t("reports.title")}</h1>
           <p className="mt-2 text-muted-foreground">{t("reports.description")}</p>
         </div>
-        <Button variant="outline" onClick={() => void refresh()}>
-          <RefreshCw />
-          {t("reports.refresh")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => void refresh()}>
+            <RefreshCw />
+            {t("reports.refresh")}
+          </Button>
+          {canAct && (
+            <Button onClick={() => setPanel(panel === "generate" ? null : "generate")}>
+              {panel === "generate" ? <X /> : <Plus />}
+              {t(panel === "generate" ? "common.cancel" : "reports.generate")}
+            </Button>
+          )}
+          {canManageProviders && (
+            <Button
+              variant="outline"
+              onClick={() => setPanel(panel === "destinations" ? null : "destinations")}
+            >
+              {panel === "destinations" ? <X /> : <Settings2 />}
+              {t(panel === "destinations" ? "common.cancel" : "reports.manageDestinations")}
+            </Button>
+          )}
+        </div>
       </div>
       {error && (
         <Alert variant="destructive">
@@ -175,88 +219,100 @@ export function ReportPage() {
         </Alert>
       )}
 
-      <NotificationProviderSection
-        providers={snapshot.providers}
-        canManage={canManageProviders}
-        onRefresh={refresh}
-        onError={setError}
-      />
+      {panel === "destinations" && (
+        <NotificationProviderSection
+          providers={snapshot.providers}
+          canManage={canManageProviders}
+          onRefresh={refresh}
+          onError={setError}
+        />
+      )}
 
-      {canAct && (
-        <section className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("reports.generate")}</CardTitle>
-              <CardDescription>{t("reports.generateDescription")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="space-y-4" onSubmit={generate}>
-                <div className="space-y-2">
-                  <Label htmlFor="report-case">{t("reports.case")}</Label>
-                  <select id="report-case" name="case_id" className={selectClass} required>
-                    <option value="">{t("reports.chooseCase")}</option>
-                    {reportable.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.title} · {item.report_language} · r{item.revision}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button type="submit" disabled={pending !== null || reportable.length === 0}>
-                  {pending === "generate" && <Spinner />}
-                  {t("reports.generate")}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("reports.deliver")}</CardTitle>
-              <CardDescription>{t("reports.deliverDescription")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="space-y-4" onSubmit={deliver}>
-                <div className="space-y-2">
-                  <Label htmlFor="delivery-report">{t("reports.report")}</Label>
-                  <select id="delivery-report" name="report_id" className={selectClass} required>
-                    <option value="">{t("reports.chooseReport")}</option>
-                    {snapshot.reports.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {caseTitle(item.case_id)} · {item.language} · {item.outcome}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="delivery-provider">{t("reports.destination")}</Label>
-                  <select
-                    id="delivery-provider"
-                    name="provider_id"
-                    className={selectClass}
-                    required
+      {canAct && (panel === "generate" || panel === "deliver") && (
+        <section id="report-action">
+          {panel === "generate" ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("reports.generate")}</CardTitle>
+                <CardDescription>{t("reports.generateDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4" onSubmit={generate}>
+                  <div className="space-y-2">
+                    <Label htmlFor="report-case">{t("reports.case")}</Label>
+                    <select id="report-case" name="case_id" className={selectClass} required>
+                      <option value="">{t("reports.chooseCase")}</option>
+                      {reportable.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.title} · {item.report_language} · r{item.revision}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button type="submit" disabled={pending !== null || reportable.length === 0}>
+                    {pending === "generate" && <Spinner />}
+                    {t("reports.generate")}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("reports.deliver")}</CardTitle>
+                <CardDescription>{t("reports.deliverDescription")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4" onSubmit={deliver}>
+                  <div className="space-y-2">
+                    <Label htmlFor="delivery-report">{t("reports.report")}</Label>
+                    <select
+                      id="delivery-report"
+                      name="report_id"
+                      className={selectClass}
+                      value={selectedReportId}
+                      onChange={(event) => setSelectedReportId(event.target.value)}
+                      required
+                    >
+                      <option value="">{t("reports.chooseReport")}</option>
+                      {snapshot.reports.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {caseTitle(item.case_id)} · {item.language} · {item.outcome}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="delivery-provider">{t("reports.destination")}</Label>
+                    <select
+                      id="delivery-provider"
+                      name="provider_id"
+                      className={selectClass}
+                      required
+                    >
+                      <option value="">{t("reports.chooseDestination")}</option>
+                      {notificationProviders.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button
+                    type="submit"
+                    disabled={
+                      pending !== null ||
+                      snapshot.reports.length === 0 ||
+                      notificationProviders.length === 0
+                    }
                   >
-                    <option value="">{t("reports.chooseDestination")}</option>
-                    {notificationProviders.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button
-                  type="submit"
-                  disabled={
-                    pending !== null ||
-                    snapshot.reports.length === 0 ||
-                    notificationProviders.length === 0
-                  }
-                >
-                  {pending === "deliver" && <Spinner />}
-                  {t("reports.createDelivery")}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                    {pending === "deliver" && <Spinner />}
+                    {t("reports.createDelivery")}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
         </section>
       )}
 
@@ -267,7 +323,7 @@ export function ReportPage() {
         </div>
         <div className="grid gap-4 xl:grid-cols-2">
           {snapshot.reports.map((report) => (
-            <Card key={report.id}>
+            <Card key={report.id} id={`report-${report.id}`}>
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -284,16 +340,31 @@ export function ReportPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <p className="break-all font-mono text-xs text-muted-foreground">
-                  SHA-256 {report.content_digest}
-                </p>
-                <Button asChild size="sm" variant="outline">
-                  <Link to={`/cases/${report.case_id}`}>{t("reports.openCase")}</Link>
-                </Button>
+                <ReportSummary content={report.content} />
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild size="sm" variant="outline">
+                    <Link to={`/cases/${report.case_id}`}>{t("reports.openCase")}</Link>
+                  </Button>
+                  {targetForCase(report.case_id) && (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={`/targets/${targetForCase(report.case_id)}`}>
+                        {targetName(targetForCase(report.case_id) as string)}
+                      </Link>
+                    </Button>
+                  )}
+                  {canAct && (
+                    <Button size="sm" onClick={() => openDelivery(report.id)}>
+                      {t("reports.deliver")}
+                    </Button>
+                  )}
+                </div>
                 <details>
                   <summary className="cursor-pointer text-sm font-medium">
-                    {t("reports.content")}
+                    {t("reports.technicalDetails")}
                   </summary>
+                  <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
+                    SHA-256 {report.content_digest}
+                  </p>
                   <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
                     {JSON.stringify(report.content, null, 2)}
                   </pre>
@@ -332,8 +403,20 @@ export function ReportPage() {
                 </Badge>
               </div>
               {delivery.reference && (
-                <p className="mt-3 break-all font-mono text-xs">{delivery.reference}</p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t("reports.deliveryReference")}: {delivery.reference}
+                </p>
               )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button asChild size="sm" variant="outline">
+                  <a href={`#report-${delivery.report_id}`}>{t("reports.openReport")}</a>
+                </Button>
+                {(delivery.status === "failed" || delivery.status === "unknown") && canAct && (
+                  <Button size="sm" onClick={() => openDelivery(delivery.report_id)}>
+                    <RotateCcw /> {t("reports.retryDelivery")}
+                  </Button>
+                )}
+              </div>
               <details className="mt-3">
                 <summary className="cursor-pointer text-xs text-muted-foreground">
                   {t("reports.deliveryDetails")}
@@ -353,6 +436,54 @@ export function ReportPage() {
       </section>
     </main>
   );
+}
+
+function ReportSummary({ content }: { content: Record<string, unknown> }) {
+  const { t } = useTranslation();
+  const unresolved = objectValue(content.unresolved);
+  const requiredInput = unresolved ? stringValue(unresolved.required_human_input) : "";
+  return (
+    <div className="space-y-3">
+      <p className="text-sm">{stringValue(content.outcome_label)}</p>
+      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <Metric label={t("reports.runs")} value={String(arrayLength(content.resolution_runs))} />
+        <Metric label={t("reports.operations")} value={String(arrayLength(content.operations))} />
+        <Metric
+          label={t("reports.verifications")}
+          value={String(arrayLength(content.verifications))}
+        />
+        <Metric label={t("reports.targetPath")} value={String(arrayLength(content.target_path))} />
+      </dl>
+      {requiredInput && (
+        <Alert>
+          <AlertDescription>{requiredInput}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="font-medium">{value}</dd>
+    </div>
+  );
+}
+
+function arrayLength(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function Loading() {

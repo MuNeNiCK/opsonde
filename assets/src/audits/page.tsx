@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -65,6 +65,7 @@ export function AuditPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [scope, setScope] = useState<"targets" | "boundary">("targets");
   const [pending, setPending] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
@@ -112,6 +113,7 @@ export function AuditPage() {
       });
       formElement.reset();
       setScope("targets");
+      setShowCreate(false);
       await refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : t("audits.requestFailed"));
@@ -148,9 +150,17 @@ export function AuditPage() {
           <h1 className="text-2xl font-semibold tracking-tight">{t("audits.title")}</h1>
           <p className="mt-2 text-muted-foreground">{t("audits.description")}</p>
         </div>
-        <Button variant="outline" onClick={() => void refresh()}>
-          <RefreshCw /> {t("audits.refresh")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => void refresh()}>
+            <RefreshCw /> {t("audits.refresh")}
+          </Button>
+          {canManage && (
+            <Button onClick={() => setShowCreate((value) => !value)}>
+              {showCreate ? <X /> : <Plus />}
+              {t(showCreate ? "common.cancel" : "audits.addSchedule")}
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -164,7 +174,7 @@ export function AuditPage() {
         </Alert>
       )}
 
-      {canManage && (
+      {canManage && showCreate && (
         <Card>
           <CardHeader>
             <CardTitle>{t("audits.addSchedule")}</CardTitle>
@@ -267,7 +277,7 @@ export function AuditPage() {
         <h2 className="text-xl font-semibold">{t("audits.schedules")}</h2>
         <div className="grid gap-4 xl:grid-cols-2">
           {snapshot.schedules.map((schedule) => (
-            <Card key={schedule.id}>
+            <Card key={schedule.id} id={`audit-schedule-${schedule.id}`}>
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -330,20 +340,40 @@ export function AuditPage() {
                   <Badge variant={run.status === "failed" ? "destructive" : "secondary"}>
                     {t(`audits.runStatus.${run.status}`)}
                   </Badge>
-                  <span className="font-medium">
-                    {run.target_id ? targetName(run.target_id) : run.target_key}
-                  </span>
+                  {run.target_id ? (
+                    <Link
+                      className="font-medium underline-offset-4 hover:underline"
+                      to={`/targets/${run.target_id}`}
+                    >
+                      {targetName(run.target_id)}
+                    </Link>
+                  ) : (
+                    <span className="font-medium">{run.target_key}</span>
+                  )}
                 </div>
                 <p className="mt-1 text-muted-foreground">
                   {formatDate(run.scheduled_for, i18n.resolvedLanguage)}
                   {run.reason ? ` · ${run.reason}` : ""}
                 </p>
               </div>
-              {run.case_id && (
-                <Button asChild size="sm" variant="outline">
-                  <Link to={`/cases/${run.case_id}`}>{t("audits.openCase")}</Link>
-                </Button>
-              )}
+              <div className="flex flex-wrap gap-2">
+                {run.case_id ? (
+                  <Button asChild size="sm" variant="outline">
+                    <Link to={`/cases/${run.case_id}`}>{t("audits.openCase")}</Link>
+                  </Button>
+                ) : (
+                  <span className="self-center text-xs text-muted-foreground">
+                    {t("audits.noCaseOpened")}
+                  </span>
+                )}
+                {(run.status === "failed" || run.status === "skipped") && (
+                  <Button asChild size="sm" variant="outline">
+                    <a href={`#audit-schedule-${run.audit_schedule_id}`}>
+                      {t("audits.reviewSchedule")}
+                    </a>
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
           {snapshot.runs.length === 0 && (
