@@ -3,16 +3,18 @@ import {
   Bot,
   Boxes,
   FileText,
+  Globe2,
+  Moon,
   RadioTower,
   Settings,
   ShieldCheck,
+  Sun,
   Webhook,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
-import { FormSelect } from "@/components/form-select";
 import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -22,6 +24,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -65,7 +69,7 @@ const navigation = [
 export function AppShell() {
   const { account, signOut } = useAuthentication();
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const location = useLocation();
   const previousPathname = useRef(location.pathname);
   const initials = account?.email.slice(0, 2).toUpperCase() ?? "OP";
@@ -148,34 +152,60 @@ export function AppShell() {
       <SidebarInset id="main-content" tabIndex={-1}>
         <header className="flex h-14 items-center justify-between border-b px-4">
           <SidebarTrigger aria-label={t("common.toggleNavigation")} />
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <span>{t("common.theme")}</span>
-              <FormSelect
-                id="application-theme"
-                className="w-auto min-w-28"
-                value={theme === "dark" ? "dark" : "light"}
-                onValueChange={(value) => {
-                  if (value === "light" || value === "dark") setTheme(value);
-                }}
-                ariaLabel={t("common.theme")}
-                options={[
-                  { value: "light", label: t("common.light") },
-                  { value: "dark", label: t("common.dark") },
-                ]}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span>{t("common.language")}</span>
-              <FormSelect
-                id="application-language"
-                className="w-auto min-w-32"
-                value={normalizeLocale(i18n.resolvedLanguage)}
-                onValueChange={(value) => value && void i18n.changeLanguage(value)}
-                ariaLabel={t("common.language")}
-                options={supportedLocales.map(({ value, label }) => ({ value, label }))}
-              />
-            </div>
+          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  id="application-theme"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t("common.theme")}
+                >
+                  {resolvedTheme === "dark" ? <Moon /> : <Sun />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-36">
+                <DropdownMenuRadioGroup
+                  value={resolvedTheme}
+                  onValueChange={(value) => {
+                    if (value === "light" || value === "dark") setTheme(value);
+                  }}
+                >
+                  <DropdownMenuRadioItem value="light">
+                    <Sun />
+                    {t("common.light")}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">
+                    <Moon />
+                    {t("common.dark")}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  id="application-language"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t("common.language")}
+                >
+                  <Globe2 />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-36">
+                <DropdownMenuRadioGroup
+                  value={normalizeLocale(i18n.resolvedLanguage)}
+                  onValueChange={(value) => void i18n.changeLanguage(value)}
+                >
+                  {supportedLocales.map(({ value, label }) => (
+                    <DropdownMenuRadioItem key={value} value={value}>
+                      {label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
         <div className="mx-auto w-full max-w-[96rem]">
