@@ -1,26 +1,43 @@
-import { Children, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { ArrowLeft, CircleAlert, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
+import {
+  ContextCard,
+  DataBlock,
+  Empty,
+  HistoryRow,
+  Metric,
+  PrimaryAction,
+  ProposalCard,
+  RecordCard,
+  ResumeCard,
+  StateIcon,
+  selectClass,
+} from "@/cases/detail-components";
+import {
+  describeSituation,
+  formatDate,
+  formValue,
+  parseAuthorityMode,
+  translatedToken,
+} from "@/cases/detail-utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 
 type Approval = components["schemas"]["Approval"];
 type CaseEvent = components["schemas"]["CaseEvent"];
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type Evidence = components["schemas"]["Evidence"];
-type Proposal = components["schemas"]["Proposal"];
 type ReviewDecision = components["schemas"]["ReviewDecision"];
 type Turn = components["schemas"]["ResolverTurn"];
 type Provider = components["schemas"]["Provider"];
@@ -40,19 +57,14 @@ type Detail = {
   accounts: Account[];
 };
 
-async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Detail> {
-  const [
-    snapshotResponse,
-    timeline,
-    turns,
-    evidence,
-    approvals,
-    reviews,
-    targets,
-    methods,
-    providers,
-    accounts,
-  ] = await Promise.all([
+type CaseState = Pick<
+  Detail,
+  "snapshot" | "timeline" | "turns" | "evidence" | "approvals" | "reviews"
+>;
+type References = Pick<Detail, "targets" | "methods" | "providers" | "accounts">;
+
+async function loadCaseState(caseId: string): Promise<CaseState> {
+  const [snapshotResponse, timeline, turns, evidence, approvals, reviews] = await Promise.all([
     apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
     collectPages((after) =>
       apiClient
@@ -89,6 +101,12 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
         })
         .then(apiData),
     ),
+  ]);
+  return { snapshot: snapshotResponse.data, timeline, turns, evidence, approvals, reviews };
+}
+
+async function loadReferences(includeAccounts: boolean): Promise<References> {
+  const [targets, methods, providers, accounts] = await Promise.all([
     collectPages((after) =>
       apiClient
         .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
@@ -116,18 +134,15 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
         )
       : Promise.resolve([]),
   ]);
-  return {
-    snapshot: snapshotResponse.data,
-    timeline,
-    turns,
-    evidence,
-    approvals,
-    reviews,
-    targets,
-    methods,
-    providers,
-    accounts,
-  };
+  return { targets, methods, providers, accounts };
+}
+
+async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Detail> {
+  const [state, references] = await Promise.all([
+    loadCaseState(caseId),
+    loadReferences(includeAccounts),
+  ]);
+  return { ...state, ...references };
 }
 
 export function CaseDetailPage() {
@@ -137,12 +152,15 @@ export function CaseDetailPage() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [confirmCancellation, setConfirmCancellation] = useState(false);
   const canOperate = account?.role === "admin" || account?.role === "operator";
+  const caseStatus = detail?.snapshot.case.status;
 
   const refresh = useCallback(async () => {
     if (!caseId) return;
-    setDetail(await loadDetail(caseId, account?.role === "admin"));
-  }, [account?.role, caseId]);
+    const state = await loadCaseState(caseId);
+    setDetail((current) => (current ? { ...current, ...state } : current));
+  }, [caseId]);
 
   useEffect(() => {
     let active = true;
@@ -157,10 +175,10 @@ export function CaseDetailPage() {
   }, [account?.role, caseId, t]);
 
   useEffect(() => {
-    if (detail?.snapshot.case.status !== "running") return;
-    const timer = window.setInterval(() => void refresh().catch(() => undefined), 4_000);
+    if (!caseStatus || ["resolved", "cancelled"].includes(caseStatus)) return;
+    const timer = window.setInterval(() => void refresh().catch(() => undefined), 5_000);
     return () => window.clearInterval(timer);
-  }, [detail?.snapshot.case.status, refresh]);
+  }, [caseStatus, refresh]);
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);
@@ -188,6 +206,14 @@ export function CaseDetailPage() {
   const latestRun = [...detail.snapshot.resolution_runs].sort(
     (a, b) => b.generation - a.generation,
   )[0];
+  const awaitingProposal = detail.snapshot.proposals.find(
+    (proposal) => proposal.status === "awaiting_human",
+  );
+  const selectedTarget = detail.targets.find((target) => target.id === incident.selected_target_id);
+  const accessMethods = detail.methods
+    .filter((method) => method.target_id === incident.selected_target_id && method.active)
+    .sort((left, right) => left.priority - right.priority);
+  const situation = describeSituation(incident, awaitingProposal, t);
   const targetName = (id: string | null) =>
     id ? (detail.targets.find((target) => target.id === id)?.name ?? id) : t("cases.unresolved");
   const providerName = (id: string) => detail.providers.find((item) => item.id === id)?.name ?? id;
@@ -206,6 +232,7 @@ export function CaseDetailPage() {
             body: request,
           }),
     );
+    if (action === "cancel") setConfirmCancellation(false);
   }
 
   async function handoff(event: FormEvent<HTMLFormElement>) {
@@ -283,24 +310,74 @@ export function CaseDetailPage() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("cases.currentState")}</CardTitle>
-          <CardDescription>
-            {incident.source} · {incident.source_ref}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label={t("cases.target")} value={targetName(incident.selected_target_id)} />
-            <Metric
-              label={t("cases.alertState")}
-              value={t(`cases.alert.${incident.alert_state}`)}
+      <Card className="overflow-hidden">
+        <CardContent className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:p-6">
+          <div className="space-y-5">
+            <div className="flex items-start gap-3">
+              <StateIcon state={incident.status} />
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">
+                  {t("cases.whatHappened")}
+                </p>
+                <p className="mt-1 text-lg font-semibold">{situation.happened}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{situation.doing}</p>
+              </div>
+            </div>
+            {situation.blocker && (
+              <Alert variant={incident.status === "needs_attention" ? "destructive" : "default"}>
+                <CircleAlert />
+                <AlertDescription>{situation.blocker}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+          <div className="space-y-3 rounded-lg border bg-muted/35 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("cases.nextAction")}
+            </p>
+            <p className="text-sm font-medium">{situation.action}</p>
+            <PrimaryAction
+              incident={incident}
+              awaitingProposal={awaitingProposal}
+              canOperate={canOperate}
+              pending={pending}
+              claim={() => void lifecycle("claim")}
             />
-            <Metric
-              label={t("cases.authority")}
-              value={t(`setup.modes.${incident.authority_mode}.name`)}
-            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <ContextCard title={t("cases.affectedTarget")} icon={<Wrench />}>
+          <p className="font-medium">{selectedTarget?.name ?? t("cases.unresolved")}</p>
+          {selectedTarget ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {selectedTarget.kind} · {selectedTarget.platform}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">{t("cases.targetPending")}</p>
+          )}
+        </ContextCard>
+        <ContextCard title={t("cases.accessPaths")} icon={<ShieldCheck />}>
+          {accessMethods.length > 0 ? (
+            <div className="space-y-2">
+              {accessMethods.map((method, index) => (
+                <div key={method.id} className="text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{method.name}</span>
+                    {index === 0 && <Badge variant="outline">{t("cases.preferred")}</Badge>}
+                  </div>
+                  <p className="break-all text-muted-foreground">
+                    {method.method} · {method.endpoint}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("cases.noAccessPaths")}</p>
+          )}
+        </ContextCard>
+        <ContextCard title={t("cases.caseControl")} icon={<ShieldCheck />}>
+          <dl className="grid grid-cols-2 gap-3 text-sm">
             <Metric
               label={t("cases.owner")}
               value={
@@ -309,63 +386,21 @@ export function CaseDetailPage() {
                 t("cases.unclaimed")
               }
             />
+            <Metric
+              label={t("cases.alertState")}
+              value={t("cases.alert." + incident.alert_state)}
+            />
+            <Metric
+              label={t("cases.authority")}
+              value={t("setup.modes." + incident.authority_mode + ".name")}
+            />
+            <Metric
+              label={t("cases.generation")}
+              value={latestRun ? String(latestRun.generation) : t("cases.notStarted")}
+            />
           </dl>
-          {incident.selected_target_id === null && (
-            <Alert>
-              <AlertDescription>{t("cases.targetPending")}</AlertDescription>
-            </Alert>
-          )}
-          {incident.required_human_input && (
-            <Alert variant="destructive">
-              <AlertDescription>{incident.required_human_input}</AlertDescription>
-            </Alert>
-          )}
-          {incident.stop_reason && (
-            <p className="text-sm text-muted-foreground">{incident.stop_reason}</p>
-          )}
-          {canOperate && incident.status !== "resolved" && incident.status !== "cancelled" && (
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={pending !== null} onClick={() => void lifecycle("claim")}>
-                {pending === "claim" && <Spinner />}
-                {t("cases.claim")}
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={pending !== null || incident.cancel_requested}
-                onClick={() => void lifecycle("cancel")}
-              >
-                {pending === "cancel" && <Spinner />}
-                {t("cases.cancel")}
-              </Button>
-            </div>
-          )}
-          {account?.role === "admin" && detail.accounts.length > 0 && (
-            <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
-              <div className="min-w-64 space-y-2">
-                <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
-                <select
-                  id="handoff-owner"
-                  name="owner_id"
-                  className={selectClass}
-                  defaultValue={incident.current_owner_id ?? account.id}
-                >
-                  {detail.accounts
-                    .filter((item) => item.role !== "viewer")
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.email}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <Button type="submit" size="sm" disabled={pending !== null}>
-                {t("cases.handoff")}
-              </Button>
-            </form>
-          )}
-        </CardContent>
-      </Card>
+        </ContextCard>
+      </section>
 
       {incident.status === "needs_attention" && latestRun && canOperate && (
         <ResumeCard
@@ -452,7 +487,9 @@ export function CaseDetailPage() {
                     <CardTitle>
                       {operation.capability} / {operation.operation}
                     </CardTitle>
-                    <Badge variant="secondary">{operation.status}</Badge>
+                    <Badge variant="secondary">
+                      {translatedToken(t, "operationStatus", operation.status)}
+                    </Badge>
                   </div>
                   <CardDescription>
                     {targetName(operation.target_id)} · {methodName(operation.access_method_id)}
@@ -504,12 +541,18 @@ export function CaseDetailPage() {
 
       <section className="grid gap-6 xl:grid-cols-2">
         <RecordCard title={t("cases.turns")} empty={t("cases.noTurns")}>
-          {detail.turns.map((turn) => (
+          {[...detail.turns].reverse().map((turn) => (
             <HistoryRow
               key={turn.id}
-              title={`#${turn.ordinal} · ${turn.status}`}
-              subtitle={turn.progress_kind ?? undefined}
+              title={t("cases.turnTitle", { ordinal: turn.ordinal })}
+              subtitle={translatedToken(t, "progress", turn.progress_kind ?? turn.status)}
             >
+              {turn.failure_message && (
+                <p className="text-sm text-destructive">
+                  {translatedToken(t, "failure", turn.failure_category ?? "failed")}:{" "}
+                  {turn.failure_message}
+                </p>
+              )}
               <DataBlock
                 value={{
                   intent: turn.intent,
@@ -523,10 +566,10 @@ export function CaseDetailPage() {
           ))}
         </RecordCard>
         <RecordCard title={t("cases.evidence")} empty={t("cases.noEvidence")}>
-          {detail.evidence.map((item) => (
+          {[...detail.evidence].reverse().map((item) => (
             <HistoryRow
               key={item.id}
-              title={`${item.kind} · ${item.source}`}
+              title={translatedToken(t, "evidenceKind", item.kind) + " · " + item.source}
               subtitle={`${item.source_ref} · ${formatDate(item.observed_at, i18n.resolvedLanguage)}`}
             >
               <DataBlock value={item.content} />
@@ -534,287 +577,114 @@ export function CaseDetailPage() {
           ))}
         </RecordCard>
         <RecordCard title={t("cases.authorityOutcomes")} empty={t("cases.noAuthorityOutcomes")}>
-          {detail.approvals.map((item) => (
+          {[...detail.approvals].reverse().map((item) => (
             <HistoryRow
               key={item.id}
-              title={`${item.source} · ${item.decision}`}
+              title={
+                translatedToken(t, "decisionSource", item.source) +
+                " · " +
+                translatedToken(t, "decision", item.decision)
+              }
               subtitle={item.reason}
             />
           ))}
-          {detail.reviews.map((item) => (
+          {[...detail.reviews].reverse().map((item) => (
             <HistoryRow
               key={item.id}
-              title={`Reviewer · ${item.verdict}`}
+              title={t("cases.reviewer") + " · " + translatedToken(t, "decision", item.verdict)}
               subtitle={`${item.selection_source} · ${item.reason}`}
             />
           ))}
         </RecordCard>
         <RecordCard title={t("cases.timeline")} empty={t("cases.noTimeline")}>
-          {detail.timeline.map((item) => (
+          {[...detail.timeline].reverse().map((item) => (
             <HistoryRow
               key={item.id}
-              title={item.type}
+              title={translatedToken(t, "event", item.type)}
               subtitle={formatDate(item.inserted_at, i18n.resolvedLanguage)}
             />
           ))}
         </RecordCard>
       </section>
-    </main>
-  );
-}
 
-const selectClass =
-  "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-
-function formValue(form: FormData, name: string) {
-  const value = form.get(name);
-  return typeof value === "string" ? value : "";
-}
-
-function parseAuthorityMode(value: string): components["schemas"]["Case"]["authority_mode"] {
-  return value === "readonly" || value === "ask" || value === "auto" || value === "full_access"
-    ? value
-    : "readonly";
-}
-
-function ProposalCard({
-  proposal,
-  target,
-  method,
-  provider,
-  canOperate,
-  pending,
-  decide,
-}: {
-  proposal: Proposal;
-  target: string;
-  method: string;
-  provider: string;
-  canOperate: boolean;
-  pending: string | null;
-  decide: (decision: "approved" | "rejected", reason: string) => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [reason, setReason] = useState("");
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>
-            {proposal.capability} / {proposal.operation}
-          </CardTitle>
-          <Badge
-            variant={
-              proposal.status === "blocked" || proposal.status === "rejected"
-                ? "destructive"
-                : "secondary"
-            }
-          >
-            {proposal.status}
-          </Badge>
-        </div>
-        <CardDescription>
-          {target} · {method} · {provider} · {t(`setup.modes.${proposal.authority_mode}.name`)}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <p className="text-sm">{proposal.reason}</p>
-        <div className="grid gap-4 lg:grid-cols-3">
-          <DataBlock
-            title={t("cases.effectRequest")}
-            value={{ selectors: proposal.selectors, parameters: proposal.parameters }}
-          />
-          <DataBlock title={t("cases.expectedResult")} value={proposal.expected_result} />
-          <DataBlock
-            title={t("cases.verification")}
-            value={{ intent: proposal.verification_intent, tool: proposal.verification_tool }}
-          />
-        </div>
-        {proposal.preflight_reason && (
-          <Alert variant="destructive">
-            <AlertDescription>{proposal.preflight_reason}</AlertDescription>
-          </Alert>
-        )}
-        {proposal.status === "awaiting_human" && canOperate && (
-          <div className="space-y-3 rounded-md border p-4">
-            <Label htmlFor={`reason-${proposal.id}`}>{t("cases.decisionReason")}</Label>
-            <Textarea
-              id={`reason-${proposal.id}`}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              required
-            />
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                disabled={!reason || pending !== null}
-                onClick={() => void decide("approved", reason)}
-              >
-                {pending === `proposal-${proposal.id}` && <Spinner />}
-                {t("cases.approve")}
-              </Button>
+      {canOperate && !["resolved", "cancelled"].includes(incident.status) && (
+        <details className="rounded-lg border bg-card p-4">
+          <summary className="cursor-pointer font-medium">{t("cases.caseControls")}</summary>
+          <div className="mt-4 space-y-5">
+            {account?.role === "admin" && detail.accounts.length > 0 && (
+              <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
+                <div className="min-w-64 space-y-2">
+                  <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
+                  <select
+                    id="handoff-owner"
+                    name="owner_id"
+                    className={selectClass}
+                    defaultValue={incident.current_owner_id ?? account.id}
+                  >
+                    {detail.accounts
+                      .filter((item) => item.role !== "viewer")
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.email}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <Button type="submit" size="sm" variant="outline" disabled={pending !== null}>
+                  {pending === "handoff" && <Spinner />}
+                  {t("cases.handoff")}
+                </Button>
+              </form>
+            )}
+            <Separator />
+            {!confirmCancellation ? (
               <Button
                 size="sm"
                 variant="destructive"
-                disabled={!reason || pending !== null}
-                onClick={() => void decide("rejected", reason)}
+                disabled={pending !== null || incident.cancel_requested}
+                onClick={() => setConfirmCancellation(true)}
               >
-                {t("cases.reject")}
+                {t("cases.cancel")}
               </Button>
-            </div>
+            ) : (
+              <Alert variant="destructive">
+                <CircleAlert />
+                <AlertDescription>
+                  <p>{t("cases.cancelConfirmation")}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={pending !== null}
+                      onClick={() => void lifecycle("cancel")}
+                    >
+                      {pending === "cancel" && <Spinner />}
+                      {t("cases.confirmCancel")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setConfirmCancellation(false)}
+                    >
+                      {t("common.cancel")}
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+        </details>
+      )}
 
-function ResumeCard({
-  incident,
-  run,
-  pending,
-  onSubmit,
-}: {
-  incident: CaseSnapshot["case"];
-  run: CaseSnapshot["resolution_runs"][number];
-  pending: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("cases.resumeTitle")}</CardTitle>
-        <CardDescription>{t("cases.resumeDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form className="space-y-4" onSubmit={(event) => void onSubmit(event)}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="space-y-2">
-              <Label htmlFor="resume-mode">{t("cases.authority")}</Label>
-              <select
-                id="resume-mode"
-                name="authority_mode"
-                className={selectClass}
-                defaultValue={incident.authority_mode}
-              >
-                {["readonly", "ask", "auto", "full_access"].map((mode) => (
-                  <option key={mode} value={mode}>
-                    {t(`setup.modes.${mode}.name`)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {Object.entries(run.limits).map(([name, value]) => (
-              <NumberField key={name} name={name} label={t(`cases.limit.${name}`)} value={value} />
-            ))}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="resume-reason">{t("cases.resumeReason")}</Label>
-            <Textarea id="resume-reason" name="reason" required maxLength={1000} />
-          </div>
-          <Button type="submit" disabled={pending}>
-            {pending && <Spinner />}
-            {t("cases.resume")}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
-  );
-}
-
-function NumberField({ name, label, value }: { name: string; label: string; value: number }) {
-  const min =
-    name === "max_elapsed_seconds"
-      ? 60
-      : name === "max_effects" || name === "max_related_targets"
-        ? 0
-        : 1;
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={`resume-${name}`}>{label}</Label>
-      <Input
-        id={`resume-${name}`}
-        name={name}
-        type="number"
-        min={min}
-        defaultValue={value}
-        required
-      />
-    </div>
-  );
-}
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-words">{value}</dd>
-    </div>
-  );
-}
-function DataBlock({ title, value }: { title?: string; value: unknown }) {
-  return (
-    <div className="min-w-0">
-      {title && <p className="mb-2 text-xs font-medium text-muted-foreground">{title}</p>}
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs">
-        {JSON.stringify(value, null, 2)}
-      </pre>
-    </div>
-  );
-}
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-function RecordCard({
-  title,
-  empty,
-  children,
-}: {
-  title: string;
-  empty: string;
-  children: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {Children.count(children) > 0 ? (
-          children
-        ) : (
-          <p className="text-sm text-muted-foreground">{empty}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-function HistoryRow({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <div>
-        <p className="font-medium">{title}</p>
-        {subtitle && <p className="break-words text-sm text-muted-foreground">{subtitle}</p>}
-      </div>
-      {children}
-      <Separator />
-    </div>
-  );
-}
-function formatDate(value: string, locale = "en") {
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
+      <details className="rounded-lg border bg-card p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          {t("cases.caseDiagnostics")}
+        </summary>
+        <p className="mt-3 font-mono text-xs text-muted-foreground">{incident.id}</p>
+        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs">
+          {JSON.stringify(detail.snapshot, null, 2)}
+        </pre>
+      </details>
+    </main>
   );
 }
