@@ -14,7 +14,7 @@ defmodule Opsonde.Targets.Changes.ReconcileSignalCases do
         |> Enum.join(":")
 
       case change_key
-           |> then(&Opsonde.Cases.SignalCaseReconciliationWorker.new(%{"change_key" => &1}))
+           |> then(&Opsonde.Signals.CaseReconciliationWorker.new(%{"change_key" => &1}))
            |> Oban.insert() do
         {:ok, _job} -> {:ok, result}
         {:error, error} -> {:error, error}

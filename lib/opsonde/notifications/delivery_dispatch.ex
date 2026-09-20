@@ -1,7 +1,7 @@
 defmodule Opsonde.Notifications.DeliveryDispatch do
   @moduledoc false
 
-  alias Opsonde.{Cases, Notifications, Providers}
+  alias Opsonde.{Notifications, Providers, Reports}
   alias Opsonde.Notifications.DeliveryClaim
   alias Opsonde.Providers.Notification
 
@@ -19,7 +19,7 @@ defmodule Opsonde.Notifications.DeliveryDispatch do
   end
 
   defp dispatch(delivery, invocation) do
-    with {:ok, report} <- Cases.get_report(delivery.report_id, authorize?: false) do
+    with {:ok, report} <- Reports.get_report(delivery.report_id, authorize?: false) do
       request = %Notification.Request{
         provider_revision: delivery.provider_revision,
         report_id: report.id,

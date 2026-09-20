@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.AuditRunClaim do
+defmodule Opsonde.Audits.AuditRunClaim do
   @moduledoc false
 
   @enforce_keys [:state, :run, :schedule]

@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.AuditWakeWorker do
+defmodule Opsonde.Audits.AuditWakeWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -6,8 +6,8 @@ defmodule Opsonde.Cases.AuditWakeWorker do
     max_attempts: 5,
     unique: [period: :infinity, fields: [:worker, :queue, :args], states: :all]
 
-  alias Opsonde.Cases
-  alias Opsonde.Cases.AuditSchedule
+  alias Opsonde.Audits
+  alias Opsonde.Audits.AuditSchedule
 
   def job(%AuditSchedule{} = schedule) do
     new(
@@ -31,7 +31,7 @@ defmodule Opsonde.Cases.AuditWakeWorker do
       when is_binary(id) and is_integer(revision) and is_binary(scheduled_for) do
     with {:ok, datetime} <- parse_time(scheduled_for),
          {:ok, _schedule} <-
-           Cases.wake_audit_schedule(id, revision, datetime, authorize?: false) do
+           Audits.wake_audit_schedule(id, revision, datetime, authorize?: false) do
       :ok
     else
       {:error, :invalid_time} -> {:cancel, "Audit wake time is invalid"}

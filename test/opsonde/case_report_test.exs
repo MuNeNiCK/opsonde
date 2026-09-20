@@ -1,9 +1,9 @@
 defmodule Opsonde.CaseReportTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases}
+  alias Opsonde.{Accounts, Cases, Reports}
   alias Opsonde.Cases.{Case, Operation, VerificationAttempt}
-  alias Opsonde.Cases.Report.Content
+  alias Opsonde.Reports.Report.Content
 
   @password "correct horse battery staple"
 
@@ -97,7 +97,7 @@ defmodule Opsonde.CaseReportTest do
     Cases.pause_resolution_run!(run, run.revision, authorize?: false)
 
     report =
-      Cases.generate_report!(terminal.id, terminal.revision, actor: context.operator)
+      Reports.generate_report!(terminal.id, terminal.revision, actor: context.operator)
 
     assert report.language == :ja
     assert report.outcome == :needs_attention
@@ -121,18 +121,18 @@ defmodule Opsonde.CaseReportTest do
     refute serialized =~ "resolver_identity"
     refute serialized =~ "session_id"
 
-    retried = Cases.generate_report!(terminal.id, terminal.revision, actor: context.operator)
+    retried = Reports.generate_report!(terminal.id, terminal.revision, actor: context.operator)
     assert retried.id == report.id
     assert retried.generated_at == report.generated_at
     assert retried.content_digest == report.content_digest
     assert retried.content == report.content
 
-    reloaded = Cases.get_report!(report.id, actor: context.viewer)
+    reloaded = Reports.get_report!(report.id, actor: context.viewer)
     assert reloaded.content == report.content
-    assert Cases.list_reports!(actor: context.viewer) |> Enum.map(& &1.id) == [report.id]
+    assert Reports.list_reports!(actor: context.viewer) |> Enum.map(& &1.id) == [report.id]
 
     assert {:error, %Ash.Error.Forbidden{}} =
-             Cases.generate_report(terminal.id, terminal.revision, actor: context.viewer)
+             Reports.generate_report(terminal.id, terminal.revision, actor: context.viewer)
   end
 
   test "English labels are fixed at Case open and a running Case stays unchanged on failure",
@@ -140,12 +140,12 @@ defmodule Opsonde.CaseReportTest do
     running = open!("running-report", :en, context.operator)
 
     assert {:error, _error} =
-             Cases.generate_report(running.id, running.revision, actor: context.operator)
+             Reports.generate_report(running.id, running.revision, actor: context.operator)
 
     unchanged = Cases.get_case!(running.id, actor: context.viewer)
     assert unchanged.status == :running
     assert unchanged.revision == running.revision
-    assert Cases.list_reports!(actor: context.viewer) == []
+    assert Reports.list_reports!(actor: context.viewer) == []
 
     resolved =
       Cases.update_case_record!(running, running.revision, %{status: :resolved},
@@ -153,13 +153,13 @@ defmodule Opsonde.CaseReportTest do
       )
 
     assert {:error, _error} =
-             Cases.generate_report(resolved.id, resolved.revision + 1, actor: context.operator)
+             Reports.generate_report(resolved.id, resolved.revision + 1, actor: context.operator)
 
     still_resolved = Cases.get_case!(resolved.id, actor: context.viewer)
     assert still_resolved.status == :resolved
     assert still_resolved.revision == resolved.revision
 
-    report = Cases.generate_report!(resolved.id, resolved.revision, actor: context.operator)
+    report = Reports.generate_report!(resolved.id, resolved.revision, actor: context.operator)
     assert report.content["labels"]["summary"] == "Summary"
     assert report.content["outcome_label"] == "Resolved"
   end

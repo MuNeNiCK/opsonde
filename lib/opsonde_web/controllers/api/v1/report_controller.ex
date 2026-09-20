@@ -3,19 +3,19 @@ defmodule OpsondeWeb.API.V1.ReportController do
 
   action_fallback OpsondeWeb.API.FallbackController
 
-  alias Opsonde.Cases
+  alias Opsonde.Reports
   alias OpsondeWeb.API.{Pagination, Response}
   alias OpsondeWeb.API.V1.OutcomeJSON
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
-         {:ok, reports} <- Cases.page_reports(page: page, actor: conn.assigns.current_user) do
+         {:ok, reports} <- Reports.page_reports(page: page, actor: conn.assigns.current_user) do
       Response.page(conn, reports, &OutcomeJSON.report/1)
     end
   end
 
   def show(conn, %{"id" => id}) do
-    with {:ok, report} <- Cases.get_report(id, actor: conn.assigns.current_user) do
+    with {:ok, report} <- Reports.get_report(id, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.report(report))
     end
   end
@@ -25,7 +25,7 @@ defmodule OpsondeWeb.API.V1.ReportController do
         %{"case_id" => case_id, "report" => %{"expected_case_revision" => revision}}
       ) do
     with {:ok, report} <-
-           Cases.generate_report(case_id, revision, actor: conn.assigns.current_user) do
+           Reports.generate_report(case_id, revision, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.report(report), :created)
     end
   end

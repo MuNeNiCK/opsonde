@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.Report do
+defmodule Opsonde.Reports.Report do
   use Ash.Resource,
     otp_app: :opsonde,
-    domain: Opsonde.Cases,
+    domain: Opsonde.Reports,
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
@@ -49,7 +49,7 @@ defmodule Opsonde.Cases.Report do
       transaction? false
       argument :case_id, :uuid, allow_nil?: false
       argument :expected_case_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      run Opsonde.Cases.Report.Actions.Generate
+      run Opsonde.Reports.Report.Actions.Generate
     end
   end
 

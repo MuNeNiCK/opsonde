@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.Report.Content do
+defmodule Opsonde.Reports.Report.Content do
   @moduledoc false
   use Gettext, backend: Opsonde.Gettext
 

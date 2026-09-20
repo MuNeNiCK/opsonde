@@ -1,10 +1,10 @@
-defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
+defmodule Opsonde.Audits.AuditSchedule.Actions.Wake do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Cases
-  alias Opsonde.Cases.{AuditRun, AuditSchedule}
-  alias Opsonde.Cases.AuditSchedule.Scheduling
+  alias Opsonde.Audits
+  alias Opsonde.Audits.{AuditRun, AuditSchedule}
+  alias Opsonde.Audits.AuditSchedule.Scheduling
   alias Opsonde.Targets.{ManagementBoundary, Target}
 
   @impl true
@@ -27,7 +27,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
            {:ok, _runs} <- create_runs(schedule, arguments.scheduled_for, specs),
            {:ok, next_run_at} <- next_run(schedule, arguments.scheduled_for),
            {:ok, advanced} <-
-             Cases.advance_audit_schedule_record(
+             Audits.advance_audit_schedule_record(
                schedule,
                schedule.revision,
                %{next_run_at: next_run_at},
@@ -59,7 +59,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
   end
 
   defp existing_runs(schedule_id, scheduled_for) do
-    Cases.audit_runs_for_occurrence(schedule_id, scheduled_for, authorize?: false)
+    Audits.audit_runs_for_occurrence(schedule_id, scheduled_for, authorize?: false)
   end
 
   defp run_specs(%{target_ids: [_ | _] = target_ids}) do
@@ -174,7 +174,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
           completed_at: if(spec.status == :skipped, do: now)
         })
 
-      with {:ok, run} <- Cases.create_audit_run_record(attrs, authorize?: false),
+      with {:ok, run} <- Audits.create_audit_run_record(attrs, authorize?: false),
            {:ok, _job} <- maybe_enqueue_run(run) do
         {:cont, {:ok, [run | runs]}}
       else
@@ -185,7 +185,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
 
   defp maybe_enqueue_run(%{status: :queued} = run) do
     run.id
-    |> then(&Opsonde.Cases.AuditRunWorker.new(%{"audit_run_id" => &1}))
+    |> then(&Opsonde.Audits.AuditRunWorker.new(%{"audit_run_id" => &1}))
     |> Oban.insert()
   end
 
@@ -199,7 +199,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Wake do
 
   defp enqueue_next(schedule) do
     schedule
-    |> Opsonde.Cases.AuditWakeWorker.job()
+    |> Opsonde.Audits.AuditWakeWorker.job()
     |> Oban.insert()
   end
 end

@@ -3,21 +3,21 @@ defmodule OpsondeWeb.API.V1.AuditController do
 
   action_fallback OpsondeWeb.API.FallbackController
 
-  alias Opsonde.Cases
+  alias Opsonde.Audits
   alias OpsondeWeb.API.{Pagination, Response}
   alias OpsondeWeb.API.V1.OutcomeJSON
 
   def schedules(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
          {:ok, schedules} <-
-           Cases.page_audit_schedules(page: page, actor: conn.assigns.current_user) do
+           Audits.page_audit_schedules(page: page, actor: conn.assigns.current_user) do
       Response.page(conn, schedules, &OutcomeJSON.audit_schedule/1)
     end
   end
 
   def schedule(conn, %{"audit_schedule" => input}) do
     with {:ok, schedule} <-
-           Cases.schedule_audit(
+           Audits.schedule_audit(
              input["name"],
              input["objective"],
              input["timezone"],
@@ -34,7 +34,7 @@ defmodule OpsondeWeb.API.V1.AuditController do
   def schedule(_conn, _params), do: {:error, :bad_request}
 
   def show_schedule(conn, %{"id" => id}) do
-    with {:ok, schedule} <- Cases.get_audit_schedule(id, actor: conn.assigns.current_user) do
+    with {:ok, schedule} <- Audits.get_audit_schedule(id, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.audit_schedule(schedule))
     end
   end
@@ -43,9 +43,9 @@ defmodule OpsondeWeb.API.V1.AuditController do
         conn,
         %{"id" => id, "audit_schedule" => %{"expected_revision" => revision}}
       ) do
-    with {:ok, schedule} <- Cases.get_audit_schedule(id, actor: conn.assigns.current_user),
+    with {:ok, schedule} <- Audits.get_audit_schedule(id, actor: conn.assigns.current_user),
          {:ok, deactivated} <-
-           Cases.deactivate_audit_schedule(schedule, revision, actor: conn.assigns.current_user) do
+           Audits.deactivate_audit_schedule(schedule, revision, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.audit_schedule(deactivated))
     end
   end
@@ -54,13 +54,13 @@ defmodule OpsondeWeb.API.V1.AuditController do
 
   def runs(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
-         {:ok, runs} <- Cases.page_audit_runs(page: page, actor: conn.assigns.current_user) do
+         {:ok, runs} <- Audits.page_audit_runs(page: page, actor: conn.assigns.current_user) do
       Response.page(conn, runs, &OutcomeJSON.audit_run/1)
     end
   end
 
   def show_run(conn, %{"id" => id}) do
-    with {:ok, run} <- Cases.get_audit_run(id, actor: conn.assigns.current_user) do
+    with {:ok, run} <- Audits.get_audit_run(id, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.audit_run(run))
     end
   end

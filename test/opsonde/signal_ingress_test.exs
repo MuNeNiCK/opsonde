@@ -3,7 +3,7 @@ defmodule Opsonde.SignalIngressTest do
 
   import Ecto.Query
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
   alias Opsonde.Providers.Signal
   alias Opsonde.Repo
 
@@ -60,7 +60,7 @@ defmodule Opsonde.SignalIngressTest do
     assert first.id == replay.id
     assert first.event_count == 1
 
-    [signal_event] = Cases.list_signal_events!(actor: context.admin)
+    [signal_event] = Signals.list_signal_events!(actor: context.admin)
     incident = Cases.get_case!(signal_event.case_id, actor: context.admin)
 
     assert signal_event.target_id == target.id
@@ -71,8 +71,8 @@ defmodule Opsonde.SignalIngressTest do
     assert incident.severity == :critical
     assert incident.status == :running
 
-    assert length(Cases.list_signal_receipts!(actor: context.admin)) == 1
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 1
     assert length(Cases.list_turns!(actor: context.admin)) == 1
     assert length(Cases.list_evidence!(actor: context.admin)) == 1
   end
@@ -91,7 +91,7 @@ defmodule Opsonde.SignalIngressTest do
       ])
     )
 
-    events = Cases.list_signal_events!(actor: context.admin)
+    events = Signals.list_signal_events!(actor: context.admin)
     cases = Cases.list_cases!(actor: context.admin)
 
     assert Enum.map(events, &{&1.event_key, &1.state}) |> Enum.sort() == [
@@ -118,7 +118,7 @@ defmodule Opsonde.SignalIngressTest do
       1..2
       |> Enum.map(fn _attempt ->
         Task.async(fn ->
-          Cases.ingest_signal(
+          Signals.ingest_signal(
             context.provider.id,
             context.provider.revision,
             envelope,
@@ -130,8 +130,8 @@ defmodule Opsonde.SignalIngressTest do
 
     assert [{:ok, first}, {:ok, second}] = attempts
     assert first.id == second.id
-    assert length(Cases.list_signal_receipts!(actor: context.admin)) == 1
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 1
     assert length(Cases.list_cases!(actor: context.admin)) == 1
 
     conflicting =
@@ -140,14 +140,14 @@ defmodule Opsonde.SignalIngressTest do
       ])
 
     assert {:error, _error} =
-             Cases.ingest_signal(
+             Signals.ingest_signal(
                context.provider.id,
                context.provider.revision,
                envelope,
                conflicting
              )
 
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 1
     assert length(Cases.list_cases!(actor: context.admin)) == 1
   end
 
@@ -160,13 +160,13 @@ defmodule Opsonde.SignalIngressTest do
     ingest_one!(context.provider, "delayed", :firing, DateTime.add(base, 20, :second))
 
     incident = Cases.list_cases!(actor: context.admin) |> List.first()
-    correlation = Cases.list_signal_correlations!(actor: context.admin) |> List.first()
+    correlation = Signals.list_signal_correlations!(actor: context.admin) |> List.first()
 
     assert incident.alert_state == :recovered
     assert incident.status == :running
     assert correlation.current_state == :recovered
     assert correlation.current_occurred_at == DateTime.add(base, 30, :second)
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 3
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 3
     assert length(Cases.list_turns!(actor: context.admin)) == 1
 
     ingest_one!(context.provider, "refiring", :firing, DateTime.add(base, 40, :second))
@@ -199,11 +199,11 @@ defmodule Opsonde.SignalIngressTest do
       ])
     )
 
-    correlation = Cases.list_signal_correlations!(actor: context.admin) |> List.first()
+    correlation = Signals.list_signal_correlations!(actor: context.admin) |> List.first()
     assert correlation.current_state == :recovered
     assert correlation.current_source_sequence == "20"
     assert Cases.list_cases!(actor: context.admin) == []
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
   end
 
   test "disabled automation stores the alert without starting autonomous resolution", context do
@@ -215,7 +215,7 @@ defmodule Opsonde.SignalIngressTest do
     assert incident.status == :needs_attention
     assert is_nil(incident.current_owner_id)
     assert Cases.list_turns!(actor: context.admin) == []
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 1
     assert length(Cases.list_evidence!(actor: context.admin)) == 1
   end
 
@@ -249,9 +249,9 @@ defmodule Opsonde.SignalIngressTest do
     )
 
     assert Cases.get_case!(incident.id, actor: context.admin).status == :cancelled
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
 
-    assert (Cases.list_signal_correlations!(actor: context.admin) |> List.first()).current_state ==
+    assert (Signals.list_signal_correlations!(actor: context.admin) |> List.first()).current_state ==
              :recovered
   end
 
@@ -286,13 +286,13 @@ defmodule Opsonde.SignalIngressTest do
     job =
       Repo.one!(
         from(job in Oban.Job,
-          where: job.worker == "Opsonde.Cases.SignalCaseReconciliationWorker",
+          where: job.worker == "Opsonde.Signals.CaseReconciliationWorker",
           order_by: [asc: job.inserted_at],
           limit: 1
         )
       )
 
-    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
 
     turns = Cases.list_turns!(actor: context.admin)
     assert length(turns) == 2
@@ -359,7 +359,7 @@ defmodule Opsonde.SignalIngressTest do
       )
 
     assert :ok =
-             Opsonde.Cases.SignalCaseReconciliationWorker.perform(
+             Opsonde.Signals.CaseReconciliationWorker.perform(
                reconciliation_job!(unrelated_identity.id)
              )
 
@@ -380,7 +380,7 @@ defmodule Opsonde.SignalIngressTest do
       )
 
     job = reconciliation_job!(identity.id)
-    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
 
     resumed = Cases.get_case!(waiting.id, actor: context.admin)
     assert resumed.status == :running
@@ -408,7 +408,7 @@ defmodule Opsonde.SignalIngressTest do
              "objective" => "Continue resolution after Target registration"
            }
 
-    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
     assert length(Cases.list_resolution_runs!(actor: context.admin)) == 2
     assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
@@ -422,7 +422,7 @@ defmodule Opsonde.SignalIngressTest do
     job = %Oban.Job{args: %{"change_key" => "target:later"}}
 
     assert {:error, "Signal Case still has an active Resolver Turn"} =
-             Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+             Opsonde.Signals.CaseReconciliationWorker.perform(job)
 
     Cases.complete_turn!(
       first_turn.id,
@@ -434,7 +434,7 @@ defmodule Opsonde.SignalIngressTest do
       authorize?: false
     )
 
-    assert :ok = Opsonde.Cases.SignalCaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
     assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
 
@@ -460,7 +460,7 @@ defmodule Opsonde.SignalIngressTest do
   defp reconciliation_job!(identity_id) do
     Repo.all(
       from(job in Oban.Job,
-        where: job.worker == "Opsonde.Cases.SignalCaseReconciliationWorker"
+        where: job.worker == "Opsonde.Signals.CaseReconciliationWorker"
       )
     )
     |> Enum.find(fn job ->
@@ -477,7 +477,7 @@ defmodule Opsonde.SignalIngressTest do
   end
 
   defp ingest!(provider, envelope, invocation) do
-    Cases.ingest_signal!(provider.id, provider.revision, envelope, invocation)
+    Signals.ingest_signal!(provider.id, provider.revision, envelope, invocation)
   end
 
   defp invocation(receipt_id, events) do

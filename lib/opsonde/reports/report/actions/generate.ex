@@ -1,8 +1,8 @@
-defmodule Opsonde.Cases.Report.Actions.Generate do
+defmodule Opsonde.Reports.Report.Actions.Generate do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Cases
+  alias Opsonde.Reports
 
   alias Opsonde.Cases.{
     Approval,
@@ -11,14 +11,14 @@ defmodule Opsonde.Cases.Report.Actions.Generate do
     Evidence,
     Operation,
     Proposal,
-    Report,
     ResolutionRun,
     ReviewDecision,
     Turn,
     VerificationAttempt
   }
 
-  alias Opsonde.Cases.Report.Content
+  alias Opsonde.Reports.Report
+  alias Opsonde.Reports.Report.Content
 
   @resources [
     Report,
@@ -51,7 +51,7 @@ defmodule Opsonde.Cases.Report.Actions.Generate do
          {:ok, records} <- records(incident.id) do
       content = Content.build(incident, records)
 
-      case Cases.create_report_record(
+      case Reports.create_report_record(
              %{
                case_id: incident.id,
                case_revision: incident.revision,

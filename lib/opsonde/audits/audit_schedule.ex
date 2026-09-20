@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.AuditSchedule do
+defmodule Opsonde.Audits.AuditSchedule do
   use Ash.Resource,
     otp_app: :opsonde,
-    domain: Opsonde.Cases,
+    domain: Opsonde.Audits,
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
@@ -95,7 +95,7 @@ defmodule Opsonde.Cases.AuditSchedule do
 
       argument :management_boundary_id, :uuid
 
-      run Opsonde.Cases.AuditSchedule.Actions.Create
+      run Opsonde.Audits.AuditSchedule.Actions.Create
     end
 
     action :wake, :struct do
@@ -104,7 +104,7 @@ defmodule Opsonde.Cases.AuditSchedule do
       argument :id, :uuid, allow_nil?: false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       argument :scheduled_for, :utc_datetime_usec, allow_nil?: false
-      run Opsonde.Cases.AuditSchedule.Actions.Wake
+      run Opsonde.Audits.AuditSchedule.Actions.Wake
     end
   end
 
@@ -189,7 +189,7 @@ defmodule Opsonde.Cases.AuditSchedule do
       public? true
     end
 
-    has_many :runs, Opsonde.Cases.AuditRun
+    has_many :runs, Opsonde.Audits.AuditRun
   end
 
   identities do

@@ -3,7 +3,7 @@ defmodule Opsonde.NotificationDeliveryTest do
 
   import Ecto.Query
 
-  alias Opsonde.{Accounts, Cases, Notifications, Providers}
+  alias Opsonde.{Accounts, Cases, Notifications, Providers, Reports}
   alias Opsonde.Notifications.{DeliveryDispatch, DeliveryWorker}
   alias Opsonde.Providers.Notification
 
@@ -155,7 +155,7 @@ defmodule Opsonde.NotificationDeliveryTest do
     assert failed.details == %{"message" => "Notification Provider rejected delivery"}
     refute_receive {:delivery, _, _}
 
-    assert Cases.get_report!(context.report.id, actor: context.viewer).content ==
+    assert Reports.get_report!(context.report.id, actor: context.viewer).content ==
              context.report.content
   end
 
@@ -179,7 +179,7 @@ defmodule Opsonde.NotificationDeliveryTest do
         authorize?: false
       )
 
-    Cases.generate_report!(resolved.id, resolved.revision, actor: operator)
+    Reports.generate_report!(resolved.id, resolved.revision, actor: operator)
   end
 
   defp enqueue!(context, key) do

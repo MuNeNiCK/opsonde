@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.AuditSchedule.Scheduling do
+defmodule Opsonde.Audits.AuditSchedule.Scheduling do
   @moduledoc false
 
   alias Crontab.CronExpression

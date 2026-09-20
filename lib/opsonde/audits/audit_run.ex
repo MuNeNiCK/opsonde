@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.AuditRun do
+defmodule Opsonde.Audits.AuditRun do
   use Ash.Resource,
     otp_app: :opsonde,
-    domain: Opsonde.Cases,
+    domain: Opsonde.Audits,
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
@@ -90,10 +90,10 @@ defmodule Opsonde.Cases.AuditRun do
     end
 
     action :claim, :struct do
-      constraints instance_of: Opsonde.Cases.AuditRunClaim
+      constraints instance_of: Opsonde.Audits.AuditRunClaim
       transaction? false
       argument :id, :uuid, allow_nil?: false
-      run Opsonde.Cases.AuditRun.Actions.Claim
+      run Opsonde.Audits.AuditRun.Actions.Claim
     end
   end
 
@@ -169,7 +169,7 @@ defmodule Opsonde.Cases.AuditRun do
   end
 
   relationships do
-    belongs_to :audit_schedule, Opsonde.Cases.AuditSchedule do
+    belongs_to :audit_schedule, Opsonde.Audits.AuditSchedule do
       allow_nil? false
       public? true
     end

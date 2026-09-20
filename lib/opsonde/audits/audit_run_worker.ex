@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.AuditRunWorker do
+defmodule Opsonde.Audits.AuditRunWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -8,7 +8,7 @@ defmodule Opsonde.Cases.AuditRunWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"audit_run_id" => id}} = job) when is_binary(id) do
-    case Opsonde.Cases.AuditRunDispatch.run(id, final_attempt?: job.attempt >= job.max_attempts) do
+    case Opsonde.Audits.AuditRunDispatch.run(id, final_attempt?: job.attempt >= job.max_attempts) do
       {:ok, _run} -> :ok
       {:error, error} -> {:error, error}
     end

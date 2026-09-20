@@ -190,7 +190,7 @@ defmodule Opsonde.Notifications.Delivery do
   end
 
   relationships do
-    belongs_to :report, Opsonde.Cases.Report do
+    belongs_to :report, Opsonde.Reports.Report do
       allow_nil? false
       public? true
     end

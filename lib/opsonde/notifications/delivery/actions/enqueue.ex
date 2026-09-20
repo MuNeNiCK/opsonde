@@ -3,7 +3,7 @@ defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
   require Ash.Query
 
   alias Opsonde.Notifications
-  alias Opsonde.Cases.Report
+  alias Opsonde.Reports.Report
   alias Opsonde.Notifications.Delivery
   alias Opsonde.Providers.Provider
 

@@ -1,20 +1,19 @@
-defmodule Opsonde.Cases.SignalIngress do
+defmodule Opsonde.Signals.Ingress do
   use Ash.Resource.Actions.Implementation
 
   require Ash.Query
 
-  alias Opsonde.{Cases, Providers, Targets}
+  alias Opsonde.{Cases, Providers, Signals, Targets}
 
   alias Opsonde.Cases.{
     Case,
     CaseEvent,
     Evidence,
     ResolutionRun,
-    SignalCorrelation,
-    SignalEvent,
-    SignalReceipt,
     Turn
   }
+
+  alias Opsonde.Signals.{SignalCorrelation, SignalEvent, SignalReceipt}
 
   alias Opsonde.Providers.Signal
 
@@ -65,7 +64,7 @@ defmodule Opsonde.Cases.SignalIngress do
   end
 
   defp create_correlation(provider_id, source, event_key) do
-    case Cases.create_signal_correlation_record(
+    case Signals.create_signal_correlation_record(
            %{
              provider_id: provider_id,
              source: source,
@@ -152,7 +151,7 @@ defmodule Opsonde.Cases.SignalIngress do
     receipt = result.receipt
 
     with {:ok, persisted_receipt} <-
-           Cases.create_signal_receipt_record(
+           Signals.create_signal_receipt_record(
              %{
                provider_id: arguments.provider_id,
                provider_revision: arguments.provider_revision,
@@ -235,7 +234,7 @@ defmodule Opsonde.Cases.SignalIngress do
   end
 
   defp create_event(receipt, event, correlation, incident, target) do
-    Cases.create_signal_event_record(
+    Signals.create_signal_event_record(
       %{
         signal_receipt_id: receipt.id,
         signal_correlation_id: correlation.id,
@@ -362,7 +361,7 @@ defmodule Opsonde.Cases.SignalIngress do
   end
 
   defp update_correlation(correlation, persisted_event, incident, event, true) do
-    Cases.update_signal_correlation_record(
+    Signals.update_signal_correlation_record(
       correlation,
       correlation.revision,
       %{
@@ -378,7 +377,7 @@ defmodule Opsonde.Cases.SignalIngress do
 
   defp update_correlation(correlation, _persisted_event, incident, _event, false) do
     if is_nil(correlation.case_id) and incident do
-      Cases.update_signal_correlation_record(
+      Signals.update_signal_correlation_record(
         correlation,
         correlation.revision,
         %{case_id: incident.id},
@@ -465,7 +464,7 @@ defmodule Opsonde.Cases.SignalIngress do
   end
 
   defp existing_receipt(provider_id, receipt_id) do
-    Cases.signal_receipt_by_source_identity(provider_id, receipt_id,
+    Signals.signal_receipt_by_source_identity(provider_id, receipt_id,
       authorize?: false,
       not_found_error?: false
     )
@@ -481,7 +480,7 @@ defmodule Opsonde.Cases.SignalIngress do
   end
 
   defp correlation(provider_id, source, event_key) do
-    Cases.signal_correlation_by_source(provider_id, source, event_key,
+    Signals.signal_correlation_by_source(provider_id, source, event_key,
       authorize?: false,
       not_found_error?: false
     )

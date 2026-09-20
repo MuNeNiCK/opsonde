@@ -1,10 +1,10 @@
-defmodule Opsonde.Cases.AuditSchedule.Actions.Create do
+defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Cases
-  alias Opsonde.Cases.AuditSchedule
-  alias Opsonde.Cases.AuditSchedule.Scheduling
+  alias Opsonde.Audits
+  alias Opsonde.Audits.AuditSchedule
+  alias Opsonde.Audits.AuditSchedule.Scheduling
   alias Opsonde.Targets.{ManagementBoundary, Target}
 
   @impl true
@@ -78,7 +78,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Create do
   end
 
   defp create_record(arguments, next_run_at) do
-    Cases.create_audit_schedule_record(
+    Audits.create_audit_schedule_record(
       %{
         name: arguments.name,
         objective: arguments.objective,
@@ -96,7 +96,7 @@ defmodule Opsonde.Cases.AuditSchedule.Actions.Create do
 
   defp enqueue(schedule) do
     schedule
-    |> Opsonde.Cases.AuditWakeWorker.job()
+    |> Opsonde.Audits.AuditWakeWorker.job()
     |> Oban.insert()
   end
 end

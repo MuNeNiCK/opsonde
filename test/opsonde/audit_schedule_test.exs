@@ -3,9 +3,9 @@ defmodule Opsonde.AuditScheduleTest do
 
   import Ecto.Query
 
-  alias Opsonde.{Accounts, Cases, Repo, Targets}
-  alias Opsonde.Cases.{AuditRunDispatch, AuditRunWorker, AuditWakeWorker}
-  alias Opsonde.Cases.AuditSchedule.Scheduling
+  alias Opsonde.{Accounts, Audits, Cases, Repo, Targets}
+  alias Opsonde.Audits.{AuditRunDispatch, AuditRunWorker, AuditWakeWorker}
+  alias Opsonde.Audits.AuditSchedule.Scheduling
 
   @password "correct horse battery staple"
 
@@ -66,7 +66,7 @@ defmodule Opsonde.AuditScheduleTest do
     assert :ok = AuditWakeWorker.perform(wake_job)
 
     assert [run] =
-             Cases.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at,
+             Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at,
                authorize?: false
              )
 
@@ -79,7 +79,7 @@ defmodule Opsonde.AuditScheduleTest do
     assert :ok = AuditRunWorker.perform(run_job)
 
     [completed] =
-      Cases.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
+      Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
 
     assert completed.status == :case_opened
     assert completed.case_id
@@ -118,7 +118,7 @@ defmodule Opsonde.AuditScheduleTest do
     wake!(schedule)
 
     assert [run] =
-             Cases.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at,
+             Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at,
                authorize?: false
              )
 
@@ -136,7 +136,7 @@ defmodule Opsonde.AuditScheduleTest do
     [cancelled_run] = occurrence_runs(cancelled_schedule)
 
     advanced = current_schedule(cancelled_schedule.id, context.viewer)
-    Cases.deactivate_audit_schedule!(advanced, advanced.revision, actor: context.admin)
+    Audits.deactivate_audit_schedule!(advanced, advanced.revision, actor: context.admin)
 
     assert {:ok, cancelled} = AuditRunDispatch.run(cancelled_run.id)
     assert cancelled.status == :cancelled
@@ -165,7 +165,7 @@ defmodule Opsonde.AuditScheduleTest do
     [run] = occurrence_runs(schedule)
 
     assert {:ok, %{state: :claimed, run: running}} =
-             Cases.claim_audit_run(run.id, authorize?: false)
+             Audits.claim_audit_run(run.id, authorize?: false)
 
     assert running.status == :running
     assert running.started_at
@@ -181,7 +181,7 @@ defmodule Opsonde.AuditScheduleTest do
 
   test "only an administrator can create a valid one-scope schedule", context do
     assert {:error, %Ash.Error.Forbidden{}} =
-             Cases.schedule_audit(
+             Audits.schedule_audit(
                "viewer-audit",
                "Inspect storage health",
                "Etc/UTC",
@@ -193,7 +193,7 @@ defmodule Opsonde.AuditScheduleTest do
              )
 
     assert {:error, _error} =
-             Cases.schedule_audit(
+             Audits.schedule_audit(
                "two-scopes",
                "Inspect storage health",
                "Etc/UTC",
@@ -205,7 +205,7 @@ defmodule Opsonde.AuditScheduleTest do
              )
 
     assert {:error, _error} =
-             Cases.schedule_audit(
+             Audits.schedule_audit(
                "no-scope",
                "Inspect storage health",
                "Etc/UTC",
@@ -218,7 +218,7 @@ defmodule Opsonde.AuditScheduleTest do
   end
 
   defp schedule!(context, name, language, target_ids, boundary_id) do
-    Cases.schedule_audit!(
+    Audits.schedule_audit!(
       name,
       "Inspect storage health",
       "Etc/UTC",
@@ -231,7 +231,7 @@ defmodule Opsonde.AuditScheduleTest do
   end
 
   defp wake!(schedule) do
-    Cases.wake_audit_schedule!(
+    Audits.wake_audit_schedule!(
       schedule.id,
       schedule.revision,
       schedule.next_run_at,
@@ -240,17 +240,17 @@ defmodule Opsonde.AuditScheduleTest do
   end
 
   defp occurrence_runs(schedule) do
-    Cases.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
+    Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
   end
 
   defp current_schedule(id, actor) do
-    Cases.list_audit_schedules!(actor: actor) |> Enum.find(&(&1.id == id))
+    Audits.list_audit_schedules!(actor: actor) |> Enum.find(&(&1.id == id))
   end
 
   defp jobs_for_schedule(schedule_id) do
     from(job in Oban.Job,
       where:
-        job.worker == "Opsonde.Cases.AuditWakeWorker" and
+        job.worker == "Opsonde.Audits.AuditWakeWorker" and
           fragment("?->>'audit_schedule_id'", job.args) == ^schedule_id
     )
     |> Repo.all()
@@ -267,7 +267,7 @@ defmodule Opsonde.AuditScheduleTest do
   defp run_job_query(run_id) do
     from job in Oban.Job,
       where:
-        job.worker == "Opsonde.Cases.AuditRunWorker" and
+        job.worker == "Opsonde.Audits.AuditRunWorker" and
           fragment("?->>'audit_run_id'", job.args) == ^run_id
   end
 

@@ -1,7 +1,7 @@
 defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Notifications, Providers, Targets}
+  alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Signals, Targets}
   alias Opsonde.Notifications.DeliveryDispatch
   alias Opsonde.Providers.Notification
 
@@ -40,7 +40,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     receipt =
-      Cases.create_signal_receipt_record!(
+      Signals.create_signal_receipt_record!(
         %{
           provider_id: provider.id,
           provider_revision: provider.revision,
@@ -69,7 +69,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     correlation =
-      Cases.create_signal_correlation_record!(
+      Signals.create_signal_correlation_record!(
         %{
           provider_id: provider.id,
           source: "zabbix",
@@ -81,7 +81,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     signal_event =
-      Cases.create_signal_event_record!(
+      Signals.create_signal_event_record!(
         %{
           signal_receipt_id: receipt.id,
           signal_correlation_id: correlation.id,
@@ -169,9 +169,9 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         context.admin_token
       )
 
-    persisted = Cases.get_audit_schedule!(schedule["id"], actor: context.admin)
+    persisted = Audits.get_audit_schedule!(schedule["id"], actor: context.admin)
 
-    Cases.wake_audit_schedule!(
+    Audits.wake_audit_schedule!(
       persisted.id,
       persisted.revision,
       persisted.next_run_at,
@@ -179,12 +179,12 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     )
 
     [queued] =
-      Cases.audit_runs_for_occurrence!(persisted.id, persisted.next_run_at, authorize?: false)
+      Audits.audit_runs_for_occurrence!(persisted.id, persisted.next_run_at, authorize?: false)
 
     assert get_data!("/api/v1/audit-runs/#{queued.id}", context.viewer_token)["status"] ==
              "queued"
 
-    Cases.claim_audit_run!(queued.id, authorize?: false)
+    Audits.claim_audit_run!(queued.id, authorize?: false)
 
     assert get_data!("/api/v1/audit-runs/#{queued.id}", context.viewer_token)["status"] ==
              "running"
@@ -195,7 +195,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     empty_schedule =
-      Cases.schedule_audit!(
+      Audits.schedule_audit!(
         "empty-scope-audit",
         "Inspect empty scope",
         "Etc/UTC",
@@ -206,7 +206,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         actor: context.admin
       )
 
-    Cases.wake_audit_schedule!(
+    Audits.wake_audit_schedule!(
       empty_schedule.id,
       empty_schedule.revision,
       empty_schedule.next_run_at,
@@ -217,7 +217,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert Enum.any?(runs, &(&1["status"] == "running" and &1["id"] == queued.id))
     assert Enum.any?(runs, &(&1["status"] == "skipped"))
 
-    current = Cases.get_audit_schedule!(persisted.id, actor: context.admin)
+    current = Audits.get_audit_schedule!(persisted.id, actor: context.admin)
 
     stale =
       post_json(

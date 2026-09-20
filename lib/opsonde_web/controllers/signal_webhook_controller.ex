@@ -1,7 +1,7 @@
 defmodule OpsondeWeb.SignalWebhookController do
   use OpsondeWeb, :controller
 
-  alias Opsonde.{Cases, Providers}
+  alias Opsonde.{Providers, Signals}
   alias Opsonde.Providers.Signal
 
   def alertmanager(conn, %{"provider_id" => provider_id}),
@@ -14,7 +14,7 @@ defmodule OpsondeWeb.SignalWebhookController do
     with {:ok, provider} <- provider(provider_id, adapter_type),
          envelope <- envelope(conn),
          {:ok, receipt} <-
-           Cases.ingest_signal(
+           Signals.ingest_signal(
              provider.id,
              provider.revision,
              envelope,

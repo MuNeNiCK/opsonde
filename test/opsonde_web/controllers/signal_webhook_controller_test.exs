@@ -1,7 +1,7 @@
 defmodule OpsondeWeb.SignalWebhookControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers}
+  alias Opsonde.{Accounts, Providers, Signals}
 
   @password "correct horse battery staple"
   @secret "monitoring-webhook-secret"
@@ -30,8 +30,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert %{"receipt_id" => receipt_id} = json_response(conn, 202)
     assert is_binary(receipt_id)
 
-    receipts = Cases.list_signal_receipts!(actor: context.admin)
-    events = Cases.list_signal_events!(actor: context.admin)
+    receipts = Signals.list_signal_receipts!(actor: context.admin)
+    events = Signals.list_signal_events!(actor: context.admin)
 
     assert length(receipts) == 1
 
@@ -63,8 +63,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     second = build_conn() |> authorized() |> post_json(path, payload)
 
     assert json_response(first, 202)["receipt_id"] == json_response(second, 202)["receipt_id"]
-    assert length(Cases.list_signal_receipts!(actor: context.admin)) == 1
-    assert length(Cases.list_signal_events!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
   end
 
   test "authentication runs before Alertmanager body normalization", context do
@@ -77,7 +77,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              "errors" => %{"detail" => "Webhook authentication failed"}
            }
 
-    assert Cases.list_signal_receipts!(actor: context.admin) == []
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 
   test "authenticated malformed Alertmanager facts are rejected without persistence", context do
@@ -92,7 +92,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              "errors" => %{"detail" => "Alertmanager timestamp is invalid"}
            }
 
-    assert Cases.list_signal_receipts!(actor: context.admin) == []
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 
   test "malformed JSON never reaches Signal persistence", context do
@@ -103,7 +103,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       |> post("/api/v1/signals/alertmanager/#{context.alertmanager.id}", "{invalid")
     end
 
-    assert Cases.list_signal_receipts!(actor: context.admin) == []
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 
   test "Zabbix problem and recovery retain one source event identity and host reference",
@@ -123,7 +123,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert response(firing, 202)
     assert response(recovery, 202)
 
-    events = Cases.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
+    events = Signals.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
 
     assert Enum.map(events, &{&1.event_key, &1.state, &1.source_sequence}) == [
              {"9001", :firing, "1726650000"},
@@ -150,7 +150,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       |> post_json("/api/v1/signals/zabbix/#{context.zabbix.id}", payload)
 
     assert response(conn, 202)
-    [event] = Cases.list_signal_events!(actor: context.admin)
+    [event] = Signals.list_signal_events!(actor: context.admin)
     assert DateTime.compare(event.occurred_at, ~U[2026-09-18 04:40:00Z]) == :eq
     assert event.source_sequence == "1789706400"
   end
@@ -168,7 +168,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              "errors" => %{"detail" => "Signal endpoint was not found"}
            }
 
-    assert Cases.list_signal_receipts!(actor: context.admin) == []
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
   end
 
   defp provider!(admin, name, adapter_type, configuration \\ %{}) do

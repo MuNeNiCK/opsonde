@@ -3,20 +3,20 @@ defmodule OpsondeWeb.API.V1.SignalReceiptController do
 
   action_fallback OpsondeWeb.API.FallbackController
 
-  alias Opsonde.Cases
+  alias Opsonde.Signals
   alias OpsondeWeb.API.{Pagination, Response}
   alias OpsondeWeb.API.V1.OutcomeJSON
 
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
          {:ok, receipts} <-
-           Cases.page_signal_receipts(page: page, actor: conn.assigns.current_user) do
+           Signals.page_signal_receipts(page: page, actor: conn.assigns.current_user) do
       Response.page(conn, receipts, &OutcomeJSON.receipt/1)
     end
   end
 
   def show(conn, %{"id" => id}) do
-    with {:ok, receipt} <- Cases.get_signal_receipt(id, actor: conn.assigns.current_user) do
+    with {:ok, receipt} <- Signals.get_signal_receipt(id, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.receipt(receipt))
     end
   end
@@ -24,7 +24,7 @@ defmodule OpsondeWeb.API.V1.SignalReceiptController do
   def events(conn, %{"id" => id} = params) do
     with {:ok, page} <- Pagination.parse(params),
          {:ok, events} <-
-           Cases.page_signal_events_for_receipt(id,
+           Signals.page_signal_events_for_receipt(id,
              page: page,
              actor: conn.assigns.current_user
            ) do

@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.SignalReceipt do
+defmodule Opsonde.Signals.SignalReceipt do
   use Ash.Resource,
     otp_app: :opsonde,
-    domain: Opsonde.Cases,
+    domain: Opsonde.Signals,
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
@@ -61,7 +61,7 @@ defmodule Opsonde.Cases.SignalReceipt do
         constraints: [instance_of: Opsonde.Providers.Signal.Envelope]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
-      run Opsonde.Cases.SignalIngress
+      run Opsonde.Signals.Ingress
     end
   end
 
@@ -134,7 +134,7 @@ defmodule Opsonde.Cases.SignalReceipt do
       public? true
     end
 
-    has_many :events, Opsonde.Cases.SignalEvent
+    has_many :events, Opsonde.Signals.SignalEvent
   end
 
   identities do

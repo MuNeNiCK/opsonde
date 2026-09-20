@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.SignalEvent do
+defmodule Opsonde.Signals.SignalEvent do
   use Ash.Resource,
     otp_app: :opsonde,
-    domain: Opsonde.Cases,
+    domain: Opsonde.Signals,
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
@@ -118,12 +118,12 @@ defmodule Opsonde.Cases.SignalEvent do
   end
 
   relationships do
-    belongs_to :signal_receipt, Opsonde.Cases.SignalReceipt do
+    belongs_to :signal_receipt, Opsonde.Signals.SignalReceipt do
       allow_nil? false
       public? true
     end
 
-    belongs_to :signal_correlation, Opsonde.Cases.SignalCorrelation do
+    belongs_to :signal_correlation, Opsonde.Signals.SignalCorrelation do
       allow_nil? false
       public? true
     end

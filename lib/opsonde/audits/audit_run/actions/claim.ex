@@ -1,9 +1,9 @@
-defmodule Opsonde.Cases.AuditRun.Actions.Claim do
+defmodule Opsonde.Audits.AuditRun.Actions.Claim do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Cases
-  alias Opsonde.Cases.{AuditRun, AuditRunClaim, AuditSchedule}
+  alias Opsonde.{Audits, Cases}
+  alias Opsonde.Audits.{AuditRun, AuditRunClaim, AuditSchedule}
   alias Opsonde.Targets.Target
 
   @terminal [:case_opened, :skipped, :cancelled, :failed]
@@ -44,7 +44,7 @@ defmodule Opsonde.Cases.AuditRun.Actions.Claim do
         case run.status do
           :queued ->
             with {:ok, running} <-
-                   Cases.mark_audit_run_running(
+                   Audits.mark_audit_run_running(
                      run,
                      run.revision,
                      %{started_at: DateTime.utc_now()},
@@ -69,7 +69,7 @@ defmodule Opsonde.Cases.AuditRun.Actions.Claim do
 
   defp terminal(run, schedule, status, reason) do
     with {:ok, terminal} <-
-           Cases.record_audit_run_outcome(
+           Audits.record_audit_run_outcome(
              run,
              run.revision,
              %{status: status, reason: reason, completed_at: DateTime.utc_now()},
