@@ -363,6 +363,11 @@ export function CaseListPage() {
                   <TableCell>
                     <Badge
                       variant={incident.status === "needs_attention" ? "destructive" : "secondary"}
+                      className={
+                        incident.status === "resolved"
+                          ? "border-success/20 bg-success text-success-foreground"
+                          : undefined
+                      }
                     >
                       {t(`cases.status.${incident.status}`)}
                     </Badge>
