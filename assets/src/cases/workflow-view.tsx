@@ -14,46 +14,24 @@ import {
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { components } from "@/api/schema";
-import { summarizeValue, translatedToken } from "@/cases/detail-utils";
+import {
+  buildLog,
+  type LogEntry,
+  type StageKey,
+  type WorkflowLogInput,
+} from "@/cases/workflow-log";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type CaseSnapshot = components["schemas"]["CaseSnapshot"];
-type CaseEvent = components["schemas"]["CaseEvent"];
-type Turn = components["schemas"]["ResolverTurn"];
-type Evidence = components["schemas"]["Evidence"];
-type Approval = components["schemas"]["Approval"];
-type Review = components["schemas"]["ReviewDecision"];
-type Report = components["schemas"]["Report"];
-
-type StageKey = "alert" | "investigate" | "review" | "remediate" | "verify" | "report" | "complete";
 type StageState = "completed" | "current" | "attention" | "pending" | "skipped";
 
-type Props = {
-  snapshot: CaseSnapshot;
-  timeline: CaseEvent[];
-  turns: Turn[];
-  evidence: Evidence[];
-  approvals: Approval[];
-  reviews: Review[];
-  reports: Report[];
-};
+type Props = WorkflowLogInput;
 
 type Stage = {
   key: StageKey;
   icon: LucideIcon;
   state: StageState;
-};
-
-type LogEntry = {
-  id: string;
-  at: string;
-  stage: StageKey;
-  source: string;
-  summary: string;
-  details?: unknown;
-  failed?: boolean;
 };
 
 const stageDefinitions: Array<{ key: StageKey; icon: LucideIcon }> = [
@@ -133,8 +111,15 @@ export function CaseWorkflowView(props: Props) {
               <ListTree className="size-4 text-muted-foreground" />
               {t("cases.workflow.logTitle")}
             </span>
-            <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
-              {t("cases.workflow.logCount", { count: log.length })}
+            <span className="flex items-center gap-2">
+              <Badge variant="outline">
+                {t("cases.workflow.aiLanguage", {
+                  language: props.snapshot.case.report_language.toUpperCase(),
+                })}
+              </Badge>
+              <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
+                {t("cases.workflow.logCount", { count: log.length })}
+              </span>
             </span>
           </CardTitle>
         </CardHeader>
@@ -148,12 +133,11 @@ export function CaseWorkflowView(props: Props) {
               {t("cases.workflow.noLogs")}
             </p>
           ) : (
-            log.map((entry, index) => (
+            log.map((entry) => (
               <ExecutionLogRow
                 key={entry.id}
                 entry={entry}
                 locale={i18n.resolvedLanguage ?? "en"}
-                latest={index === log.length - 1}
               />
             ))
           )}
@@ -239,39 +223,51 @@ function Legend({ state, label }: { state: "current" | "completed" | "skipped"; 
   );
 }
 
-function ExecutionLogRow({
-  entry,
-  locale,
-  latest,
-}: {
-  entry: LogEntry;
-  locale: string;
-  latest: boolean;
-}) {
+function ExecutionLogRow({ entry, locale }: { entry: LogEntry; locale: string }) {
   const { t } = useTranslation();
   return (
-    <details className="group border-b last:border-b-0" open={latest}>
-      <summary className="grid cursor-pointer list-none grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-3 px-4 py-3 hover:bg-muted/40">
-        <ChevronRight className="mt-0.5 size-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
+    <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 border-b px-4 py-4 last:border-b-0">
+      <div>
         <time className="whitespace-nowrap font-mono text-xs text-muted-foreground">
           {formatLogTime(entry.at, locale)}
         </time>
-        <span className="min-w-0">
-          <span className={entry.failed ? "text-destructive" : "font-medium text-primary"}>
-            [{t(`cases.workflow.stages.${entry.stage}.label`)}]
-          </span>{" "}
-          <span className="text-muted-foreground">{entry.source}</span>{" "}
-          <span className={entry.failed ? "text-destructive" : "text-foreground"}>
-            {entry.summary}
-          </span>
-        </span>
-      </summary>
-      {entry.details !== undefined && (
-        <pre className="overflow-x-auto border-t bg-muted/25 px-10 py-3 font-mono text-xs leading-relaxed text-muted-foreground">
-          {JSON.stringify(entry.details, null, 2)}
-        </pre>
-      )}
-    </details>
+      </div>
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={entry.failed ? "destructive" : "secondary"}>
+            {t(`cases.workflow.stages.${entry.stage}.label`)}
+          </Badge>
+          <span className="text-xs font-medium text-muted-foreground">{entry.source}</span>
+          {entry.modelLanguage && (
+            <Badge variant="outline">AI · {entry.modelLanguage.toUpperCase()}</Badge>
+          )}
+        </div>
+        <p className={entry.failed ? "text-sm text-destructive" : "text-sm text-foreground"}>
+          {entry.summary}
+        </p>
+        {entry.facts && entry.facts.length > 0 && (
+          <dl className="grid gap-2 rounded-md bg-muted/35 p-3 sm:grid-cols-2">
+            {entry.facts.map((fact) => (
+              <div key={`${fact.label}-${fact.value}`} className="min-w-0">
+                <dt className="text-xs font-medium text-muted-foreground">{fact.label}</dt>
+                <dd className="mt-0.5 break-words text-sm">{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {entry.technical !== undefined && (
+          <details className="group">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+              {t("cases.workflow.technicalDetails")}
+            </summary>
+            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted/45 p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+              {JSON.stringify(entry.technical, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -345,145 +341,6 @@ function projectWorkflow(props: Props): { current: StageKey; stages: Stage[] } {
               : "skipped",
     })),
   };
-}
-
-function buildLog(props: Props, t: ReturnType<typeof useTranslation>["t"]): LogEntry[] {
-  const entries: LogEntry[] = [];
-
-  for (const event of props.timeline) {
-    entries.push({
-      id: `event-${event.id}`,
-      at: event.inserted_at,
-      stage: stageForEvent(event.type),
-      source: t("cases.workflow.sources.system"),
-      summary: translatedToken(t, "event", event.type),
-      failed: event.type === "report_generation_failed",
-    });
-  }
-
-  for (const turn of props.turns) {
-    const decision = turn.decision ?? turn.outcome ?? turn.progress_kind ?? turn.status;
-    entries.push({
-      id: `turn-${turn.id}`,
-      at: turn.completed_at ?? turn.updated_at,
-      stage: "investigate",
-      source: t("cases.workflow.sources.resolver"),
-      summary: `${t("cases.turnTitle", { ordinal: turn.ordinal })} · ${summarizeValue(decision, turn.status)}`,
-      details: {
-        intent: turn.intent,
-        decision: turn.decision,
-        outcome: turn.outcome,
-        failure_category: turn.failure_category,
-        failure_message: turn.failure_message,
-      },
-      failed: Boolean(turn.failure_message),
-    });
-  }
-
-  for (const item of props.evidence) {
-    entries.push({
-      id: `evidence-${item.id}`,
-      at: item.observed_at,
-      stage: stageForEvidence(item.kind),
-      source: item.source,
-      summary: summarizeValue(item.content, translatedToken(t, "evidenceKind", item.kind)),
-      details: item.content,
-    });
-  }
-
-  for (const item of props.reviews) {
-    entries.push({
-      id: `review-${item.id}`,
-      at: item.decided_at,
-      stage: "review",
-      source: t("cases.workflow.sources.reviewer"),
-      summary: `${translatedToken(t, "decision", item.verdict)} · ${item.reason}`,
-      details: {
-        verdict: item.verdict,
-        selection_source: item.selection_source,
-        category: item.category,
-        usage: { input_tokens: item.input_tokens, output_tokens: item.output_tokens },
-      },
-      failed: item.outcome === "delivery_failed",
-    });
-  }
-
-  for (const item of props.approvals) {
-    entries.push({
-      id: `approval-${item.id}`,
-      at: item.decided_at,
-      stage: "review",
-      source: translatedToken(t, "decisionSource", item.source),
-      summary: `${translatedToken(t, "decision", item.decision)} · ${item.reason}`,
-    });
-  }
-
-  for (const item of props.snapshot.operations) {
-    entries.push({
-      id: `operation-${item.id}`,
-      at: item.completed_at ?? item.updated_at,
-      stage: "remediate",
-      source: t("cases.workflow.sources.executor"),
-      summary: `${item.capability} / ${item.operation} · ${translatedToken(t, "operationStatus", item.status)}`,
-      details: {
-        selectors: item.selectors,
-        parameters: item.parameters,
-        outcome_category: item.outcome_category,
-        reference: item.reference,
-        result: item.result_details,
-      },
-      failed: ["failed", "partial", "unknown"].includes(item.status),
-    });
-  }
-
-  for (const item of props.snapshot.verification_attempts) {
-    entries.push({
-      id: `verification-${item.id}`,
-      at: item.completed_at ?? item.accepted_at,
-      stage: "verify",
-      source: t("cases.workflow.sources.verifier"),
-      summary: `${item.capability} / ${item.operation} · ${item.status}`,
-      details: {
-        expected: item.expected,
-        facts: item.facts,
-        evidence: item.provider_evidence,
-        outcome_category: item.outcome_category,
-      },
-      failed: ["not_verified", "unknown"].includes(item.status),
-    });
-  }
-
-  for (const item of props.reports) {
-    entries.push({
-      id: `report-${item.id}`,
-      at: item.generated_at,
-      stage: "report",
-      source: t("cases.workflow.sources.reporter"),
-      summary: t("cases.workflow.reportGenerated", { language: item.language.toUpperCase() }),
-      details: { revision: item.case_revision, outcome: item.outcome, digest: item.content_digest },
-    });
-  }
-
-  return entries.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
-}
-
-function stageForEvent(type: string): StageKey {
-  if (type.includes("report")) return "report";
-  if (type.includes("verification") || type === "source_recovered") return "verify";
-  if (type.includes("effect") || type.includes("operation")) return "remediate";
-  if (type.includes("review") || type.includes("proposal")) return "review";
-  if (type === "case_resolved") return "verify";
-  if (type === "case_opened" || type.startsWith("signal_")) return "alert";
-  return "investigate";
-}
-
-function stageForEvidence(kind: string): StageKey {
-  if (["target_verification", "verification_result", "source_recovery"].includes(kind)) {
-    return "verify";
-  }
-  if (kind === "operation_result") return "remediate";
-  if (kind === "signal_event") return "alert";
-  return "investigate";
 }
 
 function formatLogTime(value: string, locale: string) {

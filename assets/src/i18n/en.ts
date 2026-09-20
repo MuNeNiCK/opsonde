@@ -412,6 +412,18 @@ const en = {
         logCount: "{{count}} records",
         noLogs: "Waiting for the first execution record…",
         reportGenerated: "{{language}} Report generated",
+        aiLanguage: "AI output: {{language}}",
+        technicalDetails: "Show technical details",
+        fields: {
+          decision: "AI decision",
+          selectedAction: "Next selected action",
+          target: "Target and selectors",
+          result: "Result",
+          observed: "Observed facts",
+          expected: "Expected state",
+          category: "Category",
+          failure: "Stop reason",
+        },
         stages: {
           alert: {
             label: "Alert received",
@@ -544,6 +556,8 @@ const en = {
       decisionSource: { human: "Operator", reviewer: "Reviewer", policy: "Policy" },
       evidenceKind: {
         signal_event: "Monitoring event",
+        observation: "Target observation",
+        observation_error: "Target observation failed",
         source_recovery: "Source recovery",
         target_observation: "Target observation",
         operation_result: "Change result",
@@ -569,6 +583,16 @@ const en = {
         case_cancelled: "Case cancelled",
         related_target_traversed: "Related Target investigated",
         report_generation_failed: "Report generation failed",
+        case_needs_attention: "Operator attention required",
+      },
+      intentType: {
+        target_search: "Search Targets",
+        target_selection: "Select Target",
+        observation_choice: "Observe Target",
+        target_traversal: "Investigate a related Target",
+        proposal: "Propose a change",
+        recovery: "Conclude recovery",
+        handoff: "Handoff to an operator",
       },
       failure: {
         failed: "Failed",

@@ -399,6 +399,18 @@ const ja = {
         logCount: "{{count}}件",
         noLogs: "最初の実行記録を待っています…",
         reportGenerated: "{{language}}レポートを作成",
+        aiLanguage: "AI応答: {{language}}",
+        technicalDetails: "技術詳細を表示",
+        fields: {
+          decision: "AIの判断",
+          selectedAction: "次に選んだ処理",
+          target: "対象・選択条件",
+          result: "結果",
+          observed: "観測結果",
+          expected: "期待する状態",
+          category: "分類",
+          failure: "停止理由",
+        },
         stages: {
           alert: {
             label: "アラート受信",
@@ -527,6 +539,8 @@ const ja = {
       decisionSource: { human: "運用者", reviewer: "Reviewer", policy: "Policy" },
       evidenceKind: {
         signal_event: "監視イベント",
+        observation: "Target観測",
+        observation_error: "Target観測失敗",
         source_recovery: "監視元の復旧",
         target_observation: "Target観測",
         operation_result: "変更結果",
@@ -552,6 +566,16 @@ const ja = {
         case_cancelled: "ケースを中止",
         related_target_traversed: "関連Targetを調査",
         report_generation_failed: "レポート作成失敗",
+        case_needs_attention: "運用者の対応が必要",
+      },
+      intentType: {
+        target_search: "Targetを検索",
+        target_selection: "Targetを選択",
+        observation_choice: "Targetを観測",
+        target_traversal: "関連Targetへ調査を拡張",
+        proposal: "変更を提案",
+        recovery: "復旧と判断",
+        handoff: "運用者へ引き継ぎ",
       },
       failure: {
         failed: "失敗",
