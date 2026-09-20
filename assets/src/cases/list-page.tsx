@@ -127,8 +127,10 @@ export function CaseListPage() {
 
   const records = page?.data ?? [];
   const summary = {
+    inProgress: records.filter(
+      (incident) => incident.status === "running" && incident.alert_state !== "recovered",
+    ).length,
     attention: records.filter((incident) => incident.status === "needs_attention").length,
-    firing: records.filter((incident) => incident.alert_state === "firing").length,
     recovering: records.filter(
       (incident) => incident.alert_state === "recovered" && incident.status === "running",
     ).length,
@@ -219,9 +221,9 @@ export function CaseListPage() {
         </Alert>
       )}
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label={t("cases.summary")}>
+      <section className="grid grid-cols-2 gap-2 lg:grid-cols-4" aria-label={t("cases.summary")}>
+        <SummaryCard label={t("cases.summaryInProgress")} value={summary.inProgress} />
         <SummaryCard label={t("cases.summaryAttention")} value={summary.attention} urgent />
-        <SummaryCard label={t("cases.summaryFiring")} value={summary.firing} />
         <SummaryCard label={t("cases.summaryRecovering")} value={summary.recovering} />
         <SummaryCard label={t("cases.summaryTerminal")} value={summary.terminal} />
       </section>
@@ -405,14 +407,12 @@ function SummaryCard({
   urgent?: boolean;
 }) {
   return (
-    <Card className={urgent && value > 0 ? "border-destructive/60" : undefined}>
-      <CardContent className="flex items-center justify-between p-4">
-        <span className="text-sm text-muted-foreground">{label}</span>
+    <Card size="sm" className={urgent && value > 0 ? "border-destructive/60 py-3" : "py-3"}>
+      <CardContent className="flex items-center justify-between px-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
         <span
           className={
-            urgent && value > 0
-              ? "text-2xl font-semibold text-destructive"
-              : "text-2xl font-semibold"
+            urgent && value > 0 ? "text-xl font-semibold text-destructive" : "text-xl font-semibold"
           }
         >
           {value}
