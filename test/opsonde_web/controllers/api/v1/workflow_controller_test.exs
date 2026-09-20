@@ -3,7 +3,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
   import OpenApiSpex.TestAssertions
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Reports, Targets}
   alias Opsonde.Cases.ReviewDelivery
   alias Opsonde.Providers.AI
 
@@ -188,6 +188,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert_operation_response(cancelled)
 
+    report = Reports.generate_report!(incident["id"], 4, actor: context.operator)
+
     snapshot = get_json("/api/v1/cases/#{incident["id"]}", context.viewer_token)
 
     assert %{
@@ -198,13 +200,15 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                ],
                "proposals" => [],
                "operations" => [],
-               "verification_attempts" => []
+               "verification_attempts" => [],
+               "reports" => [%{"id" => report_id, "case_revision" => 4}]
              }
            } = json_response(snapshot, 200)
 
     assert_operation_response(snapshot)
 
     assert case_id == incident["id"]
+    assert report_id == report.id
     refute snapshot.resp_body =~ "pending_intent"
     refute snapshot.resp_body =~ "idempotency_key"
 

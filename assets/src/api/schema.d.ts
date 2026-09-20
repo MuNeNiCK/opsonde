@@ -1843,6 +1843,7 @@ export interface components {
             case: components["schemas"]["Case"];
             operations: components["schemas"]["Operation"][];
             proposals: components["schemas"]["Proposal"][];
+            reports: components["schemas"]["Report"][];
             resolution_runs: components["schemas"]["ResolutionRun"][];
             verification_attempts: components["schemas"]["VerificationAttempt"][];
         };

@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.WorkflowJSON do
   @moduledoc false
 
+  alias OpsondeWeb.API.V1.OutcomeJSON
+
   def authority(setting) do
     %{
       id: setting.id,
@@ -58,7 +60,8 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
       proposals: Enum.map(snapshot.proposals, &proposal/1),
       operations: Enum.map(snapshot.operations, &operation/1),
-      verification_attempts: Enum.map(snapshot.verification_attempts, &verification_attempt/1)
+      verification_attempts: Enum.map(snapshot.verification_attempts, &verification_attempt/1),
+      reports: Enum.map(snapshot.reports, &OutcomeJSON.report/1)
     }
   end
 

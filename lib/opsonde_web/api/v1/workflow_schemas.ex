@@ -182,9 +182,10 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         resolution_runs: array(ref("ResolutionRun")),
         proposals: array(ref("Proposal")),
         operations: array(ref("Operation")),
-        verification_attempts: array(ref("VerificationAttempt"))
+        verification_attempts: array(ref("VerificationAttempt")),
+        reports: array(ref("Report"))
       },
-      [:case, :resolution_runs, :proposals, :operations, :verification_attempts],
+      [:case, :resolution_runs, :proposals, :operations, :verification_attempts, :reports],
       false
     )
   end

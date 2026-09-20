@@ -25,6 +25,7 @@ import {
   parseAuthorityMode,
   translatedToken,
 } from "@/cases/detail-utils";
+import { CaseWorkflowView } from "@/cases/workflow-view";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
@@ -309,6 +310,16 @@ export function CaseDetailPage() {
           <AlertDescription>{t("cases.readOnly")}</AlertDescription>
         </Alert>
       )}
+
+      <CaseWorkflowView
+        snapshot={detail.snapshot}
+        timeline={detail.timeline}
+        turns={detail.turns}
+        evidence={detail.evidence}
+        approvals={detail.approvals}
+        reviews={detail.reviews}
+        reports={detail.snapshot.reports}
+      />
 
       <Card className="overflow-hidden">
         <CardContent className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:p-6">

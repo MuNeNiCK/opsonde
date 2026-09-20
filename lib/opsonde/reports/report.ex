@@ -29,6 +29,12 @@ defmodule Opsonde.Reports.Report do
       filter expr(case_id == ^arg(:case_id) and case_revision == ^arg(:case_revision))
     end
 
+    read :for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(sort: [generated_at: :desc, id: :desc])
+    end
+
     create :create_record do
       accept [
         :case_id,
@@ -63,7 +69,7 @@ defmodule Opsonde.Reports.Report do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

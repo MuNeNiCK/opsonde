@@ -1863,6 +1863,12 @@
             },
             "type": "array"
           },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/Report"
+            },
+            "type": "array"
+          },
           "resolution_runs": {
             "items": {
               "$ref": "#/components/schemas/ResolutionRun"
@@ -1881,7 +1887,8 @@
           "resolution_runs",
           "proposals",
           "operations",
-          "verification_attempts"
+          "verification_attempts",
+          "reports"
         ],
         "type": "object"
       },

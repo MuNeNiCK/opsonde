@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.ReconnectSnapshot
+  alias Opsonde.Reports
 
   @impl true
   def run(input, _opts, context) do
@@ -13,14 +14,16 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
          {:ok, runs} <- Cases.resolution_runs_for_case(case_id, opts),
          {:ok, proposals} <- Cases.proposals_for_case(case_id, opts),
          {:ok, operations} <- Cases.operations_for_case(case_id, opts),
-         {:ok, attempts} <- Cases.verification_attempts_for_case(case_id, opts) do
+         {:ok, attempts} <- Cases.verification_attempts_for_case(case_id, opts),
+         {:ok, reports} <- Reports.reports_for_case(case_id, opts) do
       {:ok,
        %ReconnectSnapshot{
          case: incident,
          resolution_runs: runs,
          proposals: proposals,
          operations: operations,
-         verification_attempts: attempts
+         verification_attempts: attempts,
+         reports: reports
        }}
     end
   end

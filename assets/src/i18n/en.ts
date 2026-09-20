@@ -398,6 +398,61 @@ const en = {
       noAuthorityOutcomes: "No human or Reviewer decision has been recorded.",
       timeline: "Timeline",
       noTimeline: "No timeline event has been recorded.",
+      workflow: {
+        title: "Resolution progress",
+        description:
+          "Follow the current autonomous response stage and inspect each persisted execution record.",
+        progress: "Case resolution stages",
+        current: "Current",
+        completed: "Completed",
+        skipped: "Skipped",
+        logTitle: "Execution log",
+        logCount: "{{count}} records",
+        noLogs: "Waiting for the first execution record…",
+        reportGenerated: "Immutable {{language}} Report generated",
+        stages: {
+          alert: {
+            label: "Alert received",
+            description: "The triggering Signal, audit, or operator request opened this Case.",
+          },
+          investigate: {
+            label: "Investigating",
+            description:
+              "The Resolver is selecting Targets, gathering evidence, and updating its hypothesis.",
+          },
+          review: {
+            label: "Reviewing",
+            description:
+              "A Reviewer, operator, or authority policy is evaluating the proposed change.",
+          },
+          remediate: {
+            label: "Remediating",
+            description:
+              "The authorized operation is being applied through the selected Access Method.",
+          },
+          verify: {
+            label: "Verifying recovery",
+            description:
+              "Fresh Target evidence and the monitoring source are being checked independently.",
+          },
+          report: {
+            label: "Creating report",
+            description: "The terminal Case revision is being captured in an immutable Report.",
+          },
+          complete: {
+            label: "Complete",
+            description: "Recovery was verified and the immutable Report is available.",
+          },
+        },
+        sources: {
+          system: "system",
+          resolver: "resolver AI",
+          reviewer: "reviewer AI",
+          executor: "executor",
+          verifier: "verifier",
+          reporter: "reporter",
+        },
+      },
       situation: {
         sourceFiring: "The monitoring source reports an active incident.",
         sourceRecovered: "The monitoring source reports recovery.",
@@ -440,11 +495,14 @@ const en = {
         completed: "Completed",
       },
       operationStatus: {
+        queued: "Queued",
         pending: "Pending",
         accepted: "Accepted",
         dispatching: "Dispatching",
+        applied: "Applied",
         succeeded: "Succeeded",
         failed: "Failed",
+        partial: "Partially applied",
         unknown: "Outcome unknown",
         cancelled: "Cancelled",
         completed: "Completed",
@@ -462,6 +520,7 @@ const en = {
         target_observation: "Target observation",
         operation_result: "Change result",
         verification_result: "Recovery verification",
+        target_verification: "Target verification",
       },
       event: {
         case_opened: "Case opened",
@@ -481,6 +540,7 @@ const en = {
         case_resolved: "Case resolved",
         case_cancelled: "Case cancelled",
         related_target_traversed: "Related Target investigated",
+        report_generation_failed: "Report generation failed",
       },
       failure: {
         failed: "Failed",

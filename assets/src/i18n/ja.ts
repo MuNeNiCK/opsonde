@@ -386,6 +386,56 @@ const ja = {
       noAuthorityOutcomes: "人間またはReviewerの判断はまだありません。",
       timeline: "タイムライン",
       noTimeline: "タイムラインEventはまだありません。",
+      workflow: {
+        title: "解決の進行状況",
+        description: "現在の自動対応工程と、保存された各実行記録を確認できます。",
+        progress: "ケース解決工程",
+        current: "現在",
+        completed: "完了",
+        skipped: "省略",
+        logTitle: "実行ログ",
+        logCount: "{{count}}件",
+        noLogs: "最初の実行記録を待っています…",
+        reportGenerated: "不変の{{language}}レポートを作成",
+        stages: {
+          alert: {
+            label: "アラート受信",
+            description: "Signal、監査、または運用者の要求からこのケースを開始しました。",
+          },
+          investigate: {
+            label: "調査中",
+            description: "ResolverがTargetを選択し、証拠を収集して仮説を更新しています。",
+          },
+          review: {
+            label: "レビュー中",
+            description: "Reviewer、運用者、または権限Policyが変更提案を評価しています。",
+          },
+          remediate: {
+            label: "対応中",
+            description: "承認された操作を、選択したAccess Methodから実行しています。",
+          },
+          verify: {
+            label: "復旧確認中",
+            description: "新しいTarget証拠と監視元の状態を独立して確認しています。",
+          },
+          report: {
+            label: "レポート作成中",
+            description: "終端Caseのrevisionを不変のレポートへ記録しています。",
+          },
+          complete: {
+            label: "完了",
+            description: "復旧確認が完了し、不変のレポートを参照できます。",
+          },
+        },
+        sources: {
+          system: "system",
+          resolver: "resolver AI",
+          reviewer: "reviewer AI",
+          executor: "executor",
+          verifier: "verifier",
+          reporter: "reporter",
+        },
+      },
       situation: {
         sourceFiring: "監視元が障害の継続を報告しています。",
         sourceRecovered: "監視元が復旧を報告しています。",
@@ -428,11 +478,14 @@ const ja = {
         completed: "完了",
       },
       operationStatus: {
+        queued: "待機中",
         pending: "待機中",
         accepted: "受理済み",
         dispatching: "実行中",
+        applied: "適用済み",
         succeeded: "成功",
         failed: "失敗",
+        partial: "一部適用",
         unknown: "結果不明",
         cancelled: "中止済み",
         completed: "完了",
@@ -450,6 +503,7 @@ const ja = {
         target_observation: "Target観測",
         operation_result: "変更結果",
         verification_result: "復旧確認",
+        target_verification: "Target検証",
       },
       event: {
         case_opened: "ケース開始",
@@ -469,6 +523,7 @@ const ja = {
         case_resolved: "ケース解決",
         case_cancelled: "ケースを中止",
         related_target_traversed: "関連Targetを調査",
+        report_generation_failed: "レポート作成失敗",
       },
       failure: {
         failed: "失敗",
