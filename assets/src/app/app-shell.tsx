@@ -1,4 +1,13 @@
-import { BookOpenCheck, Boxes, FileText, RadioTower, Settings, ShieldCheck } from "lucide-react";
+import {
+  BookOpenCheck,
+  Bot,
+  Boxes,
+  FileText,
+  RadioTower,
+  Settings,
+  ShieldCheck,
+  Webhook,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
@@ -43,6 +52,8 @@ const navigation = [
     label: "navigation.configuration",
     items: [
       ["/targets", "navigation.targets", Boxes],
+      ["/ai", "navigation.ai", Bot],
+      ["/signals", "navigation.signals", Webhook],
       ["/settings", "navigation.settings", Settings],
     ],
   },

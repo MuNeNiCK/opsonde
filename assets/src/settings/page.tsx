@@ -10,8 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { AccountSection } from "@/settings/account-section";
 import { OIDCSetup } from "@/settings/oidc-section";
-import { ProviderSetup } from "@/providers/ai-section";
-import { SignalProviderSection } from "@/providers/signal-section";
 import { loadSettingsSnapshot, readiness, type SettingsSnapshot } from "@/settings/data";
 
 export function SetupPage() {
@@ -129,19 +127,6 @@ export function SetupPage() {
       </section>
 
       {canManage && account && <AccountSection currentAccountId={account.id} />}
-      <ProviderSetup
-        providers={snapshot.providers}
-        assignments={snapshot.assignments}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
-      <SignalProviderSection
-        providers={snapshot.providers}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
       <OIDCSetup canManage={canManage} onError={setError} />
       <AuthoritySetup
         key={snapshot.authority.setting_revision}

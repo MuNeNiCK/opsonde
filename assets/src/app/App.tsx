@@ -22,6 +22,12 @@ const SignalDiagnosticsPage = lazy(() =>
 const SetupPage = lazy(() =>
   import("@/settings/page").then((module) => ({ default: module.SetupPage })),
 );
+const AIProviderPage = lazy(() =>
+  import("@/providers/pages").then((module) => ({ default: module.AIProviderPage })),
+);
+const SignalProviderPage = lazy(() =>
+  import("@/providers/pages").then((module) => ({ default: module.SignalProviderPage })),
+);
 const OnboardingPage = lazy(() =>
   import("@/settings/onboarding-page").then((module) => ({ default: module.OnboardingPage })),
 );
@@ -131,15 +137,19 @@ function AppRoutes() {
                 ? "pages.case"
                 : path === "/cases" || path === "/"
                   ? "pages.cases"
-                  : path.startsWith("/targets")
-                    ? "pages.targets"
-                    : path === "/audits"
-                      ? "pages.audits"
-                      : path === "/reports"
-                        ? "pages.reports"
-                        : path === "/settings" || path === "/providers"
-                          ? "pages.settings"
-                          : "pages.notFound";
+                  : path === "/ai"
+                    ? "pages.ai"
+                    : path === "/signals"
+                      ? "pages.signals"
+                      : path.startsWith("/targets")
+                        ? "pages.targets"
+                        : path === "/audits"
+                          ? "pages.audits"
+                          : path === "/reports"
+                            ? "pages.reports"
+                            : path === "/settings" || path === "/providers"
+                              ? "pages.settings"
+                              : "pages.notFound";
     document.title = `${t(key)} · Opsonde`;
   }, [location.pathname, t]);
 
@@ -172,7 +182,9 @@ function AppRoutes() {
           <Route path="targets/connections" element={<TargetConnectionsPage />} />
           <Route path="targets/imports" element={<TargetImportPage />} />
           <Route path="targets/:targetId" element={<TargetDetailPage />} />
-          <Route path="providers" element={<Navigate to="/settings#ai" replace />} />
+          <Route path="ai" element={<AIProviderPage />} />
+          <Route path="signals" element={<SignalProviderPage />} />
+          <Route path="providers" element={<Navigate to="/ai" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />
           <Route path="settings" element={<SetupPage />} />
