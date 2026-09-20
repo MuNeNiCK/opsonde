@@ -21,6 +21,8 @@ export function TargetCreatePage() {
   const { account } = useAuthentication();
   const [boundaries, setBoundaries] = useState<Boundary[] | null>(null);
   const [creatingBoundary, setCreatingBoundary] = useState(false);
+  const [targetKind, setTargetKind] = useState("host");
+  const [targetPlatform, setTargetPlatform] = useState("linux");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -72,8 +74,12 @@ export function TargetCreatePage() {
           body: {
             target: {
               name: value(form, "name"),
-              kind: value(form, "kind"),
-              platform: value(form, "platform"),
+              kind:
+                value(form, "kind") === "custom" ? value(form, "custom_kind") : value(form, "kind"),
+              platform:
+                value(form, "platform") === "custom"
+                  ? value(form, "custom_platform")
+                  : value(form, "platform"),
               facts: {},
               management_boundary_id: value(form, "management_boundary_id") || null,
             },
@@ -160,35 +166,52 @@ export function TargetCreatePage() {
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
               <Field label={t("targets.name")} name="name" required maxLength={120} />
-              <Field
-                label={t("targets.kind")}
-                name="kind"
-                list="target-kind-options"
-                placeholder="host"
-                required
-                maxLength={80}
-              />
-              <datalist id="target-kind-options">
-                <option value="host" />
-                <option value="cluster" />
-                <option value="network_device" />
-                <option value="bmc" />
-                <option value="virtualization" />
-              </datalist>
-              <Field
-                label={t("targets.platform")}
-                name="platform"
-                list="target-platform-options"
-                placeholder="linux"
-                required
-                maxLength={120}
-              />
-              <datalist id="target-platform-options">
-                <option value="linux" />
-                <option value="kubernetes" />
-                <option value="cisco_ios_xe" />
-                <option value="generic" />
-              </datalist>
+              <div className="space-y-2">
+                <Label htmlFor="target-create-kind">{t("targets.kind")}</Label>
+                <FormSelect
+                  id="target-create-kind"
+                  name="kind"
+                  value={targetKind}
+                  onValueChange={(next) => next && setTargetKind(next)}
+                  required
+                  options={[
+                    { value: "host", label: "host" },
+                    { value: "cluster", label: "cluster" },
+                    { value: "network_device", label: "network_device" },
+                    { value: "bmc", label: "bmc" },
+                    { value: "virtualization", label: "virtualization" },
+                    { value: "custom", label: t("targets.custom") },
+                  ]}
+                />
+              </div>
+              {targetKind === "custom" && (
+                <Field label={t("targets.customKind")} name="custom_kind" required maxLength={80} />
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="target-create-platform">{t("targets.platform")}</Label>
+                <FormSelect
+                  id="target-create-platform"
+                  name="platform"
+                  value={targetPlatform}
+                  onValueChange={(next) => next && setTargetPlatform(next)}
+                  required
+                  options={[
+                    { value: "linux", label: "linux" },
+                    { value: "kubernetes", label: "kubernetes" },
+                    { value: "cisco_ios_xe", label: "cisco_ios_xe" },
+                    { value: "generic", label: "generic" },
+                    { value: "custom", label: t("targets.custom") },
+                  ]}
+                />
+              </div>
+              {targetPlatform === "custom" && (
+                <Field
+                  label={t("targets.customPlatform")}
+                  name="custom_platform"
+                  required
+                  maxLength={120}
+                />
+              )}
               <div className="space-y-2">
                 <Label htmlFor="target-create-boundary">{t("targets.boundary")}</Label>
                 <FormSelect

@@ -1,33 +1,22 @@
-import { useState, type FormEvent } from "react";
-import { CheckCircle2, CircleAlert, Network, Plus } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, CircleAlert, Network } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData } from "@/api/client";
+import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
-import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
-import { targetAdapter, targetAdapterOptions } from "@/targets/adapters";
 
 type Provider = components["schemas"]["Provider"];
 
 type Props = {
   providers: Provider[];
   canManage: boolean;
-  createKind: "target" | "inventory" | null;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
-  onCreated: () => void;
 };
-
-function value(form: FormData, name: string) {
-  const entry = form.get(name);
-  return typeof entry === "string" ? entry : "";
-}
 
 function firstFingerprintEndpoint(provider: Provider) {
   const fingerprints = provider.configuration.host_key_fingerprints;
@@ -35,22 +24,13 @@ function firstFingerprintEndpoint(provider: Provider) {
   return Object.keys(fingerprints)[0] ?? "";
 }
 
-export function TargetProviderSection({
-  providers,
-  canManage,
-  createKind,
-  onRefresh,
-  onError,
-  onCreated,
-}: Props) {
+export function TargetProviderSection({ providers, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
-  const [adapterType, setAdapterType] = useState("linux-ssh");
-  const [authMethod, setAuthMethod] = useState("password");
   const [pending, setPending] = useState<string | null>(null);
   const [checkInputs, setCheckInputs] = useState<Record<string, string>>({});
-  const targetProviders = providers.filter((provider) => provider.kind === "target");
-  const inventoryProviders = providers.filter((provider) => provider.kind === "inventory");
-  const selectedAdapter = targetAdapter(adapterType)!;
+  const visibleProviders = providers.filter(
+    (provider) => provider.kind === "target" || provider.kind === "inventory",
+  );
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);
@@ -58,113 +38,10 @@ export function TargetProviderSection({
     try {
       await action();
       await onRefresh();
-      return true;
     } catch {
       onError(t("targets.requestFailed"));
-      return false;
     } finally {
       setPending(null);
-    }
-  }
-
-  async function createTargetProvider(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const endpoint = value(form, "endpoint");
-    let configuration: Record<string, unknown>;
-    let credentials: Record<string, unknown>;
-
-    if (selectedAdapter.family === "ssh") {
-      configuration = {
-        host_key_fingerprints: { [endpoint]: value(form, "fingerprint") },
-      };
-      const legacyAlgorithms = value(form, "legacy_algorithms")
-        .split(",")
-        .map((algorithm) => algorithm.trim())
-        .filter(Boolean);
-      if (legacyAlgorithms.length > 0) configuration.legacy_algorithms = legacyAlgorithms;
-      if (adapterType === "linux-ssh") configuration.privilege = value(form, "privilege");
-      credentials = { username: value(form, "username"), auth_method: authMethod };
-      credentials[authMethod === "password" ? "password" : "private_key"] = value(
-        form,
-        authMethod === "password" ? "password" : "private_key",
-      );
-    } else if (selectedAdapter.family === "restconf") {
-      configuration = { ca_certificate: value(form, "ca_certificate") };
-      credentials = { username: value(form, "username"), password: value(form, "password") };
-    } else {
-      configuration = { namespace: value(form, "namespace") };
-      credentials = { kubeconfig: value(form, "kubeconfig") };
-    }
-
-    const created = await mutate("create-target-provider", async () => {
-      const response = apiData(
-        await apiClient.POST("/api/v1/providers", {
-          body: {
-            provider: {
-              name: value(form, "name"),
-              kind: "target",
-              adapter_type: adapterType,
-              configuration,
-              credentials,
-            },
-          },
-        }),
-      );
-      setCheckInputs((current) => ({ ...current, [response.data.id]: endpoint }));
-      await apiClient.POST("/api/v1/providers/{id}/check", {
-        params: { path: { id: response.data.id } },
-        body: {
-          provider: {
-            expected_revision: response.data.revision,
-            check_input: { endpoint },
-          },
-        },
-      });
-    });
-
-    if (created) {
-      formElement.reset();
-      onCreated();
-    }
-  }
-
-  async function createInventoryProvider(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const resource = value(form, "resource");
-    const created = await mutate("create-inventory-provider", async () => {
-      const response = apiData(
-        await apiClient.POST("/api/v1/providers", {
-          body: {
-            provider: {
-              name: value(form, "name"),
-              kind: "inventory",
-              adapter_type: "netbox-api",
-              configuration: {
-                base_url: value(form, "base_url"),
-                ca_certificate: value(form, "ca_certificate"),
-              },
-              credentials: { token: value(form, "token") },
-            },
-          },
-        }),
-      );
-      await apiClient.POST("/api/v1/providers/{id}/check", {
-        params: { path: { id: response.data.id } },
-        body: {
-          provider: {
-            expected_revision: response.data.revision,
-            check_input: { resource, filters: {}, page_size: 50 },
-          },
-        },
-      });
-    });
-    if (created) {
-      formElement.reset();
-      onCreated();
     }
   }
 
@@ -182,26 +59,27 @@ export function TargetProviderSection({
         : { resource: "devices", filters: {}, page_size: 50 };
 
     await mutate(`${provider.id}-${action}`, () => {
-      const body = {
-        provider: {
-          expected_revision: provider.revision,
-          ...(action === "check" ? { check_input: checkInput } : {}),
-        },
-      };
-      if (action === "check")
+      if (action === "check") {
         return apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: provider.id } },
+          body: {
+            provider: {
+              expected_revision: provider.revision,
+              check_input: checkInput,
+            },
+          },
+        });
+      }
+      const body = { provider: { expected_revision: provider.revision } };
+      if (action === "enable") {
+        return apiClient.POST("/api/v1/providers/{id}/enable", {
           params: { path: { id: provider.id } },
           body,
         });
-      const revisionBody = { provider: { expected_revision: provider.revision } };
-      if (action === "enable")
-        return apiClient.POST("/api/v1/providers/{id}/enable", {
-          params: { path: { id: provider.id } },
-          body: revisionBody,
-        });
+      }
       return apiClient.POST("/api/v1/providers/{id}/disable", {
         params: { path: { id: provider.id } },
-        body: revisionBody,
+        body,
       });
     });
   }
@@ -213,194 +91,8 @@ export function TargetProviderSection({
         <p className="mt-1 text-sm text-muted-foreground">{t("targets.connectionsDescription")}</p>
       </div>
 
-      {canManage && createKind && (
-        <div>
-          {createKind === "target" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("targets.addConnection")}</CardTitle>
-                <CardDescription>{t("targets.secretDescription")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="grid gap-4 md:grid-cols-2" onSubmit={createTargetProvider}>
-                  <Field label={t("targets.name")} name="name" required />
-                  <div className="space-y-2">
-                    <Label htmlFor="target-adapter">{t("targets.connectionType")}</Label>
-                    <FormSelect
-                      id="target-adapter"
-                      name="adapter_type"
-                      value={adapterType}
-                      onValueChange={(value) => value && setAdapterType(value)}
-                      options={targetAdapterOptions.map((option) => ({
-                        value: option.type,
-                        label: option.label,
-                      }))}
-                    />
-                  </div>
-                  <Field
-                    label={t("targets.endpoint")}
-                    name="endpoint"
-                    placeholder="ssh://host:22"
-                    required
-                  />
-                  {selectedAdapter.family === "ssh" && (
-                    <>
-                      <Field
-                        label={t("targets.fingerprint")}
-                        name="fingerprint"
-                        placeholder="SHA256:…"
-                        required
-                      />
-                      <div className="space-y-2">
-                        <Label htmlFor="target-legacy_algorithms">
-                          {t("targets.legacyAlgorithms")}
-                        </Label>
-                        <Input
-                          id="target-legacy_algorithms"
-                          name="legacy_algorithms"
-                          maxLength={160}
-                          placeholder="ssh-rsa, diffie-hellman-group14-sha1"
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          {t("targets.legacyAlgorithmsDescription")}
-                        </p>
-                      </div>
-                      <Field
-                        label={t("targets.username")}
-                        name="username"
-                        autoComplete="username"
-                        required
-                      />
-                      <div className="space-y-2">
-                        <Label htmlFor="target-auth-method">{t("targets.authentication")}</Label>
-                        <FormSelect
-                          id="target-auth-method"
-                          name="auth_method"
-                          value={authMethod}
-                          onValueChange={(value) => value && setAuthMethod(value)}
-                          options={[
-                            { value: "password", label: t("targets.password") },
-                            { value: "public_key", label: t("targets.privateKey") },
-                          ]}
-                        />
-                      </div>
-                      {authMethod === "password" ? (
-                        <Field
-                          label={t("targets.password")}
-                          name="password"
-                          type="password"
-                          autoComplete="off"
-                          required
-                        />
-                      ) : (
-                        <Area label={t("targets.privateKey")} name="private_key" required />
-                      )}
-                      {adapterType === "linux-ssh" && (
-                        <div className="space-y-2">
-                          <Label htmlFor="target-privilege">{t("targets.privilege")}</Label>
-                          <FormSelect
-                            id="target-privilege"
-                            name="privilege"
-                            defaultValue="none"
-                            options={[
-                              { value: "none", label: "none" },
-                              { value: "sudo", label: "sudo" },
-                            ]}
-                          />
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {selectedAdapter.family === "restconf" && (
-                    <>
-                      <Field
-                        label={t("targets.username")}
-                        name="username"
-                        autoComplete="username"
-                        required
-                      />
-                      <Field
-                        label={t("targets.password")}
-                        name="password"
-                        type="password"
-                        autoComplete="off"
-                        required
-                      />
-                      <Area label={t("targets.caCertificate")} name="ca_certificate" required />
-                    </>
-                  )}
-                  {selectedAdapter.family === "kubernetes" && (
-                    <>
-                      <Field
-                        label={t("targets.namespace")}
-                        name="namespace"
-                        defaultValue="default"
-                        required
-                      />
-                      <Area label={t("targets.kubeconfig")} name="kubeconfig" required />
-                    </>
-                  )}
-                  <Button
-                    type="submit"
-                    className="md:col-span-2 md:w-fit"
-                    disabled={pending !== null}
-                  >
-                    {pending === "create-target-provider" ? <Spinner /> : <Plus />}
-                    {t("targets.addAndCheck")}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-          {createKind === "inventory" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("targets.addNetBox")}</CardTitle>
-                <CardDescription>{t("targets.netBoxDescription")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="grid gap-4 md:grid-cols-2" onSubmit={createInventoryProvider}>
-                  <Field label={t("targets.name")} name="name" required />
-                  <Field label={t("targets.baseUrl")} name="base_url" type="url" required />
-                  <Field
-                    label={t("targets.token")}
-                    name="token"
-                    type="password"
-                    autoComplete="off"
-                    required
-                  />
-                  <div className="space-y-2">
-                    <Label htmlFor="netbox-resource">{t("targets.resource")}</Label>
-                    <FormSelect
-                      id="netbox-resource"
-                      name="resource"
-                      defaultValue="devices"
-                      options={[
-                        { value: "devices", label: "devices" },
-                        { value: "virtual_machines", label: "virtual_machines" },
-                      ]}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <Area label={t("targets.caCertificate")} name="ca_certificate" required />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="md:col-span-2 md:w-fit"
-                    disabled={pending !== null}
-                  >
-                    {pending === "create-inventory-provider" ? <Spinner /> : <Plus />}
-                    {t("targets.addAndCheck")}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
       <div className="grid gap-4 xl:grid-cols-2">
-        {[...targetProviders, ...inventoryProviders].map((provider) => {
+        {visibleProviders.map((provider) => {
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
           return (
@@ -486,29 +178,5 @@ export function TargetProviderSection({
         })}
       </div>
     </section>
-  );
-}
-
-function Field({
-  label,
-  name,
-  ...props
-}: React.ComponentProps<typeof Input> & { label: string; name: string }) {
-  const id = `target-${name}`;
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <Input id={id} name={name} {...props} />
-    </div>
-  );
-}
-
-function Area({ label, name, required }: { label: string; name: string; required?: boolean }) {
-  const id = `target-${name}`;
-  return (
-    <div className="space-y-2 md:col-span-2">
-      <Label htmlFor={id}>{label}</Label>
-      <Textarea id={id} name={name} required={required} rows={5} />
-    </div>
   );
 }

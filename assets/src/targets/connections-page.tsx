@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Cable, DatabaseZap, Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { TargetProviderSection } from "@/providers/target-section";
 import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
 
-type CreateKind = "target" | "inventory" | null;
-
 export function TargetConnectionsPage() {
   const { t } = useTranslation();
   const { account } = useAuthentication();
+  const location = useLocation();
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
-  const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const success = (location.state as { created?: string } | null)?.created === "target";
   const canManage = account?.role === "admin";
   const refresh = useCallback(async () => setSnapshot(await loadTargetSnapshot()), []);
 
@@ -51,22 +49,12 @@ export function TargetConnectionsPage() {
           </Link>
         </Button>
         {canManage && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant={createKind === "target" ? "default" : "outline"}
-              onClick={() => setCreateKind(createKind === "target" ? null : "target")}
-            >
-              <Cable />
+          <Button asChild>
+            <Link to="/targets/connections/new">
+              <Plus />
               {t("targets.addConnection")}
-            </Button>
-            <Button
-              variant={createKind === "inventory" ? "default" : "outline"}
-              onClick={() => setCreateKind(createKind === "inventory" ? null : "inventory")}
-            >
-              <DatabaseZap />
-              {t("targets.addNetBox")}
-            </Button>
-          </div>
+            </Link>
+          </Button>
         )}
       </div>
       {error && (
@@ -77,7 +65,7 @@ export function TargetConnectionsPage() {
       {success && (
         <Alert>
           <Plus />
-          <AlertDescription>{success}</AlertDescription>
+          <AlertDescription>{t("targets.connectionCreated")}</AlertDescription>
         </Alert>
       )}
       {!canManage && (
@@ -88,13 +76,8 @@ export function TargetConnectionsPage() {
       <TargetProviderSection
         providers={snapshot.providers}
         canManage={canManage}
-        createKind={createKind}
         onRefresh={refresh}
         onError={setError}
-        onCreated={() => {
-          setCreateKind(null);
-          setSuccess(t("targets.connectionCreated"));
-        }}
       />
     </div>
   );

@@ -35,9 +35,11 @@ function configurationNumber(provider: Provider, key: string, fallback: number) 
 }
 
 export function AIProviderCreateForm({
+  service,
   onCreated,
   onError,
 }: {
+  service: "openai" | "anthropic" | "ollama";
   onCreated: () => void;
   onError: (message: string) => void;
 }) {
@@ -48,7 +50,6 @@ export function AIProviderCreateForm({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = form.get("name");
-    const service = form.get("service");
     const model = form.get("model");
     const endpoint = form.get("endpoint");
     const apiKey = form.get("api_key");
@@ -57,7 +58,6 @@ export function AIProviderCreateForm({
 
     if (
       typeof name !== "string" ||
-      typeof service !== "string" ||
       typeof model !== "string" ||
       typeof endpoint !== "string" ||
       typeof apiKey !== "string" ||
@@ -106,7 +106,7 @@ export function AIProviderCreateForm({
       </CardHeader>
       <CardContent>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
-          <AIProviderFields idPrefix="provider" />
+          <AIProviderFields idPrefix="provider" fixedService={service} />
           <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending}>
             {pending ? <Spinner /> : <Plus />}
             {t("setup.addConnection")}
@@ -500,10 +500,12 @@ function AIProviderFields({
   idPrefix,
   provider,
   editing = false,
+  fixedService,
 }: {
   idPrefix: string;
   provider?: Provider;
   editing?: boolean;
+  fixedService?: "openai" | "anthropic" | "ollama";
 }) {
   const { t } = useTranslation();
   const value = (key: string) => (provider ? configurationValue(provider, key) : "");
@@ -522,19 +524,23 @@ function AIProviderFields({
           maxLength={120}
         />
       </div>
-      <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-service`}>{t("setup.service")}</Label>
-        <FormSelect
-          id={`${idPrefix}-service`}
-          name="service"
-          defaultValue={value("provider") || "openai"}
-          options={[
-            { value: "openai", label: "OpenAI" },
-            { value: "anthropic", label: "Anthropic" },
-            { value: "ollama", label: "Ollama" },
-          ]}
-        />
-      </div>
+      {fixedService ? (
+        <input type="hidden" name="service" value={fixedService} />
+      ) : (
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-service`}>{t("setup.service")}</Label>
+          <FormSelect
+            id={`${idPrefix}-service`}
+            name="service"
+            defaultValue={value("provider") || "openai"}
+            options={[
+              { value: "openai", label: "OpenAI" },
+              { value: "anthropic", label: "Anthropic" },
+              { value: "ollama", label: "Ollama" },
+            ]}
+          />
+        </div>
+      )}
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-model`}>{t("setup.model")}</Label>
         <Input
@@ -583,7 +589,13 @@ function AIProviderFields({
       </div>
       <div className="space-y-2 md:col-span-2">
         <Label htmlFor={`${idPrefix}-api-key`}>{t("setup.apiKey")}</Label>
-        <Input id={`${idPrefix}-api-key`} name="api_key" type="password" autoComplete="off" />
+        <Input
+          id={`${idPrefix}-api-key`}
+          name="api_key"
+          type="password"
+          autoComplete="off"
+          required={!editing && fixedService !== "ollama"}
+        />
         {editing && (
           <p className="text-xs text-muted-foreground">{t("setup.editConnectionDescription")}</p>
         )}

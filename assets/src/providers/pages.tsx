@@ -1,17 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { Activity, ArrowLeft, Bot, BrainCircuit, Cpu, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { AIProviderCreateForm, ProviderSetup } from "@/providers/ai-section";
+import { ProviderChoiceCard } from "@/providers/choice-card";
 import { SignalProviderCreateForm, SignalProviderSection } from "@/providers/signal-section";
 import { AuthoritySetup } from "@/settings/authority-section";
 import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
+type AIService = "openai" | "anthropic" | "ollama";
+type SignalAdapter = "alertmanager-webhook" | "zabbix-webhook";
+
+const aiChoices = {
+  openai: { title: "OpenAI", description: "setup.choiceOpenAI", icon: BrainCircuit },
+  anthropic: { title: "Anthropic", description: "setup.choiceAnthropic", icon: Bot },
+  ollama: { title: "Ollama", description: "setup.choiceOllama", icon: Cpu },
+} as const;
+
+const signalChoices = {
+  "alertmanager-webhook": {
+    title: "Alertmanager",
+    description: "cases.choiceAlertmanager",
+    icon: Activity,
+  },
+  "zabbix-webhook": {
+    title: "Zabbix",
+    description: "cases.choiceZabbix",
+    icon: Webhook,
+  },
+} as const;
 
 function ProviderPage({ kind }: { kind: ProviderPageKind }) {
   const { t } = useTranslation();
@@ -117,24 +139,46 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const navigate = useNavigate();
+  const { providerType } = useParams();
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
   const overview = kind === "ai" ? "/ai" : "/signals";
+  const choices = kind === "ai" ? aiChoices : signalChoices;
+  const choiceEntries = Object.entries(choices);
+  const selectedChoice = choiceEntries.find(([id]) => id === providerType)?.[1];
+  const selected = selectedChoice ? providerType : undefined;
+
+  if (providerType && !selected) return <Navigate to={`${overview}/new`} replace />;
 
   return (
     <div className="space-y-6 p-6 lg:p-8">
       <div>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
-          <Link to={overview}>
+          <Link to={selected ? `${overview}/new` : overview}>
             <ArrowLeft />
-            {t(kind === "ai" ? "setup.backToAI" : "cases.backToSignals")}
+            {t(
+              selected
+                ? kind === "ai"
+                  ? "setup.backToAITypes"
+                  : "cases.backToSignalTypes"
+                : kind === "ai"
+                  ? "setup.backToAI"
+                  : "cases.backToSignals",
+            )}
           </Link>
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">
-          {t(kind === "ai" ? "setup.addAI" : "cases.addSignal")}
+          {selectedChoice?.title ??
+            t(kind === "ai" ? "setup.chooseAIType" : "cases.chooseSignalType")}
         </h1>
         <p className="mt-2 text-muted-foreground">
-          {t(kind === "ai" ? "setup.aiDescription" : "cases.signalDescription")}
+          {t(
+            selectedChoice
+              ? selectedChoice.description
+              : kind === "ai"
+                ? "setup.chooseAITypeDescription"
+                : "cases.chooseSignalTypeDescription",
+          )}
         </p>
       </div>
 
@@ -147,13 +191,27 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
         <Alert>
           <AlertDescription>{t("setup.readOnly")}</AlertDescription>
         </Alert>
+      ) : !selected ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {choiceEntries.map(([id, item]) => (
+            <ProviderChoiceCard
+              key={id}
+              to={`${overview}/new/${id}`}
+              title={item.title}
+              description={t(item.description)}
+              icon={item.icon}
+            />
+          ))}
+        </div>
       ) : kind === "ai" ? (
         <AIProviderCreateForm
+          service={selected as AIService}
           onCreated={() => void navigate("/ai", { replace: true, state: { created: "ai" } })}
           onError={setError}
         />
       ) : (
         <SignalProviderCreateForm
+          adapterType={selected as SignalAdapter}
           onCreated={() =>
             void navigate("/signals", { replace: true, state: { created: "signal" } })
           }

@@ -51,6 +51,11 @@ const TargetConnectionsPage = lazy(() =>
     default: module.TargetConnectionsPage,
   })),
 );
+const TargetConnectionCreatePage = lazy(() =>
+  import("@/targets/connection-create-page").then((module) => ({
+    default: module.TargetConnectionCreatePage,
+  })),
+);
 const TargetImportPage = lazy(() =>
   import("@/targets/import-page").then((module) => ({ default: module.TargetImportPage })),
 );
@@ -186,12 +191,16 @@ function AppRoutes() {
           <Route path="targets" element={<TargetPage />} />
           <Route path="targets/new" element={<TargetCreatePage />} />
           <Route path="targets/connections" element={<TargetConnectionsPage />} />
+          <Route path="targets/connections/new" element={<TargetConnectionCreatePage />} />
+          <Route path="targets/connections/new/:family" element={<TargetConnectionCreatePage />} />
           <Route path="targets/imports" element={<TargetImportPage />} />
           <Route path="targets/:targetId" element={<TargetDetailPage />} />
           <Route path="ai" element={<AIProviderPage />} />
           <Route path="ai/new" element={<AIProviderCreatePage />} />
+          <Route path="ai/new/:providerType" element={<AIProviderCreatePage />} />
           <Route path="signals" element={<SignalProviderPage />} />
           <Route path="signals/new" element={<SignalProviderCreatePage />} />
+          <Route path="signals/new/:providerType" element={<SignalProviderCreatePage />} />
           <Route path="providers" element={<Navigate to="/ai" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />

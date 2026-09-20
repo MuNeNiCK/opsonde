@@ -40,3 +40,20 @@ export const targetAdapterOptions = [
 export function targetAdapter(type: string) {
   return targetAdapterOptions.find((option) => option.type === type);
 }
+
+export const targetProviderChoices = [
+  { id: "linux", adapterTypes: ["linux-ssh"] },
+  {
+    id: "cisco-ios-xe",
+    adapterTypes: ["ios-xe-ssh", "ios-xe-netconf", "ios-xe-restconf"],
+  },
+  { id: "kubernetes", adapterTypes: ["kubernetes-api"] },
+  { id: "generic", adapterTypes: ["generic-ssh"] },
+  { id: "netbox", adapterTypes: ["netbox-api"] },
+] as const;
+
+export type TargetProviderChoice = (typeof targetProviderChoices)[number]["id"];
+
+export function targetProviderChoice(id: string | undefined) {
+  return targetProviderChoices.find((choice) => choice.id === id);
+}

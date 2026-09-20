@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
 import type { components } from "@/api/schema";
-import { FormSelect } from "@/components/form-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,9 +21,11 @@ type Props = {
 };
 
 export function SignalProviderCreateForm({
+  adapterType,
   onCreated,
   onError,
 }: {
+  adapterType: "alertmanager-webhook" | "zabbix-webhook";
   onCreated: () => void;
   onError: (message: string) => void;
 }) {
@@ -34,7 +35,6 @@ export function SignalProviderCreateForm({
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const adapterType = formValue(form, "adapter_type");
     const timezone = formValue(form, "timezone");
     const configuration: Record<string, string> = { source: formValue(form, "source") };
     if (adapterType === "zabbix-webhook" && timezone) configuration.timezone = timezone;
@@ -70,26 +70,16 @@ export function SignalProviderCreateForm({
       <CardContent>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
           <Field id="signal-name" name="name" label={t("cases.name")} />
-          <div className="space-y-2">
-            <Label htmlFor="signal-adapter">{t("cases.signalType")}</Label>
-            <FormSelect
-              id="signal-adapter"
-              name="adapter_type"
-              defaultValue="alertmanager-webhook"
-              options={[
-                { value: "alertmanager-webhook", label: "Alertmanager Webhook" },
-                { value: "zabbix-webhook", label: "Zabbix Webhook" },
-              ]}
-            />
-          </div>
           <Field id="signal-source" name="source" label={t("cases.source")} />
-          <Field
-            id="signal-timezone"
-            name="timezone"
-            label={t("cases.timezone")}
-            required={false}
-            placeholder="Asia/Tokyo"
-          />
+          {adapterType === "zabbix-webhook" && (
+            <Field
+              id="signal-timezone"
+              name="timezone"
+              label={t("cases.timezone")}
+              required={false}
+              placeholder="Asia/Tokyo"
+            />
+          )}
           <Field
             id="signal-secret"
             name="secret"
