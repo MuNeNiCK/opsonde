@@ -12,6 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type CaseRecord = components["schemas"]["Case"];
 type CasePage = components["schemas"]["CasePage"];
@@ -313,24 +321,24 @@ export function CaseListPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full min-w-[70rem] text-sm">
-            <thead className="border-b bg-muted/40 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3">{t("cases.case")}</th>
-                <th className="px-4 py-3">{t("cases.severityLabel")}</th>
-                <th className="px-4 py-3">{t("cases.target")}</th>
-                <th className="px-4 py-3">{t("cases.alertState")}</th>
-                <th className="px-4 py-3">{t("cases.resolutionState")}</th>
-                <th className="px-4 py-3">{t("cases.owner")}</th>
-                <th className="px-4 py-3">{t("cases.requiredAction")}</th>
-                <th className="px-4 py-3">{t("cases.updated")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
+        <div className="rounded-lg border bg-card">
+          <Table className="min-w-[70rem]">
+            <TableHeader className="bg-muted/40 uppercase tracking-wide text-muted-foreground">
+              <TableRow>
+                <TableHead>{t("cases.case")}</TableHead>
+                <TableHead>{t("cases.severityLabel")}</TableHead>
+                <TableHead>{t("cases.target")}</TableHead>
+                <TableHead>{t("cases.alertState")}</TableHead>
+                <TableHead>{t("cases.resolutionState")}</TableHead>
+                <TableHead>{t("cases.owner")}</TableHead>
+                <TableHead>{t("cases.requiredAction")}</TableHead>
+                <TableHead>{t("cases.updated")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {records.map((incident) => (
-                <tr key={incident.id} className="align-top hover:bg-muted/30">
-                  <td className="max-w-80 px-4 py-3">
+                <TableRow key={incident.id} className="align-top">
+                  <TableCell className="max-w-80 whitespace-normal">
                     <Link
                       className="font-medium text-foreground hover:text-primary hover:underline"
                       to={`/cases/${incident.id}`}
@@ -340,45 +348,45 @@ export function CaseListPage() {
                     <p className="mt-1 truncate text-xs text-muted-foreground">
                       {incident.source} · {incident.source_ref}
                     </p>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <SeverityBadge severity={incident.severity} />
-                  </td>
-                  <td className="max-w-52 px-4 py-3 font-medium">
+                  </TableCell>
+                  <TableCell className="max-w-52 whitespace-normal font-medium">
                     {targetName(incident.selected_target_id)}
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={incident.alert_state === "firing" ? "destructive" : "outline"}>
                       {t(`cases.alert.${incident.alert_state}`)}
                     </Badge>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <Badge
                       variant={incident.status === "needs_attention" ? "destructive" : "secondary"}
                     >
                       {t(`cases.status.${incident.status}`)}
                     </Badge>
-                  </td>
-                  <td className="px-4 py-3">{ownerName(incident.current_owner_id)}</td>
-                  <td className="max-w-72 px-4 py-3">
+                  </TableCell>
+                  <TableCell>{ownerName(incident.current_owner_id)}</TableCell>
+                  <TableCell className="max-w-72 whitespace-normal">
                     <RequiredAction incident={incident} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {formatDate(incident.updated_at, i18n.resolvedLanguage)}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
               {records.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                     {query || status !== "all" || alertState !== "all"
                       ? t("cases.noMatchingCases")
                       : t("cases.noCases")}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
 
         <div className="flex items-center justify-between">
