@@ -8,6 +8,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   alias Opsonde.Transports.{NETCONF, SSH}
 
   @message_id "opsonde-1"
+  @max_message_bytes 60_000
   @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
   @native_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
@@ -19,6 +20,12 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   def kind, do: :target
 
   @impl Opsonde.Providers.Adapter
+  def build(configuration, credentials) when is_map(configuration) do
+    configuration
+    |> Map.put_new("max_output_bytes", @max_message_bytes)
+    |> SSH.build(credentials)
+  end
+
   def build(configuration, credentials), do: SSH.build(configuration, credentials)
 
   @impl Opsonde.Providers.Adapter
