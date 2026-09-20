@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, CircleAlert, Clock3, Search } from "lucide-react";
+import { Activity, CircleAlert, Clock3, RefreshCw, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData } from "@/api/client";
@@ -192,6 +192,15 @@ export function CaseListPage() {
                   })
                 : t("cases.syncing")}
           </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={refreshing}
+            onClick={() => setRetryKey((value) => value + 1)}
+          >
+            {refreshing ? <Spinner /> : <RefreshCw />}
+            {t("cases.refresh")}
+          </Button>
           <Button asChild size="sm" variant="outline">
             <Link to="/cases/signals">{t("cases.signalDiagnostics")}</Link>
           </Button>

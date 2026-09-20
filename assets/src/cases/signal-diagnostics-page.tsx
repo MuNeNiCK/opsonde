@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData } from "@/api/client";
@@ -19,6 +19,8 @@ export function SignalDiagnosticsPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [events, setEvents] = useState<Record<string, SignalEvent[]>>({});
   const [loadingReceipt, setLoadingReceipt] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [error, setError] = useState("");
   const cursor = cursors[pageIndex] ?? null;
 
@@ -29,14 +31,21 @@ export function SignalDiagnosticsPage() {
         params: { query: { limit: 50, after: cursor ?? undefined } },
       })
       .then(apiData)
-      .then((next) => active && setPage(next))
+      .then((next) => {
+        if (!active) return;
+        setPage(next);
+        setError("");
+      })
       .catch(() => {
         if (active) setError(t("cases.requestFailed"));
+      })
+      .finally(() => {
+        if (active) setRefreshing(false);
       });
     return () => {
       active = false;
     };
-  }, [cursor, t]);
+  }, [cursor, retryKey, t]);
 
   async function openReceipt(receiptId: string) {
     if (events[receiptId]) {
@@ -88,8 +97,26 @@ export function SignalDiagnosticsPage() {
             {t("cases.back")}
           </Link>
         </Button>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("cases.signalDiagnostics")}</h1>
-        <p className="mt-2 text-muted-foreground">{t("cases.receiptsDescription")}</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {t("cases.signalDiagnostics")}
+            </h1>
+            <p className="mt-2 text-muted-foreground">{t("cases.receiptsDescription")}</p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={refreshing}
+            onClick={() => {
+              setRefreshing(true);
+              setRetryKey((value) => value + 1);
+            }}
+          >
+            {refreshing ? <Spinner /> : <RefreshCw />}
+            {t("cases.refresh")}
+          </Button>
+        </div>
       </div>
 
       {error && (
