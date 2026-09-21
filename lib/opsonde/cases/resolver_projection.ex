@@ -373,7 +373,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       add_items(
         current,
         :evidence,
-        generic_evidence(evidence, current.disclosure.allowed_target_ids)
+        generic_evidence(evidence, current.disclosure.allowed_target_ids, incident, run)
       )
     end)
     |> then(fn current ->
@@ -496,7 +496,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp candidates(_evidence), do: []
 
-  defp generic_evidence(evidence, allowed_target_ids) do
+  defp generic_evidence(evidence, allowed_target_ids, incident, run) do
     evidence
     |> Enum.reject(&candidate_evidence?/1)
     |> compact_repeated_operations()
@@ -505,10 +505,37 @@ defmodule Opsonde.Cases.ResolverProjection do
         id: item.id,
         kind: item.kind,
         target_id: evidence_target_id(item, allowed_target_ids),
-        content: item.content
+        content: recovery_evidence_content(item, incident, run)
       }
     end)
   end
+
+  defp recovery_evidence_content(
+         %{
+           kind: "observation",
+           observed_at: observed_at,
+           content: %{
+             "status" => "applied",
+             "category" => "target_observed",
+             "target_id" => target_id,
+             "facts" => facts
+           }
+         } = evidence,
+         %{
+           selected_target_id: target_id,
+           source_recovered_at: %DateTime{} = recovered_at
+         },
+         %{id: run_id}
+       )
+       when is_map(facts) and map_size(facts) > 0 do
+    eligible? =
+      evidence.resolution_run_id == run_id and
+        DateTime.compare(observed_at, recovered_at) in [:eq, :gt]
+
+    Map.put(evidence.content, "recovery_eligible", eligible?)
+  end
+
+  defp recovery_evidence_content(evidence, _incident, _run), do: evidence.content
 
   defp compact_repeated_operations(evidence) do
     {compacted, _signatures} =

@@ -297,8 +297,10 @@ defmodule Opsonde.AI.ReqLLM do
         "output schema: Target search or selection, Target request, Target traversal, " <>
         "proposal, recovery, or handoff. Never execute a tool. Never invent an identifier. " <>
         "Recovery is a terminal intent: choose it when the monitoring source is recovered " <>
-        "or not applicable and supplied target_verification Evidence has status verified " <>
-        "and proves restored health. Cite that Evidence. A verified target_verification " <>
+        "or not applicable and supplied recovery Evidence proves restored health. Recovery " <>
+        "Evidence is either target_verification with status verified or a fresh successful " <>
+        "Target observation marked recovery_eligible. Cite that Evidence. A verified " <>
+        "target_verification " <>
         "proves only the expected fields for its Operation; it does not establish that every " <>
         "condition in the Case is resolved. A proposal may be an observation or an effect; " <>
         "every Target request is reviewed after you return it. Propose an effect only for an " <>

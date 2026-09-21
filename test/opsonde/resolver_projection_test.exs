@@ -373,6 +373,64 @@ defmodule Opsonde.ResolverProjectionTest do
     refute older.id in evidence_ids
   end
 
+  test "only a current-run Target observation after source recovery is recovery eligible",
+       context do
+    {incident, run} = open!("recovery-observation", context.operator, context.target)
+    recovered_at = DateTime.utc_now()
+
+    incident =
+      Cases.update_case_record!(
+        incident,
+        incident.revision,
+        %{source_recovered_at: recovered_at},
+        authorize?: false
+      )
+
+    stale =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "recovery-observation-stale",
+        "observation",
+        "operation",
+        Ecto.UUID.generate(),
+        target_observation(context, %{"ready" => false}),
+        DateTime.add(recovered_at, -1, :second),
+        authorize?: false
+      )
+
+    fresh =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "recovery-observation-fresh",
+        "observation",
+        "operation",
+        Ecto.UUID.generate(),
+        target_observation(context, %{"ready" => true}),
+        DateTime.add(recovered_at, 1, :second),
+        authorize?: false
+      )
+
+    started = start!(incident, run, "recovery-observation-turn")
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               started.value.id,
+               selection(),
+               invocation(%Target.Capabilities{observations: [], effects: []})
+             )
+
+    projected_stale = Enum.find(request.evidence, &(&1.id == stale.id))
+    projected_fresh = Enum.find(request.evidence, &(&1.id == fresh.id))
+
+    assert projected_stale.content["recovery_eligible"] == false
+    assert projected_fresh.content["recovery_eligible"] == true
+    assert AI.recovery_evidence_ids(request) == [fresh.id]
+  end
+
   test "inactive methods and disabled Providers are never exposed as tools", context do
     {method_case, method_run} = open!("inactive-method", context.operator, context.target)
     method_turn = start!(method_case, method_run, "inactive-method-turn")
@@ -499,6 +557,21 @@ defmodule Opsonde.ResolverProjectionTest do
         "minProperties" => 1,
         "additionalProperties" => false
       }
+    }
+  end
+
+  defp target_observation(context, facts) do
+    %{
+      "status" => "applied",
+      "category" => "target_observed",
+      "request_kind" => "observation",
+      "target_id" => context.target.id,
+      "access_method_id" => context.method.id,
+      "capability" => "observe.system",
+      "operation" => "system.inspect",
+      "selectors" => %{},
+      "parameters" => facts,
+      "facts" => facts
     }
   end
 

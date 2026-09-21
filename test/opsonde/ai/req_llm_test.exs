@@ -251,7 +251,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert Enum.all?(requests, fn request ->
              String.contains?(request.body, "Recovery is a terminal intent") and
-               String.contains?(request.body, "target_verification Evidence") and
+               String.contains?(request.body, "fresh successful Target observation") and
                String.contains?(request.body, "never propose an effect when") and
                String.contains?(request.body, "returned facts can directly establish") and
                String.contains?(request.body, "tool's verification_schema")
@@ -432,7 +432,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
   end
 
-  test "recovery schema exposes only verified Target verification Evidence", context do
+  test "recovery schema exposes only eligible Target recovery Evidence", context do
     state = state!("ollama", context.endpoint <> "/v1", %{})
 
     ordinary = %AI.Evidence{
@@ -517,6 +517,49 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
              "verification-1",
              "verification-2"
+           ]
+
+    observed = %AI.Evidence{
+      id: "observation-recovered",
+      kind: "observation",
+      target_id: "target-1",
+      content: %{
+        "status" => "applied",
+        "category" => "target_observed",
+        "facts" => %{"ready" => true},
+        "recovery_eligible" => true
+      }
+    }
+
+    observed_request = %{
+      request
+      | evidence: [ordinary, observed],
+        selected_target_id: "target-1",
+        selected_target_revision: 1
+    }
+
+    set_mode(context.agent, {
+      :text_decision,
+      %{
+        "type" => "recovery",
+        "reason" => "Fresh Target observation confirms recovery",
+        "evidence_ids" => ["observation-recovered"]
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, observed_request, %{})
+
+    recovery =
+      requests(context.agent)
+      |> List.last()
+      |> output_schema()
+      |> get_in(["properties", "intent", "anyOf"])
+      |> Enum.find(fn variant ->
+        get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
+      end)
+
+    assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
+             "observation-recovered"
            ]
   end
 

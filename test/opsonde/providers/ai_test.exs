@@ -262,6 +262,46 @@ defmodule Opsonde.Providers.AITest do
              end)
 
     assert ai_error(ordinary_error).category == :invalid_output
+
+    observed = %AI.Evidence{
+      id: "observation-recovered",
+      kind: "observation",
+      target_id: "target-1",
+      content: %{
+        "status" => "applied",
+        "category" => "target_observed",
+        "facts" => %{"ready" => true},
+        "recovery_eligible" => true
+      }
+    }
+
+    observed_request = %{recovered_request | evidence: later_request.evidence ++ [observed]}
+
+    observed_recovery = %AI.RecoveryConclusion{
+      reason: "The fresh Target observation confirms recovery",
+      evidence_ids: [observed.id]
+    }
+
+    assert %AI.ResolverDecision{intent: ^observed_recovery} =
+             resolve!(context, observed_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: observed_recovery, usage: usage()}}
+             end)
+
+    unmarked = %{
+      observed
+      | id: "observation-unmarked",
+        content: Map.delete(observed.content, "recovery_eligible")
+    }
+
+    unmarked_request = %{recovered_request | evidence: later_request.evidence ++ [unmarked]}
+    unmarked_recovery = %{observed_recovery | evidence_ids: [unmarked.id]}
+
+    assert {:error, unmarked_error} =
+             resolve(context, unmarked_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: unmarked_recovery, usage: usage()}}
+             end)
+
+    assert ai_error(unmarked_error).category == :invalid_output
   end
 
   test "Resolver searches and selects only a bounded offered Target before tools are exposed",

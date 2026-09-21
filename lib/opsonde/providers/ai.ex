@@ -130,6 +130,22 @@ defmodule Opsonde.Providers.AI do
        ),
        do: true
 
+  defp verified_target_evidence?(
+         %Evidence{
+           kind: "observation",
+           target_id: target_id,
+           content: %{
+             "status" => "applied",
+             "category" => "target_observed",
+             "facts" => facts,
+             "recovery_eligible" => true
+           }
+         },
+         target_id
+       )
+       when is_binary(target_id) and is_map(facts) and map_size(facts) > 0,
+       do: true
+
   defp verified_target_evidence?(_evidence, _target_id), do: false
 
   defmodule TargetCandidate do

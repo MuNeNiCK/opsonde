@@ -244,7 +244,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     if is_binary(evidence_id) and is_binary(operation_id) do
       validate_current_verification(evidence_ids, evidence_id, operation_id, incident, run)
     else
-      validate_continuity_verification(evidence_ids, incident)
+      validate_continuity_verification(evidence_ids, incident, run)
     end
   end
 
@@ -270,7 +270,14 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp validate_continuity_verification(evidence_ids, incident) do
+  defp validate_continuity_verification(evidence_ids, incident, run) do
+    case validate_target_continuity_verification(evidence_ids, incident) do
+      :ok -> :ok
+      {:error, _error} -> validate_fresh_observation(evidence_ids, incident, run)
+    end
+  end
+
+  defp validate_target_continuity_verification(evidence_ids, incident) do
     with {:ok, candidates} <-
            Cases.target_continuity_evidence(incident.id, authorize?: false),
          %{} = latest <-
@@ -285,6 +292,72 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       {:error, _error} = error -> error
     end
   end
+
+  defp validate_fresh_observation(evidence_ids, incident, run) do
+    Enum.reduce_while(
+      evidence_ids,
+      {:error, "Recovery conclusion lacks fresh Target Evidence"},
+      fn
+        evidence_id, _result ->
+          case Cases.get_evidence(evidence_id, authorize?: false) do
+            {:ok, evidence} ->
+              case valid_fresh_observation(evidence, incident, run) do
+                :ok -> {:halt, :ok}
+                {:error, _error} = error -> {:cont, error}
+              end
+
+            {:error, _error} ->
+              {:cont, {:error, "Recovery conclusion cites unavailable Target Evidence"}}
+          end
+      end
+    )
+  end
+
+  defp valid_fresh_observation(
+         %{
+           case_id: case_id,
+           resolution_run_id: run_id,
+           kind: "observation",
+           source: "operation",
+           source_ref: operation_id,
+           observed_at: observed_at,
+           content: %{
+             "status" => "applied",
+             "category" => "target_observed",
+             "target_id" => target_id,
+             "facts" => facts
+           }
+         },
+         %{
+           id: case_id,
+           selected_target_id: target_id,
+           selected_target_revision: target_revision,
+           source_recovered_at: %DateTime{} = recovered_at
+         },
+         %{id: run_id}
+       )
+       when is_map(facts) and map_size(facts) > 0 do
+    with true <- DateTime.compare(observed_at, recovered_at) in [:eq, :gt],
+         {:ok,
+          %{
+            case_id: ^case_id,
+            resolution_run_id: ^run_id,
+            target_id: ^target_id,
+            target_revision: ^target_revision,
+            request_kind: :observation,
+            status: :applied,
+            dispatch_started_at: %DateTime{} = dispatch_started_at
+          }} <- Cases.get_operation(operation_id, authorize?: false) do
+      if DateTime.compare(dispatch_started_at, recovered_at) in [:eq, :gt],
+        do: :ok,
+        else: {:error, "Recovery conclusion cites a pre-recovery Target observation"}
+    else
+      _stale -> {:error, "Recovery conclusion cites stale Target observation"}
+    end
+  end
+
+  defp valid_fresh_observation(_evidence, _incident, _run),
+    do: {:error, "Recovery conclusion lacks fresh Target Evidence"}
 
   defp valid_continuity_evidence(
          %{
