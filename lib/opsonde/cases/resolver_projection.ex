@@ -148,16 +148,12 @@ defmodule Opsonde.Cases.ResolverProjection do
        when count >= maximum,
        do: {:ok, []}
 
-  defp relations(target, incident, run) do
+  defp relations(target, _incident, _run) do
     with {:ok, relationships} <-
-           Targets.adjacent_relationships_for_traversal(target.id, authorize?: false),
-         {:ok, history} <-
-           Cases.case_target_history(incident.id, run.id, authorize?: false) do
-      visited = visited_target_ids(history, target.id)
-
+           Targets.adjacent_relationships_for_traversal(target.id, authorize?: false) do
       relationships
       |> Enum.reduce([], fn relationship, projected ->
-        case relation(relationship, target, visited) do
+        case relation(relationship, target) do
           {:ok, value} -> [value | projected]
           :skip -> projected
         end
@@ -167,49 +163,35 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp relation(relationship, target, visited) do
+  defp relation(relationship, target) do
     next_target_id =
       if relationship.source_target_id == target.id,
         do: relationship.destination_target_id,
         else: relationship.source_target_id
 
-    if MapSet.member?(visited, next_target_id) do
-      :skip
-    else
-      case Targets.get_target(next_target_id, authorize?: false) do
-        {:ok, %{active: true} = next_target} ->
-          current = target_candidate(target)
-          adjacent = target_candidate(next_target)
+    case Targets.get_target(next_target_id, authorize?: false) do
+      {:ok, %{active: true} = next_target} ->
+        current = target_candidate(target)
+        adjacent = target_candidate(next_target)
 
-          {source, destination} =
-            if relationship.source_target_id == target.id,
-              do: {current, adjacent},
-              else: {adjacent, current}
+        {source, destination} =
+          if relationship.source_target_id == target.id,
+            do: {current, adjacent},
+            else: {adjacent, current}
 
-          {:ok,
-           %AI.TargetRelation{
-             id: relationship.id,
-             revision: relationship.revision,
-             source_target: source,
-             destination_target: destination,
-             kind: relationship.kind,
-             attributes: relationship.facts
-           }}
+        {:ok,
+         %AI.TargetRelation{
+           id: relationship.id,
+           revision: relationship.revision,
+           source_target: source,
+           destination_target: destination,
+           kind: relationship.kind,
+           attributes: relationship.facts
+         }}
 
-        _unavailable ->
-          :skip
-      end
+      _unavailable ->
+        :skip
     end
-  end
-
-  defp visited_target_ids(history, current_target_id) do
-    Enum.reduce(history, MapSet.new([current_target_id]), fn event, visited ->
-      target_id =
-        event.data["next_target_id"] || event.data["target_id"] ||
-          event.data["selected_target_id"]
-
-      if is_binary(target_id), do: MapSet.put(visited, target_id), else: visited
-    end)
   end
 
   defp target_candidate(target) do

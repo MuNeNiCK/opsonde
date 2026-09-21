@@ -83,7 +83,6 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
          :ok <- exact_relationship(relationship, relationship_snapshot),
          :ok <- current_endpoint(incident, relationship_snapshot),
          :ok <- next_endpoint(intent, relationship_snapshot, incident),
-         :ok <- not_visited(incident, run, intent["next_target_id"]),
          {:ok, actor} <- current_actor(incident),
          {:ok, target} <- authorized_target(intent, actor),
          :ok <- available_access_method(target) do
@@ -187,28 +186,6 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
         :stale_context,
         "Related Target selection does not match the relationship"
       )
-    end
-  end
-
-  defp not_visited(incident, run, target_id) do
-    with {:ok, history} <- Cases.case_target_history(incident.id, run.id, authorize?: false) do
-      visited =
-        Enum.reduce(history, MapSet.new([incident.selected_target_id]), fn event, target_ids ->
-          visited_target_id =
-            event.data["next_target_id"] || event.data["target_id"] ||
-              event.data["selected_target_id"]
-
-          if is_binary(visited_target_id),
-            do: MapSet.put(target_ids, visited_target_id),
-            else: target_ids
-        end)
-
-      if MapSet.member?(visited, target_id),
-        do: traversal_failure(:cycle, "Related Target was already visited in this ResolutionRun"),
-        else: :ok
-    else
-      {:error, _error} ->
-        traversal_failure(:unavailable, "Target traversal history is unavailable")
     end
   end
 
