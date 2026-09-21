@@ -254,10 +254,10 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   end
 
   defp start_next_turn(turn, incident, run, intent) do
-    Cases.start_turn(
-      incident.id,
-      run.id,
-      route_key(turn, "next-turn"),
+    start_turn_with_pending(
+      turn,
+      incident,
+      run,
       %{
         "objective" => "Continue resolution on the selected related Target",
         "source" => "target_relationship",
@@ -266,10 +266,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
         "relationship_revision" => intent["relationship_revision"],
         "selected_target_id" => intent["next_target_id"],
         "reason" => intent["reason"]
-      },
-      %{"action" => "continue_resolution", "source_turn_id" => turn.id},
-      "Review Resolver limits or continue the Case manually",
-      authorize?: false
+      }
     )
   end
 
@@ -279,19 +276,16 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     Ash.transact([Case, ResolutionRun, Turn, Evidence, CaseEvent], fn ->
       with {:ok, evidence} <- append_failure(turn, spec),
            {:ok, next_turn} <-
-             Cases.start_turn(
-               incident.id,
-               run.id,
-               route_key(turn, "next-turn"),
+             start_turn_with_pending(
+               turn,
+               incident,
+               run,
                %{
                  "objective" => "Continue resolution after a related Target was rejected",
                  "source" => "target_relationship",
                  "source_turn_id" => turn.id,
                  "evidence_id" => evidence.id
-               },
-               %{"action" => "continue_resolution", "source_turn_id" => turn.id},
-               "Review Resolver limits or continue the Case manually",
-               authorize?: false
+               }
              ) do
         next_turn
       end
@@ -299,20 +293,58 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   end
 
   defp continue_after_failure(turn, evidence, incident, run) do
-    Cases.start_turn(
-      incident.id,
-      run.id,
-      route_key(turn, "next-turn"),
-      %{
-        "objective" => "Continue resolution after a related Target was rejected",
-        "source" => "target_relationship",
-        "source_turn_id" => turn.id,
-        "evidence_id" => evidence.id
-      },
-      %{"action" => "continue_resolution", "source_turn_id" => turn.id},
-      "Review Resolver limits or continue the Case manually",
-      authorize?: false
-    )
+    start_turn_with_pending(turn, incident, run, %{
+      "objective" => "Continue resolution after a related Target was rejected",
+      "source" => "target_relationship",
+      "source_turn_id" => turn.id,
+      "evidence_id" => evidence.id
+    })
+  end
+
+  defp start_turn_with_pending(source_turn, incident, run, turn_intent) do
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with {:ok, result} <-
+             Cases.start_turn(
+               incident.id,
+               run.id,
+               route_key(source_turn, "next-turn"),
+               turn_intent,
+               %{"action" => "continue_resolution", "source_turn_id" => source_turn.id},
+               "Review Resolver limits or continue the Case manually",
+               authorize?: false
+             ),
+           {:ok, result} <- set_pending_turn(result, source_turn.id) do
+        result
+      end
+    end)
+  end
+
+  defp set_pending_turn(%{status: :exhausted} = result, _source_turn_id), do: {:ok, result}
+
+  defp set_pending_turn(
+         %{status: status, case: incident, value: next_turn} = result,
+         source_turn_id
+       )
+       when status in [:charged, :duplicate] do
+    pending = %{
+      "action" => "resolve_turn",
+      "turn_id" => next_turn.id,
+      "source_turn_id" => source_turn_id
+    }
+
+    if incident.pending_intent == pending do
+      {:ok, result}
+    else
+      with {:ok, _updated} <-
+             Cases.update_case_record(
+               incident,
+               incident.revision,
+               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               authorize?: false
+             ) do
+        {:ok, result}
+      end
+    end
   end
 
   defp append_failure(turn, spec) do

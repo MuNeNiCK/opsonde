@@ -75,6 +75,12 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.vm.id
 
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => vm_turn.id,
+             "source_turn_id" => vm_source.id
+           }
+
     assert {:ok, vm_request} = projection(vm_turn, context)
     assert adjacent_target_ids(vm_request, context.vm.id) == MapSet.new([context.bmc.id])
 
