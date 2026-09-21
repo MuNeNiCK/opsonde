@@ -17,7 +17,7 @@ config :opsonde, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
   queues: [resolver: ai_concurrency, operations: 10, notifications: 5, audits: 5],
-  lifeline: [rescue_after: {2, :hours}],
+  lifeline: [rescue_after: {12, :minutes}],
   pruner: [max_age: {1, :day}],
   repo: Opsonde.Repo
 
