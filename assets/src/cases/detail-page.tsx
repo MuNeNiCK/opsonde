@@ -16,6 +16,7 @@ import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
 import { ProposalCard, ResumeCard } from "@/cases/detail-components";
+import { subscribeToCase } from "@/cases/realtime";
 import {
   formatDate,
   formValue,
@@ -154,8 +155,6 @@ export function CaseDetailPage() {
   const [confirmCancellation, setConfirmCancellation] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
   const canOperate = account?.role === "admin" || account?.role === "operator";
-  const caseStatus = detail?.snapshot.case.status;
-
   const refresh = useCallback(async () => {
     if (!caseId) return;
     const state = await loadCaseState(caseId);
@@ -175,10 +174,33 @@ export function CaseDetailPage() {
   }, [account?.role, caseId, t]);
 
   useEffect(() => {
-    if (!caseStatus || ["resolved", "cancelled"].includes(caseStatus)) return;
-    const timer = window.setInterval(() => void refresh().catch(() => undefined), 5_000);
-    return () => window.clearInterval(timer);
-  }, [caseStatus, refresh]);
+    let active = true;
+    let refreshing = false;
+    let queued = false;
+
+    const changed = () => {
+      if (!active) return;
+      if (refreshing) {
+        queued = true;
+        return;
+      }
+
+      refreshing = true;
+      void (async () => {
+        do {
+          queued = false;
+          await refresh().catch(() => undefined);
+        } while (active && queued);
+        refreshing = false;
+      })();
+    };
+
+    const unsubscribe = subscribeToCase(caseId, changed);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [caseId, refresh]);
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);

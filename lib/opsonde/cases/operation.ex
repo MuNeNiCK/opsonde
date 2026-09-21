@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.Operation do
     otp_app: :opsonde,
     domain: Opsonde.Cases,
     authorizers: [Ash.Policy.Authorizer],
+    simple_notifiers: [Opsonde.Cases.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer,
     extensions: [AshStateMachine]
 
