@@ -115,11 +115,33 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
       "evidence_ids" => [evidence.id]
     }
 
-    turn = completed_turn!(recovered, run, "recovery", intent, :source_change)
+    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    turn =
+      Cases.complete_turn!(
+        started.id,
+        started.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => intent,
+          "resolver" => resolver_identity(),
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :source_change,
+        %{"action" => "route_resolver_decision", "turn_id" => started.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
 
     assert {:error, _error} = Cases.route_downstream_decision(turn.id, authorize?: false)
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
-    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
+             "action" => "resolve_turn",
+             "source_state" => "recovered",
+             "turn_id" => turn.id
+           }
+
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
   end
 

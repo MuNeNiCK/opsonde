@@ -129,6 +129,19 @@ defmodule Opsonde.Cases.Proposal do
       argument :review_decision_id, :uuid, allow_nil?: false
       run {Opsonde.Cases.Proposal.Actions.Authority, operation: :review}
     end
+
+    action :fail_review_delivery, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      argument :category, :string, allow_nil?: false, constraints: [min_length: 1, max_length: 80]
+
+      argument :reason, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :review_delivery_failure}
+    end
   end
 
   policies do
@@ -138,7 +151,8 @@ defmodule Opsonde.Cases.Proposal do
              :transition,
              :materialize,
              :route_authority,
-             :apply_review
+             :apply_review,
+             :fail_review_delivery
            ]) do
       forbid_if always()
     end

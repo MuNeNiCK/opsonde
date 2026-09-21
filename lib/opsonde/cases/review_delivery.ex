@@ -30,7 +30,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp select_and_deliver(proposal, opts) do
     case assigned_selection(proposal) do
       {:ok, selection} -> deliver(proposal, selection, opts)
-      {:error, error} -> persist_failure(proposal, nil, error)
+      {:error, error} -> persist_failure(proposal, nil, error, nil, opts)
     end
   end
 
@@ -38,24 +38,33 @@ defmodule Opsonde.Cases.ReviewDelivery do
     with {:ok, current} <- current_selection(selection),
          {:ok, request} <- ReviewProjection.build(proposal.id, current),
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
-         {:ok, claim} <- claim_invocation(proposal, incident, current, request) do
+         {:ok, claim} <-
+           claim_invocation(proposal, incident, current, request, delivery_attempt(opts)) do
       dispatch(proposal, current, request, claim, opts)
     else
-      {:error, error} -> persist_failure(proposal, selection, error)
+      {:error, error} -> persist_failure(proposal, selection, error, nil, opts)
     end
   end
 
   defp dispatch(proposal, selection, request, %AIInvocationClaim{state: :claimed} = claim, opts) do
-    invocation = invocation(proposal.case_id, Keyword.get(opts, :ai_invocation, %{}))
+    invocation = invocation(proposal, Keyword.get(opts, :ai_invocation, %{}))
 
     case Providers.ai_review(selection.provider_id, request, invocation, authorize?: false) do
       {:ok, decision} ->
-        with {:ok, stored} <- accept(proposal, selection, request, claim.invocation, decision) do
-          apply(stored)
+        if review_context_current?(proposal) do
+          case accept(proposal, selection, request, claim.invocation, decision) do
+            {:ok, {:decision, stored}} -> apply(stored)
+            {:ok, :stopped} -> :ok
+            {:error, _error} = error -> error
+          end
+        else
+          settle_changed_context(claim.invocation)
         end
 
       {:error, error} ->
-        persist_failure(proposal, selection, error, claim.invocation)
+        if review_context_current?(proposal),
+          do: persist_failure(proposal, selection, error, claim.invocation, opts),
+          else: settle_changed_context(claim.invocation)
     end
   end
 
@@ -64,18 +73,24 @@ defmodule Opsonde.Cases.ReviewDelivery do
          selection,
          _request,
          %AIInvocationClaim{state: :interrupted, invocation: invocation},
-         _opts
+         opts
        ),
-       do: persist_interruption(proposal, selection, invocation)
+       do: persist_interruption(proposal, selection, invocation, opts)
 
-  defp dispatch(proposal, _selection, _request, %AIInvocationClaim{state: :terminal}, _opts) do
+  defp dispatch(
+         proposal,
+         _selection,
+         _request,
+         %AIInvocationClaim{state: :terminal, invocation: invocation},
+         opts
+       ) do
     case existing_decision(proposal.id) do
       {:ok, %ReviewDecision{} = decision} -> apply(decision)
-      _missing -> {:error, "Reviewer AI invocation is already terminal"}
+      _missing -> replay_terminal_failure(proposal, invocation, opts)
     end
   end
 
-  defp claim_invocation(proposal, incident, selection, request) do
+  defp claim_invocation(proposal, incident, selection, request, delivery_attempt) do
     Cases.claim_ai_invocation(
       :reviewer,
       proposal.case_id,
@@ -90,7 +105,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
       selection.provider_revision,
       selection.assignment_revision,
       selection.source,
-      AIInvocation.request_digest(request),
+      AIInvocation.request_digest({request, delivery_attempt}),
       authorize?: false
     )
   end
@@ -209,47 +224,57 @@ defmodule Opsonde.Cases.ReviewDelivery do
     usage = decision.usage.input_tokens + decision.usage.output_tokens
     attrs = decision_attrs(proposal, selection, request, decision)
 
-    Ash.transact([AIInvocation, Case, ResolutionRun, Proposal, ReviewDecision], fn ->
-      with {:ok, charged} <-
-             charge_usage(
-               proposal,
-               usage,
-               "review-result:#{invocation.id}",
-               %{
-                 "action" => "review_ai_usage",
-                 "proposal_id" => proposal.id,
-                 "ai_invocation_id" => invocation.id
-               }
-             ) do
-        case charged.status do
-          status when status in [:charged, :duplicate] ->
-            with {:ok, stored} <- store_decision(attrs),
-                 {:ok, _invocation} <-
-                   record_invocation(invocation, :completed,
-                     input_tokens: decision.usage.input_tokens,
-                     output_tokens: decision.usage.output_tokens,
-                     result_digest: attrs.result_digest
-                   ) do
-              stored
-            end
+    result =
+      Ash.transact([AIInvocation, Case, ResolutionRun, Proposal, ReviewDecision], fn ->
+        with {:ok, charged} <-
+               charge_usage(
+                 proposal,
+                 usage,
+                 "review-result:#{invocation.id}",
+                 %{
+                   "action" => "review_ai_usage",
+                   "proposal_id" => proposal.id,
+                   "ai_invocation_id" => invocation.id
+                 }
+               ) do
+          case charged.status do
+            status when status in [:charged, :duplicate] ->
+              with {:ok, stored} <- store_decision(attrs),
+                   {:ok, _invocation} <-
+                     record_invocation(invocation, :completed,
+                       input_tokens: decision.usage.input_tokens,
+                       output_tokens: decision.usage.output_tokens,
+                       result_digest: attrs.result_digest
+                     ) do
+                {:accepted, stored}
+              end
 
-          :exhausted ->
-            failure = failure_attrs(proposal, selection, "budget_exhausted", charged.reason)
-
-            with {:ok, stored} <- store_decision(failure),
-                 {:ok, _invocation} <-
-                   record_invocation(invocation, :completed,
-                     input_tokens: decision.usage.input_tokens,
-                     output_tokens: decision.usage.output_tokens,
-                     category: "budget_exhausted",
-                     result_digest: failure.result_digest
-                   ) do
-              stored
-            end
+            :exhausted ->
+              with {:ok, _invocation} <-
+                     record_invocation(invocation, :completed,
+                       input_tokens: decision.usage.input_tokens,
+                       output_tokens: decision.usage.output_tokens,
+                       category: "budget_exhausted"
+                     ) do
+                {:exhausted, charged.reason}
+              end
+          end
         end
-      end
-    end)
-    |> accepted_or_existing(proposal.id)
+      end)
+
+    case result do
+      {:ok, {:accepted, stored}} ->
+        {:ok, {:decision, stored}}
+
+      {:ok, {:exhausted, reason}} ->
+        with :ok <- stop_delivery(proposal, "budget_exhausted", reason), do: {:ok, :stopped}
+
+      {:error, error} ->
+        case accepted_or_existing({:error, error}, proposal.id) do
+          {:ok, stored} -> {:ok, {:decision, stored}}
+          {:error, _error} = failure -> failure
+        end
+    end
   end
 
   defp decision_attrs(proposal, selection, request, decision) do
@@ -280,78 +305,43 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp store_decision(attrs),
     do: Cases.create_review_decision_record(attrs, authorize?: false)
 
-  defp persist_failure(proposal, selection, error, invocation \\ nil) do
+  defp persist_failure(proposal, _selection, error, invocation, opts) do
     {category, reason} = failure(error)
-    attrs = failure_attrs(proposal, selection, category, reason)
 
-    Ash.transact([AIInvocation, ReviewDecision], fn ->
-      with {:ok, stored} <- store_decision(attrs),
-           {:ok, _invocation} <- record_failure(invocation, category) do
-        stored
+    with {:ok, _invocation} <- record_failure(invocation, category) do
+      if retryable_failure?(category) and retry_available?(opts) do
+        {:error,
+         "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
+      else
+        stop_delivery(proposal, category, reason)
       end
-    end)
-    |> accepted_or_existing(proposal.id)
-    |> case do
-      {:ok, stored} -> apply(stored)
-      {:error, _error} = error -> error
     end
   end
 
-  defp persist_interruption(proposal, selection, invocation) do
+  defp persist_interruption(proposal, _selection, invocation, _opts) do
     reason =
       "Reviewer response is unknown after dispatch; #{invocation.reserved_units} AI usage units were reserved"
 
-    attrs = failure_attrs(proposal, selection, "response_unknown", reason)
+    with {:ok, charged} <-
+           charge_usage(
+             proposal,
+             invocation.reserved_units,
+             "review-unknown:#{invocation.id}",
+             %{
+               "action" => "reserve_unknown_review_usage",
+               "proposal_id" => proposal.id,
+               "ai_invocation_id" => invocation.id,
+               "reserved_usage_units" => invocation.reserved_units
+             }
+           ) do
+      case charged.status do
+        status when status in [:charged, :duplicate] ->
+          stop_delivery(proposal, "response_unknown", reason)
 
-    Ash.transact([Case, ResolutionRun, Proposal, ReviewDecision], fn ->
-      with {:ok, charged} <-
-             charge_usage(
-               proposal,
-               invocation.reserved_units,
-               "review-unknown:#{invocation.id}",
-               %{
-                 "action" => "reserve_unknown_review_usage",
-                 "proposal_id" => proposal.id,
-                 "ai_invocation_id" => invocation.id,
-                 "reserved_usage_units" => invocation.reserved_units
-               }
-             ),
-           true <-
-             charged.status in [:charged, :duplicate] ||
-               {:error, "Reviewer AI usage reservation could not be charged"},
-           {:ok, stored} <- store_decision(attrs) do
-        stored
+        :exhausted ->
+          :ok
       end
-    end)
-    |> accepted_or_existing(proposal.id)
-    |> case do
-      {:ok, stored} -> apply(stored)
-      {:error, _error} = error -> error
     end
-  end
-
-  defp failure_attrs(proposal, selection, category, reason) do
-    %{
-      proposal_id: proposal.id,
-      case_id: proposal.case_id,
-      resolution_run_id: proposal.resolution_run_id,
-      provider_id: selection && selection.provider_id,
-      assignment_id: selection && selection.assignment_id,
-      outcome: :delivery_failed,
-      verdict: :needs_human,
-      category: category,
-      reason: String.slice(reason, 0, 1_000),
-      selection_source: selection && selection.source,
-      provider_revision: selection && selection.provider_revision,
-      assignment_revision: selection && selection.assignment_revision,
-      session_id: "reviewer:#{proposal.id}",
-      resolver_session_id: "resolver:#{proposal.resolution_run_id}",
-      proposal_digest: proposal.proposal_digest,
-      input_tokens: 0,
-      output_tokens: 0,
-      decided_at: DateTime.utc_now()
-    }
-    |> then(&Map.put(&1, :result_digest, result_digest(&1)))
   end
 
   defp apply(decision) do
@@ -418,7 +408,41 @@ defmodule Opsonde.Cases.ReviewDelivery do
         not_found_error?: false
       )
 
-  defp accepted_or_existing({:ok, stored}, _proposal_id), do: {:ok, stored}
+  defp replay_terminal_failure(proposal, %{status: :failed, category: category}, opts) do
+    category = category || "failed"
+
+    if retryable_failure?(category) and retry_available?(opts) do
+      {:error,
+       "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
+    else
+      stop_delivery(proposal, category, public_failure_atom(category))
+    end
+  end
+
+  defp replay_terminal_failure(_proposal, _invocation, _opts),
+    do: {:error, "Reviewer AI invocation is already terminal"}
+
+  defp stop_delivery(proposal, category, reason) do
+    case Cases.fail_proposal_review_delivery(
+           proposal.id,
+           category,
+           String.slice(reason, 0, 1_000),
+           authorize?: false
+         ) do
+      {:ok, _proposal} -> :ok
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp retryable_failure?(category),
+    do: category in ["timeout", "unreachable", "rate_limited", "invalid_output", "failed"]
+
+  defp retry_available?(opts), do: delivery_attempt(opts) < max_delivery_attempts(opts)
+
+  defp delivery_attempt(opts), do: max(Keyword.get(opts, :delivery_attempt, 1), 1)
+
+  defp max_delivery_attempts(opts),
+    do: max(Keyword.get(opts, :max_delivery_attempts, 1), delivery_attempt(opts))
 
   defp accepted_or_existing({:error, error}, proposal_id) do
     case existing_decision(proposal_id) do
@@ -427,21 +451,32 @@ defmodule Opsonde.Cases.ReviewDelivery do
     end
   end
 
-  defp invocation(case_id, supplied) do
+  defp invocation(proposal, supplied) do
     supplied_cancelled = Map.get(supplied, :cancelled?)
 
     Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or case_stopped?(case_id)
+      cancelled?(supplied_cancelled) or not review_context_current?(proposal)
     end)
   end
 
   defp cancelled?(callback) when is_function(callback, 0), do: callback.()
   defp cancelled?(_callback), do: false
 
-  defp case_stopped?(case_id) do
-    case Cases.get_case(case_id, authorize?: false) do
-      {:ok, %{status: :running, cancel_requested: false}} -> false
-      _stopped -> true
+  defp review_context_current?(proposal) do
+    with {:ok, %{status: :running, cancel_requested: false}} <-
+           Cases.get_case(proposal.case_id, authorize?: false),
+         {:ok, %{status: :reviewing, revision: revision}} <-
+           Cases.get_proposal(proposal.id, authorize?: false) do
+      revision == proposal.revision
+    else
+      _changed -> false
+    end
+  end
+
+  defp settle_changed_context(invocation) do
+    case record_invocation(invocation, :failed, category: "context_changed") do
+      {:ok, _invocation} -> :ok
+      {:error, _error} = error -> error
     end
   end
 
@@ -460,7 +495,23 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp public_failure(:invalid_input), do: "Reviewer input is invalid"
   defp public_failure(:invalid_output), do: "Reviewer output is invalid"
   defp public_failure(:unavailable), do: "Reviewer AI is unavailable"
+  defp public_failure(:budget_exhausted), do: "Reviewer AI budget is exhausted"
   defp public_failure(_category), do: "Reviewer delivery failed"
+
+  defp public_failure_atom(category) do
+    case category do
+      "authentication" -> public_failure(:authentication)
+      "unreachable" -> public_failure(:unreachable)
+      "timeout" -> public_failure(:timeout)
+      "rate_limited" -> public_failure(:rate_limited)
+      "cancelled" -> public_failure(:cancelled)
+      "invalid_input" -> public_failure(:invalid_input)
+      "invalid_output" -> public_failure(:invalid_output)
+      "unavailable" -> public_failure(:unavailable)
+      "budget_exhausted" -> public_failure(:budget_exhausted)
+      _category -> public_failure(:failed)
+    end
+  end
 
   defp find_error(%AI.Error{} = error), do: error
 

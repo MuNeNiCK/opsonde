@@ -531,7 +531,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     refute response.resp_body =~ "reviewer-secret"
   end
 
-  test "unexpected AI failures cannot reach the reconnect contract", context do
+  test "unexpected Reviewer failures stop for provider repair without creating an approval",
+       context do
     configure_mode!(:auto, context.admin)
     setup = proposal_setup!(context)
     {incident, reviewing} = awaiting_proposal!(setup, context.operator)
@@ -547,18 +548,20 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     response =
       get_json("/api/v1/cases/#{incident.id}/review-decisions", context.viewer_token)
 
-    assert %{
-             "data" => [
-               %{
-                 "outcome" => "delivery_failed",
-                 "verdict" => "needs_human",
-                 "category" => "failed",
-                 "reason" => "Reviewer delivery failed"
-               }
-             ]
-           } = json_response(response, 200)
+    assert %{"data" => [], "page" => %{"next" => nil}} = json_response(response, 200)
 
     assert_operation_response(response)
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+
+    assert stopped.pending_intent == %{
+             "action" => "restore_reviewer_delivery",
+             "proposal_id" => reviewing.id
+           }
+
+    assert stopped.required_human_input == "Restore Reviewer AI availability and resume the Case"
+    assert Cases.get_proposal!(reviewing.id, authorize?: false).status == :invalidated
 
     refute response.resp_body =~ "internal-review-secret"
     refute response.resp_body =~ "RuntimeError"

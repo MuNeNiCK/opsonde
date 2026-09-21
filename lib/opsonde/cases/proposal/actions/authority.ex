@@ -21,9 +21,21 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   @impl true
   def run(input, opts, context) do
     case opts[:operation] do
-      :route -> route(input.arguments.proposal_id)
-      :decide -> decide(input.arguments, context.actor)
-      :review -> apply_review(input.arguments.proposal_id, input.arguments.review_decision_id)
+      :route ->
+        route(input.arguments.proposal_id)
+
+      :decide ->
+        decide(input.arguments, context.actor)
+
+      :review ->
+        apply_review(input.arguments.proposal_id, input.arguments.review_decision_id)
+
+      :review_delivery_failure ->
+        fail_review_delivery(
+          input.arguments.proposal_id,
+          input.arguments.category,
+          input.arguments.reason
+        )
     end
   end
 
@@ -228,6 +240,72 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp apply_review_locked(_proposal, _decision, _incident, _run),
     do: {:error, "Proposal is not awaiting Reviewer decision"}
+
+  defp fail_review_delivery(proposal_id, category, reason) do
+    with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do
+      Ash.transact([Case, ResolutionRun, Proposal, CaseEvent], fn ->
+        with {:ok, incident} <- lock_case(source.case_id),
+             {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
+             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id) do
+          fail_review_delivery_locked(proposal, incident, run, category, reason)
+        end
+      end)
+    end
+  end
+
+  defp fail_review_delivery_locked(
+         %{status: :reviewing} = proposal,
+         %{status: :needs_attention},
+         %{status: :needs_attention},
+         _category,
+         _reason
+       ) do
+    with {:ok, invalidated} <- transition(proposal, :invalidated), do: invalidated
+  end
+
+  defp fail_review_delivery_locked(
+         %{status: :reviewing} = proposal,
+         incident,
+         run,
+         category,
+         reason
+       ) do
+    with :ok <- valid_context(proposal, incident, run),
+         {:ok, invalidated} <- transition(proposal, :invalidated) do
+      require_attention(
+        invalidated,
+        incident,
+        run,
+        "Reviewer delivery failed: #{reason}",
+        "restore_reviewer_delivery",
+        reviewer_recovery(category)
+      )
+    end
+  end
+
+  defp fail_review_delivery_locked(
+         %{status: :invalidated} = proposal,
+         %{status: :needs_attention},
+         %{status: :needs_attention},
+         _category,
+         _reason
+       ),
+       do: proposal
+
+  defp fail_review_delivery_locked(_proposal, _incident, _run, _category, _reason),
+    do: {:error, "Proposal is not awaiting Reviewer delivery"}
+
+  defp reviewer_recovery("budget_exhausted"),
+    do: "Review the Case AI usage limit and resume the Case"
+
+  defp reviewer_recovery("authentication"),
+    do: "Repair Reviewer AI authentication and resume the Case"
+
+  defp reviewer_recovery("invalid_output"),
+    do: "Use a Reviewer AI that produces valid structured output and resume the Case"
+
+  defp reviewer_recovery(_category),
+    do: "Restore Reviewer AI availability and resume the Case"
 
   defp approve_review(proposal, decision, incident, run) do
     with {:ok, actor} <- current_owner(incident),

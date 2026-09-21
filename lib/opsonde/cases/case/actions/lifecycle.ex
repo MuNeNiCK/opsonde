@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
   alias Opsonde.Accounts
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun}
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
 
   @limit_fields [
     :max_elapsed_seconds,
@@ -135,7 +135,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   defp record_recovery(incident, run, expected_revision, actor, key) do
     recovered_at = DateTime.utc_now()
 
-    Ash.transact([Case, ResolutionRun, Evidence, CaseEvent], fn ->
+    Ash.transact([Case, ResolutionRun, Evidence, CaseEvent, Proposal, Turn], fn ->
       with {:ok, updated} <-
              Cases.update_case_record(
                incident,
@@ -166,11 +166,105 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
              create_event(updated, run, actor, "source_recovered", key, %{
                "recovered_at" => DateTime.to_iso8601(recovered_at),
                "evidence_id" => evidence.id
-             }) do
-        updated
+             }),
+           {:ok, continued} <- continue_after_source_recovery(updated, run, key) do
+        continued
       end
     end)
   end
+
+  defp continue_after_source_recovery(
+         %{status: :running} = incident,
+         %{status: :running} = run,
+         key
+       ) do
+    with {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false) do
+      cond do
+        started != [] ->
+          {:ok, incident}
+
+        stale_proposal_pending?(incident.pending_intent) ->
+          with {:ok, superseded_id} <- invalidate_pending_proposal(incident, run),
+               {:ok, result} <- start_recovery_turn(incident, run, key, superseded_id) do
+            recovery_turn_result(incident, result, superseded_id)
+          end
+
+        map_size(incident.pending_intent) == 0 ->
+          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
+            recovery_turn_result(incident, result, nil)
+          end
+
+        true ->
+          {:ok, incident}
+      end
+    end
+  end
+
+  defp continue_after_source_recovery(incident, _run, _key), do: {:ok, incident}
+
+  defp stale_proposal_pending?(%{"action" => action, "proposal_id" => proposal_id})
+       when action in ["review_proposal", "decide_proposal", "dispatch_operation"] and
+              is_binary(proposal_id),
+       do: true
+
+  defp stale_proposal_pending?(_pending), do: false
+
+  defp invalidate_pending_proposal(incident, run) do
+    proposal_id = incident.pending_intent["proposal_id"]
+
+    with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false),
+         true <-
+           (proposal.case_id == incident.id and proposal.resolution_run_id == run.id) ||
+             {:error, "Pending Proposal does not belong to the active Case"},
+         {:ok, _invalidated} <-
+           Cases.transition_proposal(
+             proposal,
+             proposal.revision,
+             %{status: :invalidated},
+             authorize?: false
+           ) do
+      {:ok, proposal.id}
+    end
+  end
+
+  defp start_recovery_turn(incident, run, key, superseded_id) do
+    Cases.start_turn(
+      incident.id,
+      run.id,
+      "source-recovery:#{key}",
+      %{
+        "objective" => "Reassess the Case after the monitoring source recovered",
+        "superseded_proposal_id" => superseded_id
+      },
+      %{"action" => "continue_resolution", "source_state" => "recovered"},
+      "Review Resolver limits",
+      authorize?: false
+    )
+  end
+
+  defp recovery_turn_result(_incident, %{status: :exhausted, case: stopped}, _superseded_id),
+    do: {:ok, stopped}
+
+  defp recovery_turn_result(incident, %{status: status, value: %Turn{} = turn}, superseded_id)
+       when status in [:charged, :duplicate] do
+    pending =
+      %{
+        "action" => "resolve_turn",
+        "turn_id" => turn.id,
+        "source_state" => "recovered"
+      }
+      |> maybe_put("superseded_proposal_id", superseded_id)
+
+    Cases.update_case_record(
+      incident,
+      incident.revision,
+      %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+      authorize?: false
+    )
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp require_attention(arguments, actor) do
     transition_once(arguments.id, arguments.idempotency_key, fn incident ->

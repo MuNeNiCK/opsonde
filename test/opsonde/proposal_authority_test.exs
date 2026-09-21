@@ -471,7 +471,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "Auto hands an explicit needs_human Reviewer verdict to a human", context do
+  test "Auto waits for an explicit needs_human verdict until source state changes", context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("review-needs-human", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
@@ -502,15 +502,131 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 4
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    firing =
+      Cases.update_case_record!(
+        current,
+        current.revision,
+        %{alert_state: :firing, source_recovered_at: nil},
+        authorize?: false
+      )
+
+    recovered =
+      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
+
+    assert recovered.alert_state == :recovered
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert recovered.pending_intent["action"] == "resolve_turn"
+    assert recovered.pending_intent["turn_id"] == turn.id
+    assert recovered.pending_intent["superseded_proposal_id"] == proposal.id
   end
 
-  test "Reviewer failure is durable human fallback without usage or effect", context do
+  test "source recovery supersedes an in-flight review and starts one fresh Resolver turn",
+       context do
     configure_mode!(:auto, context.admin)
-    {_incident, run, proposal} = proposal!("review-timeout", context)
+    {incident, run, proposal} = proposal!("review-source-recovery", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        ReviewDelivery.run(reviewing.id,
+          ai_invocation: %{
+            test_pid: parent,
+            respond: fn _request ->
+              send(parent, :reviewer_remote_started)
+
+              receive do
+                :release_reviewer ->
+                  {:ok,
+                   %AI.ReviewDecision{
+                     verdict: :approved,
+                     reason: "The old source state supported this Proposal",
+                     usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+                   }}
+              end
+            end
+          }
+        )
+      end)
+
+    assert_receive :reviewer_remote_started
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    firing =
+      Cases.update_case_record!(
+        current,
+        current.revision,
+        %{alert_state: :firing, source_recovered_at: nil},
+        authorize?: false
+      )
+
+    recovered =
+      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
+
+    send(task.pid, :release_reviewer)
+    assert :ok = Task.await(task)
+
+    assert recovered.alert_state == :recovered
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :failed
+    assert invocation.category == "context_changed"
+
+    started = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert length(started) == 1
+    [turn] = started
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    assert pending["action"] == "resolve_turn"
+    assert pending["turn_id"] == turn.id
+    assert pending["source_state"] == "recovered"
+    assert pending["superseded_proposal_id"] == proposal.id
+
+    replayed =
+      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
+
+    assert replayed.revision == recovered.revision
+    assert length(Cases.started_turns_for_run!(run.id, authorize?: false)) == 1
+    refute_receive {:effect, _, _}
+  end
+
+  test "Reviewer delivery retries remain autonomous and terminal failure stops the Case",
+       context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-timeout", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    for attempt <- 1..2 do
+      assert {:error, message} =
+               ReviewDelivery.run(reviewing.id,
+                 delivery_attempt: attempt,
+                 max_delivery_attempts: 3,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request -> {:error, :timeout, "review deadline exceeded"} end
+                 }
+               )
+
+      assert message =~ "attempt #{attempt} of 3"
+      assert_receive {:review, _, _}
+      assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
+      assert Cases.get_case!(incident.id, authorize?: false).status == :running
+      assert Cases.list_review_decisions!(actor: context.admin) == []
+    end
 
     assert :ok =
              ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 3,
+               max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn _request -> {:error, :timeout, "review deadline exceeded"} end
@@ -518,21 +634,27 @@ defmodule Opsonde.ProposalAuthorityTest do
              )
 
     assert_receive {:review, _, _}
-    [decision] = Cases.list_review_decisions!(actor: context.admin)
-    assert decision.outcome == :delivery_failed
-    assert decision.verdict == :needs_human
-    assert decision.category == "timeout"
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :awaiting_human
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.pending_intent["action"] == "restore_reviewer_delivery"
+    assert stopped.pending_intent["proposal_id"] == proposal.id
+    assert stopped.stop_reason == "Reviewer delivery failed: Reviewer AI timed out"
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
 
-    [record] = Cases.list_ai_invocations!(authorize?: false)
-    assert record.status == :failed
-    assert record.category == "timeout"
+    records = Cases.list_ai_invocations!(authorize?: false)
+    assert length(records) == 3
+    assert Enum.all?(records, &(&1.status == :failed and &1.category == "timeout"))
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
   end
 
-  test "an interrupted Reviewer dispatch is reserved and handed to a human once", context do
+  test "an interrupted Reviewer dispatch is reserved and stops without an approval request",
+       context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("review-interrupted", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
@@ -574,20 +696,15 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert unknown.status == :unknown
     assert unknown.category == "response_unknown"
 
-    [decision] = Cases.list_review_decisions!(actor: context.admin)
-    assert decision.outcome == :delivery_failed
-    assert decision.verdict == :needs_human
-    assert decision.category == "response_unknown"
-    assert decision.reason =~ "#{unknown.reserved_units} AI usage units were reserved"
-
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :awaiting_human
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
              unknown.reserved_units
 
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    assert pending["action"] == "decide_proposal"
-    assert pending["review_decision_id"] == decision.id
+    assert pending["action"] == "restore_reviewer_delivery"
+    assert pending["proposal_id"] == proposal.id
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
 
@@ -604,6 +721,55 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Enum.count(events, fn event ->
              event.data["request_key"] == "review-unknown:#{unknown.id}"
            end) == 1
+  end
+
+  test "Reviewer budget exhaustion stops the Case instead of requesting approval", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-budget", context)
+    run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    run =
+      Cases.update_resolution_run_counters!(
+        run,
+        run.revision,
+        %{ai_usage_units: run.max_ai_usage_units - 1},
+        authorize?: false
+      )
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :approved,
+                      reason: "The exact observation is safe",
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, _, _}
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.pending_intent["action"] == "restore_reviewer_delivery"
+    assert stopped.required_human_input == "Review the Case AI usage limit and resume the Case"
+
+    paused = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert paused.status == :needs_attention
+    assert paused.ai_usage_units == run.max_ai_usage_units - 1
+
+    [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :failed
+    assert invocation.category == "budget_exhausted"
+    assert Cases.list_approvals!(actor: context.admin) == []
   end
 
   test "stale Target context invalidates Ask approval and cannot be overridden", context do
