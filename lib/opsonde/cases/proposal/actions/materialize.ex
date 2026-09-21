@@ -33,8 +33,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
            valid_evidence(
              request_kind(proposal.intent),
              proposal.intent["evidence_ids"],
-             incident.id,
-             run.id
+             incident,
+             run
            ),
          reserved_operation_id <- Ash.UUID.generate(),
          operation_key <- Budget.key("proposal:operation", turn.id),
@@ -165,13 +165,18 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp current_actor(_incident), do: {:error, "Case has no Proposal owner"}
 
-  defp valid_evidence(kind, ids, case_id, run_id)
+  defp valid_evidence(kind, ids, incident, run)
        when is_list(ids) and (kind == :observation or ids != []) do
     if length(ids) == MapSet.size(MapSet.new(ids)) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
-          {:ok, %{case_id: ^case_id, resolution_run_id: ^run_id}} -> {:cont, :ok}
-          _unavailable -> {:halt, {:error, "Proposal cites unavailable Evidence"}}
+          {:ok, evidence} ->
+            if valid_proposal_evidence?(evidence, incident, run),
+              do: {:cont, :ok},
+              else: {:halt, {:error, "Proposal cites unavailable Evidence"}}
+
+          _unavailable ->
+            {:halt, {:error, "Proposal cites unavailable Evidence"}}
         end
       end)
     else
@@ -179,8 +184,88 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     end
   end
 
-  defp valid_evidence(_kind, _ids, _case_id, _run_id),
+  defp valid_evidence(_kind, _ids, _incident, _run),
     do: {:error, "Proposal must cite Evidence"}
+
+  defp valid_proposal_evidence?(
+         %{case_id: case_id, resolution_run_id: run_id},
+         %{id: case_id},
+         %{id: run_id}
+       ),
+       do: true
+
+  defp valid_proposal_evidence?(
+         %{
+           case_id: case_id,
+           kind: "signal_event",
+           source_ref: source_ref,
+           content: %{"current" => true, "state" => state}
+         } = evidence,
+         %{id: case_id, source_ref: source_ref, alert_state: alert_state},
+         _run
+       ) do
+    state == to_string(alert_state) and latest_source_evidence?(evidence, case_id, source_ref)
+  end
+
+  defp valid_proposal_evidence?(
+         %{
+           case_id: case_id,
+           kind: "target_verification",
+           source: "verification",
+           content: %{
+             "status" => "verified",
+             "operation_id" => operation_id,
+             "target_id" => target_id
+           }
+         } = evidence,
+         %{
+           id: case_id,
+           selected_target_id: target_id,
+           selected_target_revision: target_revision
+         },
+         _run
+       ) do
+    latest_target_evidence?(evidence, case_id, target_id) and
+      verified_operation?(operation_id, case_id, target_id, target_revision)
+  end
+
+  defp valid_proposal_evidence?(_evidence, _incident, _run), do: false
+
+  defp latest_source_evidence?(evidence, case_id, source_ref) do
+    case Cases.source_context_evidence(case_id, source_ref, authorize?: false) do
+      {:ok, [%{id: id} | _rest]} -> id == evidence.id
+      _unavailable -> false
+    end
+  end
+
+  defp latest_target_evidence?(evidence, case_id, target_id) do
+    case Cases.target_continuity_evidence(case_id, authorize?: false) do
+      {:ok, candidates} ->
+        case Enum.find(candidates, &(&1.content["target_id"] == target_id)) do
+          %{id: id} -> id == evidence.id
+          _unavailable -> false
+        end
+
+      _unavailable ->
+        false
+    end
+  end
+
+  defp verified_operation?(operation_id, case_id, target_id, target_revision) do
+    case Cases.get_operation(operation_id, authorize?: false) do
+      {:ok,
+       %{
+         case_id: ^case_id,
+         target_id: ^target_id,
+         target_revision: ^target_revision,
+         status: :applied
+       }} ->
+        true
+
+      _unavailable ->
+        false
+    end
+  end
 
   defp policy_request(intent, incident, operation_id, operation_key) do
     %PolicyRequest{

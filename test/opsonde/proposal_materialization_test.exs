@@ -122,6 +122,29 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert Cases.list_proposals!(actor: context.admin) == []
   end
 
+  test "the current Signal Evidence remains available after a Case resumes", context do
+    {_incident, _prior_run, resumed_run, current, _stale, resumed_turn} =
+      resumed_signal_case!("current-signal", context)
+
+    completed =
+      complete_turn!(resumed_turn, proposal_intent(current.id, context))
+
+    assert {:ok, proposal} = Cases.materialize_proposal(completed.id, authorize?: false)
+    assert proposal.resolution_run_id == resumed_run.id
+    assert proposal.evidence_ids == [current.id]
+  end
+
+  test "a stale Signal Evidence cannot cross a resumed Case generation", context do
+    {_incident, _prior_run, _resumed_run, _current, stale, resumed_turn} =
+      resumed_signal_case!("stale-signal", context)
+
+    completed =
+      complete_turn!(resumed_turn, proposal_intent(stale.id, context))
+
+    assert {:error, _error} = Cases.materialize_proposal(completed.id, authorize?: false)
+    assert Cases.list_proposals!(actor: context.admin) == []
+  end
+
   test "a changed Access Method records stale preflight and preserves the offered revisions",
        context do
     {_incident, run, _evidence, turn, _intent} = proposal_turn!("stale-method", context)
@@ -208,9 +231,13 @@ defmodule Opsonde.ProposalMaterializationTest do
         authorize?: false
       )
 
+    complete_turn!(started.value, intent)
+  end
+
+  defp complete_turn!(turn, intent) do
     Cases.complete_turn!(
-      started.value.id,
-      started.value.revision,
+      turn.id,
+      turn.revision,
       %{
         "outcome" => "decision",
         "intent" => intent,
@@ -218,10 +245,117 @@ defmodule Opsonde.ProposalMaterializationTest do
         "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
       },
       :proposal,
-      %{"action" => "route_resolver_decision", "turn_id" => started.value.id},
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
       "Review the Resolver decision",
       authorize?: false
     ).value
+  end
+
+  defp resumed_signal_case!(suffix, context) do
+    enable_signal_automation!(context.admin)
+    source_ref = "proposal-signal-#{suffix}"
+
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        source_ref,
+        "Proposal #{suffix}",
+        :warning,
+        :firing,
+        %{},
+        context.target.id,
+        :en,
+        actor: context.operator
+      )
+
+    prior_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    stale =
+      Cases.append_evidence!(
+        incident.id,
+        prior_run.id,
+        nil,
+        "proposal-signal-stale-#{suffix}",
+        "signal_event",
+        "alertmanager",
+        source_ref,
+        %{"current" => false, "state" => "recovered"},
+        DateTime.add(DateTime.utc_now(), -60, :second),
+        authorize?: false
+      )
+
+    current =
+      Cases.append_evidence!(
+        incident.id,
+        prior_run.id,
+        nil,
+        "proposal-signal-current-#{suffix}",
+        "signal_event",
+        "alertmanager",
+        source_ref,
+        %{"current" => true, "state" => "firing"},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    attention =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        prior_run.id,
+        prior_run.revision,
+        "proposal-signal-attention-#{suffix}",
+        "Resolver interrupted",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(prior_run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue after Resolver interruption",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    {incident, prior_run, resumed_run, current, stale, resumed_turn}
+  end
+
+  defp enable_signal_automation!(admin) do
+    current = Cases.current_authority_setting!(actor: admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      true,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "enable resumed Signal Proposal test",
+      actor: admin
+    )
   end
 
   defp proposal_intent(evidence_id, context) do
