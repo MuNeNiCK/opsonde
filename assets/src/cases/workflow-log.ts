@@ -54,6 +54,7 @@ const hiddenRoutineEvents = new Set([
 
 export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   const entries: LogEntry[] = [];
+  const reviewedProposalIds = new Set(props.reviews.map((review) => review.proposal_id));
 
   for (const event of props.timeline) {
     if (hiddenRoutineEvents.has(event.type)) continue;
@@ -151,6 +152,8 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   }
 
   for (const item of props.approvals) {
+    if (item.source === "reviewer" && reviewedProposalIds.has(item.proposal_id)) continue;
+
     entries.push({
       id: `approval-${item.id}`,
       at: item.decided_at,
