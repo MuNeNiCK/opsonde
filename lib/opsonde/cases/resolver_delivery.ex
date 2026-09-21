@@ -624,10 +624,39 @@ defmodule Opsonde.Cases.ResolverDelivery do
                intent,
                "Review Resolver limits or continue the Case manually",
                authorize?: false
-             ) do
+             ),
+           {:ok, next_turn} <- set_retry_pending(next_turn, turn.id) do
         %{completed: completed, next_turn: next_turn}
       end
     end)
+  end
+
+  defp set_retry_pending(%{status: :exhausted} = result, _source_turn_id), do: {:ok, result}
+
+  defp set_retry_pending(
+         %{status: status, case: incident, value: next_turn} = result,
+         source_turn_id
+       )
+       when status in [:charged, :duplicate] do
+    pending = %{
+      "action" => "resolve_turn",
+      "turn_id" => next_turn.id,
+      "source_turn_id" => source_turn_id
+    }
+
+    if incident.pending_intent == pending do
+      {:ok, result}
+    else
+      with {:ok, _updated} <-
+             Cases.update_case_record(
+               incident,
+               incident.revision,
+               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               authorize?: false
+             ) do
+        {:ok, result}
+      end
+    end
   end
 
   defp persist_attention_failure(turn, invocation, category, message) do

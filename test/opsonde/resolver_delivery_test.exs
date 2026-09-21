@@ -163,8 +163,6 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.result["category"] == "invalid_output"
     assert completed.progress_kind == :none
 
-    assert Cases.get_case!(incident.id, authorize?: false).status == :running
-
     running = Cases.get_resolution_run!(run.id, authorize?: false)
     assert running.status == :running
     assert running.turn_count == 2
@@ -179,6 +177,15 @@ defmodule Opsonde.ResolverDeliveryTest do
              "category" => "invalid_output",
              "objective" => "Continue resolution after an invalid Resolver response",
              "source" => "resolver_delivery_failure",
+             "source_turn_id" => turn.id
+           }
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+
+    assert current.pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => successor.id,
              "source_turn_id" => turn.id
            }
 
