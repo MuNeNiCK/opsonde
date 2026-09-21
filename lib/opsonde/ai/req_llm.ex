@@ -7,7 +7,8 @@ defmodule Opsonde.AI.ReqLLM do
   alias Opsonde.Providers.AI
 
   @providers %{"openai" => :openai, "anthropic" => :anthropic, "ollama" => :ollama}
-  @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms)
+  @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms reasoning_effort)
+  @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
   @max_output_bytes 65_536
   @max_tokens 32_768
@@ -33,6 +34,7 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, stream?} <- boolean(configuration, "stream", false),
          {:ok, max_tokens} <- integer(configuration, "max_tokens", 2_048, 1, @max_tokens),
          {:ok, timeout} <- integer(configuration, "timeout_ms", 60_000, 100, @max_timeout),
+         {:ok, reasoning_effort} <- reasoning_effort(provider, model, configuration),
          {:ok, api_key} <- credentials(provider, credentials),
          model_spec <- model_spec(provider, model),
          {:ok, resolved_model} <- ReqLLM.model(model_spec) do
@@ -44,6 +46,7 @@ defmodule Opsonde.AI.ReqLLM do
          stream?: stream?,
          max_tokens: max_tokens,
          timeout: timeout,
+         reasoning_effort: reasoning_effort,
          api_key: api_key,
          output_mode: output_mode(provider, model)
        }}
@@ -148,6 +151,7 @@ defmodule Opsonde.AI.ReqLLM do
         receive_timeout: state.timeout,
         telemetry: [payloads: :none]
       ]
+      |> maybe_put(:reasoning_effort, state.reasoning_effort)
       |> maybe_put(:api_key, state.api_key)
       |> maybe_put(:base_url, state.endpoint)
 
@@ -801,6 +805,22 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp output_mode(_provider, _model), do: :native
+
+  defp reasoning_effort(:ollama, model, configuration) do
+    default = if String.ends_with?(model, ":cloud"), do: "low", else: nil
+
+    case Map.get(configuration, "reasoning_effort", default) do
+      nil -> {:ok, nil}
+      effort when effort in @reasoning_efforts -> {:ok, String.to_atom(effort)}
+      _invalid -> {:error, :invalid_reasoning_effort}
+    end
+  end
+
+  defp reasoning_effort(_provider, _model, configuration) do
+    if is_nil(Map.get(configuration, "reasoning_effort")),
+      do: {:ok, nil},
+      else: {:error, :unsupported_reasoning_effort}
+  end
 
   defp known_configuration(configuration) do
     if Enum.all?(Map.keys(configuration), &(to_string(&1) in @configuration_keys)),

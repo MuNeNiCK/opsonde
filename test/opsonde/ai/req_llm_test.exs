@@ -305,6 +305,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute Map.has_key?(body, "tools")
     refute Map.has_key?(body, "response_format")
     assert body["temperature"] == 0
+    assert body["reasoning_effort"] == "low"
 
     assert Enum.any?(body["messages"], fn message ->
              message["role"] == "system" and
@@ -710,6 +711,29 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :invalid_configuration} =
              Adapter.build(%{base | "provider" => "unknown"}, %{"api_key" => "secret"})
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(Map.put(base, "reasoning_effort", "unbounded"), %{})
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(
+               %{base | "provider" => "openai"} |> Map.put("reasoning_effort", "low"),
+               %{"api_key" => "secret"}
+             )
+  end
+
+  test "Ollama Cloud reasoning effort can be overridden", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{
+        "model" => "test-model:cloud",
+        "reasoning_effort" => "high"
+      })
+
+    set_mode(context.agent, {:text_decision, handoff()})
+    assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, resolver_request(), %{})
+
+    [request] = requests(context.agent)
+    assert Jason.decode!(request.body)["reasoning_effort"] == "high"
   end
 
   test "hosted Provider lifecycles and public AI actions invoke the registered adapter",
