@@ -503,6 +503,69 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(invocations, &(&1.category == "context_changed")) == 1
   end
 
+  test "source recovery supersedes a completed Resolver decision before it is routed", context do
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        "source-change-after-completion",
+        "Service is unavailable",
+        :critical,
+        :firing,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    turn = start_turn!(incident, run, "source-change-after-completion")
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Handoff{
+                        reason: "The firing signal needs more evidence",
+                        required_input: "Provide current service state"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.status == :completed
+
+    completed_case = Cases.get_case!(incident.id, authorize?: false)
+
+    before_recovery =
+      Cases.update_case_record!(
+        completed_case,
+        completed_case.revision,
+        %{pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id}},
+        authorize?: false
+      )
+
+    recovered =
+      Cases.record_case_source_recovery!(
+        before_recovery.id,
+        before_recovery.revision,
+        authorize?: false
+      )
+
+    assert recovered.alert_state == :recovered
+    assert recovered.status == :running
+    assert recovered.pending_intent["action"] == "resolve_turn"
+    refute recovered.pending_intent["turn_id"] == turn.id
+    assert {:error, _error} = Cases.route_downstream_decision(turn.id, authorize?: false)
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
   test "accepted observation and Proposal retain exact offered tool snapshots", context do
     {target, method, capabilities} = target_context!(context.admin)
 

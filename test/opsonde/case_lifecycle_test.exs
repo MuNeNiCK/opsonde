@@ -383,6 +383,48 @@ defmodule Opsonde.CaseLifecycleTest do
     assert Cases.started_turns_for_run!(run.id, authorize?: false) == []
   end
 
+  test "source recovery autonomously resumes a Case that only awaited more incident input",
+       context do
+    configure_authority!(context.admin, %{
+      signal_automation_enabled: true,
+      reason: "enable autonomous recovery reassessment"
+    })
+
+    incident = open_case!(:signal, "alertmanager", "input-recovery", :firing, nil)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    waiting =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        run.id,
+        run.revision,
+        "input-recovery-wait",
+        "More current incident evidence is required",
+        %{"action" => "provide_human_input", "source_turn_id" => Ash.UUID.generate()},
+        "Provide current workload health",
+        authorize?: false
+      )
+
+    recovered =
+      Cases.record_case_source_recovery!(waiting.id, waiting.revision, actor: context.operator)
+
+    assert recovered.status == :running
+    assert recovered.alert_state == :recovered
+    assert recovered.stop_reason == nil
+    assert recovered.required_human_input == nil
+
+    old_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    refute old_run.active
+    assert old_run.status == :superseded
+
+    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    assert resumed_run.generation == 2
+    assert resumed_run.status == :running
+    assert [turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
+    assert recovered.pending_intent == %{"action" => "resolve_turn", "turn_id" => turn.id}
+  end
+
   test "cancelling an attention Case retires its active run", context do
     incident = open_case!(:manual, "web", "cancel-attention", :not_applicable, context.operator)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)

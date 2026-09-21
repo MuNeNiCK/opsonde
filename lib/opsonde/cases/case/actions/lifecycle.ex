@@ -189,6 +189,11 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
             recovery_turn_result(incident, result, superseded_id)
           end
 
+        stale_resolver_pending?(incident.pending_intent) ->
+          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
+            recovery_turn_result(incident, result, nil)
+          end
+
         map_size(incident.pending_intent) == 0 ->
           with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
             recovery_turn_result(incident, result, nil)
@@ -200,14 +205,59 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     end
   end
 
+  defp continue_after_source_recovery(
+         %{
+           status: :needs_attention,
+           pending_intent: %{"action" => "provide_human_input"}
+         } = incident,
+         %{status: :needs_attention} = run,
+         key
+       ) do
+    arguments = automatic_recovery_resume_arguments(incident, run)
+
+    with {:ok, resumed_run} <-
+           resume_transaction(incident, run, arguments, nil, "source-recovery-resume:#{key}"),
+         {:ok, resumed_case} <- start_automatic_recovery_turn(incident.id, resumed_run) do
+      {:ok, resumed_case}
+    end
+  end
+
   defp continue_after_source_recovery(incident, _run, _key), do: {:ok, incident}
 
   defp stale_proposal_pending?(%{"action" => action, "proposal_id" => proposal_id})
-       when action in ["review_proposal", "decide_proposal", "dispatch_operation"] and
+       when action in [
+              "route_proposal",
+              "review_proposal",
+              "decide_proposal",
+              "dispatch_operation"
+            ] and
               is_binary(proposal_id),
        do: true
 
   defp stale_proposal_pending?(_pending), do: false
+
+  defp stale_resolver_pending?(%{"action" => action, "turn_id" => turn_id})
+       when action in ["resolve_turn", "route_resolver_decision"] and is_binary(turn_id),
+       do: superseded_resolver_decision?(turn_id)
+
+  defp stale_resolver_pending?(_pending), do: false
+
+  defp superseded_resolver_decision?(turn_id) do
+    case Cases.get_turn(turn_id, authorize?: false) do
+      {:ok,
+       %Turn{
+         status: :completed,
+         result: %{"intent" => %{"type" => "recovery_conclusion"}}
+       }} ->
+        false
+
+      {:ok, %Turn{status: :completed}} ->
+        true
+
+      _unfinished_or_missing ->
+        false
+    end
+  end
 
   defp invalidate_pending_proposal(incident, run) do
     proposal_id = incident.pending_intent["proposal_id"]
@@ -240,6 +290,38 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       "Review Resolver limits",
       authorize?: false
     )
+  end
+
+  defp start_automatic_recovery_turn(case_id, run) do
+    case Cases.start_turn(
+           case_id,
+           run.id,
+           "resume:#{run.id}:#{run.generation}",
+           %{"objective" => "Reassess the Case after the monitoring source recovered"},
+           %{"action" => "continue"},
+           "Review Case inputs and limits",
+           authorize?: false
+         ) do
+      {:ok, %{status: status, value: %Turn{} = turn}} when status in [:charged, :duplicate] ->
+        with {:ok, incident} <- Cases.get_case(case_id, authorize?: false) do
+          Cases.update_case_record(
+            incident,
+            incident.revision,
+            %{
+              pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id},
+              stop_reason: nil,
+              required_human_input: nil
+            },
+            authorize?: false
+          )
+        end
+
+      {:ok, %{status: :exhausted, case: stopped}} ->
+        {:ok, stopped}
+
+      {:error, _error} = error ->
+        error
+    end
   end
 
   defp recovery_turn_result(_incident, %{status: :exhausted, case: stopped}, _superseded_id),
@@ -545,6 +627,18 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       resolution_run_id: run.id,
       expected_run_revision: run.revision,
       reason: "The registered ExternalIdentity now resolves the firing signal to a Target"
+    })
+  end
+
+  defp automatic_recovery_resume_arguments(incident, run) do
+    run
+    |> Map.take([:authority_mode | @limit_fields])
+    |> Map.merge(%{
+      id: incident.id,
+      expected_case_revision: incident.revision,
+      resolution_run_id: run.id,
+      expected_run_revision: run.revision,
+      reason: "The monitoring source recovered while the Case awaited input"
     })
   end
 
