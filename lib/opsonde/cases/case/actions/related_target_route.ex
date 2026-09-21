@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun, Turn}
 
   defmodule Error do
     use Splode.Error, class: :invalid, fields: [:category, :message]
@@ -78,7 +78,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     relationship_snapshot = intent["relationship"]
 
     with :ok <- running_context(incident, run),
-         :ok <- cited_evidence(intent["evidence_ids"], incident.id, run.id),
+         :ok <- cited_evidence(intent["evidence_ids"], incident, run),
          {:ok, relationship} <- current_relationship(relationship_snapshot),
          :ok <- exact_relationship(relationship, relationship_snapshot),
          :ok <- current_endpoint(incident, relationship_snapshot),
@@ -103,12 +103,14 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   defp running_context(_incident, _run),
     do: traversal_failure(:stale_context, "Case resolution is not running")
 
-  defp cited_evidence(ids, case_id, run_id) when is_list(ids) and ids != [] do
+  defp cited_evidence(ids, incident, run) when is_list(ids) and ids != [] do
     if length(ids) == MapSet.size(MapSet.new(ids)) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
-          {:ok, %{case_id: ^case_id, resolution_run_id: ^run_id}} ->
-            {:cont, :ok}
+          {:ok, evidence} ->
+            if EvidenceCitation.valid?(evidence, incident, run),
+              do: {:cont, :ok},
+              else: {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
 
           _unavailable ->
             {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
@@ -119,7 +121,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     end
   end
 
-  defp cited_evidence(_ids, _case_id, _run_id),
+  defp cited_evidence(_ids, _incident, _run),
     do: traversal_failure(:invalid_evidence, "Cited Evidence is invalid")
 
   defp current_relationship(%{"id" => id, "revision" => revision}) do

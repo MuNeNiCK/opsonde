@@ -4,7 +4,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
   require Ash.Query
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun}
 
   @impl true
   def run(input, _opts, context) do
@@ -29,7 +29,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
          {:ok, run} <- lock_run(arguments.resolution_run_id, incident.id),
          :ok <- unique_evidence(arguments.evidence_ids),
          {:ok, evidence} <- load_evidence(arguments.evidence_ids),
-         :ok <- valid_evidence(evidence, incident.id, run.id),
+         :ok <- valid_evidence(evidence, incident, run),
          :ok <- offered_candidate(evidence, arguments.target_id, arguments.target_revision),
          {:ok, target} <- Targets.get_target(arguments.target_id, authorize?: false),
          :ok <- current_target(target, arguments.target_revision),
@@ -108,8 +108,8 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
     end)
   end
 
-  defp valid_evidence(evidence, case_id, run_id) do
-    if Enum.all?(evidence, &(&1.case_id == case_id and &1.resolution_run_id == run_id)),
+  defp valid_evidence(evidence, incident, run) do
+    if Enum.all?(evidence, &EvidenceCitation.valid?(&1, incident, run)),
       do: :ok,
       else: {:error, "Target selection evidence belongs to another Case or ResolutionRun"}
   end

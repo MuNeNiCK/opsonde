@@ -158,6 +158,88 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).related_target_count == 1
   end
 
+  test "a resumed run can traverse with the Case's current Signal evidence", context do
+    source_ref = "resumed-relation"
+
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        source_ref,
+        "Kubernetes workload is unavailable",
+        :critical,
+        :firing,
+        %{},
+        context.linux.id,
+        :en,
+        actor: context.operator
+      )
+
+    prior_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    signal =
+      Cases.append_evidence!(
+        incident.id,
+        prior_run.id,
+        nil,
+        "resumed-relation-signal",
+        "signal_event",
+        "alertmanager",
+        source_ref,
+        %{"current" => true, "state" => "firing"},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    attention =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        prior_run.id,
+        prior_run.revision,
+        "resumed-relation-attention",
+        "Resolver interrupted",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(prior_run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue autonomous resolution",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    next_turn =
+      resumed_turn
+      |> complete_traversal!(context.runs_on, context.vm, signal)
+      |> route_traversal!()
+
+    selected = Cases.get_case!(incident.id, authorize?: false)
+    assert selected.status == :running
+    assert selected.selected_target_id == context.vm.id
+    assert next_turn.resolution_run_id == resumed_run.id
+    refute evidence_for_source_turn!(resumed_turn.id, context.admin)
+  end
+
   test "stale relationships, changed authority, and missing Access Methods become Evidence",
        context do
     {stale_case, stale_run, stale_evidence, stale_turn} =
