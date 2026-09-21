@@ -498,6 +498,8 @@ function CompletedCaseSummary({
 }) {
   const { t, i18n } = useTranslation();
   const narrative = completedNarrative(report.content);
+  const visibleOperations = narrative.operations.slice(0, 3);
+  const additionalOperations = narrative.operations.slice(3);
 
   return (
     <Card>
@@ -530,9 +532,28 @@ function CompletedCaseSummary({
               <Search className="size-4 text-muted-foreground" aria-hidden="true" />
               <h3>{t("cases.completionSummary.cause")}</h3>
             </div>
-            <p className="text-sm leading-relaxed">
-              {narrative.cause ?? t("cases.completionSummary.causeUnavailable")}
-            </p>
+            {narrative.cause ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t("cases.completionSummary.confirmedCondition")}
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed">{narrative.cause}</p>
+                </div>
+                {narrative.rationale && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t("cases.completionSummary.rationale")}
+                    </p>
+                    <p className="mt-1 text-sm leading-relaxed">{narrative.rationale}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {t("cases.completionSummary.causeUnavailable")}
+              </p>
+            )}
           </section>
 
           <section className="space-y-3 border-t p-4 lg:border-t-0">
@@ -541,27 +562,30 @@ function CompletedCaseSummary({
               <h3>{t("cases.completionSummary.actions")}</h3>
             </div>
             {narrative.operations.length > 0 ? (
-              <ul className="space-y-3">
-                {narrative.operations.map((operation, index) => (
-                  <li key={`${operation.capability}-${operation.operation}-${index}`}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium">
-                        {operation.capability} / {operation.operation}
-                      </p>
-                      {operation.status && (
-                        <Badge variant="secondary">
-                          {translatedToken(t, "operationStatus", operation.status)}
-                        </Badge>
-                      )}
-                    </div>
-                    {operation.input && (
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {operation.input}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                <ul className="space-y-3">
+                  {visibleOperations.map((operation, index) => (
+                    <RemediationItem key={`${operation.title}-${index}`} operation={operation} />
+                  ))}
+                </ul>
+                {additionalOperations.length > 0 && (
+                  <details>
+                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+                      {t("cases.completionSummary.moreActions", {
+                        count: additionalOperations.length,
+                      })}
+                    </summary>
+                    <ul className="mt-3 space-y-3 border-l pl-3">
+                      {additionalOperations.map((operation, index) => (
+                        <RemediationItem
+                          key={`${operation.title}-${index + visibleOperations.length}`}
+                          operation={operation}
+                        />
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
             ) : (
               <p className="text-sm text-muted-foreground">
                 {t("cases.completionSummary.noRemediation")}
@@ -616,28 +640,97 @@ function CompletedCaseSummary({
 
 type SummaryRecord = Record<string, unknown>;
 
+type Remediation = {
+  title: string;
+  status: string | null;
+  input: string | null;
+};
+
+function RemediationItem({ operation }: { operation: Remediation }) {
+  const { t } = useTranslation();
+  return (
+    <li>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-medium">{operation.title}</p>
+        {operation.status && (
+          <Badge variant="secondary">
+            {translatedToken(t, "operationStatus", operation.status)}
+          </Badge>
+        )}
+      </div>
+      {operation.input && (
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{operation.input}</p>
+      )}
+    </li>
+  );
+}
+
 function completedNarrative(content: SummaryRecord) {
   const proposals = recordList(content.proposals);
-  const operations = recordList(content.operations).map((operation) => ({
-    capability: stringField(operation.capability) ?? "Operation",
-    operation: stringField(operation.operation) ?? "unknown",
+  const operationRecords = recordList(content.operations);
+  const appliedEffects = operationRecords.filter(
+    (operation) => operation.request_kind === "effect" && operation.status === "applied",
+  );
+  const operations = appliedEffects.map((operation) => ({
+    title: remediationTitle(operation),
     status: stringField(operation.status),
-    input: summarizeOperationInput(operation),
+    input: summarizeRemediationInput(operation),
   }));
-  const verifications = recordList(content.verifications).map((verification) => ({
-    status: stringField(verification.status),
-    facts: summarizeVerificationFacts(verification.facts),
-  }));
+  const finalEffect = appliedEffects.at(-1);
+  const evidenceRecords = recordList(content.raw_evidence);
+  const verificationRecords = recordList(content.verifications);
+  const finalVerification =
+    verificationRecords.findLast((verification) => verification.status === "verified") ??
+    verificationRecords.at(-1);
+  const finalEffectCompletedAt = stringField(finalEffect?.completed_at);
+  const finalObservation = finalEffectCompletedAt
+    ? evidenceRecords.findLast((evidence) => {
+        const observedAt = stringField(evidence.observed_at);
+        return (
+          evidence.kind === "observation" &&
+          observedAt !== null &&
+          observedAt > finalEffectCompletedAt &&
+          objectField(objectField(evidence.content)?.facts) !== null
+        );
+      })
+    : undefined;
+  const recoveryFacts = finalObservation
+    ? objectField(objectField(finalObservation.content)?.facts)
+    : finalVerification?.facts;
+  const verifications =
+    finalVerification || finalObservation
+      ? [
+          {
+            status: stringField(finalVerification?.status) ?? "verified",
+            facts: summarizeVerificationFacts(recoveryFacts),
+          },
+        ]
+      : [];
+  const effectProposal = finalEffect
+    ? proposals.find((proposal) => proposal.id === finalEffect.proposal_id)
+    : undefined;
+  const citedEvidenceIds = new Set(stringList(effectProposal?.evidence_ids));
+  const cause = evidenceRecords
+    .filter((evidence) => citedEvidenceIds.has(String(evidence.id)))
+    .map(summarizeCauseEvidence)
+    .findLast(Boolean);
   const recoveryTurn = recordList(content.resolver_turns)
     .map((turn) => objectField(turn.decision))
     .findLast((decision) => decision?.type === "recovery_conclusion");
 
   return {
-    cause: proposals.map((proposal) => stringField(proposal.reason)).findLast(Boolean) ?? null,
+    cause: cause ?? null,
+    rationale: effectProposal ? stringField(effectProposal.reason) : null,
     operations,
     verifications,
     conclusion: recoveryTurn ? stringField(recoveryTurn.reason) : null,
   };
+}
+
+function stringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function recordList(value: unknown): SummaryRecord[] {
@@ -656,15 +749,60 @@ function stringField(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
-function summarizeOperationInput(operation: SummaryRecord) {
-  const selectors = objectField(operation.selectors);
+function remediationTitle(operation: SummaryRecord) {
   const parameters = objectField(operation.parameters);
-  const input = {
-    ...(selectors && Object.keys(selectors).length > 0 ? { selectors } : {}),
-    ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
-  };
+  const command = stringField(parameters?.command);
+  if (command) return command;
 
-  return Object.keys(input).length > 0 ? summarizeValue(input, "") : null;
+  const action = stringField(parameters?.action);
+  const kind = stringField(parameters?.kind);
+  const name = stringField(parameters?.name);
+  if (action && (kind || name)) return [kind, name, action].filter(Boolean).join(" · ");
+
+  const method = stringField(parameters?.method);
+  const path = stringField(parameters?.path);
+  if (method && path) return `${method.toUpperCase()} ${path}`;
+
+  return [
+    stringField(operation.capability) ?? "Operation",
+    stringField(operation.operation) ?? "unknown",
+  ].join(" / ");
+}
+
+function summarizeRemediationInput(operation: SummaryRecord) {
+  const parameters = objectField(operation.parameters);
+  if (!parameters) return null;
+  const omitted = new Set(["action", "kind", "name", "command", "method", "path"]);
+  const details = Object.fromEntries(
+    Object.entries(parameters).filter(([key]) => !omitted.has(key)),
+  );
+  return Object.keys(details).length > 0 ? summarizeValue(details, "") : null;
+}
+
+function summarizeCauseEvidence(evidence: SummaryRecord) {
+  const content = objectField(evidence.content);
+  const facts = objectField(content?.facts);
+  if (!facts) return null;
+
+  const name = stringField(facts.name) ?? stringField(facts.unit);
+  const preferred = [
+    "active_state",
+    "sub_state",
+    "replicas",
+    "ready_replicas",
+    "available_replicas",
+    "status",
+    "state",
+    "health",
+    "ready",
+    "phase",
+  ];
+  const details = preferred
+    .filter((key) => facts[key] !== undefined)
+    .map((key) => `${key}=${summarizeValue(facts[key], "-")}`);
+
+  if (!name && details.length === 0) return null;
+  return [name, ...details].filter(Boolean).join(" · ");
 }
 
 function summarizeVerificationFacts(value: unknown) {
