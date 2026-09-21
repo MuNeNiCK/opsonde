@@ -2934,6 +2934,15 @@
           "limits": {
             "$ref": "#/components/schemas/WorkflowLimits"
           },
+          "operator_action": {
+            "enum": [
+              "none",
+              "decision_required",
+              "input_required",
+              "intervention_required"
+            ],
+            "type": "string"
+          },
           "report_language": {
             "enum": [
               "en",
@@ -3026,6 +3035,7 @@
           "alert_state",
           "report_language",
           "status",
+          "operator_action",
           "initial_context",
           "authority_setting_id",
           "authority_setting_revision",

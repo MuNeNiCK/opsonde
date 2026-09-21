@@ -136,12 +136,13 @@ export function CaseListPage() {
   const records = page?.data ?? [];
   const summary = {
     inProgress: records.filter(
-      (incident) => incident.status === "running" && incident.alert_state !== "recovered",
+      (incident) => incident.status === "running" && incident.operator_action === "none",
     ).length,
-    attention: records.filter((incident) => incident.status === "needs_attention").length,
-    recovering: records.filter(
-      (incident) => incident.alert_state === "recovered" && incident.status === "running",
+    waiting: records.filter((incident) =>
+      ["decision_required", "input_required"].includes(incident.operator_action),
     ).length,
+    stopped: records.filter((incident) => incident.operator_action === "intervention_required")
+      .length,
     terminal: records.filter((incident) => ["resolved", "cancelled"].includes(incident.status))
       .length,
   };
@@ -231,8 +232,8 @@ export function CaseListPage() {
 
       <section className="grid grid-cols-2 gap-2 lg:grid-cols-4" aria-label={t("cases.summary")}>
         <SummaryCard label={t("cases.summaryInProgress")} value={summary.inProgress} />
-        <SummaryCard label={t("cases.summaryAttention")} value={summary.attention} urgent />
-        <SummaryCard label={t("cases.summaryRecovering")} value={summary.recovering} />
+        <SummaryCard label={t("cases.summaryWaiting")} value={summary.waiting} urgent />
+        <SummaryCard label={t("cases.summaryStopped")} value={summary.stopped} urgent />
         <SummaryCard label={t("cases.summaryTerminal")} value={summary.terminal} />
       </section>
 
@@ -362,14 +363,20 @@ export function CaseListPage() {
                   </TableCell>
                   <TableCell>
                     <Badge
-                      variant={incident.status === "needs_attention" ? "destructive" : "secondary"}
+                      variant={
+                        incident.operator_action === "intervention_required"
+                          ? "destructive"
+                          : "secondary"
+                      }
                       className={
                         incident.status === "resolved"
                           ? "border-success/20 bg-success text-success-foreground"
                           : undefined
                       }
                     >
-                      {t(`cases.status.${incident.status}`)}
+                      {incident.operator_action === "none"
+                        ? t(`cases.status.${incident.status}`)
+                        : t(`cases.operatorAction.${incident.operator_action}`)}
                     </Badge>
                   </TableCell>
                   <TableCell>{ownerName(incident.current_owner_id)}</TableCell>
@@ -446,21 +453,24 @@ function SeverityBadge({ severity }: { severity: CaseRecord["severity"] }) {
 
 function RequiredAction({ incident }: { incident: CaseRecord }) {
   const { t } = useTranslation();
-  const label = incident.required_human_input
-    ? t("cases.actionInputRequired")
-    : incident.status === "needs_attention"
-      ? t("cases.actionReview")
-      : incident.status === "resolved"
-        ? t("cases.actionNone")
-        : incident.status === "cancelled"
-          ? t("cases.actionReviewCancellation")
-          : incident.alert_state === "recovered"
-            ? t("cases.actionVerifying")
-            : t("cases.actionResolving");
+  const label =
+    incident.operator_action === "decision_required"
+      ? t("cases.actionDecisionRequired")
+      : incident.operator_action === "input_required"
+        ? t("cases.actionInputRequired")
+        : incident.operator_action === "intervention_required"
+          ? t("cases.actionInterventionRequired")
+          : incident.status === "resolved"
+            ? t("cases.actionNone")
+            : incident.status === "cancelled"
+              ? t("cases.actionReviewCancellation")
+              : incident.alert_state === "recovered"
+                ? t("cases.actionVerifying")
+                : t("cases.actionResolving");
 
   return (
     <span className="flex items-start gap-2">
-      {incident.status === "needs_attention" ? (
+      {incident.operator_action !== "none" ? (
         <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
       ) : (
         <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />

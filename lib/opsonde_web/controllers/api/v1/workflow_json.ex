@@ -35,6 +35,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       alert_state: incident.alert_state,
       report_language: incident.report_language,
       status: incident.status,
+      operator_action: operator_action(incident),
       initial_context: incident.initial_context,
       authority_setting_id: incident.authority_setting_id,
       authority_setting_revision: incident.authority_setting_revision,
@@ -53,6 +54,15 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       updated_at: incident.updated_at
     }
   end
+
+  defp operator_action(%{pending_intent: %{"action" => "decide_proposal"}}),
+    do: :decision_required
+
+  defp operator_action(%{pending_intent: %{"action" => "provide_human_input"}}),
+    do: :input_required
+
+  defp operator_action(%{status: :needs_attention}), do: :intervention_required
+  defp operator_action(_incident), do: :none
 
   def snapshot(snapshot) do
     %{

@@ -102,6 +102,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         alert_state: enum(~w(firing recovered not_applicable)),
         report_language: enum(~w(en ja)),
         status: enum(~w(running needs_attention resolved cancelled)),
+        operator_action: enum(~w(none decision_required input_required intervention_required)),
         initial_context: map(),
         authority_setting_id: Schemas.uuid(),
         authority_setting_revision: positive_integer(),
@@ -119,7 +120,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref title severity alert_state report_language status initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input source_recovered_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input source_recovered_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end

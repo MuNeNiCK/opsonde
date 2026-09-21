@@ -136,6 +136,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     incident = open_case!(context.operator_token, "lifecycle-1")
     assert incident["status"] == "running"
+    assert incident["operator_action"] == "none"
     assert incident["authority_mode"] == "ask"
     assert incident["report_language"] == "ja"
 
@@ -287,7 +288,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_operation_response(resumed)
 
     snapshot = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)
-    assert snapshot["case"]["status"] == "running"
+    assert snapshot["case"]["status"] == "running", inspect(snapshot["case"])
     assert Enum.map(snapshot["resolution_runs"], & &1["generation"]) == [2, 1]
     assert Enum.map(snapshot["resolution_runs"], & &1["status"]) == ["running", "superseded"]
 
@@ -563,8 +564,37 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert stopped.required_human_input == "Restore Reviewer AI availability and resume the Case"
     assert Cases.get_proposal!(reviewing.id, authorize?: false).status == :invalidated
 
+    snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert snapshot["case"]["operator_action"] == "intervention_required"
+
     refute response.resp_body =~ "internal-review-secret"
     refute response.resp_body =~ "RuntimeError"
+  end
+
+  test "an explicit Reviewer handoff is exposed as an operator decision", context do
+    configure_mode!(:auto, context.admin)
+    setup = proposal_setup!(context)
+    {incident, reviewing} = awaiting_proposal!(setup, context.operator)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :needs_human,
+                      reason: "The evidence requires an operator decision",
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert snapshot["case"]["status"] == "running"
+    assert snapshot["case"]["operator_action"] == "decision_required"
+    assert [%{"status" => "awaiting_human"}] = snapshot["proposals"]
   end
 
   test "contract rejects malformed Case identifiers and action bodies", context do

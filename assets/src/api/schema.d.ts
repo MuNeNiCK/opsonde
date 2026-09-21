@@ -2154,6 +2154,8 @@ export interface components {
             inserted_at: string;
             limits: components["schemas"]["WorkflowLimits"];
             /** @enum {string} */
+            operator_action: "none" | "decision_required" | "input_required" | "intervention_required";
+            /** @enum {string} */
             report_language: "en" | "ja";
             required_human_input: string | null;
             revision: number;

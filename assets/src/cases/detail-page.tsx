@@ -322,8 +322,14 @@ export function CaseDetailPage() {
           </Button>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{incident.title}</h1>
-            <Badge variant={incident.status === "needs_attention" ? "destructive" : "secondary"}>
-              {t(`cases.status.${incident.status}`)}
+            <Badge
+              variant={
+                incident.operator_action === "intervention_required" ? "destructive" : "secondary"
+              }
+            >
+              {incident.operator_action === "none"
+                ? t(`cases.status.${incident.status}`)
+                : t(`cases.operatorAction.${incident.operator_action}`)}
             </Badge>
             <Badge variant="outline">{t(`cases.severity.${incident.severity}`)}</Badge>
           </div>
