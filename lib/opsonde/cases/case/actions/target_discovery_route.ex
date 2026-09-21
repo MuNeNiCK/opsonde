@@ -89,16 +89,65 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
   end
 
   defp start_next_turn(turn, incident, run, context) do
-    Cases.start_turn(
-      incident.id,
-      run.id,
-      route_key(turn, "next-turn"),
-      Map.put(context, "objective", "Continue resolution with the accepted Target discovery"),
-      %{"action" => "continue_resolution", "source_turn_id" => turn.id},
-      "Review Resolver limits or continue the Case manually",
-      authorize?: false
-    )
+    with {:ok, result} <-
+           Cases.start_turn(
+             incident.id,
+             run.id,
+             route_key(turn, "next-turn"),
+             Map.put(
+               context,
+               "objective",
+               "Continue resolution with the accepted Target discovery"
+             ),
+             %{"action" => "continue_resolution", "source_turn_id" => turn.id},
+             "Review Resolver limits or continue the Case manually",
+             authorize?: false
+           ) do
+      set_pending_turn(result, turn.id)
+    end
   end
+
+  defp set_pending_turn(%{status: :exhausted} = result, _source_turn_id),
+    do: {:ok, result}
+
+  defp set_pending_turn(
+         %{status: status, case: incident, value: next_turn} = result,
+         source_turn_id
+       )
+       when status in [:charged, :duplicate] do
+    pending = %{
+      "action" => "resolve_turn",
+      "turn_id" => next_turn.id,
+      "source_turn_id" => source_turn_id
+    }
+
+    if incident.pending_intent == pending do
+      {:ok, result}
+    else
+      with :ok <- available_pending_turn(incident.pending_intent, source_turn_id),
+           {:ok, _updated} <-
+             Cases.update_case_record(
+               incident,
+               incident.revision,
+               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               authorize?: false
+             ) do
+        {:ok, result}
+      end
+    end
+  end
+
+  defp available_pending_turn(current, _source_turn_id) when map_size(current) == 0, do: :ok
+
+  defp available_pending_turn(
+         %{"action" => action, "turn_id" => source_turn_id},
+         source_turn_id
+       )
+       when action in ["resolve_turn", "route_resolver_decision"],
+       do: :ok
+
+  defp available_pending_turn(_current, _source_turn_id),
+    do: {:error, "Case already has another pending decision"}
 
   defp action_value({:ok, value}), do: value
   defp action_value({:error, _error} = error), do: error

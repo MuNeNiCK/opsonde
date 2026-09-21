@@ -33,6 +33,12 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     assert routed.value.ordinal == 2
     assert routed.value.intent["source"] == "target_search"
 
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
+             "action" => "resolve_turn",
+             "source_turn_id" => source_turn.id,
+             "turn_id" => routed.value.id
+           }
+
     assert {:ok, replayed} = Cases.route_target_discovery(source_turn.id, authorize?: false)
     assert replayed.status == :duplicate
     assert replayed.value.id == routed.value.id
@@ -88,6 +94,9 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     selected = Cases.get_case!(incident.id, authorize?: false)
     assert selected.selected_target_id == context.target.id
     assert selected.selected_target_revision == context.target.revision
+    assert selected.pending_intent["action"] == "resolve_turn"
+    assert selected.pending_intent["source_turn_id"] == source_turn.id
+    assert selected.pending_intent["turn_id"] == routed.value.id
 
     assert {:ok, replayed} = Cases.route_target_discovery(source_turn.id, authorize?: false)
     assert replayed.status == :duplicate
@@ -96,6 +105,68 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     events = Cases.list_case_events!(actor: context.admin)
     assert Enum.count(events, &(&1.event_type == "case_target_selected")) == 1
     assert Targets.list_external_identities!(actor: context.admin) == []
+  end
+
+  test "search and selection hand the current Turn to downstream routing", context do
+    {incident, _run, search_turn} =
+      completed_turn!("discovery-chain", context.operator, search_intent())
+
+    searched = Cases.route_target_discovery!(search_turn.id, authorize?: false)
+
+    selection_turn =
+      Cases.complete_turn!(
+        searched.value.id,
+        searched.value.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => %{
+            "type" => "target_selection",
+            "target_id" => context.target.id,
+            "target_revision" => context.target.revision,
+            "evidence_ids" => [searched.value.intent["evidence_id"]],
+            "reason" => "The discovered Target matches the incident"
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :hypothesis,
+        %{"action" => "route_resolver_decision", "turn_id" => searched.value.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    selected = Cases.route_target_discovery!(selection_turn.id, authorize?: false)
+
+    downstream_turn =
+      Cases.complete_turn!(
+        selected.value.id,
+        selected.value.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => %{
+            "type" => "handoff",
+            "reason" => "A real operator decision is required",
+            "required_input" => "Choose a maintenance window"
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :human_input,
+        %{"action" => "route_resolver_decision", "turn_id" => selected.value.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert {:ok, routed} = Cases.route_downstream_decision(downstream_turn.id, authorize?: false)
+    assert routed.status == :needs_attention
+    assert routed.stop_reason == "A real operator decision is required"
+    refute routed.stop_reason == "Resolver decision routing failed"
+
+    assert routed.pending_intent == %{
+             "action" => "provide_human_input",
+             "source_turn_id" => downstream_turn.id
+           }
+
+    assert Cases.get_resolution_run!(selected.run.id, authorize?: false).turn_count == 3
+    assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.target.id
   end
 
   test "stale selection and non-discovery results fail without a next Turn", context do
@@ -143,6 +214,27 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
       })
 
     assert {:error, _error} = Cases.route_target_discovery(other_turn.id, authorize?: false)
+  end
+
+  test "unrelated pending work rejects discovery without partial progress", context do
+    {incident, run, source_turn} =
+      completed_turn!("pending-conflict", context.operator, search_intent())
+
+    Cases.update_case_record!(
+      incident,
+      incident.revision,
+      %{
+        pending_intent: %{
+          "action" => "resolve_turn",
+          "turn_id" => Ash.UUID.generate()
+        }
+      },
+      authorize?: false
+    )
+
+    assert {:error, _error} = Cases.route_target_discovery(source_turn.id, authorize?: false)
+    assert Cases.get_resolution_run!(run.id, authorize?: false).turn_count == 1
+    assert Cases.list_evidence!(actor: context.admin) == []
   end
 
   defp completed_turn!(source_ref, actor, intent) do
