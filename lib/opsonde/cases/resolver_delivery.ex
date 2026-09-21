@@ -464,7 +464,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
     }
   end
 
-  defp tool_snapshot(tool) do
+  defp tool_snapshot(%AI.ProposalTool{} = tool) do
+    tool
+    |> common_tool_snapshot()
+    |> Map.put("request_kind", to_string(tool.request_kind))
+  end
+
+  defp tool_snapshot(tool), do: common_tool_snapshot(tool)
+
+  defp common_tool_snapshot(tool) do
     %{
       "id" => tool.id,
       "target_id" => tool.target_id,

@@ -459,6 +459,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert observation_intent["tool"]["access_method_revision"] == method.revision
     assert observation_intent["tool"]["provider_id"] == method.provider_id
     assert observation_intent["tool"]["provider_revision"] == method.provider_revision
+    assert observation_intent["tool"]["request_kind"] == "observation"
     assert observation_intent["tool"]["capability"] == "observe.system"
     assert observation_intent["tool"]["operation"] == "system.inspect"
 
@@ -552,6 +553,7 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert proposal_intent["tool"]["provider_id"] == method.provider_id
     assert proposal_intent["tool"]["provider_revision"] == method.provider_revision
+    assert proposal_intent["tool"]["request_kind"] == "effect"
 
     assert proposal_intent["verification_intent"]["selectors"] == %{
              "service" => "api"
