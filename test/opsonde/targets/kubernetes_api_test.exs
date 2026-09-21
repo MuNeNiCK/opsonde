@@ -13,7 +13,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     "observe.workload",
     "observe.logs",
     "observe.events",
-    "effect.workload"
+    "effect.workload",
+    "native.kubernetes_api"
   ]
 
   defmodule KubernetesStub do
@@ -104,6 +105,17 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       conn
       |> put_resp_content_type("text/plain")
       |> send_resp(200, "line one\nline two\n")
+    end
+
+    defp route(
+           %{
+             method: "GET",
+             request_path: "/api/v1/namespaces/#{@namespace}/pods/pod-one"
+           } = conn,
+           _agent,
+           _request
+         ) do
+      json(conn, 200, pod("pod-one", "22"))
     end
 
     defp route(
@@ -342,6 +354,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     tools = Map.new(observations, &{&1.operation, &1})
     deployment_tool = tools["kubernetes.deployment.inspect"]
+    native_tool = tools["request.observe"]
 
     assert Map.keys(deployment_tool.verification_schema["properties"]) == ["replicas"]
     assert deployment_tool.verification_schema["required"] == ["replicas"]
@@ -355,6 +368,24 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert_schema_rejects!(deployment_tool.verification_schema, %{
       "replicas" => 1,
       "available_replicas" => 1
+    })
+
+    native_parameters = %{
+      "action" => "get",
+      "api_version" => "v1",
+      "kind" => "Pod",
+      "name" => "pod-one",
+      "query" => %{"pretty" => "true"}
+    }
+
+    assert_schema_accepts!(native_tool.input_schema, %{
+      "selectors" => %{},
+      "parameters" => native_parameters
+    })
+
+    assert_schema_rejects!(native_tool.input_schema, %{
+      "selectors" => %{},
+      "parameters" => put_in(native_parameters, ["query"], %{"namespace" => @namespace})
     })
 
     [effect, native_effect] = effects
@@ -423,6 +454,11 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     assert_schema_accepts!(deployment_tool.output_schema, deployment.facts)
 
+    native =
+      observe!(context, "native.kubernetes_api", "request.observe", %{}, native_parameters)
+
+    assert %{"response" => %{"metadata" => %{"name" => "pod-one"}}} = native.facts
+
     assert Enum.all?(requests(context), fn request ->
              request.authorized? and
                (request.path in ["/api/v1", "/apis/apps/v1"] or
@@ -435,6 +471,45 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     watch_request = Enum.find(requests(context), &(&1.query["watch"] in ["1", "true"]))
     assert watch_request.query["labelSelector"] == "app=fixture"
+
+    native_request =
+      Enum.find(requests(context), fn request ->
+        request.path == "/api/v1/namespaces/#{@namespace}/pods/pod-one"
+      end)
+
+    assert native_request.query == %{"pretty" => "true"}
+  end
+
+  test "native observation rejects path scope and unknown query keys without dispatch", context do
+    request_count = length(requests(context))
+
+    for query <- [%{"namespace" => @namespace}, %{"unknown" => "value"}] do
+      request =
+        policy_request(
+          context,
+          :observation,
+          "native.kubernetes_api",
+          "request.observe",
+          %{},
+          %{
+            "action" => "get",
+            "api_version" => "v1",
+            "kind" => "Pod",
+            "name" => "pod-one",
+            "query" => query
+          }
+        )
+
+      clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+      assert {:error, error} =
+               Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+
+      assert %Target.Error{category: :failed, message: "Kubernetes API request is invalid"} =
+               target_error(error)
+    end
+
+    assert length(requests(context)) == request_count
   end
 
   test "approved scale is preconditioned and followed by fresh verification", context do

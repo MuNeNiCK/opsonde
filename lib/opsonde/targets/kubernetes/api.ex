@@ -10,6 +10,15 @@ defmodule Opsonde.Targets.Kubernetes.API do
   @credential_keys ~w(kubeconfig)
   @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
   @native "native.kubernetes_api"
+  @native_observation_query_keys %{
+    "continue" => :continue,
+    "fieldSelector" => :fieldSelector,
+    "limit" => :limit,
+    "pretty" => :pretty,
+    "resourceVersion" => :resourceVersion,
+    "resourceVersionMatch" => :resourceVersionMatch,
+    "timeoutSeconds" => :timeoutSeconds
+  }
 
   defmodule State do
     @moduledoc false
@@ -310,6 +319,8 @@ defmodule Opsonde.Targets.Kubernetes.API do
       false -> invalid_request()
       {:error, _category, _message} = error -> error
     end
+  rescue
+    _error -> invalid_request()
   end
 
   defp native_effect_operation(state, request) do
@@ -334,6 +345,8 @@ defmodule Opsonde.Targets.Kubernetes.API do
           invalid_request()
       end
     end
+  rescue
+    _error -> invalid_request()
   end
 
   defp native_read_operation(state, "get", api_version, kind, name) when is_binary(name),
@@ -344,7 +357,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   defp native_read_operation(_state, _action, _api_version, _kind, _name), do: invalid_request()
 
-  defp add_query(operation, query) do
+  defp add_query(operation, query) when is_list(query) do
     Enum.reduce(query, operation, fn {key, value}, current ->
       K8s.Operation.put_query_param(current, key, value)
     end)
@@ -368,13 +381,15 @@ defmodule Opsonde.Targets.Kubernetes.API do
         query = Map.get(parameters, "query", %{})
         body = Map.get(parameters, "body")
 
-        if byte_size(api_version) in 1..120 and byte_size(kind) in 1..120 and
-             (is_nil(name) or (is_binary(name) and Regex.match?(@name_pattern, name))) and
-             is_map(query) and
-             Enum.all?(query, fn {key, value} -> is_binary(key) and is_binary(value) end) and
-             (is_nil(body) or is_map(body)),
-           do: {:ok, action, api_version, kind, name, query, body},
-           else: invalid_request()
+        with true <- byte_size(api_version) in 1..120,
+             true <- byte_size(kind) in 1..120,
+             true <- is_nil(name) or (is_binary(name) and Regex.match?(@name_pattern, name)),
+             {:ok, query} <- native_query(operation, query),
+             true <- is_nil(body) or is_map(body) do
+          {:ok, action, api_version, kind, name, query, body}
+        else
+          _invalid -> invalid_request()
+        end
 
       _request ->
         invalid_request()
@@ -393,7 +408,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
       capability: @native,
       operation: "request.observe",
       description: "Run one exact Kubernetes get or list request",
-      input_schema: native_schema(["get", "list"]),
+      input_schema: native_schema(["get", "list"], @native_observation_query_keys),
       output_schema: output,
       verification_schema: Map.put(output, "minProperties", 1),
       native?: true
@@ -404,14 +419,14 @@ defmodule Opsonde.Targets.Kubernetes.API do
       operation: "request.execute",
       description:
         "Run one exact Kubernetes create, update, patch, or delete request after review",
-      input_schema: native_schema(["create", "update", "patch", "delete"]),
+      input_schema: native_schema(["create", "update", "patch", "delete"], %{}),
       native?: true
     }
 
     {observation, effect}
   end
 
-  defp native_schema(actions) do
+  defp native_schema(actions, query_keys) do
     %{
       "type" => "object",
       "properties" => %{
@@ -425,7 +440,13 @@ defmodule Opsonde.Targets.Kubernetes.API do
             "name" => %{"type" => ["string", "null"], "maxLength" => 253},
             "query" => %{
               "type" => "object",
-              "additionalProperties" => %{"type" => "string", "maxLength" => 2_048}
+              "description" =>
+                "Optional Kubernetes query parameters; namespace is fixed by the Access Method",
+              "properties" =>
+                Map.new(query_keys, fn {key, _atom} ->
+                  {key, %{"type" => "string", "maxLength" => 2_048}}
+                end),
+              "additionalProperties" => false
             },
             "body" => %{"type" => ["object", "null"]}
           },
@@ -437,6 +458,23 @@ defmodule Opsonde.Targets.Kubernetes.API do
       "additionalProperties" => false
     }
   end
+
+  defp native_query("request.observe", query) when is_map(query) do
+    Enum.reduce_while(query, {:ok, []}, fn {key, value}, {:ok, normalized} ->
+      case {@native_observation_query_keys[key], value} do
+        {atom, value}
+        when not is_nil(atom) and is_atom(atom) and is_binary(value) and
+               byte_size(value) <= 2_048 ->
+          {:cont, {:ok, [{atom, value} | normalized]}}
+
+        _unsupported ->
+          {:halt, invalid_request()}
+      end
+    end)
+  end
+
+  defp native_query("request.execute", query) when query == %{}, do: {:ok, []}
+  defp native_query(_operation, _query), do: invalid_request()
 
   defp expected_status(_facts, expected) when expected == %{}, do: :unknown
 
