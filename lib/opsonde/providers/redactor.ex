@@ -2,6 +2,10 @@ defmodule Opsonde.Providers.Redactor do
   @moduledoc false
 
   @redacted "[REDACTED]"
+  @secret_keys ~w(
+    api_key authorization bearer client_secret community credential kubeconfig
+    password passphrase private_key secret signing_secret token
+  )
 
   def message(message, credentials) when is_binary(message) and is_map(credentials) do
     credentials
@@ -28,11 +32,28 @@ defmodule Opsonde.Providers.Redactor do
   def value(value, credentials) when is_binary(value), do: message(value, credentials)
   def value(value, _credentials), do: value
 
-  defp secret_strings(value) when is_map(value),
-    do: value |> Map.values() |> Enum.flat_map(&secret_strings/1)
+  defp secret_strings(value) when is_map(value) do
+    Enum.flat_map(value, fn {key, nested} ->
+      if secret_key?(key), do: scalar_strings(nested), else: secret_strings(nested)
+    end)
+  end
 
   defp secret_strings(value) when is_list(value), do: Enum.flat_map(value, &secret_strings/1)
-  defp secret_strings(value) when is_binary(value) and value != "", do: [value]
-  defp secret_strings(value) when is_integer(value) or is_float(value), do: [to_string(value)]
   defp secret_strings(_value), do: []
+
+  defp scalar_strings(value) when is_map(value),
+    do: value |> Map.values() |> Enum.flat_map(&scalar_strings/1)
+
+  defp scalar_strings(value) when is_list(value), do: Enum.flat_map(value, &scalar_strings/1)
+  defp scalar_strings(value) when is_binary(value) and value != "", do: [value]
+  defp scalar_strings(value) when is_integer(value) or is_float(value), do: [to_string(value)]
+  defp scalar_strings(_value), do: []
+
+  defp secret_key?(key) do
+    normalized = key |> to_string() |> String.downcase()
+
+    Enum.any?(@secret_keys, fn secret ->
+      normalized == secret or String.ends_with?(normalized, "_#{secret}")
+    end)
+  end
 end

@@ -264,6 +264,13 @@ defmodule Opsonde.OperationDeliveryTest do
                "verify_operation"
 
       assert operation_evidence(operation.id) == 1
+
+      evidence = operation_evidence_record(operation.id)
+      assert evidence.content["request_kind"] == "effect"
+      assert evidence.content["capability"] == "effect.service"
+      assert evidence.content["operation"] == "service.restart"
+      assert evidence.content["selectors"] == %{"service" => "api"}
+      assert evidence.content["parameters"] == %{"service" => "api"}
     end
   end
 
@@ -285,6 +292,34 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     refute_receive {:effect, _, _}
+  end
+
+  test "failed observations persist the bounded Target error and exact request", context do
+    {incident, _run, proposal} =
+      authorized_proposal!("observation-failure", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation({:error, :failed, "service observation failed without a stack trace"})
+             )
+
+    assert_receive {:observe, _, _}
+    failed = Cases.get_operation!(operation.id, authorize?: false)
+    assert failed.status == :failed
+
+    assert failed.result_details == %{
+             "message" => "service observation failed without a stack trace"
+           }
+
+    evidence = operation_evidence_record(operation.id)
+    assert evidence.case_id == incident.id
+    assert evidence.content["request_kind"] == "observation"
+    assert evidence.content["operation"] == "service.inspect"
+    assert evidence.content["selectors"] == %{"service" => "api"}
+    assert evidence.content["details"] == failed.result_details
   end
 
   test "authorization changed after acceptance fails before Target dispatch", context do
@@ -1031,6 +1066,7 @@ defmodule Opsonde.OperationDeliveryTest do
   defp authorized_proposal!(suffix, context, opts \\ []) do
     trigger_kind = Keyword.get(opts, :trigger_kind, :manual)
     alert_state = Keyword.get(opts, :alert_state, :not_applicable)
+    request_kind = Keyword.get(opts, :request_kind, :effect)
 
     incident =
       Cases.open_case!(
@@ -1079,7 +1115,7 @@ defmodule Opsonde.OperationDeliveryTest do
         started.value.revision,
         %{
           "outcome" => "decision",
-          "intent" => proposal_intent(evidence.id, context),
+          "intent" => proposal_intent(evidence.id, context, request_kind),
           "resolver" => %{
             "provider_id" => context.resolver_provider.id,
             "provider_revision" => context.resolver_provider.revision,
@@ -1099,7 +1135,10 @@ defmodule Opsonde.OperationDeliveryTest do
     {incident, run, authorized}
   end
 
-  defp proposal_intent(evidence_id, context) do
+  defp proposal_intent(evidence_id, context),
+    do: proposal_intent(evidence_id, context, :effect)
+
+  defp proposal_intent(evidence_id, context, :effect) do
     tool = %{
       "request_kind" => "effect",
       "id" => "effect-tool",
@@ -1146,6 +1185,41 @@ defmodule Opsonde.OperationDeliveryTest do
         "capability" => "observe.service",
         "operation" => "service.inspect"
       }
+    }
+  end
+
+  defp proposal_intent(evidence_id, context, :observation) do
+    tool = %{
+      "request_kind" => "observation",
+      "id" => "observation-tool",
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "access_method_id" => context.method.id,
+      "access_method_revision" => context.method.revision,
+      "provider_id" => context.provider.id,
+      "provider_revision" => context.provider.revision,
+      "capability" => "observe.service",
+      "operation" => "service.inspect"
+    }
+
+    %{
+      "type" => "proposal",
+      "request_kind" => "observation",
+      "tool_id" => tool["id"],
+      "target_id" => tool["target_id"],
+      "target_revision" => tool["target_revision"],
+      "access_method_id" => tool["access_method_id"],
+      "access_method_revision" => tool["access_method_revision"],
+      "capability" => tool["capability"],
+      "operation" => tool["operation"],
+      "selectors" => %{"service" => "api"},
+      "parameters" => %{"service" => "api"},
+      "reason" => "Inspect the unhealthy API service",
+      "evidence_ids" => [evidence_id],
+      "expected_result" => %{},
+      "tool" => tool,
+      "verification_intent" => %{},
+      "verification_tool" => %{}
     }
   end
 
@@ -1228,6 +1302,14 @@ defmodule Opsonde.OperationDeliveryTest do
         where: evidence.idempotency_key == ^"operation:outcome:#{operation_id}"
       ),
       :count
+    )
+  end
+
+  defp operation_evidence_record(operation_id) do
+    Opsonde.Repo.one!(
+      from(evidence in Opsonde.Cases.Evidence,
+        where: evidence.idempotency_key == ^"operation:outcome:#{operation_id}"
+      )
     )
   end
 

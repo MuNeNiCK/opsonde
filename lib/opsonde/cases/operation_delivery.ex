@@ -107,12 +107,27 @@ defmodule Opsonde.Cases.OperationDelivery do
       status: :failed,
       category: "observation_failed",
       reference: nil,
-      details: %{"message" => Exception.message(error)}
+      details: %{"message" => observation_failure_message(error)}
     }
   rescue
     _error ->
       %{status: :failed, category: "observation_failed", reference: nil, details: %{}}
   end
+
+  defp observation_failure_message(%ProviderTarget.Error{message: message}), do: message
+
+  defp observation_failure_message(%{errors: errors}) when is_list(errors) do
+    Enum.find_value(errors, &target_error_message/1) || "Target observation failed"
+  end
+
+  defp observation_failure_message(error), do: Exception.message(error)
+
+  defp target_error_message(%ProviderTarget.Error{message: message}), do: message
+
+  defp target_error_message(%{errors: errors}) when is_list(errors),
+    do: Enum.find_value(errors, &target_error_message/1)
+
+  defp target_error_message(_error), do: nil
 
   defp unknown(category, message) do
     %{status: :unknown, category: category, reference: nil, details: %{"message" => message}}
@@ -262,6 +277,11 @@ defmodule Opsonde.Cases.OperationDelivery do
       "status" => to_string(operation.status),
       "category" => operation.outcome_category,
       "reference" => operation.reference,
+      "request_kind" => to_string(operation.request_kind),
+      "capability" => operation.capability,
+      "operation" => operation.operation,
+      "selectors" => operation.selectors,
+      "parameters" => operation.parameters,
       "details" => operation.result_details,
       "facts" => operation.result_details["facts"] || %{},
       "tool_id" => proposal.tool_id,

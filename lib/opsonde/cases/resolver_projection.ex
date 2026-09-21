@@ -517,6 +517,7 @@ defmodule Opsonde.Cases.ResolverProjection do
   defp generic_evidence(evidence, allowed_target_ids) do
     evidence
     |> Enum.reject(&candidate_evidence?/1)
+    |> compact_repeated_operations()
     |> Enum.map(fn item ->
       %AI.Evidence{
         id: item.id,
@@ -526,6 +527,45 @@ defmodule Opsonde.Cases.ResolverProjection do
       }
     end)
   end
+
+  defp compact_repeated_operations(evidence) do
+    {compacted, _signatures} =
+      Enum.reduce(evidence, {[], MapSet.new()}, fn item, {items, signatures} ->
+        case operation_signature(item) do
+          nil ->
+            {[item | items], signatures}
+
+          signature ->
+            if MapSet.member?(signatures, signature) do
+              {items, signatures}
+            else
+              {[item | items], MapSet.put(signatures, signature)}
+            end
+        end
+      end)
+
+    Enum.reverse(compacted)
+  end
+
+  defp operation_signature(%{
+         kind: kind,
+         content: %{
+           "request_kind" => request_kind,
+           "target_id" => target_id,
+           "access_method_id" => access_method_id,
+           "capability" => capability,
+           "operation" => operation,
+           "selectors" => selectors,
+           "parameters" => parameters
+         }
+       })
+       when kind in ["observation", "operation_outcome"] and is_binary(request_kind) and
+              is_binary(target_id) and is_binary(access_method_id) and is_binary(capability) and
+              is_binary(operation) and is_map(selectors) and is_map(parameters) do
+    {request_kind, target_id, access_method_id, capability, operation, selectors, parameters}
+  end
+
+  defp operation_signature(_evidence), do: nil
 
   defp evidence_target_id(
          %{content: %{"target_id" => target_id}},

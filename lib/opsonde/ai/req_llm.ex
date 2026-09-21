@@ -313,6 +313,11 @@ defmodule Opsonde.AI.ReqLLM do
         "tool is supplied, choose that observation request before handoff. Select the narrowest " <>
         "request whose output directly examines the unresolved condition. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
+        "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
+        "When a current-Target observation can identify the failing dependency, observe it before " <>
+        "traversal unless supplied Evidence already identifies the exact downstream resource. " <>
+        "After a failed observation or one with no relevant facts, do not repeat the same operation " <>
+        "with identical selectors and parameters; choose a materially different observation. " <>
         "Choose handoff only when no offered intent can make safe progress and a required value " <>
         "is absent from the supplied input. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>

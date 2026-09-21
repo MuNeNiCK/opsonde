@@ -676,18 +676,18 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "malformed output, deadline, and caller cancellation stay typed", context do
-    state = state!("ollama", context.endpoint <> "/v1", %{}, %{"timeout_ms" => 100})
+    state = state!("ollama", context.endpoint <> "/v1", %{}, %{"timeout_ms" => 500})
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
 
-    set_mode(context.agent, {:sleep, 500})
+    set_mode(context.agent, {:sleep, 1_000})
     assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
 
     cancellation =
       start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
 
-    set_mode(context.agent, {:sleep, 500})
+    set_mode(context.agent, {:sleep, 1_000})
 
     cancelled? = fn ->
       Agent.get_and_update(cancellation, fn count -> {count >= 1, count + 1} end)

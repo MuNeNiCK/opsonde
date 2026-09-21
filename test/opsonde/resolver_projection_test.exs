@@ -324,6 +324,55 @@ defmodule Opsonde.ResolverProjectionTest do
     assert :ok = AI.Validator.validate_request(:resolve, request)
   end
 
+  test "projection keeps only the latest result of an identical Target request", context do
+    {incident, run} = open!("repeated-observation", context.operator, context.target)
+    now = DateTime.utc_now()
+
+    evidence = fn key, selectors, observed_at ->
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        key,
+        "observation",
+        "operation",
+        key,
+        %{
+          "request_kind" => "observation",
+          "target_id" => context.target.id,
+          "access_method_id" => context.method.id,
+          "capability" => "observe.service",
+          "operation" => "service.inspect",
+          "selectors" => selectors,
+          "parameters" => %{},
+          "status" => "failed"
+        },
+        observed_at,
+        authorize?: false
+      )
+    end
+
+    older = evidence.("same-request-older", %{"unit" => "api.service"}, DateTime.add(now, -2))
+    newest = evidence.("same-request-newest", %{"unit" => "api.service"}, now)
+
+    different =
+      evidence.("different-request", %{"unit" => "worker.service"}, DateTime.add(now, -1))
+
+    started = start!(incident, run, "repeated-observation-turn")
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               started.value.id,
+               selection(),
+               invocation(%Target.Capabilities{observations: [], effects: []})
+             )
+
+    evidence_ids = Enum.map(request.evidence, & &1.id)
+    assert newest.id in evidence_ids
+    assert different.id in evidence_ids
+    refute older.id in evidence_ids
+  end
+
   test "inactive methods and disabled Providers are never exposed as tools", context do
     {method_case, method_run} = open!("inactive-method", context.operator, context.target)
     method_turn = start!(method_case, method_run, "inactive-method-turn")
