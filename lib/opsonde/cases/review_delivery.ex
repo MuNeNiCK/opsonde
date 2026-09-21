@@ -318,7 +318,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
     end
   end
 
-  defp persist_interruption(proposal, _selection, invocation, _opts) do
+  defp persist_interruption(proposal, _selection, invocation, opts) do
     reason =
       "Reviewer response is unknown after dispatch; #{invocation.reserved_units} AI usage units were reserved"
 
@@ -336,7 +336,12 @@ defmodule Opsonde.Cases.ReviewDelivery do
            ) do
       case charged.status do
         status when status in [:charged, :duplicate] ->
-          stop_delivery(proposal, "response_unknown", reason)
+          if retry_available?(opts) do
+            {:error,
+             "Reviewer response was lost on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
+          else
+            stop_delivery(proposal, "response_unknown", reason)
+          end
 
         :exhausted ->
           :ok

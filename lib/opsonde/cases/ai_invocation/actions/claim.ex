@@ -2,6 +2,8 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
+  @max_reservation 65_536
+
   alias Opsonde.Cases
 
   alias Opsonde.Cases.{
@@ -44,7 +46,7 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
         provider_revision: arguments.provider_revision,
         assignment_revision: arguments.assignment_revision,
         selection_source: arguments.selection_source,
-        reserved_units: remaining,
+        reserved_units: min(remaining, @max_reservation),
         dispatch_started_at: DateTime.utc_now()
       }
 
@@ -137,14 +139,14 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   defp unresolved_invocation(%{role: :resolver, turn_id: turn_id}) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(turn_id == ^turn_id and status in [:dispatching, :unknown])
+    |> Ash.Query.filter(turn_id == ^turn_id and status == :dispatching)
     |> unresolved_invocation()
   end
 
   defp unresolved_invocation(%{role: :reviewer, proposal_id: proposal_id}) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(proposal_id == ^proposal_id and status in [:dispatching, :unknown])
+    |> Ash.Query.filter(proposal_id == ^proposal_id and status == :dispatching)
     |> unresolved_invocation()
   end
 

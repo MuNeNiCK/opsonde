@@ -653,7 +653,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "an interrupted Reviewer dispatch is reserved and stops without an approval request",
+  test "an interrupted Reviewer dispatch retries without a human approval request",
        context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("review-interrupted", context)
@@ -663,6 +663,8 @@ defmodule Opsonde.ProposalAuthorityTest do
     task =
       Task.async(fn ->
         ReviewDelivery.run(reviewing.id,
+          delivery_attempt: 1,
+          max_delivery_attempts: 3,
           ai_invocation: %{
             test_pid: parent,
             respond: fn _request ->
@@ -681,13 +683,17 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert dispatching.role == :reviewer
     assert dispatching.status == :dispatching
 
-    assert :ok =
+    assert {:error, retry_reason} =
              ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 2,
+               max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn _request -> flunk("interrupted Reviewer called AI again") end
                }
              )
+
+    assert retry_reason == "Reviewer response was lost on attempt 2 of 3"
 
     refute_receive {:review, _, _}
 
@@ -695,26 +701,42 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert unknown.id == dispatching.id
     assert unknown.status == :unknown
     assert unknown.category == "response_unknown"
+    assert unknown.reserved_units == 65_536
 
     assert Cases.list_review_decisions!(actor: context.admin) == []
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
              unknown.reserved_units
 
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    assert pending["action"] == "restore_reviewer_delivery"
-    assert pending["proposal_id"] == proposal.id
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
 
+    response = %AI.ReviewDecision{
+      verdict: :approved,
+      reason: "The bounded retry recovered the independent review",
+      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+    }
+
     assert :ok =
              ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 3,
+               max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),
-                 respond: fn _request -> flunk("unknown Reviewer called AI again") end
+                 respond: fn _request -> {:ok, response} end
                }
              )
+
+    assert_receive {:review, _, _}
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+    assert [%{verdict: :approved}] = Cases.list_review_decisions!(actor: context.admin)
+    assert [%{source: :reviewer}] = Cases.list_approvals!(actor: context.admin)
+
+    records = Cases.list_ai_invocations!(authorize?: false)
+    assert Enum.count(records, &(&1.status == :unknown)) == 1
+    assert Enum.count(records, &(&1.status == :completed)) == 1
 
     events = Cases.list_case_events!(actor: context.admin)
 

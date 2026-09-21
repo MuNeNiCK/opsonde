@@ -509,8 +509,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp handle_interruption(turn, invocation) do
-    reason = "Resolver response is unknown after dispatch"
-    intent = %{"action" => "review_resolver_response", "turn_id" => turn.id}
+    reason = "Resolver response was lost after dispatch; retrying autonomously"
+    intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
       with {:ok, usage_result} <-
@@ -519,42 +519,53 @@ defmodule Opsonde.Cases.ResolverDelivery do
                invocation.reserved_units,
                "resolver-unknown:#{invocation.id}"
              ),
-           true <-
-             usage_result.status in [:charged, :duplicate] ||
-               {:error, "AI usage reservation could not be charged"},
-           {:ok, completed} <-
-             Cases.complete_turn(
-               turn.id,
-               turn.revision,
-               %{
-                 "outcome" => "delivery_unknown",
-                 "category" => "response_unknown",
-                 "message" => reason,
-                 "reserved_usage_units" => invocation.reserved_units
-               },
-               :human_input,
-               intent,
-               "Review the unknown Resolver response before retrying",
-               authorize?: false
-             ),
-           {:ok, incident} <-
-             Cases.require_case_attention(
-               turn.case_id,
-               completed.case.revision,
-               turn.resolution_run_id,
-               completed.run.revision,
-               "resolver-unknown:#{invocation.id}",
-               reason,
-               intent,
-               "Review the unknown Resolver response before retrying",
-               authorize?: false
-             ) do
-        incident
+           {:ok, result} <- retry_interrupted(turn, invocation, usage_result, intent, reason) do
+        result
       end
     end)
     |> case do
       {:ok, _incident} -> :ok
       {:error, error} -> if(turn_completed?(turn.id), do: :ok, else: {:error, error})
+    end
+  end
+
+  defp retry_interrupted(_turn, _invocation, %{status: :exhausted} = result, _intent, _reason),
+    do: {:ok, result}
+
+  defp retry_interrupted(turn, invocation, %{status: status}, intent, reason)
+       when status in [:charged, :duplicate] do
+    with {:ok, completed} <-
+           Cases.complete_turn(
+             turn.id,
+             turn.revision,
+             %{
+               "outcome" => "delivery_unknown",
+               "category" => "response_unknown",
+               "message" => reason,
+               "reserved_usage_units" => invocation.reserved_units
+             },
+             :none,
+             intent,
+             "Continue autonomous resolution after the lost Resolver response",
+             authorize?: false
+           ),
+         {:ok, next_turn} <-
+           Cases.start_turn(
+             turn.case_id,
+             turn.resolution_run_id,
+             "resolver:response-unknown:#{invocation.id}",
+             %{
+               "objective" => "Continue resolution after a lost Resolver response",
+               "source" => "resolver_delivery_interruption",
+               "source_turn_id" => turn.id,
+               "ai_invocation_id" => invocation.id
+             },
+             intent,
+             "Continue autonomous resolution after the lost Resolver response",
+             authorize?: false
+           ),
+         {:ok, next_turn} <- set_retry_pending(next_turn, turn.id) do
+      {:ok, %{completed: completed, next_turn: next_turn}}
     end
   end
 
@@ -581,7 +592,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp persist_failure(turn, invocation, category, message, rejection_code) do
-    if category == "invalid_output" do
+    if retryable_failure?(category) do
       persist_retryable_failure(turn, invocation, category, message, rejection_code)
     else
       persist_attention_failure(turn, invocation, category, message)
@@ -616,9 +627,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
              Cases.start_turn(
                turn.case_id,
                turn.resolution_run_id,
-               "resolver:invalid-output:#{turn.id}",
+               "resolver:delivery-retry:#{turn.id}",
                %{
-                 "objective" => "Continue resolution after an invalid Resolver response",
+                 "objective" => "Continue resolution after a retryable Resolver delivery failure",
                  "source" => "resolver_delivery_failure",
                  "source_turn_id" => turn.id,
                  "category" => category
@@ -632,6 +643,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
       end
     end)
   end
+
+  defp retryable_failure?(category),
+    do: category in ["timeout", "unreachable", "rate_limited", "invalid_output", "failed"]
 
   defp set_retry_pending(%{status: :exhausted} = result, _source_turn_id), do: {:ok, result}
 

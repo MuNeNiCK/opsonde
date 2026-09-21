@@ -116,7 +116,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
-  test "known timeout persists a handoff without usage charge", context do
+  test "known timeout starts a bounded autonomous successor without usage charge", context do
     {incident, run, turn} = turn!("timeout", context.operator)
 
     assert :ok =
@@ -134,14 +134,24 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.result["outcome"] == "delivery_failed"
     assert completed.result["category"] == "timeout"
 
-    attention = Cases.get_case!(incident.id, authorize?: false)
-    assert attention.status == :needs_attention
-    assert attention.pending_intent == %{"action" => "retry_resolver", "turn_id" => turn.id}
-    assert attention.stop_reason =~ "timeout"
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
 
-    paused = Cases.get_resolution_run!(run.id, authorize?: false)
-    assert paused.status == :needs_attention
-    assert paused.ai_usage_units == 0
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+    assert current.stop_reason == nil
+    assert current.required_human_input == nil
+
+    assert current.pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => successor.id,
+             "source_turn_id" => turn.id
+           }
+
+    active = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert active.status == :running
+    assert active.ai_usage_units == 0
 
     record =
       Cases.list_ai_invocations!(authorize?: false)
@@ -176,7 +186,7 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert successor.intent == %{
              "category" => "invalid_output",
-             "objective" => "Continue resolution after an invalid Resolver response",
+             "objective" => "Continue resolution after a retryable Resolver delivery failure",
              "source" => "resolver_delivery_failure",
              "source_turn_id" => turn.id
            }
@@ -212,7 +222,24 @@ defmodule Opsonde.ResolverDeliveryTest do
              2
   end
 
-  test "an interrupted dispatch becomes visible without a second AI call", context do
+  test "an interrupted dispatch starts one bounded autonomous successor", context do
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      200_000,
+      current.max_no_progress_turns,
+      "allow a bounded interrupted invocation retry",
+      actor: context.admin
+    )
+
     incident =
       Cases.open_case!(
         :signal,
@@ -253,7 +280,7 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     [dispatching] = Cases.list_ai_invocations!(authorize?: false)
     assert dispatching.status == :dispatching
-    assert dispatching.reserved_units == 10_000
+    assert dispatching.reserved_units == 65_536
 
     assert :ok =
              ResolverDelivery.run(turn.id,
@@ -273,17 +300,31 @@ defmodule Opsonde.ResolverDeliveryTest do
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.status == :completed
     assert completed.result["outcome"] == "delivery_unknown"
-    assert completed.result["reserved_usage_units"] == 10_000
+    assert completed.result["reserved_usage_units"] == 65_536
+    assert completed.progress_kind == :none
 
-    paused = Cases.get_case!(incident.id, authorize?: false)
-    assert paused.status == :needs_attention
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
 
-    assert paused.pending_intent == %{
-             "action" => "review_resolver_response",
-             "turn_id" => turn.id
+    assert successor.intent == %{
+             "ai_invocation_id" => unknown.id,
+             "objective" => "Continue resolution after a lost Resolver response",
+             "source" => "resolver_delivery_interruption",
+             "source_turn_id" => turn.id
            }
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10_000
+    running = Cases.get_case!(incident.id, authorize?: false)
+    assert running.status == :running
+    assert running.required_human_input == nil
+
+    assert running.pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => successor.id,
+             "source_turn_id" => turn.id
+           }
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_536
 
     assert :ok =
              ResolverDelivery.run(turn.id,
@@ -298,6 +339,9 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, fn event ->
              event.data["request_key"] == "resolver-unknown:#{unknown.id}"
            end) == 1
+
+    assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
+             2
   end
 
   test "a competing Turn completion still accounts for the later AI result", context do
