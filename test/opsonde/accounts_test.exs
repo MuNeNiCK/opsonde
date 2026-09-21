@@ -12,6 +12,7 @@ defmodule Opsonde.AccountsTest do
 
     assert admin.role == :admin
     assert admin.role_version == 1
+    assert admin.preferred_language == :en
     assert admin.hashed_password != @password
     assert String.starts_with?(admin.hashed_password, "$argon2")
 
@@ -100,6 +101,17 @@ defmodule Opsonde.AccountsTest do
     renewed = Accounts.sign_in!("operator@example.com", @password, authorize?: true)
     renewed_token = Ash.Resource.get_metadata(renewed, :token)
     assert authenticated_user(renewed_token).role == :viewer
+  end
+
+  test "each account controls its own preferred language" do
+    admin = bootstrap_admin!()
+    operator = Accounts.create_user!("operator@example.com", @password, :operator, actor: admin)
+
+    updated = Accounts.change_preferred_language!(operator, :ja, actor: operator)
+    assert updated.preferred_language == :ja
+
+    assert {:error, %Ash.Error.Forbidden{}} =
+             Accounts.change_preferred_language(admin, :ja, actor: operator)
   end
 
   defp bootstrap_admin! do

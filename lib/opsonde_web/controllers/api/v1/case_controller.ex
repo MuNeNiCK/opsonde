@@ -208,7 +208,7 @@ defmodule OpsondeWeb.API.V1.CaseController do
              input["alert_state"] || "not_applicable",
              input["initial_context"] || %{},
              input["initial_target_id"],
-             input["report_language"] || "en",
+             nil,
              actor: conn.assigns.current_user
            ) do
       Response.data(conn, WorkflowJSON.case_record(incident), :created)

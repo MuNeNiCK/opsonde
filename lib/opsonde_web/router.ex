@@ -34,6 +34,7 @@ defmodule OpsondeWeb.Router do
     get "/accounts", AccountController, :index
     post "/accounts", AccountController, :create
     patch "/accounts/:id/role", AccountController, :update_role
+    patch "/account/language", AccountController, :update_language
     get "/oidc/provider", OIDCController, :show_provider
     put "/oidc/provider", OIDCController, :configure_provider
     post "/oidc/link-requests", OIDCController, :create_link_request

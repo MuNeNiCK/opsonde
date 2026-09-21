@@ -121,6 +121,16 @@ defmodule Opsonde.Accounts.User do
       change atomic_update(:role_version, expr(role_version + 1))
       change Opsonde.Accounts.User.Changes.RevokeTokens
     end
+
+    update :change_preferred_language do
+      accept []
+
+      argument :preferred_language, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:en, :ja]]
+
+      change set_attribute(:preferred_language, arg(:preferred_language))
+    end
   end
 
   policies do
@@ -138,6 +148,10 @@ defmodule Opsonde.Accounts.User do
 
     policy action(:sign_in_with_password) do
       authorize_if always()
+    end
+
+    policy action(:change_preferred_language) do
+      authorize_if expr(id == ^actor(:id))
     end
 
     policy action_type(:read) do
@@ -170,6 +184,13 @@ defmodule Opsonde.Accounts.User do
       public? true
       default 1
       constraints min: 1
+    end
+
+    attribute :preferred_language, :atom do
+      allow_nil? false
+      public? true
+      default :en
+      constraints one_of: [:en, :ja]
     end
 
     attribute :bootstrap_marker, :string do

@@ -257,8 +257,11 @@ defmodule Opsonde.CaseLifecycleTest do
 
   test "attention and concurrent resume preserve history and create one new generation",
        context do
+    operator =
+      Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
+
     incident =
-      open_case!(:manual, "cli", "manual-resume", :not_applicable, context.operator, nil, :ja)
+      open_case!(:manual, "cli", "manual-resume", :not_applicable, operator)
 
     assert incident.report_language == :ja
     first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
@@ -452,8 +455,7 @@ defmodule Opsonde.CaseLifecycleTest do
          source_ref,
          alert_state,
          actor,
-         target_id \\ nil,
-         report_language \\ :en
+         target_id \\ nil
        ) do
     Cases.open_case!(
       kind,
@@ -464,7 +466,7 @@ defmodule Opsonde.CaseLifecycleTest do
       alert_state,
       %{"source_ref" => source_ref},
       target_id,
-      report_language,
+      :en,
       actor: actor,
       authorize?: not is_nil(actor)
     )

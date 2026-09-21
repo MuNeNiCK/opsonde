@@ -22,7 +22,8 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
                "id" => admin_id,
                "email" => "api-admin@example.com",
                "role" => "admin",
-               "role_version" => 1
+               "role_version" => 1,
+               "preferred_language" => "en"
              }
            } = json_response(bootstrap, 201)
 
@@ -49,6 +50,23 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
     assert_operation_response(current)
 
     assert is_binary(current_request_id(current))
+
+    language =
+      patch_json(
+        "/api/v1/account/language",
+        %{"account" => %{"preferred_language" => "ja"}},
+        token
+      )
+
+    assert %{"data" => %{"id" => ^admin_id, "preferred_language" => "ja"}} =
+             json_response(language, 200)
+
+    assert_operation_response(language)
+
+    persisted = get_json("/api/v1/session", token)
+
+    assert %{"data" => %{"account" => %{"preferred_language" => "ja"}}} =
+             json_response(persisted, 200)
 
     logout = delete_json("/api/v1/session", token)
     assert response(logout, 204) == ""

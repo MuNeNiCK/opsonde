@@ -18,6 +18,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:get, "/api/v1/accounts"},
     {:post, "/api/v1/accounts"},
     {:patch, "/api/v1/accounts/:id/role"},
+    {:patch, "/api/v1/account/language"},
     {:get, "/api/v1/oidc/provider"},
     {:put, "/api/v1/oidc/provider"},
     {:post, "/api/v1/oidc/link-requests"},

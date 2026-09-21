@@ -159,9 +159,7 @@ defmodule Opsonde.Cases.Case do
         allow_nil?: false,
         constraints: [one_of: [:firing, :not_applicable]]
 
-      argument :report_language, :atom,
-        allow_nil?: false,
-        constraints: [one_of: [:en, :ja]]
+      argument :report_language, :atom, constraints: [one_of: [:en, :ja]]
 
       argument :initial_context, :map, allow_nil?: false, default: %{}
       argument :initial_target_id, :uuid

@@ -9,6 +9,7 @@ import {
 } from "@/api/client";
 import { AuthenticationContext, type Account } from "@/auth/context";
 import type { components } from "@/api/schema";
+import i18n, { normalizeLocale, type SupportedLocale } from "@/i18n/config";
 
 type OIDCStatus = components["schemas"]["OIDCStatusResponse"]["data"];
 
@@ -110,6 +111,10 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (account) void i18n.changeLanguage(account.preferred_language);
+  }, [account]);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const { data } = apiData(
       await apiClient.POST("/api/v1/sessions", {
@@ -139,12 +144,19 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
 
   const bootstrap = useCallback(
     async (email: string, password: string, confirmation: string) => {
+      const preferredLanguage = normalizeLocale(i18n.resolvedLanguage);
       await apiClient.POST("/api/v1/accounts/bootstrap", {
         body: {
           account: { email, password, password_confirmation: confirmation },
         },
       });
       await signIn(email, password);
+      const { data } = apiData(
+        await apiClient.PATCH("/api/v1/account/language", {
+          body: { account: { preferred_language: preferredLanguage } },
+        }),
+      );
+      setAccount(data);
     },
     [signIn],
   );
@@ -158,6 +170,15 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const changePreferredLanguage = useCallback(async (language: SupportedLocale) => {
+    const { data } = apiData(
+      await apiClient.PATCH("/api/v1/account/language", {
+        body: { account: { preferred_language: language } },
+      }),
+    );
+    setAccount(data);
+  }, []);
+
   const value = useMemo(
     () => ({
       account,
@@ -167,9 +188,20 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
       signIn,
       signInWithOIDC,
       linkOIDC,
+      changePreferredLanguage,
       signOut,
     }),
-    [account, bootstrap, linkOIDC, loading, oidcStatus.enabled, signIn, signInWithOIDC, signOut],
+    [
+      account,
+      bootstrap,
+      changePreferredLanguage,
+      linkOIDC,
+      loading,
+      oidcStatus.enabled,
+      signIn,
+      signInWithOIDC,
+      signOut,
+    ],
   );
 
   return <AuthenticationContext.Provider value={value}>{children}</AuthenticationContext.Provider>;

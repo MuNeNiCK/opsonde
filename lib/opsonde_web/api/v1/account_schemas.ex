@@ -12,6 +12,7 @@ defmodule OpsondeWeb.API.V1.AccountSchemas do
       "BootstrapAccountRequest" => bootstrap_request(),
       "CreateAccountRequest" => create_account_request(),
       "UpdateAccountRoleRequest" => update_role_request(),
+      "UpdateAccountLanguageRequest" => update_language_request(),
       "CreateSessionRequest" => create_session_request(),
       "SessionResponse" => Schemas.data(session()),
       "CurrentSessionResponse" => Schemas.data(object(%{account: ref("Account")}, [:account])),
@@ -39,10 +40,11 @@ defmodule OpsondeWeb.API.V1.AccountSchemas do
         email: %Schema{type: :string, format: :email},
         role: %Schema{type: :string, enum: ~w(admin operator viewer)},
         role_version: positive_integer(),
+        preferred_language: %Schema{type: :string, enum: ~w(en ja)},
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      [:id, :email, :role, :role_version, :inserted_at, :updated_at],
+      [:id, :email, :role, :role_version, :preferred_language, :inserted_at, :updated_at],
       false
     )
   end
@@ -88,6 +90,19 @@ defmodule OpsondeWeb.API.V1.AccountSchemas do
           object(
             %{role: %Schema{type: :string, enum: ~w(admin operator viewer)}},
             [:role]
+          )
+      },
+      [:account]
+    )
+  end
+
+  defp update_language_request do
+    object(
+      %{
+        account:
+          object(
+            %{preferred_language: %Schema{type: :string, enum: ~w(en ja)}},
+            [:preferred_language]
           )
       },
       [:account]

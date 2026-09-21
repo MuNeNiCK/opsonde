@@ -7,6 +7,11 @@ defmodule Opsonde.Accounts do
       define :bootstrap, action: :bootstrap, args: [:email, :password, :password_confirmation]
       define :create_user, action: :create_user, args: [:email, :password, :role]
       define :change_role, action: :change_role, args: [:role]
+
+      define :change_preferred_language,
+        action: :change_preferred_language,
+        args: [:preferred_language]
+
       define :list_users, action: :page
       define :get_user, action: :read, get_by: [:id]
       define :sign_in, action: :sign_in_with_password, args: [:email, :password]

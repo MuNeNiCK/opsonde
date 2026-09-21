@@ -82,7 +82,10 @@ defmodule Opsonde.ResolverProjectionTest do
     other =
       Targets.create_target!("switch-01", "network", "ios-xe", %{}, nil, actor: context.admin)
 
-    {incident, run} = open!("selected", context.operator, context.target, :ja)
+    operator =
+      Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
+
+    {incident, run} = open!("selected", operator, context.target)
 
     signal =
       Cases.append_evidence!(
@@ -391,7 +394,7 @@ defmodule Opsonde.ResolverProjectionTest do
     refute_receive {:capabilities, _}
   end
 
-  defp open!(source_ref, actor, target \\ nil, report_language \\ :en) do
+  defp open!(source_ref, actor, target \\ nil) do
     incident =
       Cases.open_case!(
         :manual,
@@ -402,7 +405,7 @@ defmodule Opsonde.ResolverProjectionTest do
         :not_applicable,
         %{"symptom" => "service unavailable"},
         target && target.id,
-        report_language,
+        :en,
         actor: actor
       )
 

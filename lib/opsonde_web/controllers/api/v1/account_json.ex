@@ -7,6 +7,7 @@ defmodule OpsondeWeb.API.V1.AccountJSON do
       email: to_string(user.email),
       role: user.role,
       role_version: user.role_version,
+      preferred_language: user.preferred_language,
       inserted_at: user.inserted_at,
       updated_at: user.updated_at
     }

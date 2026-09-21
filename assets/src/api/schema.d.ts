@@ -1104,6 +1104,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/account/language": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update the current account language */
+        patch: operations["updatePreferredLanguage"];
+        trace?: never;
+    };
     "/api/v1/cases": {
         parameters: {
             query?: never;
@@ -1754,8 +1771,6 @@ export interface components {
                 };
                 /** Format: uuid */
                 initial_target_id?: string | null;
-                /** @enum {string} */
-                report_language?: "en" | "ja";
                 /** @enum {string} */
                 severity: "info" | "warning" | "error" | "critical";
                 source: string;
@@ -2553,6 +2568,8 @@ export interface components {
             /** Format: date-time */
             inserted_at: string;
             /** @enum {string} */
+            preferred_language: "en" | "ja";
+            /** @enum {string} */
             role: "admin" | "operator" | "viewer";
             role_version: number;
             /** Format: date-time */
@@ -2782,6 +2799,12 @@ export interface components {
         };
         CaseSnapshotResponse: {
             data: components["schemas"]["CaseSnapshot"];
+        };
+        UpdateAccountLanguageRequest: {
+            account: {
+                /** @enum {string} */
+                preferred_language: "en" | "ja";
+            };
         };
         SignalReceiptPage: {
             data: components["schemas"]["SignalReceipt"][];
@@ -8410,6 +8433,76 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updatePreferredLanguage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Language update */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountLanguageRequest"];
+            };
+        };
+        responses: {
+            /** @description Account updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

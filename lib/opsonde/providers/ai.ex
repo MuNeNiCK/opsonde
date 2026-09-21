@@ -319,6 +319,7 @@ defmodule Opsonde.Providers.AI do
       :resolver_session_id,
       :case_id,
       :objective,
+      :report_language,
       :policy_summary,
       :proposal,
       :source_evidence,

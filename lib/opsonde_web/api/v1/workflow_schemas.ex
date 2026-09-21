@@ -135,8 +135,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         severity: enum(~w(info warning error critical)),
         alert_state: enum(~w(firing not_applicable)),
         initial_context: map(),
-        initial_target_id: nullable_uuid(),
-        report_language: enum(~w(en ja))
+        initial_target_id: nullable_uuid()
       },
       ~w(trigger_kind source source_ref title severity)a
     )

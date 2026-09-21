@@ -17,6 +17,7 @@ defmodule Opsonde.Cases.ReviewProjection do
         resolver_session_id: "resolver:#{run.id}",
         case_id: incident.id,
         objective: objective(incident),
+        report_language: incident.report_language,
         policy_summary: policy_summary(proposal),
         proposal: review_proposal(proposal),
         source_evidence: source_evidence,

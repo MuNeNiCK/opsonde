@@ -307,7 +307,11 @@ defmodule Opsonde.ProposalAuthorityTest do
 
   test "Auto accepts one isolated assigned Reviewer decision and usage", context do
     configure_mode!(:auto, context.admin)
-    {incident, run, proposal} = proposal!("review-approved", context)
+
+    operator =
+      Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
+
+    {incident, run, proposal} = proposal!("review-approved", %{context | operator: operator})
 
     source_evidence =
       Cases.append_evidence!(
@@ -348,6 +352,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         assert event.data["assignment_id"] == context.reviewer_assignment.id
         assert request.session_id == "reviewer:#{proposal.id}"
         assert request.resolver_session_id == "resolver:#{run.id}"
+        assert request.report_language == :ja
         refute request.session_id == request.resolver_session_id
         assert request.proposal.tool_id == proposal.tool_id
         assert Enum.map(request.source_evidence, & &1.id) == [source_evidence.id]

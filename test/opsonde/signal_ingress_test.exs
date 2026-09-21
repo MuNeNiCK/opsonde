@@ -32,6 +32,7 @@ defmodule Opsonde.SignalIngressTest do
 
   test "authenticated firing resolves only an exact registered identity and starts one Case",
        context do
+    Accounts.change_preferred_language!(context.admin, :ja, actor: context.admin)
     enable_signal_automation!(context.admin)
 
     target = Targets.create_target!("linux-01", "host", "linux", %{}, nil, actor: context.admin)
@@ -70,6 +71,10 @@ defmodule Opsonde.SignalIngressTest do
     assert incident.title == "Disk errors"
     assert incident.severity == :critical
     assert incident.status == :running
+    assert incident.report_language == :ja
+
+    Accounts.change_preferred_language!(context.admin, :en, actor: context.admin)
+    assert Cases.get_case!(incident.id, actor: context.admin).report_language == :ja
 
     assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
     assert length(Signals.list_signal_events!(actor: context.admin)) == 1

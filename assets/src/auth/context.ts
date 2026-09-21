@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { components } from "@/api/schema";
+import type { SupportedLocale } from "@/i18n/config";
 
 export type Account = components["schemas"]["Account"];
 
@@ -11,6 +12,7 @@ export type Authentication = {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithOIDC: () => Promise<void>;
   linkOIDC: () => Promise<void>;
+  changePreferredLanguage: (language: SupportedLocale) => Promise<void>;
   signOut: () => Promise<void>;
 };
 

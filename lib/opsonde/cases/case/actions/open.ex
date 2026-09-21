@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.Case.Actions.Open do
   use Ash.Resource.Actions.Implementation
 
-  alias Opsonde.Cases
+  alias Opsonde.{Accounts, Cases}
   alias Opsonde.Cases.{AuthoritySetting, Case, CaseEvent, ResolutionRun}
   alias Opsonde.Targets
 
@@ -25,8 +25,10 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     result =
       Ash.transact([AuthoritySetting, Case, ResolutionRun, CaseEvent], fn ->
         with {:ok, setting} <- locked_current_setting(),
+             {:ok, report_language} <- report_language(arguments, setting, actor),
              now <- DateTime.utc_now(),
-             {:ok, incident} <- create_case_record(arguments, initial_target, setting, actor),
+             {:ok, incident} <-
+               create_case_record(arguments, initial_target, setting, actor, report_language),
              {:ok, run} <- create_run(incident, setting, now),
              {:ok, _event} <- create_opened_event(incident, run, actor, arguments) do
           incident
@@ -70,7 +72,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     end
   end
 
-  defp create_case_record(arguments, initial_target, setting, actor) do
+  defp create_case_record(arguments, initial_target, setting, actor, report_language) do
     {status, pending_intent, stop_reason, required_human_input} =
       initial_state(arguments, setting)
 
@@ -81,7 +83,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       title: arguments.title,
       severity: arguments.severity,
       alert_state: arguments.alert_state,
-      report_language: arguments.report_language,
+      report_language: report_language,
       status: status,
       initial_context: arguments.initial_context,
       authority_setting_id: setting.id,
@@ -202,4 +204,20 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   defp owner_id(:signal, %{signal_automation_enabled: true, changed_by_id: id}, _actor), do: id
   defp owner_id(:audit, %{changed_by_id: id}, _actor), do: id
   defp owner_id(_trigger_kind, _setting, actor), do: actor_id(actor)
+
+  defp report_language(%{trigger_kind: :signal}, setting, _actor),
+    do: preferred_language(setting.changed_by_id, :en)
+
+  defp report_language(%{trigger_kind: :manual}, _setting, %{id: user_id}),
+    do: preferred_language(user_id, :en)
+
+  defp report_language(arguments, _setting, _actor), do: {:ok, arguments.report_language}
+
+  defp preferred_language(nil, fallback), do: {:ok, fallback}
+
+  defp preferred_language(user_id, _fallback) do
+    with {:ok, user} <- Accounts.get_user(user_id, authorize?: false) do
+      {:ok, user.preferred_language}
+    end
+  end
 end

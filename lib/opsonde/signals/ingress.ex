@@ -213,7 +213,7 @@ defmodule Opsonde.Signals.Ingress do
             :firing,
             initial_context(event),
             target && target.id,
-            :en,
+            nil,
             authorize?: false
           )
 

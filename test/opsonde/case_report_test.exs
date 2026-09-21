@@ -20,7 +20,10 @@ defmodule Opsonde.CaseReportTest do
   end
 
   test "a terminal Case revision becomes one immutable localized Report", context do
-    incident = open!("ja-report", :ja, context.operator)
+    operator =
+      Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
+
+    incident = open!("ja-report", operator)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
     now = DateTime.utc_now()
 
@@ -138,7 +141,7 @@ defmodule Opsonde.CaseReportTest do
 
   test "English labels are fixed at Case open and a running Case stays unchanged on failure",
        context do
-    running = open!("running-report", :en, context.operator)
+    running = open!("running-report", context.operator)
 
     assert {:error, _error} =
              Reports.generate_report(running.id, running.revision, actor: context.operator)
@@ -166,7 +169,7 @@ defmodule Opsonde.CaseReportTest do
   end
 
   test "a final automatic Report failure is persisted without claiming completion", context do
-    incident = open!("failed-report", :en, context.operator)
+    incident = open!("failed-report", context.operator)
 
     assert {:error, _error} =
              GenerationWorker.perform(%Oban.Job{
@@ -233,7 +236,7 @@ defmodule Opsonde.CaseReportTest do
     assert content["verifications"] |> hd() |> Map.fetch!("status") == "unknown"
   end
 
-  defp open!(source_ref, language, actor) do
+  defp open!(source_ref, actor) do
     Cases.open_case!(
       :manual,
       "test",
@@ -243,7 +246,7 @@ defmodule Opsonde.CaseReportTest do
       :not_applicable,
       %{"source_ref" => source_ref},
       nil,
-      language,
+      :en,
       actor: actor
     )
   end

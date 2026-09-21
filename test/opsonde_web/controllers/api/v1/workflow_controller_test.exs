@@ -125,9 +125,19 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert %{"error" => %{"code" => "conflict"}} = json_response(stale_setting, 409)
 
+    language =
+      patch_json(
+        "/api/v1/account/language",
+        %{"account" => %{"preferred_language" => "ja"}},
+        context.operator_token
+      )
+
+    assert %{"data" => %{"preferred_language" => "ja"}} = json_response(language, 200)
+
     incident = open_case!(context.operator_token, "lifecycle-1")
     assert incident["status"] == "running"
     assert incident["authority_mode"] == "ask"
+    assert incident["report_language"] == "ja"
 
     cases = get_json("/api/v1/cases", context.viewer_token)
     assert %{"data" => [%{"id" => case_id}]} = json_response(cases, 200)
@@ -817,8 +827,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
             "title" => "Investigate #{source_ref}",
             "severity" => severity,
             "alert_state" => "not_applicable",
-            "initial_context" => %{},
-            "report_language" => "en"
+            "initial_context" => %{}
           }
         },
         token
@@ -851,6 +860,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   defp get_json(path, token), do: request(:get, path, nil, token)
   defp post_json(path, body, token), do: request(:post, path, body, token)
   defp put_json(path, body, token), do: request(:put, path, body, token)
+  defp patch_json(path, body, token), do: request(:patch, path, body, token)
 
   defp request(method, path, body, token) do
     build_json_conn(body)
@@ -861,6 +871,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   defp dispatch_request(conn, :get, path, _body), do: get(conn, path)
   defp dispatch_request(conn, :post, path, body), do: post(conn, path, body)
   defp dispatch_request(conn, :put, path, body), do: put(conn, path, body)
+  defp dispatch_request(conn, :patch, path, body), do: patch(conn, path, body)
 
   defp maybe_authorize(conn, nil), do: conn
   defp maybe_authorize(conn, token), do: put_req_header(conn, "authorization", "Bearer " <> token)

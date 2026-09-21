@@ -66,7 +66,7 @@ const navigation = [
 ] as const;
 
 export function AppShell() {
-  const { account, signOut } = useAuthentication();
+  const { account, changePreferredLanguage, signOut } = useAuthentication();
   const { t, i18n } = useTranslation();
   const { resolvedTheme, setTheme } = useTheme();
   const location = useLocation();
@@ -177,7 +177,7 @@ export function AppShell() {
                   <DropdownMenuItem
                     key={value}
                     closeOnClick
-                    onClick={() => void i18n.changeLanguage(value)}
+                    onClick={() => void changePreferredLanguage(value)}
                   >
                     {label}
                     {normalizeLocale(i18n.resolvedLanguage) === value && (

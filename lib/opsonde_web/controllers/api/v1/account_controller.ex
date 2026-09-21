@@ -75,6 +75,22 @@ defmodule OpsondeWeb.API.V1.AccountController do
           :internal_server_error
         ])
 
+  operation :update_language,
+    operation_id: "updatePreferredLanguage",
+    summary: "Update the current account language",
+    request_body:
+      {"Language update", "application/json", AccountSchemas.ref("UpdateAccountLanguageRequest"),
+       required: true},
+    responses:
+      [ok: {"Account updated", "application/json", AccountSchemas.ref("AccountResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   def bootstrap(
         conn,
         %{
@@ -120,4 +136,17 @@ defmodule OpsondeWeb.API.V1.AccountController do
   end
 
   def update_role(_conn, _params), do: {:error, :bad_request}
+
+  def update_language(conn, %{"account" => %{"preferred_language" => language}}) do
+    with {:ok, updated} <-
+           Accounts.change_preferred_language(
+             conn.assigns.current_user,
+             language,
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, AccountJSON.data(updated))
+    end
+  end
+
+  def update_language(_conn, _params), do: {:error, :bad_request}
 end

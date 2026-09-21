@@ -1007,6 +1007,7 @@ defmodule Opsonde.Providers.AITest do
       resolver_session_id: "resolver-session-1",
       case_id: "case-1",
       objective: "Restore service health",
+      report_language: :en,
       policy_summary: "Target policy permits this exact restart request",
       proposal: proposal(),
       source_evidence: [],

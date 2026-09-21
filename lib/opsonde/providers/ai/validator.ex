@@ -65,7 +65,8 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(request.provider_revision) and nonempty?(request.session_id) and
         nonempty?(request.resolver_session_id) and
         request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
-        nonempty?(request.objective) and nonempty?(request.policy_summary) and
+        nonempty?(request.objective) and request.report_language in [:en, :ja] and
+        nonempty?(request.policy_summary) and
         valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
         valid_review_proposal?(request.proposal, evidence_ids)
     else

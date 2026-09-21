@@ -537,6 +537,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert request.body =~ "proposal-tool"
     assert request.body =~ "authoritative-request-value"
     assert request.body =~ "may be truncated"
+    assert request.body =~ "Write the human-facing reason in the report_language"
+    assert %{"report_language" => "ja"} = reviewer_payload(request)
     refute request.body =~ "resolver-private-session"
     refute request.body =~ "observation_tools"
     refute request.body =~ "proposal_tools"
@@ -788,6 +790,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       resolver_session_id: "resolver-private-session",
       case_id: "case-1",
       objective: "Restore service health",
+      report_language: :ja,
       policy_summary: "No destructive action",
       proposal: proposal(),
       source_evidence: [
@@ -808,6 +811,13 @@ defmodule Opsonde.AI.ReqLLMTest do
       ],
       budget: budget()
     }
+  end
+
+  defp reviewer_payload(request) do
+    request.body
+    |> Jason.decode!()
+    |> get_in(["messages", Access.at(1), "content"])
+    |> Jason.decode!()
   end
 
   defp proposal do
