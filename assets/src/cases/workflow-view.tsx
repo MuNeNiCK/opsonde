@@ -6,48 +6,38 @@ import {
   CircleDashed,
   FileText,
   ListTree,
-  Search,
-  ShieldCheck,
-  Stethoscope,
-  Wrench,
+  Network,
+  Repeat2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  buildLog,
-  type LogEntry,
-  type StageKey,
-  type WorkflowLogInput,
-} from "@/cases/workflow-log";
+import type { components } from "@/api/schema";
+import { InvestigationMap } from "@/cases/investigation-map";
+import { buildLog, type LogEntry, type WorkflowLogInput } from "@/cases/workflow-log";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type StageState = "completed" | "current" | "attention" | "pending" | "skipped";
+type Target = components["schemas"]["Target"];
+type AccessMethod = components["schemas"]["AccessMethod"];
+type Props = WorkflowLogInput & { targets: Target[]; methods: AccessMethod[] };
+type PhaseState = "completed" | "current" | "attention" | "pending";
+type PhaseKey = "alert" | "resolution" | "report" | "complete";
+type Phase = { key: PhaseKey; icon: LucideIcon; state: PhaseState };
 
-type Props = WorkflowLogInput;
-
-type Stage = {
-  key: StageKey;
-  icon: LucideIcon;
-  state: StageState;
-};
-
-const stageDefinitions: Array<{ key: StageKey; icon: LucideIcon }> = [
+const phaseDefinitions: Array<Omit<Phase, "state">> = [
   { key: "alert", icon: BellRing },
-  { key: "investigate", icon: Search },
-  { key: "review", icon: ShieldCheck },
-  { key: "remediate", icon: Wrench },
-  { key: "verify", icon: Stethoscope },
+  { key: "resolution", icon: Repeat2 },
   { key: "report", icon: FileText },
   { key: "complete", icon: Check },
 ];
 
 export function CaseWorkflowView(props: Props) {
   const { t, i18n } = useTranslation();
-  const projection = projectWorkflow(props);
+  const phases = projectProgress(props);
   const log = buildLog(props, t);
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const logContainer = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
 
@@ -65,93 +55,110 @@ export function CaseWorkflowView(props: Props) {
     followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
   }
 
-  return (
-    <section className="space-y-4" aria-labelledby="case-workflow-title">
-      <div>
-        <h2 id="case-workflow-title" className="text-xl font-semibold">
-          {t("cases.workflow.title")}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t("cases.workflow.description")}</p>
-      </div>
+  function selectLog(id: string) {
+    followLatest.current = id === log.at(-1)?.id;
+    setSelectedLogId(id);
+  }
 
-      <Card>
-        <CardContent className="overflow-x-auto px-4 py-5 lg:px-6">
-          <ol className="grid min-w-[56rem] grid-cols-7" aria-label={t("cases.workflow.progress")}>
-            {projection.stages.map((stage, index) => (
-              <WorkflowStage
-                key={stage.key}
-                stage={stage}
+  return (
+    <section className="space-y-3" aria-labelledby="case-workflow-title">
+      <h2 id="case-workflow-title" className="text-xl font-semibold">
+        {t("cases.workflow.title")}
+      </h2>
+
+      <Card className="gap-0 overflow-hidden py-0">
+        <CardContent className="border-b px-4 py-4 lg:px-6">
+          <ol
+            className="mx-auto grid min-w-[36rem] max-w-4xl grid-cols-4"
+            aria-label={t("cases.workflow.progress")}
+          >
+            {phases.map((phase, index) => (
+              <ProgressPhase
+                key={phase.key}
+                phase={phase}
                 first={index === 0}
-                last={index === projection.stages.length - 1}
+                last={index === phases.length - 1}
               />
             ))}
           </ol>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-            <div>
-              <p className="text-sm font-medium">
-                {t(`cases.workflow.stages.${projection.current}.label`)}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t(`cases.workflow.stages.${projection.current}.description`)}
-              </p>
-            </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <Legend state="current" label={t("cases.workflow.current")} />
-              <Legend state="completed" label={t("cases.workflow.completed")} />
-              <Legend state="skipped" label={t("cases.workflow.skipped")} />
-            </div>
-          </div>
         </CardContent>
-      </Card>
 
-      <Card className="gap-0 overflow-hidden py-0">
-        <CardHeader className="border-b bg-muted/30 px-4 py-3">
-          <CardTitle className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex items-center gap-2">
-              <ListTree className="size-4 text-muted-foreground" />
-              {t("cases.workflow.logTitle")}
-            </span>
-            <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
-              {t("cases.workflow.logCount", { count: log.length })}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent
-          ref={logContainer}
-          className="max-h-[32rem] overflow-auto px-0 text-sm"
-          onScroll={trackLogPosition}
-        >
-          {log.length === 0 ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">
-              {t("cases.workflow.noLogs")}
-            </p>
-          ) : (
-            log.map((entry) => (
-              <ExecutionLogRow
-                key={entry.id}
-                entry={entry}
-                locale={i18n.resolvedLanguage ?? "en"}
-              />
-            ))
-          )}
-        </CardContent>
+        <div className="grid xl:grid-cols-[minmax(0,1.7fr)_minmax(24rem,0.8fr)]">
+          <section className="min-w-0" aria-labelledby="investigation-map-title">
+            <header className="flex h-12 items-center justify-between gap-3 border-b bg-muted/20 px-4">
+              <h3
+                id="investigation-map-title"
+                className="flex items-center gap-2 text-sm font-semibold"
+              >
+                <Network className="size-4 text-primary" />
+                {t("cases.workflow.map.title")}
+              </h3>
+              <span className="text-xs text-muted-foreground">
+                {t("cases.workflow.map.turnCount", { count: props.turns.length })}
+              </span>
+            </header>
+            <div className="h-[31rem] bg-muted/[0.08]">
+              <InvestigationMap {...props} selectedLogId={selectedLogId} onSelectLog={selectLog} />
+            </div>
+          </section>
+
+          <section
+            className="min-w-0 border-t xl:border-l xl:border-t-0"
+            aria-labelledby="execution-history-title"
+          >
+            <header className="flex h-12 items-center justify-between gap-3 border-b bg-muted/20 px-4">
+              <h3
+                id="execution-history-title"
+                className="flex items-center gap-2 text-sm font-semibold"
+              >
+                <ListTree className="size-4 text-muted-foreground" />
+                {t("cases.workflow.logTitle")}
+              </h3>
+              <span className="text-xs text-muted-foreground" aria-live="polite">
+                {t("cases.workflow.logCount", { count: log.length })}
+              </span>
+            </header>
+            <div
+              ref={logContainer}
+              className="h-[31rem] overflow-auto text-sm"
+              onScroll={trackLogPosition}
+            >
+              {log.length === 0 ? (
+                <p className="px-4 py-8 text-center text-muted-foreground">
+                  {t("cases.workflow.noLogs")}
+                </p>
+              ) : (
+                log.map((entry, index) => (
+                  <ExecutionLogRow
+                    key={entry.id}
+                    entry={entry}
+                    locale={i18n.resolvedLanguage ?? "en"}
+                    selected={entry.id === selectedLogId}
+                    latest={index === log.length - 1}
+                    onSelect={() => selectLog(entry.id)}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        </div>
       </Card>
     </section>
   );
 }
 
-function WorkflowStage({ stage, first, last }: { stage: Stage; first: boolean; last: boolean }) {
+function ProgressPhase({ phase, first, last }: { phase: Phase; first: boolean; last: boolean }) {
   const { t } = useTranslation();
-  const Icon = stage.icon;
-  const active = stage.state === "current" || stage.state === "attention";
+  const Icon = phase.icon;
+  const active = phase.state === "current" || phase.state === "attention";
 
   return (
-    <li className="relative flex flex-col items-center text-center">
+    <li className="relative flex items-center justify-center gap-2">
       {!first && (
         <span
           className={cn(
-            "absolute left-0 top-5 h-0.5 w-1/2",
-            stage.state === "pending" ? "bg-border" : "bg-primary/55",
+            "absolute left-0 top-1/2 h-px w-1/2 bg-border",
+            phase.state !== "pending" && "bg-primary/55",
           )}
           aria-hidden="true"
         />
@@ -159,190 +166,139 @@ function WorkflowStage({ stage, first, last }: { stage: Stage; first: boolean; l
       {!last && (
         <span
           className={cn(
-            "absolute right-0 top-5 h-0.5 w-1/2",
-            stage.state === "completed" || active ? "bg-primary/55" : "bg-border",
+            "absolute right-0 top-1/2 h-px w-1/2 bg-border",
+            (phase.state === "completed" || active) && "bg-primary/55",
           )}
           aria-hidden="true"
         />
       )}
       <span
         className={cn(
-          "relative z-10 flex size-10 items-center justify-center rounded-full border-2 bg-background transition",
-          stage.state === "completed" && "border-primary bg-primary text-primary-foreground",
-          stage.state === "current" &&
-            "border-primary text-primary shadow-[0_0_0_5px_color-mix(in_oklab,var(--primary)_18%,transparent),0_0_24px_color-mix(in_oklab,var(--primary)_45%,transparent)]",
-          stage.state === "attention" &&
-            "border-destructive text-destructive shadow-[0_0_0_5px_color-mix(in_oklab,var(--destructive)_18%,transparent),0_0_24px_color-mix(in_oklab,var(--destructive)_40%,transparent)]",
-          stage.state === "pending" && "border-border text-muted-foreground",
-          stage.state === "skipped" &&
-            "border-dashed border-muted-foreground/50 text-muted-foreground",
+          "relative z-10 flex size-8 items-center justify-center rounded-full border bg-card text-muted-foreground",
+          phase.state === "completed" && "border-primary bg-primary text-primary-foreground",
+          phase.state === "current" &&
+            "border-primary text-primary shadow-[0_0_0_4px_color-mix(in_oklab,var(--primary)_12%,transparent)]",
+          phase.state === "attention" &&
+            "border-destructive text-destructive shadow-[0_0_0_4px_color-mix(in_oklab,var(--destructive)_12%,transparent)]",
         )}
       >
-        {stage.state === "completed" ? (
-          <Check className="size-4" />
-        ) : stage.state === "attention" ? (
-          <CircleAlert className="size-4" />
-        ) : stage.state === "pending" || stage.state === "skipped" ? (
-          <CircleDashed className="size-4" />
+        {phase.state === "completed" ? (
+          <Check className="size-3.5" />
+        ) : phase.state === "attention" ? (
+          <CircleAlert className="size-3.5" />
+        ) : phase.state === "pending" ? (
+          <CircleDashed className="size-3.5" />
         ) : (
-          <Icon className="size-4 animate-pulse" />
+          <Icon className="size-3.5 animate-pulse" />
         )}
       </span>
       <span
         className={cn(
-          "mt-2 max-w-28 text-xs font-medium",
-          active ? "text-foreground" : "text-muted-foreground",
+          "relative z-10 bg-card pr-1 text-xs font-medium text-muted-foreground",
+          active && "text-foreground",
         )}
       >
-        {t(`cases.workflow.stages.${stage.key}.label`)}
+        {t(`cases.workflow.phases.${phase.key}`)}
       </span>
     </li>
   );
 }
 
-function Legend({ state, label }: { state: "current" | "completed" | "skipped"; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span
-        className={cn(
-          "size-2.5 rounded-full border",
-          state === "current" && "border-primary bg-primary/25 shadow-[0_0_8px_var(--primary)]",
-          state === "completed" && "border-primary bg-primary",
-          state === "skipped" && "border-dashed border-muted-foreground",
-        )}
-      />
-      {label}
-    </span>
-  );
-}
-
-function ExecutionLogRow({ entry, locale }: { entry: LogEntry; locale: string }) {
+function ExecutionLogRow({
+  entry,
+  locale,
+  selected,
+  latest,
+  onSelect,
+}: {
+  entry: LogEntry;
+  locale: string;
+  selected: boolean;
+  latest: boolean;
+  onSelect: () => void;
+}) {
   const { t } = useTranslation();
   return (
-    <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 border-b px-4 py-4 last:border-b-0">
-      <div>
-        <time className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-          {formatLogTime(entry.at, locale)}
-        </time>
-      </div>
-      <div className="min-w-0 space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={entry.failed ? "destructive" : "secondary"}>
+    <article
+      className={cn(
+        "border-b last:border-b-0",
+        latest && "shadow-[inset_2px_0_var(--primary)]",
+        selected && "bg-primary/[0.04]",
+      )}
+    >
+      <button
+        type="button"
+        className="w-full px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        onClick={onSelect}
+        aria-pressed={selected}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <time className="shrink-0 font-mono text-[10px] text-muted-foreground">
+            {formatLogTime(entry.at, locale)}
+          </time>
+          <Badge variant={entry.failed ? "destructive" : "secondary"} className="shrink-0">
             {t(`cases.workflow.stages.${entry.stage}.label`)}
           </Badge>
-          <span className="text-xs font-medium text-muted-foreground">{entry.source}</span>
-        </div>
-        <p className={entry.failed ? "text-sm text-destructive" : "text-sm text-foreground"}>
+          <span className="truncate text-[11px] font-medium text-muted-foreground">
+            {entry.source}
+          </span>
+        </span>
+        <span
+          className={cn(
+            "mt-2 block break-words text-xs leading-5 text-foreground",
+            !selected && "line-clamp-4",
+            entry.failed && "text-destructive",
+          )}
+        >
           {entry.summary}
-        </p>
-        {entry.facts && entry.facts.length > 0 && (
-          <dl className="grid gap-2 rounded-md bg-muted/35 p-3 sm:grid-cols-2">
-            {entry.facts.map((fact) => (
-              <div key={`${fact.label}-${fact.value}`} className="min-w-0">
-                <dt className="text-xs font-medium text-muted-foreground">{fact.label}</dt>
-                <dd className="mt-0.5 break-words text-sm">{fact.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        {entry.technical !== undefined && (
-          <details className="group">
-            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-              {t("cases.workflow.technicalDetails")}
-            </summary>
-            <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted/45 p-3 font-mono text-xs leading-relaxed text-muted-foreground">
-              {JSON.stringify(entry.technical, null, 2)}
-            </pre>
-          </details>
-        )}
-      </div>
+        </span>
+      </button>
+
+      {selected && (
+        <div className="space-y-2 px-4 pb-3">
+          {entry.facts && entry.facts.length > 0 && (
+            <dl className="grid gap-2 rounded-md bg-muted/35 p-3">
+              {entry.facts.map((fact) => (
+                <div key={`${fact.label}-${fact.value}`} className="min-w-0">
+                  <dt className="text-[10px] font-medium text-muted-foreground">{fact.label}</dt>
+                  <dd className="mt-0.5 break-words text-xs">{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {entry.technical !== undefined && (
+            <details className="group">
+              <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+                {t("cases.workflow.technicalDetails")}
+              </summary>
+              <pre className="mt-2 max-h-52 overflow-auto rounded-md bg-muted/45 p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {JSON.stringify(entry.technical, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
     </article>
   );
 }
 
-function projectWorkflow(props: Props): { current: StageKey; stages: Stage[] } {
-  const { snapshot, timeline, turns, evidence, approvals, reviews, reports } = props;
-  const incident = snapshot.case;
-  const latestRun = [...snapshot.resolution_runs].sort((a, b) => b.generation - a.generation)[0];
-  const runId = latestRun?.id;
-  const inRun = <T extends { resolution_run_id: string }>(items: T[]) =>
-    runId ? items.filter((item) => item.resolution_run_id === runId) : items;
-  const runTurns = inRun(turns);
-  const runProposals = inRun(snapshot.proposals);
-  const runOperations = inRun(snapshot.operations);
-  const observationOperations = runOperations.filter((item) => item.request_kind === "observation");
-  const effectOperations = runOperations.filter((item) => item.request_kind === "effect");
-  const runVerifications = inRun(snapshot.verification_attempts);
-  const runEvidence = inRun(evidence);
-  const runApprovals = inRun(approvals);
-  const runReviews = inRun(reviews);
-  const exactReport = reports.find((report) => report.case_revision === incident.revision);
-  const reportFailed = timeline.some((event) => event.type === "report_generation_failed");
-
-  let current: StageKey;
-  let attention = incident.status === "needs_attention" || incident.status === "cancelled";
-
-  if (incident.status === "resolved") {
-    current = exactReport ? "complete" : "report";
-    attention = reportFailed && !exactReport;
-  } else {
-    const activity: Array<{ stage: StageKey; at: string }> = [
-      ...runTurns.map((item) => ({ stage: "investigate" as const, at: item.updated_at })),
-      ...observationOperations.map((item) => ({
-        stage: "investigate" as const,
-        at: item.updated_at,
-      })),
-      ...runProposals.map((item) => ({ stage: "review" as const, at: item.updated_at })),
-      ...runReviews.map((item) => ({ stage: "review" as const, at: item.decided_at })),
-      ...runApprovals.map((item) => ({ stage: "review" as const, at: item.decided_at })),
-      ...effectOperations.map((item) => ({ stage: "remediate" as const, at: item.updated_at })),
-      ...runVerifications.map((item) => ({
-        stage: "verify" as const,
-        at: item.completed_at ?? item.accepted_at,
-      })),
-    ];
-    current = activity.sort((a, b) => a.at.localeCompare(b.at)).at(-1)?.stage ?? "investigate";
-    if (incident.alert_state === "recovered" && current === "investigate") current = "verify";
-  }
-
-  const occurred: Record<StageKey, boolean> = {
-    alert: true,
-    investigate: runTurns.length > 0 || runEvidence.length > 0 || observationOperations.length > 0,
-    review: runProposals.length > 0 || runReviews.length > 0 || runApprovals.length > 0,
-    remediate: effectOperations.length > 0,
-    verify:
-      runVerifications.length > 0 ||
-      runEvidence.some((item) =>
-        ["target_verification", "verification_result"].includes(item.kind),
-      ),
-    report: Boolean(exactReport),
-    complete: Boolean(exactReport && incident.status === "resolved"),
+function projectProgress(props: Props): Phase[] {
+  const incident = props.snapshot.case;
+  const report = props.reports.find((item) => item.case_revision === incident.revision);
+  const attention = ["needs_attention", "cancelled"].includes(incident.status);
+  const resolved = incident.status === "resolved";
+  const states: Record<PhaseKey, PhaseState> = {
+    alert: "completed",
+    resolution: resolved ? "completed" : attention ? "attention" : "current",
+    report: report ? "completed" : resolved ? "current" : "pending",
+    complete: report && resolved ? "completed" : "pending",
   };
-  const currentIndex = stageDefinitions.findIndex((stage) => stage.key === current);
-
-  return {
-    current,
-    stages: stageDefinitions.map((stage, index) => ({
-      ...stage,
-      state:
-        index === currentIndex
-          ? attention
-            ? "attention"
-            : "current"
-          : index > currentIndex
-            ? "pending"
-            : occurred[stage.key]
-              ? "completed"
-              : "skipped",
-    })),
-  };
+  return phaseDefinitions.map((phase) => ({ ...phase, state: states[phase.key] }));
 }
 
 function formatLogTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, {
-    month: "2-digit",
-    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",

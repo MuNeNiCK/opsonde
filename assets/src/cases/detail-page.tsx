@@ -305,6 +305,8 @@ export function CaseDetailPage() {
       approvals={detail.approvals}
       reviews={detail.reviews}
       reports={detail.snapshot.reports}
+      targets={detail.targets}
+      methods={detail.methods}
     />
   );
 

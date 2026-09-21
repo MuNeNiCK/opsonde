@@ -43,6 +43,7 @@ export type LogEntry = {
 const hiddenRoutineEvents = new Set([
   "budget_charged",
   "effect_budget_charged",
+  "observation_budget_charged",
   "evidence_added",
   "resolver_assigned",
   "reviewer_assigned",
