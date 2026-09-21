@@ -111,15 +111,8 @@ export function CaseWorkflowView(props: Props) {
               <ListTree className="size-4 text-muted-foreground" />
               {t("cases.workflow.logTitle")}
             </span>
-            <span className="flex items-center gap-2">
-              <Badge variant="outline">
-                {t("cases.workflow.aiLanguage", {
-                  language: props.snapshot.case.report_language.toUpperCase(),
-                })}
-              </Badge>
-              <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
-                {t("cases.workflow.logCount", { count: log.length })}
-              </span>
+            <span className="text-xs font-normal text-muted-foreground" aria-live="polite">
+              {t("cases.workflow.logCount", { count: log.length })}
             </span>
           </CardTitle>
         </CardHeader>
@@ -238,9 +231,6 @@ function ExecutionLogRow({ entry, locale }: { entry: LogEntry; locale: string })
             {t(`cases.workflow.stages.${entry.stage}.label`)}
           </Badge>
           <span className="text-xs font-medium text-muted-foreground">{entry.source}</span>
-          {entry.modelLanguage && (
-            <Badge variant="outline">AI · {entry.modelLanguage.toUpperCase()}</Badge>
-          )}
         </div>
         <p className={entry.failed ? "text-sm text-destructive" : "text-sm text-foreground"}>
           {entry.summary}

@@ -37,7 +37,6 @@ export type LogEntry = {
   summary: string;
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
-  modelLanguage?: string;
   failed?: boolean;
 };
 
@@ -109,7 +108,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
         failure_category: turn.failure_category,
         failure_message: turn.failure_message,
       },
-      modelLanguage: props.snapshot.case.report_language,
       failed: Boolean(failure),
     });
   }
@@ -148,7 +146,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
         category: item.category,
         usage: { input_tokens: item.input_tokens, output_tokens: item.output_tokens },
       },
-      modelLanguage: props.snapshot.case.report_language,
       failed: item.outcome === "delivery_failed",
     });
   }
@@ -218,7 +215,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       at: item.generated_at,
       stage: "report",
       source: t("cases.workflow.sources.reporter"),
-      summary: t("cases.workflow.reportGenerated", { language: item.language.toUpperCase() }),
+      summary: t("cases.workflow.reportGenerated"),
       technical: {
         revision: item.case_revision,
         outcome: item.outcome,

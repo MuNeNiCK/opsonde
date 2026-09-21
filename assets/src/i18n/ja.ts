@@ -398,8 +398,7 @@ const ja = {
         logTitle: "実行履歴",
         logCount: "{{count}}件",
         noLogs: "最初の実行記録を待っています…",
-        reportGenerated: "{{language}}レポートを作成",
-        aiLanguage: "AI応答: {{language}}",
+        reportGenerated: "レポートを作成",
         technicalDetails: "技術詳細を表示",
         fields: {
           decision: "AIの判断",
@@ -467,7 +466,7 @@ const ja = {
         verification: "復旧確認",
         verificationCount: "{{count}}件の検証を完了",
         completedAt: "完了日時",
-        report: "{{language}}レポート作成済み",
+        report: "レポート作成済み",
       },
       verificationStatus: {
         queued: "待機中",

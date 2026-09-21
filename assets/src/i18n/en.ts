@@ -411,8 +411,7 @@ const en = {
         logTitle: "Activity history",
         logCount: "{{count}} records",
         noLogs: "Waiting for the first execution record…",
-        reportGenerated: "{{language}} Report generated",
-        aiLanguage: "AI output: {{language}}",
+        reportGenerated: "Report generated",
         technicalDetails: "Show technical details",
         fields: {
           decision: "AI decision",
@@ -484,7 +483,7 @@ const en = {
         verification: "Recovery verification",
         verificationCount: "{{count}} checks completed",
         completedAt: "Completed",
-        report: "{{language}} Report generated",
+        report: "Report generated",
       },
       verificationStatus: {
         queued: "Queued",

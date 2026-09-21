@@ -584,9 +584,7 @@ function CompletedCaseSummary({
           <SummaryField
             label={t("cases.completionSummary.completedAt")}
             value={formatDate(report.generated_at, i18n.resolvedLanguage)}
-            detail={t("cases.completionSummary.report", {
-              language: report.language.toUpperCase(),
-            })}
+            detail={t("cases.completionSummary.report")}
           />
         </dl>
       </CardContent>
