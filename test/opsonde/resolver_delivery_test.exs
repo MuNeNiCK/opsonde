@@ -116,55 +116,92 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
-  test "known timeout and malformed output persist distinct handoffs without usage charge",
-       context do
-    for {suffix, response, expected_category} <- [
-          {"timeout", {:error, :timeout, "model deadline exceeded"}, "timeout"},
-          {"malformed", {:ok, %{}}, "invalid_output"}
-        ] do
-      {incident, run, turn} = turn!(suffix, context.operator)
+  test "known timeout persists a handoff without usage charge", context do
+    {incident, run, turn} = turn!("timeout", context.operator)
 
-      assert :ok =
-               ResolverDelivery.run(turn.id,
-                 ai_invocation: %{
-                   test_pid: self(),
-                   respond: fn _request -> response end
-                 }
-               )
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> {:error, :timeout, "model deadline exceeded"} end
+               }
+             )
 
-      assert_receive {:resolve, %{api_key: @api_key}, _request}
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
 
-      completed = Cases.get_turn!(turn.id, authorize?: false)
-      assert completed.status == :completed
-      assert completed.result["outcome"] == "delivery_failed"
-      assert completed.result["category"] == expected_category
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.status == :completed
+    assert completed.result["outcome"] == "delivery_failed"
+    assert completed.result["category"] == "timeout"
 
-      attention = Cases.get_case!(incident.id, authorize?: false)
-      assert attention.status == :needs_attention
-      assert attention.pending_intent == %{"action" => "retry_resolver", "turn_id" => turn.id}
-      assert attention.stop_reason =~ expected_category
+    attention = Cases.get_case!(incident.id, authorize?: false)
+    assert attention.status == :needs_attention
+    assert attention.pending_intent == %{"action" => "retry_resolver", "turn_id" => turn.id}
+    assert attention.stop_reason =~ "timeout"
 
-      paused = Cases.get_resolution_run!(run.id, authorize?: false)
-      assert paused.status == :needs_attention
-      assert paused.ai_usage_units == 0
+    paused = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert paused.status == :needs_attention
+    assert paused.ai_usage_units == 0
 
-      record =
-        Cases.list_ai_invocations!(authorize?: false)
-        |> Enum.find(&(&1.turn_id == turn.id))
+    record =
+      Cases.list_ai_invocations!(authorize?: false)
+      |> Enum.find(&(&1.turn_id == turn.id))
 
-      assert record.status == :failed
-      assert record.category == expected_category
+    assert record.status == :failed
+    assert record.category == "timeout"
+  end
 
-      assert :ok =
-               ResolverDelivery.run(turn.id,
-                 ai_invocation: %{
-                   test_pid: self(),
-                   respond: fn _request -> flunk("failed Turn called AI again") end
-                 }
-               )
+  test "invalid output starts one bounded successor Turn", context do
+    {incident, run, turn} = turn!("malformed", context.operator)
 
-      refute_receive {:resolve, _, _}
-    end
+    assert :ok = invalid_output(turn)
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.status == :completed
+    assert completed.result["outcome"] == "delivery_failed"
+    assert completed.result["category"] == "invalid_output"
+    assert completed.progress_kind == :none
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    running = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert running.status == :running
+    assert running.turn_count == 2
+    assert running.no_progress_turns == 1
+    assert running.ai_usage_units == 0
+
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
+
+    assert successor.intent == %{
+             "category" => "invalid_output",
+             "objective" => "Continue resolution after an invalid Resolver response",
+             "source" => "resolver_delivery_failure",
+             "source_turn_id" => turn.id
+           }
+
+    assert :ok = invalid_output(turn, fn -> flunk("completed Turn called AI again") end)
+    refute_receive {:resolve, _, _}
+
+    assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
+             2
+
+    assert :ok = invalid_output(successor)
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+
+    exhausted = Cases.get_case!(incident.id, authorize?: false)
+    assert exhausted.status == :needs_attention
+    assert exhausted.stop_reason == "No-progress turn limit exhausted"
+
+    exhausted_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert exhausted_run.status == :needs_attention
+    assert exhausted_run.turn_count == 2
+    assert exhausted_run.no_progress_turns == 2
+
+    assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
+             2
   end
 
   test "an interrupted dispatch becomes visible without a second AI call", context do
@@ -815,6 +852,15 @@ defmodule Opsonde.ResolverDeliveryTest do
       respond: fn -> {:ok, capabilities} end,
       cancelled?: fn -> false end
     }
+  end
+
+  defp invalid_output(turn, callback \\ fn -> {:ok, %{}} end) do
+    ResolverDelivery.run(turn.id,
+      ai_invocation: %{
+        test_pid: self(),
+        respond: fn _request -> callback.() end
+      }
+    )
   end
 
   defp route_jobs(turn_id) do

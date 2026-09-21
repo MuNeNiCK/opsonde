@@ -580,6 +580,57 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp persist_failure(turn, invocation, category, message) do
+    if category == "invalid_output" do
+      persist_retryable_failure(turn, invocation, category, message)
+    else
+      persist_attention_failure(turn, invocation, category, message)
+    end
+  end
+
+  defp persist_retryable_failure(turn, invocation, category, message) do
+    intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
+
+    Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with {:ok, incident} <- lock_case(turn.case_id),
+           true <-
+             (incident.status == :running and not incident.cancel_requested) ||
+               {:error, "Case resolution is not running"},
+           {:ok, completed} <-
+             Cases.complete_turn(
+               turn.id,
+               turn.revision,
+               %{
+                 "outcome" => "delivery_failed",
+                 "category" => category,
+                 "message" => String.slice(message, 0, 1_000)
+               },
+               :none,
+               intent,
+               "Review Resolver limits or continue the Case manually",
+               authorize?: false
+             ),
+           {:ok, _invocation} <- record_failure(invocation, category),
+           {:ok, next_turn} <-
+             Cases.start_turn(
+               turn.case_id,
+               turn.resolution_run_id,
+               "resolver:invalid-output:#{turn.id}",
+               %{
+                 "objective" => "Continue resolution after an invalid Resolver response",
+                 "source" => "resolver_delivery_failure",
+                 "source_turn_id" => turn.id,
+                 "category" => category
+               },
+               intent,
+               "Review Resolver limits or continue the Case manually",
+               authorize?: false
+             ) do
+        %{completed: completed, next_turn: next_turn}
+      end
+    end)
+  end
+
+  defp persist_attention_failure(turn, invocation, category, message) do
     reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
     intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
 
