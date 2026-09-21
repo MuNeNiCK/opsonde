@@ -7,6 +7,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     OperationAcceptanceWorker,
     OperationWorker,
     ReviewDelivery,
+    ReviewProjection,
     ReviewWorker
   }
 
@@ -406,6 +407,119 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:review, _, _}
     assert acceptance_jobs(proposal.id) == 1
     refute_receive {:effect, _, _}
+  end
+
+  test "Auto Reviewer accepts cited Case evidence preserved from a prior generation", context do
+    configure_mode!(:auto, context.admin)
+
+    setting = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      setting.setting_revision,
+      setting.authority_mode,
+      true,
+      setting.max_elapsed_seconds,
+      setting.max_resolver_turns,
+      setting.max_target_requests,
+      setting.max_effects,
+      setting.max_related_targets,
+      setting.max_ai_usage_units,
+      setting.max_no_progress_turns,
+      "enable resumed Signal review",
+      actor: context.admin
+    )
+
+    incident =
+      Cases.open_case!(
+        :signal,
+        "test-monitor",
+        "review-resumed-evidence",
+        "Review resumed evidence",
+        :warning,
+        :firing,
+        %{},
+        context.target.id,
+        :en,
+        actor: context.operator
+      )
+
+    first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    prior_evidence =
+      Cases.append_evidence!(
+        incident.id,
+        first_run.id,
+        nil,
+        "review-prior-generation-evidence",
+        "signal_event",
+        incident.source,
+        incident.source_ref,
+        %{"current" => true, "state" => "recovered", "service" => "healthy"},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    waiting =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        first_run.id,
+        first_run.revision,
+        "review-prior-generation-wait",
+        "Resolver delivery failed",
+        %{"action" => "retry_resolver"},
+        "Retry Resolver delivery",
+        authorize?: false
+      )
+
+    resumed =
+      Cases.record_case_source_recovery!(waiting.id, waiting.revision, actor: context.operator)
+
+    second_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    assert second_run.generation == 2
+    [started] = Cases.started_turns_for_run!(second_run.id, authorize?: false)
+
+    turn =
+      Cases.complete_turn!(
+        started.id,
+        started.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => proposal_intent(prior_evidence.id, context, :observation),
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => started.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+
+    reviewing =
+      Cases.list_proposals!(authorize?: false)
+      |> Enum.find(&(&1.source_turn_id == turn.id))
+
+    assert reviewing.status == :reviewing
+
+    selection = %AI.Selection{
+      role: :reviewer,
+      provider_id: context.reviewer_provider.id,
+      provider_revision: context.reviewer_provider.revision,
+      assignment_id: context.reviewer_assignment.id,
+      assignment_revision: context.reviewer_assignment.revision,
+      source: :assignment
+    }
+
+    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+    assert resumed.status == :running
+    assert Enum.map(request.cited_evidence, & &1.id) == [prior_evidence.id]
   end
 
   test "Auto uses isolated Resolver fallback and reconsiders a rejected proposal once", context do

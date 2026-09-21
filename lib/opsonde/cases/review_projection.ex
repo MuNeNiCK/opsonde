@@ -56,9 +56,7 @@ defmodule Opsonde.Cases.ReviewProjection do
   defp cited_evidence(proposal) do
     Enum.reduce_while(proposal.evidence_ids, {:ok, []}, fn id, {:ok, loaded} ->
       case Cases.get_evidence(id, authorize?: false) do
-        {:ok, evidence}
-        when evidence.case_id == proposal.case_id and
-               evidence.resolution_run_id == proposal.resolution_run_id ->
+        {:ok, evidence} when evidence.case_id == proposal.case_id ->
           item = %AI.Evidence{
             id: evidence.id,
             kind: evidence.kind,
