@@ -206,10 +206,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   end
 
   defp continue_after_source_recovery(
-         %{
-           status: :needs_attention,
-           pending_intent: %{"action" => "provide_human_input"}
-         } = incident,
+         %{status: :needs_attention} = incident,
          %{status: :needs_attention} = run,
          key
        ) do
@@ -638,7 +635,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       expected_case_revision: incident.revision,
       resolution_run_id: run.id,
       expected_run_revision: run.revision,
-      reason: "The monitoring source recovered while the Case awaited input"
+      reason: "The monitoring source recovered while autonomous resolution was paused"
     })
   end
 

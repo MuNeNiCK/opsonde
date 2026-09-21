@@ -182,6 +182,59 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_turns!(actor: context.admin)) == 1
   end
 
+  test "source recovery resumes an attention Case without operator input", context do
+    enable_signal_automation!(context.admin)
+    base = DateTime.utc_now()
+
+    ingest_one!(context.provider, "attention-firing", :firing, base)
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      %{"outcome" => "delivery_failed", "category" => "invalid_output"},
+      :none,
+      %{"action" => "retry_resolver", "turn_id" => turn.id},
+      "Review the Resolver delivery failure",
+      authorize?: false
+    )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    current_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    Cases.require_case_attention!(
+      current.id,
+      current.revision,
+      current_run.id,
+      current_run.revision,
+      "resolver-delivery-failed:test",
+      "Resolver delivery failed",
+      %{"action" => "retry_resolver", "turn_id" => turn.id},
+      "Review the Resolver delivery failure",
+      authorize?: false
+    )
+
+    ingest_one!(
+      context.provider,
+      "attention-recovered",
+      :recovered,
+      DateTime.add(base, 30, :second)
+    )
+
+    recovered = Cases.get_case!(incident.id, actor: context.admin)
+    assert recovered.status == :running
+    assert recovered.alert_state == :recovered
+    assert recovered.required_human_input == nil
+    assert recovered.stop_reason == nil
+
+    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    assert resumed_run.generation == 2
+    assert [_turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
+  end
+
   test "source sequence orders events that have the same source timestamp", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()

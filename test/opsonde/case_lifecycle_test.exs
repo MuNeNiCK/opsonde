@@ -351,7 +351,7 @@ defmodule Opsonde.CaseLifecycleTest do
     assert resumed_event.data["reason"] == "extend one turn"
   end
 
-  test "source recovery remains recordable while a limit has paused autonomous resolution",
+  test "source recovery autonomously resumes a Case after a limit paused resolution",
        context do
     configure_authority!(context.admin, %{
       signal_automation_enabled: true,
@@ -377,10 +377,21 @@ defmodule Opsonde.CaseLifecycleTest do
     recovered =
       Cases.record_case_source_recovery!(stopped.id, stopped.revision, actor: context.operator)
 
-    assert recovered.status == :needs_attention
+    assert recovered.status == :running
     assert recovered.alert_state == :recovered
-    assert recovered.pending_intent == stopped.pending_intent
+    assert recovered.stop_reason == nil
+    assert recovered.required_human_input == nil
     assert Cases.started_turns_for_run!(run.id, authorize?: false) == []
+
+    old_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    refute old_run.active
+    assert old_run.status == :superseded
+
+    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    assert resumed_run.generation == 2
+    assert resumed_run.status == :running
+    assert [turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
+    assert recovered.pending_intent == %{"action" => "resolve_turn", "turn_id" => turn.id}
   end
 
   test "source recovery autonomously resumes a Case that only awaited more incident input",
