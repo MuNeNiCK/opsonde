@@ -322,13 +322,20 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.review(state, review_request(), %{})
 
     set_mode(context.agent, {:text_decision, %{"unexpected" => true}})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    assert {:error, :invalid_output, "AI provider JSON does not match the requested schema"} =
+             Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
+    assert {:error, :invalid_output, "AI provider output is not valid JSON"} =
+             Adapter.resolve(state, resolver_request(), %{})
+
     set_mode(context.agent, {:raw_text, String.duplicate("x", 65_537)})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    assert {:error, :invalid_output, "AI provider JSON text is too large"} =
+             Adapter.resolve(state, resolver_request(), %{})
   end
 
   test "Ollama Cloud JSON requests preserve timeout and cancellation", context do

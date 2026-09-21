@@ -6,6 +6,10 @@ defmodule Opsonde.Providers.AI.Validator do
   @max_output_bytes 65_536
   @max_review_items 100
   @max_review_bytes 65_536
+  @resolver_reason_codepoints 500
+  @search_query_codepoints 50
+  @reviewer_reason_codepoints 1_000
+  @handoff_input_codepoints 250
 
   def validate_request(:resolve, %AI.ResolverRequest{} = request) do
     cond do
@@ -280,7 +284,7 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:review, %AI.ReviewDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
-         true <- bounded_string?(decision.reason, 1_000),
+         true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
          true <- review_decision_size(decision) <= @max_output_bytes do
       :ok
     else
@@ -301,8 +305,9 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
-    if request.budget.remaining_target_requests > 0 and bounded_string?(search.query, 200) and
-         bounded_string?(search.reason, 500) do
+    if request.budget.remaining_target_requests > 0 and
+         bounded_text?(search.query, @search_query_codepoints) and
+         bounded_text?(search.reason, @resolver_reason_codepoints) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI Target search is invalid")}
@@ -318,7 +323,8 @@ defmodule Opsonde.Providers.AI.Validator do
           candidate.revision == selection.target_revision
       end)
 
-    if not is_nil(candidate) and bounded_string?(selection.reason, 500) and
+    if not is_nil(candidate) and
+         bounded_text?(selection.reason, @resolver_reason_codepoints) and
          nonempty_list?(selection.evidence_ids) and
          unique?(selection.evidence_ids) and
          Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) do
@@ -339,7 +345,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
     if request.budget.remaining_related_targets > 0 and not is_nil(relationship) and
          traversal_destination?(relationship, request.selected_target_id, traversal) and
-         bounded_string?(traversal.reason, 500) and
+         bounded_text?(traversal.reason, @resolver_reason_codepoints) and
          nonempty_list?(traversal.evidence_ids) and unique?(traversal.evidence_ids) and
          Enum.all?(traversal.evidence_ids, &(&1 in evidence_ids)) do
       :ok
@@ -363,7 +369,7 @@ defmodule Opsonde.Providers.AI.Validator do
              ) and
              exact_proposal?(proposal, tool) and
              valid_request_verification?(proposal, tool, request.observation_tools) and
-             bounded_string?(proposal.reason, 500) and
+             bounded_text?(proposal.reason, @resolver_reason_codepoints) and
              valid_request_evidence_ids?(proposal, evidence_ids) do
           :ok
         else
@@ -379,7 +385,7 @@ defmodule Opsonde.Providers.AI.Validator do
     recovery_evidence_ids = AI.recovery_evidence_ids(request)
 
     if request.alert_state in [:recovered, :not_applicable] and
-         bounded_string?(conclusion.reason, 500) and
+         bounded_text?(conclusion.reason, @resolver_reason_codepoints) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) do
       :ok
@@ -389,9 +395,10 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.Handoff{} = handoff, _request) do
-    if bounded_string?(handoff.reason, 500) and bounded_string?(handoff.required_input, 1_000),
-      do: :ok,
-      else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
+    if bounded_text?(handoff.reason, @resolver_reason_codepoints) and
+         bounded_text?(handoff.required_input, @handoff_input_codepoints),
+       do: :ok,
+       else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
   end
 
   defp validate_resolver_intent(_intent, _request),
@@ -420,7 +427,7 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(proposal.access_method_revision) and
       proposal.request_kind in [:observation, :effect] and nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and
-      bounded_string?(proposal.reason, 500) and is_map(proposal.selectors) and
+      bounded_text?(proposal.reason, @resolver_reason_codepoints) and is_map(proposal.selectors) and
       valid_request_evidence_ids?(proposal, evidence_ids) and
       valid_review_verification?(proposal)
   end
@@ -612,6 +619,15 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp bounded_string?(value, max_bytes),
     do: nonempty?(value) and byte_size(value) <= max_bytes
+
+  defp bounded_text?(value, max_codepoints) when is_binary(value) and byte_size(value) > 0 do
+    case :unicode.characters_to_list(value) do
+      codepoints when is_list(codepoints) -> length(codepoints) <= max_codepoints
+      _invalid -> false
+    end
+  end
+
+  defp bounded_text?(_value, _max_codepoints), do: false
 
   defp bounded_kind?(value), do: bounded_string?(value, 120)
   defp bounded_identifier?(value), do: bounded_string?(value, 500)

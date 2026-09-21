@@ -568,8 +568,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
       true ->
         {category, message} = failure(error)
+        rejection_code = rejection_code(error)
 
-        case persist_failure(turn, invocation, category, message) do
+        case persist_failure(turn, invocation, category, message, rejection_code) do
           {:ok, _incident} ->
             :ok
 
@@ -579,15 +580,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp persist_failure(turn, invocation, category, message) do
+  defp persist_failure(turn, invocation, category, message, rejection_code) do
     if category == "invalid_output" do
-      persist_retryable_failure(turn, invocation, category, message)
+      persist_retryable_failure(turn, invocation, category, message, rejection_code)
     else
       persist_attention_failure(turn, invocation, category, message)
     end
   end
 
-  defp persist_retryable_failure(turn, invocation, category, message) do
+  defp persist_retryable_failure(turn, invocation, category, message, rejection_code) do
     intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
@@ -602,6 +603,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                %{
                  "outcome" => "delivery_failed",
                  "category" => category,
+                 "rejection_code" => rejection_code,
                  "message" => String.slice(message, 0, 1_000)
                },
                :none,
@@ -768,6 +770,37 @@ defmodule Opsonde.Cases.ResolverDelivery do
     do: Enum.find_value(errors, &find_error/1)
 
   defp find_error(error), do: error
+
+  defp rejection_code(error) do
+    case find_error(error) do
+      %AI.Error{category: :invalid_output, message: message} -> invalid_output_code(message)
+      _error -> nil
+    end
+  end
+
+  defp invalid_output_code("AI provider returned no JSON text"), do: "missing_json_text"
+  defp invalid_output_code("AI provider JSON text is too large"), do: "json_text_too_large"
+  defp invalid_output_code("AI provider output is not valid JSON"), do: "json_decode"
+
+  defp invalid_output_code("AI provider JSON does not match the requested schema"),
+    do: "schema_validation"
+
+  defp invalid_output_code("AI provider did not return a structured object"),
+    do: "missing_structured_object"
+
+  defp invalid_output_code("AI provider output is too large"), do: "output_too_large"
+  defp invalid_output_code("AI provider did not return token usage"), do: "usage_missing"
+  defp invalid_output_code("AI token usage is invalid"), do: "usage_invalid"
+  defp invalid_output_code("AI Resolver output is too large"), do: "output_too_large"
+  defp invalid_output_code("AI Resolver must conclude recovery"), do: "recovery_required"
+  defp invalid_output_code("AI Target search is invalid"), do: "target_search"
+  defp invalid_output_code("AI Target selection is invalid"), do: "target_selection"
+  defp invalid_output_code("AI Target traversal is invalid"), do: "target_traversal"
+  defp invalid_output_code("AI Proposal is invalid"), do: "proposal"
+  defp invalid_output_code("AI recovery conclusion is invalid"), do: "recovery"
+  defp invalid_output_code("AI handoff is invalid"), do: "handoff"
+  defp invalid_output_code("AI Resolver intent is invalid"), do: "resolver_intent"
+  defp invalid_output_code(_message), do: "invalid_output"
 
   defp turn_completed?(turn_id) do
     match?({:ok, %{status: :completed}}, Cases.get_turn(turn_id, authorize?: false))

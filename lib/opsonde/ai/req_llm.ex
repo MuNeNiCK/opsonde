@@ -189,13 +189,31 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp prompt_json_value(response, schema) do
-    with text when is_binary(text) <- ReqLLM.Response.text(response),
-         true <- byte_size(text) <= @max_output_bytes,
-         {:ok, value} <- ReqLLM.JSON.decode(text, json_repair: false),
-         {:ok, _validated} <- ReqLLM.Schema.validate(value, schema) do
-      {:ok, value}
-    else
-      _error -> invalid_output()
+    case ReqLLM.Response.text(response) do
+      text when is_binary(text) -> validate_prompt_json(text, schema)
+      _missing -> invalid_output("AI provider returned no JSON text")
+    end
+  end
+
+  defp validate_prompt_json(text, schema) do
+    cond do
+      byte_size(text) > @max_output_bytes ->
+        invalid_output("AI provider JSON text is too large")
+
+      true ->
+        case ReqLLM.JSON.decode(text, json_repair: false) do
+          {:ok, value} ->
+            case ReqLLM.Schema.validate(value, schema) do
+              {:ok, _validated} ->
+                {:ok, value}
+
+              {:error, _validation} ->
+                invalid_output("AI provider JSON does not match the requested schema")
+            end
+
+          {:error, _decode} ->
+            invalid_output("AI provider output is not valid JSON")
+        end
     end
   end
 
@@ -494,7 +512,7 @@ defmodule Opsonde.AI.ReqLLM do
     value = ReqLLM.Response.output(response, descriptor)
 
     cond do
-      not is_map(value) -> invalid_output()
+      not is_map(value) -> invalid_output("AI provider did not return a structured object")
       encoded_size(value) > @max_output_bytes -> invalid_output("AI provider output is too large")
       true -> {:ok, value}
     end

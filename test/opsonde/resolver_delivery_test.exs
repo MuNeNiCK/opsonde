@@ -161,6 +161,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.status == :completed
     assert completed.result["outcome"] == "delivery_failed"
     assert completed.result["category"] == "invalid_output"
+    assert completed.result["rejection_code"] == "invalid_output"
     assert completed.progress_kind == :none
 
     running = Cases.get_resolution_run!(run.id, authorize?: false)

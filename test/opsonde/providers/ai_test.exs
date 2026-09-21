@@ -773,6 +773,36 @@ defmodule Opsonde.Providers.AITest do
     refute_receive {:resolve, _, _}
   end
 
+  test "multilingual decision text uses the same character limits as the provider schema",
+       context do
+    resolver_request = resolver_request(context.provider.revision)
+    reason = String.duplicate("界", 500)
+    required_input = String.duplicate("界", 250)
+
+    assert %AI.ResolverDecision{
+             intent: %AI.Handoff{reason: ^reason, required_input: ^required_input}
+           } =
+             resolve!(context, resolver_request, fn _request ->
+               {:ok,
+                %AI.ResolverDecision{
+                  intent: %AI.Handoff{reason: reason, required_input: required_input},
+                  usage: usage()
+                }}
+             end)
+
+    reviewer_reason = String.duplicate("界", 1_000)
+
+    assert %AI.ReviewDecision{reason: ^reviewer_reason} =
+             review!(context, review_request(context.provider.revision), fn _request ->
+               {:ok,
+                %AI.ReviewDecision{
+                  verdict: :approved,
+                  reason: reviewer_reason,
+                  usage: usage()
+                }}
+             end)
+  end
+
   test "token usage and provider failures stay typed and redact secrets", context do
     request = resolver_request(context.provider.revision)
     intent = %AI.Handoff{reason: "Need human input", required_input: "Inspect hardware"}
@@ -784,7 +814,7 @@ defmodule Opsonde.Providers.AITest do
           },
           %AI.Handoff{
             reason: "Need human input",
-            required_input: String.duplicate("i", 1_001)
+            required_input: String.duplicate("i", 251)
           },
           %{proposal() | reason: String.duplicate("r", 501)}
         ] do
