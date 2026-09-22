@@ -20,7 +20,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
-         {:ok, relations} <- relations(target, incident, run),
+         {:ok, relations} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, invocation),
          request <-
            request(selection, incident, run, turn, continuity, target, relations, tools),
@@ -137,16 +137,22 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp prepend_verified_continuity(evidence, _latest, _incident, _target), do: evidence
 
-  defp relations(nil, _incident, _run), do: {:ok, []}
+  defp relations(nil, _incident, _run, _turn), do: {:ok, []}
 
-  defp relations(_target, _incident, %{max_related_targets: maximum, related_target_count: count})
+  defp relations(
+         _target,
+         _incident,
+         %{max_related_targets: maximum, related_target_count: count},
+         _turn
+       )
        when count >= maximum,
        do: {:ok, []}
 
-  defp relations(target, _incident, _run) do
+  defp relations(target, _incident, _run, turn) do
     with {:ok, relationships} <-
            Targets.adjacent_relationships_for_traversal(target.id, authorize?: false) do
       relationships
+      |> Enum.reject(&immediate_reverse?(&1, turn))
       |> Enum.reduce([], fn relationship, projected ->
         case relation(relationship, target) do
           {:ok, value} -> [value | projected]
@@ -157,6 +163,12 @@ defmodule Opsonde.Cases.ResolverProjection do
       |> then(&{:ok, &1})
     end
   end
+
+  defp immediate_reverse?(relationship, %{intent: %{"source" => "target_relationship"} = intent}) do
+    relationship.id == intent["relationship_id"]
+  end
+
+  defp immediate_reverse?(_relationship, _turn), do: false
 
   defp relation(relationship, target) do
     next_target_id =

@@ -40,7 +40,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
         pending_intent: %{"action" => "route_related_target", "source_turn_id" => turn.id},
         required_human_input: "Review the related Target limit or continue the Case manually",
         operation: fn locked_case, locked_run ->
-          select_related_target(locked_case, locked_run, intent)
+          select_related_target(turn, locked_case, locked_run, intent)
         end,
         duplicate: fn current_case, _current_run -> {:ok, current_case} end
       )
@@ -58,8 +58,8 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     end
   end
 
-  defp select_related_target(incident, run, intent) do
-    with {:ok, target} <- traversal_context(incident, run, intent),
+  defp select_related_target(turn, incident, run, intent) do
+    with {:ok, target} <- traversal_context(turn, incident, run, intent),
          {:ok, updated} <-
            Cases.update_case_record(
              incident,
@@ -74,10 +74,11 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     end
   end
 
-  defp traversal_context(incident, run, intent) do
+  defp traversal_context(turn, incident, run, intent) do
     relationship_snapshot = intent["relationship"]
 
     with :ok <- running_context(incident, run),
+         :ok <- no_immediate_reverse(turn, intent),
          :ok <- cited_evidence(intent["evidence_ids"], incident, run),
          {:ok, relationship} <- current_relationship(relationship_snapshot),
          :ok <- exact_relationship(relationship, relationship_snapshot),
@@ -101,6 +102,18 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
 
   defp running_context(_incident, _run),
     do: traversal_failure(:stale_context, "Case resolution is not running")
+
+  defp no_immediate_reverse(
+         %{intent: %{"source" => "target_relationship", "relationship_id" => relationship_id}},
+         %{"relationship_id" => relationship_id}
+       ),
+       do:
+         traversal_failure(
+           :stale_context,
+           "Observe the selected Target before reversing the same relationship"
+         )
+
+  defp no_immediate_reverse(_turn, _intent), do: :ok
 
   defp cited_evidence(ids, incident, run) when is_list(ids) and ids != [] do
     if length(ids) == MapSet.size(MapSet.new(ids)) do
@@ -264,6 +277,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
                  "objective" => "Continue resolution after a related Target was rejected",
                  "source" => "target_relationship",
                  "source_turn_id" => turn.id,
+                 "relationship_id" => intent["relationship_id"],
                  "evidence_id" => evidence.id
                }
              ) do
@@ -277,6 +291,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       "objective" => "Continue resolution after a related Target was rejected",
       "source" => "target_relationship",
       "source_turn_id" => turn.id,
+      "relationship_id" => evidence.content["relationship_id"],
       "evidence_id" => evidence.id
     })
   end

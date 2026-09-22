@@ -85,8 +85,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     assert {:ok, vm_request} = projection(vm_turn, context)
 
-    assert adjacent_target_ids(vm_request, context.vm.id) ==
-             MapSet.new([context.linux.id, context.bmc.id])
+    assert adjacent_target_ids(vm_request, context.vm.id) == MapSet.new([context.bmc.id])
 
     assert Enum.map(vm_request.observation_tools, & &1.access_method_id) == [
              access_method_id!(context.vm.id)
@@ -102,7 +101,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert selected.selected_target_revision == context.bmc.revision
 
     assert {:ok, bmc_request} = projection(bmc_turn, context)
-    assert adjacent_target_ids(bmc_request, context.bmc.id) == MapSet.new([context.vm.id])
+    assert adjacent_target_ids(bmc_request, context.bmc.id) == MapSet.new()
 
     assert Enum.map(bmc_request.observation_tools, & &1.access_method_id) == [
              access_method_id!(context.bmc.id)
@@ -123,7 +122,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
            ]
   end
 
-  test "layer revisits are allowed until the related Target ceiling is reached",
+  test "an entered relationship requires Target evidence before it can be revisited",
        context do
     {cycle_case, cycle_run, cycle_evidence, cycle_first_turn} =
       case_with_evidence!("cycle", context)
@@ -136,13 +135,32 @@ defmodule Opsonde.RelatedTargetRouteTest do
     cycle_source =
       complete_traversal!(cycle_vm_turn, context.runs_on, context.linux, cycle_evidence)
 
-    linux_turn = route_traversal!(cycle_source)
-    assert linux_turn.status == :started
+    rejected_turn = route_traversal!(cycle_source)
+    assert rejected_turn.status == :started
 
     assert Cases.get_case!(cycle_case.id, authorize?: false).selected_target_id ==
-             context.linux.id
+             context.vm.id
 
-    assert Cases.get_resolution_run!(cycle_run.id, authorize?: false).related_target_count == 2
+    assert Cases.get_resolution_run!(cycle_run.id, authorize?: false).related_target_count == 1
+
+    assert evidence_for_source_turn!(cycle_source.id, context.admin).content["message"] ==
+             "Observe the selected Target before reversing the same relationship"
+
+    assert {:ok, rejected_request} = projection(rejected_turn, context)
+    assert adjacent_target_ids(rejected_request, context.vm.id) == MapSet.new([context.bmc.id])
+
+    {_observed_case, _observed_run, _observed_evidence, observed_turn} =
+      case_with_evidence!(
+        "cycle-after-observation",
+        context,
+        context.vm,
+        %{"source" => "observation"}
+      )
+
+    assert {:ok, observed_request} = projection(observed_turn, context)
+
+    assert adjacent_target_ids(observed_request, context.vm.id) ==
+             MapSet.new([context.linux.id, context.bmc.id])
 
     configure_limits!(context.admin, 1)
     {incident, run, evidence, first_turn} = case_with_evidence!("bounded", context)
@@ -327,7 +345,13 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).related_target_count == 0
   end
 
-  defp case_with_evidence!(source_ref, context) do
+  defp case_with_evidence!(source_ref, context),
+    do:
+      case_with_evidence!(source_ref, context, context.linux, %{
+        "objective" => "Find and resolve the I/O fault"
+      })
+
+  defp case_with_evidence!(source_ref, context, target, turn_intent) do
     incident =
       Cases.open_case!(
         :manual,
@@ -337,7 +361,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         :critical,
         :not_applicable,
         %{"symptom" => "I/O errors are increasing"},
-        context.linux.id,
+        target.id,
         :en,
         actor: context.operator
       )
@@ -353,7 +377,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         "signal",
         "zabbix",
         source_ref,
-        %{"target_id" => context.linux.id, "message" => "I/O errors are increasing"},
+        %{"target_id" => target.id, "message" => "I/O errors are increasing"},
         DateTime.utc_now(),
         authorize?: false
       )
@@ -363,7 +387,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         incident.id,
         run.id,
         "start-#{source_ref}",
-        %{"objective" => "Find and resolve the I/O fault"},
+        turn_intent,
         %{"action" => "continue"},
         "Review Resolver limits",
         authorize?: false
