@@ -371,6 +371,83 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
   end
 
+  test "eligible Target traversal removes avoidable handoff from the Resolver contract",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    source = %AI.TargetCandidate{
+      id: "target-1",
+      revision: 1,
+      name: "cluster",
+      kind: "cluster",
+      platform: "kubernetes",
+      facts: %{}
+    }
+
+    destination = %AI.TargetCandidate{
+      id: "target-2",
+      revision: 1,
+      name: "host",
+      kind: "host",
+      platform: "linux",
+      facts: %{}
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 1,
+        evidence: [
+          %AI.Evidence{
+            id: "evidence-1",
+            kind: "observation",
+            target_id: "target-1",
+            content: %{"status" => "applied"}
+          }
+        ],
+        target_relations: [
+          %AI.TargetRelation{
+            id: "relationship-1",
+            revision: 1,
+            source_target: source,
+            destination_target: destination,
+            kind: "hosted_by"
+          }
+        ],
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: ["target-1", "target-2"],
+            allowed_evidence_kinds: ["observation"]
+        }
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "type" => "target_traversal",
+        "reason" => "Inspect the related host",
+        "relationship_id" => "relationship-1",
+        "evidence_ids" => ["evidence-1"]
+      }
+    })
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.TargetTraversal{relationship_id: "relationship-1"}
+            }} = Adapter.resolve(state, request, %{})
+
+    [provider_request] = requests(context.agent)
+    variants = output_schema(provider_request)["properties"]["intent"]["anyOf"]
+    payload = user_payload(provider_request)
+
+    assert "target_traversal" in payload["allowed_intents"]
+    refute "handoff" in payload["allowed_intents"]
+
+    refute Enum.any?(variants, fn variant ->
+             get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
+           end)
+  end
+
   test "Resolver schema retries receive explicit bounded correction context", context do
     state =
       state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})

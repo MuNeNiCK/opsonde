@@ -680,6 +680,8 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp resolver_schema(request) do
+    traversal = target_traversal_schema(request)
+
     variants =
       if AI.recovery_ready?(request) do
         [recovery_schema(request)]
@@ -687,10 +689,10 @@ defmodule Opsonde.AI.ReqLLM do
         [
           target_search_schema(request),
           target_selection_schema(request),
-          target_traversal_schema(request),
+          traversal,
           proposal_schema(request),
           recovery_schema(request),
-          handoff_schema()
+          handoff_schema(traversal)
         ]
       end
       |> Enum.reject(&is_nil/1)
@@ -832,11 +834,13 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp recovery_schema(_request), do: nil
 
-  defp handoff_schema,
+  defp handoff_schema(nil),
     do:
       intent_schema("handoff", %{
         "required_input" => bounded_string_schema(@handoff_input_codepoints)
       })
+
+  defp handoff_schema(_traversal), do: nil
 
   defp intent_schema(type, properties),
     do:
