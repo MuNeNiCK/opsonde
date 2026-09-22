@@ -541,21 +541,11 @@ function CompletedCaseSummary({
               <h3>{t("cases.completionSummary.cause")}</h3>
             </div>
             {narrative.cause ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {t("cases.completionSummary.confirmedCondition")}
-                  </p>
-                  <p className="mt-1 text-sm leading-relaxed">{narrative.cause}</p>
-                </div>
-                {narrative.rationale && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {t("cases.completionSummary.rationale")}
-                    </p>
-                    <p className="mt-1 text-sm leading-relaxed">{narrative.rationale}</p>
-                  </div>
-                )}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">
+                  {t("cases.completionSummary.confirmedCondition")}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed">{narrative.cause}</p>
               </div>
             ) : (
               <p className="text-sm leading-relaxed text-muted-foreground">
@@ -728,7 +718,6 @@ function completedNarrative(content: SummaryRecord) {
 
   return {
     cause: cause ?? null,
-    rationale: effectProposal ? stringField(effectProposal.reason) : null,
     operations,
     verifications,
     conclusion: recoveryTurn ? stringField(recoveryTurn.reason) : null,
