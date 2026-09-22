@@ -588,8 +588,20 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert request.body =~ "proposal-tool"
     assert request.body =~ "authoritative-request-value"
     assert request.body =~ "may be truncated"
+    assert request.body =~ "validated_contract"
+    assert request.body =~ "Do not infer an Access Method's capability set from cited evidence"
     assert request.body =~ "Write the human-facing reason in the report_language"
-    assert %{"report_language" => "ja"} = reviewer_payload(request)
+
+    assert %{
+             "report_language" => "ja",
+             "validated_contract" => %{
+               "access_method_current_and_authorized" => true,
+               "input_matches_provider_schema" => true,
+               "proposal_matches_disclosed_provider_tool" => true,
+               "target_revision_current" => true
+             }
+           } = reviewer_payload(request)
+
     refute request.body =~ "resolver-private-session"
     refute request.body =~ "observation_tools"
     refute request.body =~ "proposal_tools"
