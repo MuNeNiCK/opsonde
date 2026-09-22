@@ -320,8 +320,122 @@ defmodule Opsonde.ResolverProjectionTest do
     limits = AI.resolver_disclosure_limits()
     assert length(AI.resolver_disclosure_items(request)) <= limits.max_items
     assert AI.resolver_disclosure_size(request) <= limits.max_bytes
-    assert length(request.evidence) < 50
+    assert length(request.evidence) <= limits.max_items
     assert :ok = AI.Validator.validate_request(:resolve, request)
+  end
+
+  test "projection keeps structured facts and bounds only indispensable diagnostics", context do
+    {incident, run} = open!("compact-evidence", context.operator, context.target)
+
+    applied =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "compact-applied-observation",
+        "observation",
+        "operation",
+        Ecto.UUID.generate(),
+        %{
+          "request_kind" => "observation",
+          "target_id" => context.target.id,
+          "access_method_id" => context.method.id,
+          "capability" => "observe.service",
+          "operation" => "service.inspect",
+          "selectors" => %{"unit" => "api.service"},
+          "parameters" => %{},
+          "status" => "applied",
+          "category" => "target_observed",
+          "facts" => %{"active_state" => "inactive"},
+          "details" => %{
+            "stdout" => %{"encoding" => "utf-8", "value" => String.duplicate("x", 8_000)}
+          }
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    failed =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "compact-failed-effect",
+        "operation_outcome",
+        "operation",
+        Ecto.UUID.generate(),
+        %{
+          "request_kind" => "effect",
+          "target_id" => context.target.id,
+          "access_method_id" => context.method.id,
+          "capability" => "native.ssh",
+          "operation" => "command.execute",
+          "selectors" => %{},
+          "parameters" => %{"command" => "systemctl start api.service"},
+          "status" => "failed",
+          "category" => "target_failed",
+          "facts" => %{},
+          "details" => %{
+            "exit_status" => 1,
+            "stderr" => %{
+              "encoding" => "utf-8",
+              "value" => "Interactive authentication required\n" <> String.duplicate("x", 4_000)
+            }
+          }
+        },
+        DateTime.add(DateTime.utc_now(), 1, :second),
+        authorize?: false
+      )
+
+    verification =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "compact-verification",
+        "target_verification",
+        "verification",
+        Ecto.UUID.generate(),
+        %{
+          "target_id" => context.target.id,
+          "access_method_id" => context.method.id,
+          "operation_id" => Ecto.UUID.generate(),
+          "status" => "not_verified",
+          "category" => "target_not_verified",
+          "expected" => %{"active_state" => "active"},
+          "facts" => %{"active_state" => "inactive"},
+          "provider_evidence" => %{"raw" => String.duplicate("x", 8_000)}
+        },
+        DateTime.add(DateTime.utc_now(), 2, :second),
+        authorize?: false
+      )
+
+    started = start!(incident, run, "compact-evidence-turn")
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               started.value.id,
+               selection(),
+               invocation(%Target.Capabilities{observations: [], effects: []})
+             )
+
+    projected_applied = Enum.find(request.evidence, &(&1.id == applied.id))
+    assert projected_applied.content["facts"] == %{"active_state" => "inactive"}
+    refute Map.has_key?(projected_applied.content, "details")
+    refute Map.has_key?(projected_applied.content, "diagnostics")
+
+    projected_failed = Enum.find(request.evidence, &(&1.id == failed.id))
+    assert projected_failed.content["diagnostics"]["exit_status"] == 1
+    assert projected_failed.content["diagnostics"]["stderr"]["truncated"]
+
+    assert String.starts_with?(
+             projected_failed.content["diagnostics"]["stderr"]["value"],
+             "Interactive authentication required"
+           )
+
+    projected_verification = Enum.find(request.evidence, &(&1.id == verification.id))
+    assert projected_verification.content["facts"] == %{"active_state" => "inactive"}
+    refute Map.has_key?(projected_verification.content, "provider_evidence")
   end
 
   test "projection reserves the latest context from every correlated Signal source", context do

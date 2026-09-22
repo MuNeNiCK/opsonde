@@ -4,6 +4,8 @@ defmodule Opsonde.Cases.ResolverProjection do
   alias Opsonde.{Cases, Providers, Targets}
   alias Opsonde.Providers.AI
 
+  @diagnostic_text_limit 2_000
+
   @spec build(String.t(), AI.Selection.t(), map()) ::
           {:ok, AI.ResolverRequest.t()} | {:error, term()}
   def build(turn_id, selection, invocation \\ %{})
@@ -540,10 +542,81 @@ defmodule Opsonde.Cases.ResolverProjection do
       evidence.resolution_run_id == run_id and
         DateTime.compare(observed_at, recovered_at) in [:eq, :gt]
 
-    Map.put(evidence.content, "recovery_eligible", eligible?)
+    evidence
+    |> projected_evidence_content()
+    |> Map.put("recovery_eligible", eligible?)
   end
 
-  defp recovery_evidence_content(evidence, _incident, _run), do: evidence.content
+  defp recovery_evidence_content(evidence, _incident, _run),
+    do: projected_evidence_content(evidence)
+
+  defp projected_evidence_content(%{kind: kind, content: content})
+       when kind in ["observation", "operation_outcome"] do
+    facts = content["facts"]
+
+    projected =
+      Map.take(content, [
+        "access_method_id",
+        "capability",
+        "category",
+        "facts",
+        "operation",
+        "parameters",
+        "reference",
+        "request_kind",
+        "selectors",
+        "status",
+        "target_id",
+        "tool_id"
+      ])
+
+    if content["status"] != "applied" or not is_map(facts) or map_size(facts) == 0 do
+      maybe_put_diagnostics(projected, content["details"])
+    else
+      projected
+    end
+  end
+
+  defp projected_evidence_content(%{kind: "target_verification", content: content}) do
+    Map.take(content, [
+      "access_method_id",
+      "category",
+      "expected",
+      "facts",
+      "operation_id",
+      "status",
+      "target_id"
+    ])
+  end
+
+  defp projected_evidence_content(%{content: content}), do: content
+
+  defp maybe_put_diagnostics(projected, details) when is_map(details) do
+    diagnostics =
+      details
+      |> Map.take(["exit_status", "message"])
+      |> maybe_put_stream("stderr", details["stderr"])
+      |> maybe_put_stream("stdout", details["stdout"])
+
+    if map_size(diagnostics) == 0,
+      do: projected,
+      else: Map.put(projected, "diagnostics", diagnostics)
+  end
+
+  defp maybe_put_diagnostics(projected, _details), do: projected
+
+  defp maybe_put_stream(diagnostics, key, %{"value" => value} = stream)
+       when is_binary(value) do
+    compact = %{
+      "encoding" => stream["encoding"],
+      "value" => String.slice(value, 0, @diagnostic_text_limit),
+      "truncated" => String.length(value) > @diagnostic_text_limit
+    }
+
+    Map.put(diagnostics, key, compact)
+  end
+
+  defp maybe_put_stream(diagnostics, _key, _stream), do: diagnostics
 
   defp compact_repeated_operations(evidence) do
     {compacted, _signatures} =

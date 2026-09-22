@@ -148,7 +148,12 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
     assert Enum.all?(events, &(&1.incident_key == "storage-outage-42"))
 
-    assert hd(events).attributes["zabbix"]["event_name"] == "Linux disk I/O errors"
+    assert hd(events).attributes == %{
+             "severity" => "error",
+             "title" => "Linux disk I/O errors"
+           }
+
+    assert hd(events).metadata["zabbix"]["event_name"] == "Linux disk I/O errors"
   end
 
   test "Zabbix 7.0 date and time facts use the configured source timezone", context do

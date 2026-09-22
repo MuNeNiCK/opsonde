@@ -62,10 +62,9 @@ defmodule Opsonde.Signals.Zabbix.Webhook do
          incident_key: incident_key,
          attributes: %{
            "title" => title(payload, event_id),
-           "severity" => severity(payload),
-           "zabbix" => payload
+           "severity" => severity(payload)
          },
-         metadata: %{}
+         metadata: %{"zabbix" => payload}
        }}
     end
   end
