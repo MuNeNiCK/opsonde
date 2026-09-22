@@ -49,8 +49,11 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert firing.attributes["labels"] == %{
              "alertname" => "DiskErrors",
              "instance" => "server-a:9100",
+             "opsonde_incident_key" => "storage-outage-42",
              "severity" => "critical"
            }
+
+    assert firing.incident_key == "storage-outage-42"
 
     assert firing.attributes["annotations"] == %{"summary" => "Disk errors increased"}
     assert firing.metadata["alertmanager"]["truncated_alerts"] == 0
@@ -142,6 +145,8 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert Enum.all?(events, fn event ->
              event.target_ref == %{"kind" => "host_id", "value" => "10601"}
            end)
+
+    assert Enum.all?(events, &(&1.incident_key == "storage-outage-42"))
 
     assert hd(events).attributes["zabbix"]["event_name"] == "Linux disk I/O errors"
   end
@@ -239,6 +244,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
           "labels" => %{
             "alertname" => "DiskErrors",
             "instance" => "server-a:9100",
+            "opsonde_incident_key" => "storage-outage-42",
             "severity" => "critical"
           },
           "annotations" => %{"summary" => "Disk errors increased"},
@@ -278,7 +284,10 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       "event_name" => "Linux disk I/O errors",
       "severity" => "High",
       "severity_number" => "4",
-      "tags" => [%{"tag" => "service", "value" => "storage"}]
+      "tags" => [
+        %{"tag" => "service", "value" => "storage"},
+        %{"tag" => "opsonde_incident_key", "value" => "storage-outage-42"}
+      ]
     }
   end
 end

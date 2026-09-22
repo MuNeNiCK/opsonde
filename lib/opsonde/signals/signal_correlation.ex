@@ -37,6 +37,12 @@ defmodule Opsonde.Signals.SignalCorrelation do
              )
     end
 
+    read :for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     create :create_record do
       accept [:provider_id, :source, :event_key, :current_state, :revision]
     end
@@ -58,7 +64,7 @@ defmodule Opsonde.Signals.SignalCorrelation do
   end
 
   policies do
-    policy action([:by_source_identity, :create_record, :update_record]) do
+    policy action([:by_source_identity, :for_case, :create_record, :update_record]) do
       forbid_if always()
     end
 

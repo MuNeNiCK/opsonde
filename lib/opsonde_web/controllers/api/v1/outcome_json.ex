@@ -20,6 +20,7 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
       id: event.id,
       signal_receipt_id: event.signal_receipt_id,
       event_key: event.event_key,
+      incident_key: event.incident_key,
       state: event.state,
       source_sequence: event.source_sequence,
       occurred_at: event.occurred_at,

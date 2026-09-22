@@ -84,6 +84,7 @@ defmodule Opsonde.Signals.Alertmanager.Webhook do
          occurred_at: occurred_at,
          source_sequence: DateTime.to_unix(occurred_at, :microsecond),
          target_ref: target_ref(labels),
+         incident_key: labels["opsonde_incident_key"],
          attributes: %{
            "title" => title(labels, annotations, fingerprint),
            "severity" => severity(labels["severity"]),

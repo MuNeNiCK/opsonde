@@ -109,6 +109,220 @@ defmodule Opsonde.SignalIngressTest do
     assert is_nil(Enum.find(events, &(&1.event_key == "alert-b")).case_id)
   end
 
+  test "authoritative incident identity joins monitoring sources and waits for every recovery",
+       context do
+    enable_signal_automation!(context.admin)
+
+    boundary =
+      Targets.create_management_boundary!("shared-stack", "environment", %{},
+        actor: context.admin
+      )
+
+    linux =
+      Targets.create_target!("linux-shared", "host", "linux", %{}, boundary.id,
+        actor: context.admin
+      )
+
+    kubernetes =
+      Targets.create_target!("kubernetes-shared", "cluster", "kubernetes", %{}, boundary.id,
+        actor: context.admin
+      )
+
+    Targets.create_external_identity!(
+      linux.id,
+      "test-monitor",
+      "hostname",
+      "linux-shared",
+      actor: context.admin
+    )
+
+    second_provider = signal_provider!(context.admin, "second-monitor")
+
+    Targets.create_external_identity!(
+      kubernetes.id,
+      "second-monitor",
+      "hostname",
+      "kubernetes-shared",
+      actor: context.admin
+    )
+
+    base = DateTime.utc_now()
+
+    ingest!(
+      context.provider,
+      envelope("linux-firing", base),
+      invocation("linux-firing", [
+        event("linux-firing", "linux-event", :firing, base,
+          incident_key: "shared-outage-42",
+          target_ref: %{kind: :hostname, value: "linux-shared"}
+        )
+      ])
+    )
+
+    ingest!(
+      second_provider,
+      envelope("kubernetes-firing", DateTime.add(base, 1, :second)),
+      invocation("kubernetes-firing", [
+        event("kubernetes-firing", "kubernetes-event", :firing, base,
+          incident_key: "shared-outage-42",
+          target_ref: %{kind: :hostname, value: "kubernetes-shared"}
+        )
+      ])
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    events = Signals.list_signal_events!(actor: context.admin)
+    correlations = Signals.list_signal_correlations!(actor: context.admin)
+
+    assert is_binary(incident.incident_key)
+    assert byte_size(incident.incident_key) == 64
+    assert Enum.map(events, & &1.incident_key) == ["shared-outage-42", "shared-outage-42"]
+    assert Enum.all?(events, &(&1.case_id == incident.id))
+    assert Enum.all?(correlations, &(&1.case_id == incident.id))
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+
+    ingest!(
+      context.provider,
+      envelope("linux-recovered", DateTime.add(base, 2, :second)),
+      invocation("linux-recovered", [
+        event("linux-recovered", "linux-event", :recovered, DateTime.add(base, 2, :second),
+          incident_key: "shared-outage-42",
+          target_ref: %{kind: :hostname, value: "linux-shared"}
+        )
+      ])
+    )
+
+    assert Cases.get_case!(incident.id, actor: context.admin).alert_state == :firing
+
+    ingest!(
+      second_provider,
+      envelope("kubernetes-recovered", DateTime.add(base, 3, :second)),
+      invocation("kubernetes-recovered", [
+        event(
+          "kubernetes-recovered",
+          "kubernetes-event",
+          :recovered,
+          DateTime.add(base, 3, :second),
+          incident_key: "shared-outage-42",
+          target_ref: %{kind: :hostname, value: "kubernetes-shared"}
+        )
+      ])
+    )
+
+    assert Cases.get_case!(incident.id, actor: context.admin).alert_state == :recovered
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 4
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 4
+  end
+
+  test "correlation never guesses from matching Target, title, or time", context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("same-target", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "same-target",
+      actor: context.admin
+    )
+
+    second_provider = signal_provider!(context.admin, "separate-monitor")
+
+    Targets.create_external_identity!(
+      target.id,
+      "separate-monitor",
+      "hostname",
+      "same-target",
+      actor: context.admin
+    )
+
+    occurred_at = DateTime.utc_now()
+    attributes = %{"title" => "Identical alert title"}
+
+    ingest!(
+      context.provider,
+      envelope("separate-a", occurred_at),
+      invocation("separate-a", [
+        event("separate-a", "event-a", :firing, occurred_at,
+          target_ref: %{kind: :hostname, value: "same-target"},
+          attributes: attributes
+        )
+      ])
+    )
+
+    ingest!(
+      second_provider,
+      envelope("separate-b", occurred_at),
+      invocation("separate-b", [
+        event("separate-b", "event-b", :firing, occurred_at,
+          target_ref: %{kind: :hostname, value: "same-target"},
+          attributes: attributes
+        )
+      ])
+    )
+
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+  end
+
+  test "concurrent monitoring sources converge on one active incident", context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("concurrent-target", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "concurrent-target",
+      actor: context.admin
+    )
+
+    second_provider = signal_provider!(context.admin, "concurrent-monitor")
+
+    Targets.create_external_identity!(
+      target.id,
+      "concurrent-monitor",
+      "hostname",
+      "concurrent-target",
+      actor: context.admin
+    )
+
+    occurred_at = DateTime.utc_now()
+
+    requests = [
+      {context.provider, "concurrent-a", "event-a", "test-monitor"},
+      {second_provider, "concurrent-b", "event-b", "concurrent-monitor"}
+    ]
+
+    results =
+      requests
+      |> Enum.map(fn {provider, receipt_id, event_key, _source} ->
+        Task.async(fn ->
+          Signals.ingest_signal(
+            provider.id,
+            provider.revision,
+            envelope(receipt_id, occurred_at),
+            invocation(receipt_id, [
+              event(receipt_id, event_key, :firing, occurred_at,
+                incident_key: "concurrent-incident",
+                target_ref: %{kind: :hostname, value: "concurrent-target"}
+              )
+            ])
+          )
+        end)
+      end)
+      |> Task.await_many()
+
+    assert [{:ok, _first}, {:ok, _second}] = results
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_correlations!(actor: context.admin)) == 2
+  end
+
   test "concurrent receipt replay converges and conflicting reuse is rejected", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()
@@ -515,6 +729,19 @@ defmodule Opsonde.SignalIngressTest do
     )
   end
 
+  defp signal_provider!(admin, source) do
+    Providers.create_provider!(
+      "signal-ingress-#{source}",
+      :signal,
+      "fixture-signal",
+      %{"source" => source},
+      %{"secret" => "signal-secret"},
+      actor: admin
+    )
+    |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+    |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+  end
+
   defp reconciliation_job!(identity_id) do
     Repo.all(
       from(job in Oban.Job,
@@ -559,6 +786,7 @@ defmodule Opsonde.SignalIngressTest do
       occurred_at: occurred_at,
       source_sequence: Keyword.get(opts, :source_sequence),
       target_ref: Keyword.get(opts, :target_ref),
+      incident_key: Keyword.get(opts, :incident_key),
       attributes: Keyword.get(opts, :attributes, %{})
     }
   end

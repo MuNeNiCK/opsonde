@@ -20,7 +20,13 @@ defmodule Opsonde.Providers.Signal do
     @enforce_keys [:receipt_id, :event_key, :state, :occurred_at]
 
     defstruct @enforce_keys ++
-                [source_sequence: nil, target_ref: nil, attributes: %{}, metadata: %{}]
+                [
+                  source_sequence: nil,
+                  target_ref: nil,
+                  incident_key: nil,
+                  attributes: %{},
+                  metadata: %{}
+                ]
 
     @type t :: %__MODULE__{}
   end

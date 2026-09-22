@@ -1690,6 +1690,7 @@ export interface components {
             event_key: string;
             /** Format: uuid */
             id: string;
+            incident_key: string | null;
             /** Format: date-time */
             inserted_at: string;
             /** Format: date-time */

@@ -15,6 +15,11 @@ defmodule Opsonde.Cases.Case do
       index [:initial_target_id]
       index [:selected_target_id]
       index [:current_owner_id]
+
+      index [:incident_key],
+        unique: true,
+        name: "cases_active_incident_key_index",
+        where: "incident_key IS NOT NULL AND status IN ('running', 'needs_attention')"
     end
 
     check_constraints do
@@ -67,6 +72,16 @@ defmodule Opsonde.Cases.Case do
              )
     end
 
+    read :active_by_incident_key do
+      get? true
+
+      argument :incident_key, :string,
+        allow_nil?: false,
+        constraints: [min_length: 64, max_length: 64]
+
+      filter expr(incident_key == ^arg(:incident_key) and status in [:running, :needs_attention])
+    end
+
     read :unresolved_signals_without_target do
       filter expr(
                trigger_kind == :signal and alert_state == :firing and
@@ -81,6 +96,7 @@ defmodule Opsonde.Cases.Case do
         :trigger_kind,
         :source,
         :source_ref,
+        :incident_key,
         :title,
         :severity,
         :alert_state,
@@ -164,6 +180,8 @@ defmodule Opsonde.Cases.Case do
 
       argument :initial_context, :map, allow_nil?: false, default: %{}
       argument :initial_target_id, :uuid
+
+      argument :incident_key, :string, constraints: [min_length: 64, max_length: 64]
 
       run {Opsonde.Cases.Case.Actions.Open, []}
     end
@@ -383,6 +401,7 @@ defmodule Opsonde.Cases.Case do
 
     policy action([
              :by_trigger,
+             :active_by_incident_key,
              :unresolved_signals_without_target,
              :create_record,
              :update_record,
@@ -421,6 +440,11 @@ defmodule Opsonde.Cases.Case do
       allow_nil? false
       public? true
       constraints min_length: 1, max_length: 500
+    end
+
+    attribute :incident_key, :string do
+      public? false
+      constraints min_length: 64, max_length: 64
     end
 
     attribute :title, :string do

@@ -40,6 +40,8 @@ defmodule Opsonde.Signals do
         action: :by_source_identity,
         args: [:provider_id, :source, :event_key]
 
+      define :signal_correlations_for_case, action: :for_case, args: [:case_id]
+
       define :create_signal_correlation_record, action: :create_record
       define :update_signal_correlation_record, action: :update_record, args: [:expected_revision]
     end

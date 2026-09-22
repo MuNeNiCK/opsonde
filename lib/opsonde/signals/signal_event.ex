@@ -46,6 +46,7 @@ defmodule Opsonde.Signals.SignalEvent do
         :signal_receipt_id,
         :signal_correlation_id,
         :event_key,
+        :incident_key,
         :state,
         :source_sequence,
         :occurred_at,
@@ -78,6 +79,11 @@ defmodule Opsonde.Signals.SignalEvent do
 
     attribute :event_key, :string do
       allow_nil? false
+      public? true
+      constraints min_length: 1, max_length: 500
+    end
+
+    attribute :incident_key, :string do
       public? true
       constraints min_length: 1, max_length: 500
     end

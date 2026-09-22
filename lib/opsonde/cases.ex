@@ -38,6 +38,10 @@ defmodule Opsonde.Cases do
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
 
+      define :active_case_by_incident_key,
+        action: :active_by_incident_key,
+        args: [:incident_key]
+
       define :unresolved_signal_cases_without_target,
         action: :unresolved_signals_without_target
 
@@ -56,6 +60,21 @@ defmodule Opsonde.Cases do
           :initial_context,
           :initial_target_id,
           :report_language
+        ]
+
+      define :open_correlated_signal_case,
+        action: :open,
+        args: [
+          :trigger_kind,
+          :source,
+          :source_ref,
+          :title,
+          :severity,
+          :alert_state,
+          :initial_context,
+          :initial_target_id,
+          :report_language,
+          :incident_key
         ]
 
       define :claim_case, action: :claim, args: [:id, :expected_revision]

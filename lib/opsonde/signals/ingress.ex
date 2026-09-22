@@ -187,24 +187,26 @@ defmodule Opsonde.Signals.Ingress do
     current? = current_event?(event, correlation)
 
     with {:ok, target} <- resolve_target(receipt.source, event.target_ref),
-         {:ok, incident} <- case_for_event(receipt, event, correlation, target, current?),
+         incident_key <- incident_key(event, target),
+         {:ok, incident} <-
+           case_for_event(receipt, event, correlation, target, incident_key, current?),
          {:ok, persisted_event} <- create_event(receipt, event, correlation, incident, target),
-         {:ok, incident} <- record_case_input(incident, persisted_event, receipt, event, current?),
          {:ok, _correlation} <-
            update_correlation(correlation, persisted_event, incident, event, current?),
+         {:ok, incident} <- record_case_input(incident, persisted_event, receipt, event, current?),
          :ok <- start_resolution(incident, receipt, event, current?) do
       {:ok, persisted_event}
     end
   end
 
-  defp case_for_event(receipt, event, correlation, target, current?) do
+  defp case_for_event(receipt, event, correlation, target, incident_key, current?) do
     with {:ok, existing} <- existing_case(correlation, receipt.source, event.event_key) do
       cond do
         existing ->
           {:ok, existing}
 
         current? and event.state == :firing ->
-          Cases.open_case(
+          Cases.open_correlated_signal_case(
             :signal,
             receipt.source,
             event.event_key,
@@ -214,6 +216,7 @@ defmodule Opsonde.Signals.Ingress do
             initial_context(event),
             target && target.id,
             nil,
+            incident_key,
             authorize?: false
           )
 
@@ -239,6 +242,7 @@ defmodule Opsonde.Signals.Ingress do
         signal_receipt_id: receipt.id,
         signal_correlation_id: correlation.id,
         event_key: event.event_key,
+        incident_key: event.incident_key,
         state: event.state,
         source_sequence: sequence(event.source_sequence),
         occurred_at: event.occurred_at,
@@ -290,6 +294,7 @@ defmodule Opsonde.Signals.Ingress do
                  "state" => to_string(event.state),
                  "current" => current?,
                  "source_sequence" => sequence(event.source_sequence),
+                 "incident_key" => event.incident_key,
                  "target_ref" => json_target_ref(event.target_ref),
                  "attributes" => event.attributes
                },
@@ -321,15 +326,19 @@ defmodule Opsonde.Signals.Ingress do
 
   defp apply_current_source_state(%{status: status} = incident, event, true)
        when status in [:running, :needs_attention] do
-    cond do
-      event.state == :recovered and incident.alert_state == :firing ->
-        Cases.record_case_source_recovery(incident.id, incident.revision, authorize?: false)
+    with {:ok, correlations} <-
+           Signals.signal_correlations_for_case(incident.id, authorize?: false) do
+      cond do
+        event.state == :recovered and incident.alert_state == :firing and
+          correlations != [] and Enum.all?(correlations, &(&1.current_state == :recovered)) ->
+          Cases.record_case_source_recovery(incident.id, incident.revision, authorize?: false)
 
-      event.state == :firing and incident.alert_state == :recovered ->
-        mark_source_firing(incident, event)
+        event.state == :firing and incident.alert_state == :recovered ->
+          mark_source_firing(incident, event)
 
-      true ->
-        {:ok, incident}
+        true ->
+          {:ok, incident}
+      end
     end
   end
 
@@ -388,14 +397,14 @@ defmodule Opsonde.Signals.Ingress do
     end
   end
 
-  defp start_resolution(%{status: :running} = incident, receipt, event, true)
+  defp start_resolution(%{status: :running} = incident, _receipt, event, true)
        when event.state == :firing do
     with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
          {:ok, result} <-
            Cases.start_turn(
              incident.id,
              run.id,
-             initial_turn_key(receipt, event),
+             initial_turn_key(incident, run),
              %{"objective" => "Resolve the incident"},
              %{"action" => "continue"},
              "Review Resolver limits",
@@ -426,6 +435,22 @@ defmodule Opsonde.Signals.Ingress do
   end
 
   defp resolve_target(_source, _target_ref), do: {:ok, nil}
+
+  defp incident_key(%{incident_key: key}, %{id: target_id} = target)
+       when is_binary(key) do
+    scope =
+      case target.management_boundary_id do
+        id when is_binary(id) -> {:management_boundary, id}
+        _none -> {:target, target_id}
+      end
+
+    {scope, key}
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp incident_key(_event, _target), do: nil
 
   defp ref_value(ref, key) do
     value = Map.get(ref, key) || Map.get(ref, Atom.to_string(key))
@@ -524,8 +549,8 @@ defmodule Opsonde.Signals.Ingress do
   defp sequence(nil), do: nil
   defp sequence(value), do: to_string(value)
 
-  defp initial_turn_key(receipt, event) do
-    raw = [receipt.provider_id, receipt.source, event.event_key] |> Enum.join(":")
+  defp initial_turn_key(incident, run) do
+    raw = [incident.id, run.generation] |> Enum.join(":")
     "signal-initial:" <> (:crypto.hash(:sha256, raw) |> Base.encode16(case: :lower))
   end
 

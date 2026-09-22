@@ -119,6 +119,7 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
            occurred_at: %DateTime{},
            source_sequence: sequence,
            target_ref: target_ref,
+           incident_key: incident_key,
            attributes: attributes,
            metadata: metadata
          },
@@ -129,7 +130,10 @@ defmodule Opsonde.Providers.Provider.Actions.Signal do
               state in [:firing, :recovered] and
               (is_nil(sequence) or is_integer(sequence) or
                  (is_binary(sequence) and byte_size(sequence) > 0 and
-                    byte_size(sequence) <= @max_event_key_bytes)),
+                    byte_size(sequence) <= @max_event_key_bytes)) and
+              (is_nil(incident_key) or
+                 (is_binary(incident_key) and byte_size(incident_key) > 0 and
+                    byte_size(incident_key) <= @max_event_key_bytes)),
        do:
          bounded_facts?(attributes) and bounded_facts?(metadata) and
            (is_nil(target_ref) or bounded_facts?(target_ref))

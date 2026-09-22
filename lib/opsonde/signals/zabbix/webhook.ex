@@ -49,7 +49,8 @@ defmodule Opsonde.Signals.Zabbix.Webhook do
        when is_binary(event_id) and byte_size(event_id) > 0 do
     with {:ok, state} <- state(event_value),
          {:ok, occurred_at, sequence} <- occurred_at(payload, state, timezone),
-         :ok <- validate_facts(payload) do
+         :ok <- validate_facts(payload),
+         {:ok, incident_key} <- incident_key(payload) do
       {:ok,
        %Signal.Event{
          receipt_id: receipt.receipt_id,
@@ -58,6 +59,7 @@ defmodule Opsonde.Signals.Zabbix.Webhook do
          occurred_at: occurred_at,
          source_sequence: sequence,
          target_ref: target_ref(payload),
+         incident_key: incident_key,
          attributes: %{
            "title" => title(payload, event_id),
            "severity" => severity(payload),
@@ -166,6 +168,39 @@ defmodule Opsonde.Signals.Zabbix.Webhook do
     do: %{"kind" => "host", "value" => host}
 
   defp target_ref(_payload), do: nil
+
+  defp incident_key(%{"incident_key" => value}), do: validate_incident_key(value)
+
+  defp incident_key(%{"tags" => tags}) when is_binary(tags) do
+    case Jason.decode(tags) do
+      {:ok, decoded} -> incident_key_from_tags(decoded)
+      {:error, _error} -> {:ok, nil}
+    end
+  end
+
+  defp incident_key(%{"tags" => tags}), do: incident_key_from_tags(tags)
+  defp incident_key(_payload), do: {:ok, nil}
+
+  defp incident_key_from_tags(tags) when is_list(tags) do
+    tags
+    |> Enum.find_value(fn
+      %{"tag" => "opsonde_incident_key", "value" => value} -> value
+      _tag -> nil
+    end)
+    |> case do
+      nil -> {:ok, nil}
+      value -> validate_incident_key(value)
+    end
+  end
+
+  defp incident_key_from_tags(_tags), do: {:ok, nil}
+
+  defp validate_incident_key(value)
+       when is_binary(value) and byte_size(value) > 0 and byte_size(value) <= 500,
+       do: {:ok, value}
+
+  defp validate_incident_key(_value),
+    do: {:error, :invalid_input, "Zabbix incident key is invalid"}
 
   defp title(payload, event_id) do
     first_present([payload["event_name"], payload["subject"], "Zabbix event #{event_id}"])

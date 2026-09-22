@@ -1234,6 +1234,11 @@
             "format": "uuid",
             "type": "string"
           },
+          "incident_key": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
           "inserted_at": {
             "format": "date-time",
             "type": "string"
@@ -1277,6 +1282,7 @@
           "id",
           "signal_receipt_id",
           "event_key",
+          "incident_key",
           "state",
           "source_sequence",
           "occurred_at",
