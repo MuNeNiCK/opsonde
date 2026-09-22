@@ -892,14 +892,19 @@ defmodule Opsonde.AI.ReqLLM do
   defp normalize_req_llm_error(%ReqLLM.Error.API.Timeout{}),
     do: {:error, :timeout, "AI provider timed out"}
 
+  defp normalize_req_llm_error(%ReqLLM.Error.Validation.Error{
+         tag: :structured_output_validation_failed
+       }),
+       do: invalid_output("AI provider JSON does not match the requested schema")
+
   defp normalize_req_llm_error(%ReqLLM.Error.Validation.Error{}),
-    do: invalid_output()
+    do: {:error, :failed, "AI provider request validation failed"}
 
   defp normalize_req_llm_error(%ReqLLM.Error.API.SchemaValidation{}),
-    do: invalid_output()
+    do: invalid_output("AI provider JSON does not match the requested schema")
 
   defp normalize_req_llm_error(%ReqLLM.Error.API.Response{}),
-    do: invalid_output()
+    do: invalid_output("AI provider did not return a structured object")
 
   defp normalize_req_llm_error(_error), do: {:error, :failed, "AI provider failed"}
 

@@ -28,7 +28,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp select_and_deliver(proposal, opts) do
-    case assigned_selection(proposal) do
+    case assigned_selection(proposal, assignment_generation(opts)) do
       {:ok, selection} -> deliver(proposal, selection, opts)
       {:error, error} -> persist_failure(proposal, nil, error, nil, opts)
     end
@@ -105,13 +105,15 @@ defmodule Opsonde.Cases.ReviewDelivery do
       selection.provider_revision,
       selection.assignment_revision,
       selection.source,
-      AIInvocation.request_digest({request, delivery_attempt}),
+      AIInvocation.request_digest(
+        {request, delivery_attempt, selection.provider_id, selection.assignment_id}
+      ),
       authorize?: false
     )
   end
 
-  defp assigned_selection(proposal) do
-    key = assignment_key(proposal.id)
+  defp assigned_selection(proposal, generation) do
+    key = assignment_key(proposal.id, generation)
 
     case Cases.case_event_by_idempotency(proposal.case_id, key,
            authorize?: false,
@@ -305,16 +307,38 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp store_decision(attrs),
     do: Cases.create_review_decision_record(attrs, authorize?: false)
 
-  defp persist_failure(proposal, _selection, error, invocation, opts) do
+  defp persist_failure(proposal, selection, error, invocation, opts) do
     {category, reason} = failure(error)
 
     with {:ok, _invocation} <- record_failure(invocation, category) do
-      if retryable_failure?(category) and retry_available?(opts) do
-        {:error,
-         "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
-      else
-        stop_delivery(proposal, category, reason)
+      cond do
+        AI.structured_contract_failure?(error) and match?(%AI.Selection{}, selection) ->
+          failover_contract(proposal, selection, opts)
+
+        retryable_failure?(category) and retry_available?(opts) ->
+          {:error,
+           "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
+
+        true ->
+          stop_delivery(proposal, category, reason)
       end
+    end
+  end
+
+  defp failover_contract(proposal, selection, opts) do
+    case Providers.fail_provider_runtime_contract(
+           selection.provider_id,
+           selection.provider_revision,
+           authorize?: false
+         ) do
+      {:ok, _provider} ->
+        select_and_deliver(
+          proposal,
+          Keyword.put(opts, :assignment_generation, assignment_generation(opts) + 1)
+        )
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -449,6 +473,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp max_delivery_attempts(opts),
     do: max(Keyword.get(opts, :max_delivery_attempts, 1), delivery_attempt(opts))
 
+  defp assignment_generation(opts),
+    do: max(Keyword.get(opts, :assignment_generation, 1), 1)
+
   defp accepted_or_existing({:error, error}, proposal_id) do
     case existing_decision(proposal_id) do
       {:ok, %ReviewDecision{} = stored} -> {:ok, stored}
@@ -533,7 +560,12 @@ defmodule Opsonde.Cases.ReviewDelivery do
     |> Base.encode16(case: :lower)
   end
 
-  defp assignment_key(proposal_id), do: Budget.key("proposal:reviewer_assignment", proposal_id)
+  defp assignment_key(proposal_id, 1),
+    do: Budget.key("proposal:reviewer_assignment", proposal_id)
+
+  defp assignment_key(proposal_id, generation),
+    do: Budget.key("proposal:reviewer_assignment:#{generation}", proposal_id)
+
   defp source("assignment"), do: :assignment
   defp source("resolver_fallback"), do: :resolver_fallback
   defp source(_value), do: nil

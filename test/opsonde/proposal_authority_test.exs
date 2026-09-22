@@ -767,6 +767,88 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "Reviewer schema contract failure immediately uses the next assigned AI", context do
+    configure_mode!(:auto, context.admin)
+
+    fallback_provider =
+      ai_provider!(context.admin, "authority-reviewer-fallback", "fallback-model")
+
+    fallback_assignment =
+      Providers.create_ai_usage_role_assignment!(fallback_provider.id, :reviewer, 20,
+        actor: context.admin
+      )
+
+    {_incident, _run, proposal} = proposal!("review-schema-failover", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    calls = start_supervised!({Agent, fn -> 0 end})
+
+    response = %AI.ReviewDecision{
+      verdict: :approved,
+      reason: "The fallback Reviewer approved the bounded operation",
+      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+    }
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+                     0 ->
+                       {:error, :invalid_output,
+                        "AI provider JSON does not match the requested schema"}
+
+                     1 ->
+                       {:ok, response}
+                   end
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+    assert_receive {:review, %{model: "fallback-model"}, _request}
+
+    failed_provider = Providers.get_provider!(context.reviewer_provider.id, authorize?: false)
+    refute failed_provider.enabled
+    assert failed_provider.check_status == :failed
+    assert failed_provider.check_category == :capability
+
+    [decision] = Cases.list_review_decisions!(actor: context.admin)
+    assert decision.provider_id == fallback_provider.id
+    assert decision.assignment_id == fallback_assignment.id
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+  end
+
+  test "Reviewer schema contract failure stops after one call without an alternate AI", context do
+    configure_mode!(:auto, context.admin)
+    {_incident, run, proposal} = proposal!("review-schema-no-fallback", context)
+
+    Providers.disable_provider!(
+      context.resolver_provider,
+      context.resolver_provider.revision,
+      actor: context.admin
+    )
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:error, :invalid_output,
+                    "AI provider JSON does not match the requested schema"}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+    refute_receive {:review, _, _}
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+  end
+
   test "an interrupted Reviewer dispatch retries without a human approval request",
        context do
     configure_mode!(:auto, context.admin)

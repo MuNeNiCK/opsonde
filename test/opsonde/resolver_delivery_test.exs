@@ -223,8 +223,30 @@ defmodule Opsonde.ResolverDeliveryTest do
              2
   end
 
-  test "schema rejection classification reaches the successor Turn", context do
-    {_incident, _run, turn} = turn!("schema-rejection", context.operator)
+  test "schema contract failure disables the route and selects the next Resolver", context do
+    fallback_key = "fallback-provider-secret"
+
+    fallback_provider =
+      Providers.create_provider!(
+        "fallback-resolver-ai",
+        :ai,
+        "fixture-ai",
+        %{"model" => "fallback-model"},
+        %{"api_key" => fallback_key},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    fallback_assignment =
+      Providers.create_ai_usage_role_assignment!(
+        fallback_provider.id,
+        :resolver,
+        20,
+        actor: context.admin
+      )
+
+    {_incident, _run, turn} = turn!("schema-failover", context.operator)
 
     assert :ok =
              invalid_output(turn, fn ->
@@ -239,6 +261,54 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert successor.intent["category"] == "invalid_output"
     assert successor.intent["rejection_code"] == "schema_validation"
+
+    failed_provider = Providers.get_provider!(context.provider.id, authorize?: false)
+    refute failed_provider.enabled
+    assert failed_provider.check_status == :failed
+    assert failed_provider.check_category == :capability
+
+    decision = %AI.ResolverDecision{
+      intent: %AI.TargetSearch{query: "continue with fallback", reason: "Use the healthy route"},
+      usage: %AI.Usage{input_tokens: 2, output_tokens: 1}
+    }
+
+    assert :ok =
+             ResolverDelivery.run(successor.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> {:ok, decision} end
+               }
+             )
+
+    assert_receive {:resolve, %{api_key: ^fallback_key}, _request}
+
+    assignment_key = Budget.key("turn:resolver_assignment", successor.id)
+    event = Cases.case_event_by_idempotency!(successor.case_id, assignment_key, authorize?: false)
+    assert event.data["provider_id"] == fallback_provider.id
+    assert event.data["assignment_id"] == fallback_assignment.id
+  end
+
+  test "schema contract failure stops after one call when no alternate Resolver exists",
+       context do
+    {incident, run, turn} = turn!("schema-no-fallback", context.operator)
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI provider JSON does not match the requested schema"}
+             end)
+
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.result["rejection_code"] == "schema_validation"
+
+    refute Enum.any?(Cases.list_turns!(authorize?: false), fn candidate ->
+             candidate.resolution_run_id == run.id and candidate.status == :started
+           end)
   end
 
   test "an interrupted dispatch starts one bounded autonomous successor", context do

@@ -371,6 +371,23 @@ defmodule Opsonde.Providers.AI do
     def message(error), do: error.message
   end
 
+  @structured_contract_messages [
+    "AI provider returned no JSON text",
+    "AI provider JSON text is too large",
+    "AI provider output is not valid JSON",
+    "AI provider JSON does not match the requested schema",
+    "AI provider did not return a structured object",
+    "AI provider output is too large"
+  ]
+
+  def structured_contract_failure?(%Error{category: :invalid_output, message: message}),
+    do: message in @structured_contract_messages
+
+  def structured_contract_failure?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &structured_contract_failure?/1)
+
+  def structured_contract_failure?(_error), do: false
+
   def resolver_disclosure_items(%ResolverRequest{} = request) do
     request.evidence ++
       request.target_candidates ++

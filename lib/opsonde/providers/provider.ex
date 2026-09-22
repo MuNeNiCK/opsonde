@@ -99,6 +99,19 @@ defmodule Opsonde.Providers.Provider do
       run Opsonde.Providers.Provider.Actions.Check
     end
 
+    action :fail_runtime_contract, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+
+      argument :id, :uuid, allow_nil?: false
+
+      argument :expected_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1]
+
+      run Opsonde.Providers.Provider.Actions.FailRuntimeContract
+    end
+
     action :target_capabilities, :struct do
       constraints instance_of: Opsonde.Providers.Target.Capabilities
       transaction? false
@@ -303,7 +316,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action(:record_check) do
+    policy action([:record_check, :fail_runtime_contract]) do
       forbid_if always()
     end
 

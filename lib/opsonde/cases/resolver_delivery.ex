@@ -71,7 +71,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
       {:error, error} ->
         if resolver_context_current?(request) do
-          handle_failure(turn, error, claim.invocation)
+          handle_failure(turn, error, claim.invocation, selection)
         else
           with {:ok, _invocation} <-
                  record_invocation(claim.invocation, :failed, category: "context_changed") do
@@ -88,7 +88,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
            {:ok, _result} <- accept(turn, invocation, decision, result, request) do
         :ok
       else
-        {:error, error} -> handle_failure(turn, error, invocation)
+        {:error, error} -> handle_failure(turn, error, invocation, selection)
       end
     else
       with {:ok, _result} <- settle_unused_result(turn, invocation, decision, "context_changed") do
@@ -569,7 +569,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp handle_failure(turn, error, invocation \\ nil) do
+  defp handle_failure(turn, error, invocation \\ nil, selection \\ nil) do
     cond do
       case_cancelled?(turn.case_id) ->
         {:cancel, "Case resolution was cancelled"}
@@ -580,8 +580,17 @@ defmodule Opsonde.Cases.ResolverDelivery do
       true ->
         {category, message} = failure(error)
         rejection_code = rejection_code(error)
+        contract_failure? = AI.structured_contract_failure?(error)
 
-        case persist_failure(turn, invocation, category, message, rejection_code) do
+        case persist_failure(
+               turn,
+               invocation,
+               selection,
+               category,
+               message,
+               rejection_code,
+               contract_failure?
+             ) do
           {:ok, _incident} ->
             :ok
 
@@ -591,11 +600,65 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp persist_failure(turn, invocation, category, message, rejection_code) do
-    if retryable_failure?(category) do
+  defp persist_failure(
+         turn,
+         invocation,
+         selection,
+         category,
+         message,
+         rejection_code,
+         contract_failure?
+       ) do
+    cond do
+      contract_failure? and match?(%AI.Selection{}, selection) ->
+        persist_contract_failure(
+          turn,
+          invocation,
+          selection,
+          category,
+          message,
+          rejection_code
+        )
+
+      retryable_failure?(category) ->
+        persist_retryable_failure(turn, invocation, category, message, rejection_code)
+
+      true ->
+        persist_attention_failure(turn, invocation, category, message, rejection_code)
+    end
+  end
+
+  defp persist_contract_failure(
+         turn,
+         invocation,
+         selection,
+         category,
+         message,
+         rejection_code
+       ) do
+    with :ok <- mark_provider_unhealthy(selection),
+         {:ok, %AI.Selection{}} <- Providers.select_resolver_ai(authorize?: false) do
       persist_retryable_failure(turn, invocation, category, message, rejection_code)
     else
-      persist_attention_failure(turn, invocation, category, message)
+      {:error, error} ->
+        case find_error(error) do
+          %AI.Error{category: :unavailable} ->
+            persist_attention_failure(turn, invocation, category, message, rejection_code)
+
+          _other ->
+            {:error, error}
+        end
+    end
+  end
+
+  defp mark_provider_unhealthy(selection) do
+    case Providers.fail_provider_runtime_contract(
+           selection.provider_id,
+           selection.provider_revision,
+           authorize?: false
+         ) do
+      {:ok, _provider} -> :ok
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -684,7 +747,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp persist_attention_failure(turn, invocation, category, message) do
+  defp persist_attention_failure(turn, invocation, category, message, rejection_code) do
     reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
     intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
 
@@ -696,6 +759,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                %{
                  "outcome" => "delivery_failed",
                  "category" => category,
+                 "rejection_code" => rejection_code,
                  "message" => String.slice(message, 0, 1_000)
                },
                :human_input,
