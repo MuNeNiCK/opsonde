@@ -11,8 +11,6 @@ defmodule Opsonde.AI.ReqLLM do
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
   @max_output_bytes 65_536
-  @max_correction_bytes 16_384
-  @max_schema_hint_bytes 2_000
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
@@ -159,8 +157,8 @@ defmodule Opsonde.AI.ReqLLM do
       |> maybe_put(:base_url, state.endpoint)
 
     case state.output_mode do
-      :prompt_json ->
-        prompt_json_request(state, messages, output, options, parent, stream_ref)
+      :tool_json ->
+        tool_json_request(state, messages, output, options, parent, stream_ref)
 
       :native ->
         options = Keyword.merge(options, output: output, output_validation: :strict)
@@ -172,168 +170,35 @@ defmodule Opsonde.AI.ReqLLM do
     _kind, _reason -> {:error, :failed, "AI provider failed"}
   end
 
-  defp prompt_json_request(state, messages, output, options, parent, stream_ref) do
+  defp tool_json_request(state, messages, output, options, parent, stream_ref) do
     with {:ok, %{compiled_schema: %{schema: schema}}} <- ReqLLM.Output.compile(output),
-         {:ok, encoded_schema} <- Jason.encode(schema),
-         messages <- prompt_json_context(messages, encoded_schema),
-         options <- Keyword.put(options, :temperature, 0.0),
-         {:ok, response} <- request(state, messages, options, parent, stream_ref) do
-      case prompt_json_value(response, schema) do
-        {:ok, value} ->
-          {:ok, %{response | object: value}}
-
-        {:schema_mismatch, text, hint} ->
-          correct_prompt_json(
-            state,
-            messages,
-            options,
-            parent,
-            stream_ref,
-            response,
-            text,
-            hint,
-            schema
-          )
-
-        {:error, _category, _message} = error ->
-          error
-      end
-    else
-      {:error, _category, _message} = error -> error
-      _error -> invalid_output()
-    end
-  end
-
-  defp prompt_json_context(messages, encoded_schema) do
-    instruction =
-      "Your entire response must be exactly one JSON value that validates against the " <>
-        "following JSON Schema. Do not include Markdown, code fences, commentary, or " <>
-        "reasoning outside the JSON value. JSON Schema: " <> encoded_schema
-
-    ReqLLM.Context.prepend(messages, ReqLLM.Context.system(instruction))
-  end
-
-  defp prompt_json_value(response, schema) do
-    case ReqLLM.Response.text(response) do
-      text when is_binary(text) -> validate_prompt_json(text, schema)
-      _missing -> invalid_output("AI provider returned no JSON text")
-    end
-  end
-
-  defp validate_prompt_json(text, schema) do
-    cond do
-      byte_size(text) > @max_output_bytes ->
-        invalid_output("AI provider JSON text is too large")
-
-      true ->
-        case ReqLLM.JSON.decode(text, json_repair: false) do
-          {:ok, value} ->
-            case ReqLLM.Schema.validate(value, schema) do
-              {:ok, _validated} ->
-                {:ok, value}
-
-              {:error, validation} ->
-                if byte_size(text) <= @max_correction_bytes do
-                  {:schema_mismatch, text, schema_hint(value, schema, validation)}
-                else
-                  invalid_output("AI provider JSON does not match the requested schema")
-                end
-            end
-
-          {:error, _decode} ->
-            invalid_output("AI provider output is not valid JSON")
-        end
-    end
-  end
-
-  defp correct_prompt_json(
-         state,
-         messages,
-         options,
-         parent,
-         stream_ref,
-         first_response,
-         invalid_text,
-         hint,
-         schema
-       ) do
-    max_tokens = Keyword.fetch!(options, :max_tokens)
-
-    with {:ok, first_usage} <- usage(first_response),
-         remaining when remaining > 0 <-
-           max_tokens - first_usage.input_tokens - first_usage.output_tokens,
-         correction_context <- correction_context(messages, invalid_text, hint),
-         correction_options <- Keyword.put(options, :max_tokens, remaining),
-         {:ok, corrected_response} <-
-           request(
-             state,
-             correction_context,
-             correction_options,
-             parent,
-             stream_ref
+         {:ok, tool} <-
+           ReqLLM.Tool.new(
+             name: "structured_output",
+             description: "Return the Opsonde decision matching the required schema",
+             parameter_schema: schema,
+             strict: true,
+             callback: fn _arguments -> {:error, :not_executable} end
            ),
-         {:ok, corrected_value} <- corrected_prompt_json_value(corrected_response, schema),
-         {:ok, _corrected_usage} <- usage(corrected_response) do
-      corrected_response = combine_response_usage(first_response, corrected_response)
-      {:ok, %{corrected_response | object: corrected_value}}
+         options <-
+           options
+           |> Keyword.put(:temperature, 0.0)
+           |> Keyword.put(:tools, [tool])
+           |> Keyword.put(:tool_choice, %{
+             type: "function",
+             function: %{name: "structured_output"}
+           }),
+         {:ok, response} <- request(state, messages, options, parent, stream_ref),
+         [call] <- ReqLLM.Response.tool_calls(response),
+         %{state: :valid, arguments: value} <-
+           ReqLLM.ToolCall.resolve(call, [tool], json_repair: false),
+         {:ok, _validated} <- ReqLLM.Schema.validate(value, schema),
+         true <- encoded_size(value) <= @max_output_bytes do
+      {:ok, %{response | object: value}}
     else
       {:error, _category, _message} = error -> error
-      _unavailable -> invalid_output("AI provider JSON does not match the requested schema")
+      _invalid -> invalid_output("AI provider did not produce the required tool call")
     end
-  end
-
-  defp corrected_prompt_json_value(response, schema) do
-    case prompt_json_value(response, schema) do
-      {:ok, value} ->
-        {:ok, value}
-
-      {:schema_mismatch, _text, _hint} ->
-        invalid_output("AI provider JSON does not match the requested schema")
-
-      {:error, _category, _message} = error ->
-        error
-    end
-  end
-
-  defp correction_context(messages, invalid_text, hint) do
-    ReqLLM.Context.append(messages, [
-      ReqLLM.Context.assistant(invalid_text),
-      ReqLLM.Context.user(
-        "That JSON did not validate against the current output schema. " <>
-          "Validation error: #{hint}. Return one corrected JSON value only. " <>
-          "Copy enum values exactly, include every required field, and add no unsupported field."
-      )
-    ])
-  end
-
-  defp schema_hint(value, schema, validation) do
-    type = get_in(value, ["intent", "type"])
-    allowed = schema_intent_types(schema)
-
-    if is_binary(type) and type not in allowed do
-      "intent.type #{type} is not offered; choose exactly one of: #{Enum.join(allowed, ", ")}"
-    else
-      generic_schema_hint(validation)
-    end
-  end
-
-  defp generic_schema_hint(%{reason: reason}) when is_binary(reason),
-    do: String.slice(reason, 0, @max_schema_hint_bytes)
-
-  defp generic_schema_hint(_validation), do: "The JSON value does not match the schema"
-
-  defp combine_response_usage(first_response, corrected_response) do
-    first = ReqLLM.Response.usage(first_response) || %{}
-    corrected = ReqLLM.Response.usage(corrected_response) || %{}
-
-    combined =
-      Map.merge(first, corrected, fn _key, first_value, corrected_value ->
-        if is_number(first_value) and is_number(corrected_value),
-          do: first_value + corrected_value,
-          else: corrected_value
-      end)
-
-    %{corrected_response | usage: combined}
   end
 
   defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
@@ -972,7 +837,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp model_spec(provider, model), do: %{provider: provider, id: model}
 
   defp output_mode(:ollama, model) do
-    if String.ends_with?(model, ":cloud"), do: :prompt_json, else: :native
+    if String.ends_with?(model, ":cloud"), do: :tool_json, else: :native
   end
 
   defp output_mode(_provider, _model), do: :native

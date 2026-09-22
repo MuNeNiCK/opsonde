@@ -37,9 +37,14 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     defp next_mode(state), do: {state.mode, state}
 
-    defp respond(conn, _request, {:sleep, milliseconds}) do
+    defp respond(conn, request, {:sleep, milliseconds}) do
       Process.sleep(milliseconds)
-      json(conn, openai_text_response(wire_decision(handoff())))
+
+      decision = wire_decision(handoff())
+
+      if tool_request?(request.body),
+        do: json(conn, openai_response(decision)),
+        else: json(conn, openai_text_response(decision))
     end
 
     defp respond(conn, request, {:decision, decision}) do
@@ -47,6 +52,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       cond do
         request.path == "/v1/messages" -> json(conn, anthropic_response(decision))
+        tool_request?(request.body) -> json(conn, openai_response(decision))
         authorization?(request.headers) -> json(conn, openai_response(decision))
         true -> json(conn, openai_text_response(decision))
       end
@@ -164,6 +170,13 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
 
     defp authorization?(headers), do: List.keymember?(headers, "authorization", 0)
+
+    defp tool_request?(body) do
+      case Jason.decode(body) do
+        {:ok, %{"tools" => tools}} when is_list(tools) and tools != [] -> true
+        _other -> false
+      end
+    end
 
     defp check_decision(body, {:decision, _decision} = mode) do
       if String.contains?(body, "Return the single value ready"),
@@ -297,11 +310,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
   end
 
-  test "Ollama Cloud uses exact JSON text with the existing strict output schemas", context do
+  test "Ollama Cloud forces one schema-validated tool call", context do
     state =
       state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
 
-    set_mode(context.agent, {:text_decision, handoff()})
+    set_mode(context.agent, {:decision, handoff()})
 
     assert {:ok,
             %AI.ResolverDecision{
@@ -311,40 +324,37 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [request] = requests(context.agent)
     body = Jason.decode!(request.body)
-    refute Map.has_key?(body, "tools")
     refute Map.has_key?(body, "response_format")
     assert body["temperature"] == 0
     assert body["reasoning_effort"] == "low"
 
-    assert Enum.any?(body["messages"], fn message ->
-             message["role"] == "system" and
-               String.contains?(message["content"], "exactly one JSON value") and
-               String.contains?(message["content"], "JSON Schema") and
-               String.contains?(message["content"], "additionalProperties")
-           end)
+    assert body["tool_choice"] == %{
+             "type" => "function",
+             "function" => %{"name" => "structured_output"}
+           }
 
-    set_mode(context.agent, {:text_decision, %{"value" => "ready"}})
+    assert [tool] = body["tools"]
+    assert get_in(tool, ["function", "name"]) == "structured_output"
+    assert get_in(tool, ["function", "strict"]) == true
+    assert get_in(tool, ["function", "parameters", "additionalProperties"]) == false
+
+    set_mode(context.agent, {:decision, %{"value" => "ready"}})
     assert :ok = Adapter.check(state, %{})
 
-    set_mode(context.agent, {:text_decision, %{"verdict" => "approved", "reason" => "bounded"}})
+    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
              Adapter.review(state, review_request(), %{})
 
-    set_mode(context.agent, {:text_decision, %{"unexpected" => true}})
+    set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, "AI provider JSON does not match the requested schema"} =
+    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
-    assert {:error, :invalid_output, "AI provider output is not valid JSON"} =
-             Adapter.resolve(state, resolver_request(), %{})
-
-    set_mode(context.agent, {:raw_text, String.duplicate("x", 65_537)})
-
-    assert {:error, :invalid_output, "AI provider JSON text is too large"} =
+    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -460,7 +470,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         }
     }
 
-    set_mode(context.agent, {:text_decision, handoff()})
+    set_mode(context.agent, {:decision, handoff()})
 
     assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
              Adapter.resolve(state, request, %{})
@@ -478,44 +488,22 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
-  test "Ollama Cloud corrects one schema mismatch and accounts for both responses", context do
+  test "Ollama Cloud rejects schema-invalid tool arguments without a second request", context do
     state =
       state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
 
-    invalid =
-      Jason.encode!(%{
+    set_mode(context.agent, {
+      :decision,
+      %{
         "reason" => "The monitoring source recovered",
         "intent" => %{"type" => "recovery", "evidence_ids" => ["stale-evidence"]}
-      })
-
-    set_mode(context.agent, {
-      :sequence,
-      [{:raw_text, invalid}, {:text_decision, handoff()}]
+      }
     })
 
-    assert {:ok,
-            %AI.ResolverDecision{
-              intent: %AI.Handoff{reason: "probe"},
-              usage: %AI.Usage{input_tokens: 14, output_tokens: 10}
-            }} = Adapter.resolve(state, resolver_request(), %{})
+    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
+             Adapter.resolve(state, resolver_request(), %{})
 
-    [first, correction] = requests(context.agent)
-    first_body = Jason.decode!(first.body)
-    correction_body = Jason.decode!(correction.body)
-
-    user_payload =
-      first_body["messages"] |> List.last() |> Map.fetch!("content") |> Jason.decode!()
-
-    refute "recovery" in user_payload["allowed_intents"]
-    assert length(correction_body["messages"]) == length(first_body["messages"]) + 2
-    assert Enum.at(correction_body["messages"], -2)["role"] == "assistant"
-    assert Enum.at(correction_body["messages"], -2)["content"] == invalid
-    assert Enum.at(correction_body["messages"], -1)["role"] == "user"
-
-    assert String.contains?(
-             Enum.at(correction_body["messages"], -1)["content"],
-             "intent.type recovery is not offered"
-           )
+    assert [_request] = requests(context.agent)
   end
 
   test "buffered AI calls support the resolver queue concurrency", context do
@@ -945,7 +933,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reasoning_effort" => "high"
       })
 
-    set_mode(context.agent, {:text_decision, handoff()})
+    set_mode(context.agent, {:decision, handoff()})
     assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, resolver_request(), %{})
 
     [request] = requests(context.agent)
