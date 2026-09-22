@@ -362,6 +362,36 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
   end
 
+  test "Resolver schema retries receive explicit bounded correction context", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+
+    request = %{
+      resolver_request()
+      | retry_context: %{
+          "category" => "invalid_output",
+          "rejection_code" => "schema_validation"
+        }
+    }
+
+    set_mode(context.agent, {:text_decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    body = Jason.decode!(wire_request.body)
+    user_payload = body["messages"] |> List.last() |> Map.fetch!("content") |> Jason.decode!()
+
+    assert user_payload["retry_context"] == request.retry_context
+
+    assert Enum.any?(body["messages"], fn message ->
+             message["role"] == "system" and
+               String.contains?(message["content"], "previous response was rejected") and
+               String.contains?(message["content"], "copy enum values exactly")
+           end)
+  end
+
   test "buffered AI calls support the resolver queue concurrency", context do
     state =
       state!("ollama", context.endpoint <> "/v1", %{}, %{

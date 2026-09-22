@@ -365,6 +365,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       target_candidates: [],
       selected_target_id: target && target.id,
       selected_target_revision: target && target.revision,
+      retry_context: retry_context(turn),
       observation_results: [],
       target_relations: [],
       observation_tools: [],
@@ -408,6 +409,20 @@ defmodule Opsonde.Cases.ResolverProjection do
       {:error, _error} -> incident.title
     end
   end
+
+  defp retry_context(%{
+         intent: %{"source" => "resolver_delivery_failure", "category" => category} = intent
+       }) do
+    %{"category" => category}
+    |> maybe_put_retry_code(intent["rejection_code"])
+  end
+
+  defp retry_context(_turn), do: nil
+
+  defp maybe_put_retry_code(context, code) when is_binary(code) and code != "",
+    do: Map.put(context, "rejection_code", code)
+
+  defp maybe_put_retry_code(context, _code), do: context
 
   defp budget(run, turn) do
     %AI.Budget{

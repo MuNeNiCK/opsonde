@@ -628,12 +628,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                turn.case_id,
                turn.resolution_run_id,
                "resolver:delivery-retry:#{turn.id}",
-               %{
-                 "objective" => "Continue resolution after a retryable Resolver delivery failure",
-                 "source" => "resolver_delivery_failure",
-                 "source_turn_id" => turn.id,
-                 "category" => category
-               },
+               retry_turn_intent(turn, category, rejection_code),
                intent,
                "Review Resolver limits or continue the Case manually",
                authorize?: false
@@ -646,6 +641,20 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp retryable_failure?(category),
     do: category in ["timeout", "unreachable", "rate_limited", "invalid_output", "failed"]
+
+  defp retry_turn_intent(turn, category, rejection_code) do
+    %{
+      "objective" => "Continue resolution after a retryable Resolver delivery failure",
+      "source" => "resolver_delivery_failure",
+      "source_turn_id" => turn.id,
+      "category" => category
+    }
+    |> then(fn intent ->
+      if is_binary(rejection_code) and rejection_code != "",
+        do: Map.put(intent, "rejection_code", rejection_code),
+        else: intent
+    end)
+  end
 
   defp set_retry_pending(%{status: :exhausted} = result, _source_turn_id), do: {:ok, result}
 

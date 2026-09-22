@@ -187,6 +187,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert successor.intent == %{
              "category" => "invalid_output",
              "objective" => "Continue resolution after a retryable Resolver delivery failure",
+             "rejection_code" => "invalid_output",
              "source" => "resolver_delivery_failure",
              "source_turn_id" => turn.id
            }
@@ -220,6 +221,24 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
              2
+  end
+
+  test "schema rejection classification reaches the successor Turn", context do
+    {_incident, _run, turn} = turn!("schema-rejection", context.operator)
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI provider JSON does not match the requested schema"}
+             end)
+
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+
+    successor =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.find(&(&1.resolution_run_id == turn.resolution_run_id and &1.status == :started))
+
+    assert successor.intent["category"] == "invalid_output"
+    assert successor.intent["rejection_code"] == "schema_validation"
   end
 
   test "an interrupted dispatch starts one bounded autonomous successor", context do

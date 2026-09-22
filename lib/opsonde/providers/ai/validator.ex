@@ -51,6 +51,7 @@ defmodule Opsonde.Providers.AI.Validator do
       nonempty?(request.case_id) and positive?(request.turn) and nonempty?(request.objective) and
       request.alert_state in [:firing, :recovered, :not_applicable] and
       request.report_language in [:en, :ja] and
+      valid_retry_context?(request.retry_context) and
       valid_budget?(request.budget) and
       valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
       valid_resolver_items?(request)
@@ -79,6 +80,19 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_review_request?(_request), do: false
+
+  defp valid_retry_context?(nil), do: true
+
+  defp valid_retry_context?(%{"category" => category} = context) do
+    Map.keys(context) -- ["category", "rejection_code"] == [] and
+      bounded_retry_value?(category) and
+      (is_nil(context["rejection_code"]) or bounded_retry_value?(context["rejection_code"]))
+  end
+
+  defp valid_retry_context?(_context), do: false
+
+  defp bounded_retry_value?(value),
+    do: is_binary(value) and value != "" and String.length(value) <= 64
 
   defp valid_budget?(%AI.Budget{} = budget) do
     Enum.all?(

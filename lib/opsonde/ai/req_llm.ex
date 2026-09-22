@@ -279,6 +279,7 @@ defmodule Opsonde.AI.ReqLLM do
       "case_id" => request.case_id,
       "turn" => request.turn,
       "objective" => request.objective,
+      "retry_context" => request.retry_context,
       "alert_state" => to_string(request.alert_state),
       "report_language" => to_string(request.report_language),
       "budget" => plain(request.budget),
@@ -326,7 +327,10 @@ defmodule Opsonde.AI.ReqLLM do
         "the user payload. Keep reason concise and at most 500 characters. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
         "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
-        "in the user payload.",
+        "in the user payload. If retry_context is present, the previous response was rejected " <>
+        "before any intent was accepted. When its rejection_code is schema_validation, rebuild " <>
+        "the response from the current output schema, copy enum values exactly, include every " <>
+        "required field, and add no field that the schema does not allow.",
       Jason.encode!(payload)
     )
   end

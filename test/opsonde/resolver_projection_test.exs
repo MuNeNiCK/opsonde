@@ -438,6 +438,39 @@ defmodule Opsonde.ResolverProjectionTest do
     refute Map.has_key?(projected_verification.content, "provider_evidence")
   end
 
+  test "projection gives the Resolver bounded feedback for a rejected schema", context do
+    {incident, run} = open!("schema-retry", context.operator, context.target)
+
+    started =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "schema-retry-turn",
+        %{
+          "objective" => "Continue resolution after a retryable Resolver delivery failure",
+          "source" => "resolver_delivery_failure",
+          "source_turn_id" => Ecto.UUID.generate(),
+          "category" => "invalid_output",
+          "rejection_code" => "schema_validation"
+        },
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      )
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               started.value.id,
+               selection(),
+               invocation(%Target.Capabilities{observations: [], effects: []})
+             )
+
+    assert request.retry_context == %{
+             "category" => "invalid_output",
+             "rejection_code" => "schema_validation"
+           }
+  end
+
   test "projection reserves the latest context from every correlated Signal source", context do
     incident =
       Cases.open_case!(

@@ -322,7 +322,9 @@ defmodule Opsonde.Providers.AI do
       :proposal_tools
     ]
 
-    defstruct @enforce_keys ++ [selected_target_id: nil, selected_target_revision: nil]
+    defstruct @enforce_keys ++
+                [selected_target_id: nil, selected_target_revision: nil, retry_context: nil]
+
     @type t :: %__MODULE__{}
   end
 
@@ -381,7 +383,8 @@ defmodule Opsonde.Providers.AI do
       context: %{
         objective: request.objective,
         alert_state: request.alert_state,
-        report_language: request.report_language
+        report_language: request.report_language,
+        retry_context: request.retry_context
       },
       items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
     }
