@@ -22,11 +22,20 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       mode =
         Agent.get_and_update(agent, fn state ->
-          {state.mode, %{state | requests: [request | state.requests]}}
+          {mode, state} = next_mode(state)
+          {mode, %{state | requests: [request | state.requests]}}
         end)
 
       respond(conn, request, check_decision(request.body, mode))
     end
+
+    defp next_mode(%{mode: {:sequence, [mode | remaining]}} = state),
+      do: {mode, %{state | mode: {:sequence, remaining}}}
+
+    defp next_mode(%{mode: {:sequence, []}} = state),
+      do: {{:raw_text, ""}, state}
+
+    defp next_mode(state), do: {state.mode, state}
 
     defp respond(conn, _request, {:sleep, milliseconds}) do
       Process.sleep(milliseconds)
@@ -390,6 +399,38 @@ defmodule Opsonde.AI.ReqLLMTest do
                String.contains?(message["content"], "previous response was rejected") and
                String.contains?(message["content"], "copy enum values exactly")
            end)
+  end
+
+  test "Ollama Cloud corrects one schema mismatch and accounts for both responses", context do
+    state =
+      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+
+    invalid = Jason.encode!(%{"reason" => "retry", "intent" => %{"type" => "unknown"}})
+
+    set_mode(context.agent, {
+      :sequence,
+      [{:raw_text, invalid}, {:text_decision, handoff()}]
+    })
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{reason: "probe"},
+              usage: %AI.Usage{input_tokens: 14, output_tokens: 10}
+            }} = Adapter.resolve(state, resolver_request(), %{})
+
+    [first, correction] = requests(context.agent)
+    first_body = Jason.decode!(first.body)
+    correction_body = Jason.decode!(correction.body)
+
+    assert length(correction_body["messages"]) == length(first_body["messages"]) + 2
+    assert Enum.at(correction_body["messages"], -2)["role"] == "assistant"
+    assert Enum.at(correction_body["messages"], -2)["content"] == invalid
+    assert Enum.at(correction_body["messages"], -1)["role"] == "user"
+
+    assert String.contains?(
+             Enum.at(correction_body["messages"], -1)["content"],
+             "did not validate"
+           )
   end
 
   test "buffered AI calls support the resolver queue concurrency", context do

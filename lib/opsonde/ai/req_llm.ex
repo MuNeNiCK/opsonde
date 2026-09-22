@@ -11,6 +11,8 @@ defmodule Opsonde.AI.ReqLLM do
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
   @max_output_bytes 65_536
+  @max_correction_bytes 16_384
+  @max_schema_hint_bytes 2_000
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
@@ -174,9 +176,27 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, encoded_schema} <- Jason.encode(schema),
          messages <- prompt_json_context(messages, encoded_schema),
          options <- Keyword.put(options, :temperature, 0.0),
-         {:ok, response} <- request(state, messages, options, parent, stream_ref),
-         {:ok, value} <- prompt_json_value(response, schema) do
-      {:ok, %{response | object: value}}
+         {:ok, response} <- request(state, messages, options, parent, stream_ref) do
+      case prompt_json_value(response, schema) do
+        {:ok, value} ->
+          {:ok, %{response | object: value}}
+
+        {:schema_mismatch, text, hint} ->
+          correct_prompt_json(
+            state,
+            messages,
+            options,
+            parent,
+            stream_ref,
+            response,
+            text,
+            hint,
+            schema
+          )
+
+        {:error, _category, _message} = error ->
+          error
+      end
     else
       {:error, _category, _message} = error -> error
       _error -> invalid_output()
@@ -211,14 +231,97 @@ defmodule Opsonde.AI.ReqLLM do
               {:ok, _validated} ->
                 {:ok, value}
 
-              {:error, _validation} ->
-                invalid_output("AI provider JSON does not match the requested schema")
+              {:error, validation} ->
+                if byte_size(text) <= @max_correction_bytes do
+                  {:schema_mismatch, text, schema_hint(validation)}
+                else
+                  invalid_output("AI provider JSON does not match the requested schema")
+                end
             end
 
           {:error, _decode} ->
             invalid_output("AI provider output is not valid JSON")
         end
     end
+  end
+
+  defp correct_prompt_json(
+         state,
+         messages,
+         options,
+         parent,
+         stream_ref,
+         first_response,
+         invalid_text,
+         hint,
+         schema
+       ) do
+    max_tokens = Keyword.fetch!(options, :max_tokens)
+
+    with {:ok, first_usage} <- usage(first_response),
+         remaining when remaining > 0 <-
+           max_tokens - first_usage.input_tokens - first_usage.output_tokens,
+         correction_context <- correction_context(messages, invalid_text, hint),
+         correction_options <- Keyword.put(options, :max_tokens, remaining),
+         {:ok, corrected_response} <-
+           request(
+             state,
+             correction_context,
+             correction_options,
+             parent,
+             stream_ref
+           ),
+         {:ok, corrected_value} <- corrected_prompt_json_value(corrected_response, schema),
+         {:ok, _corrected_usage} <- usage(corrected_response) do
+      corrected_response = combine_response_usage(first_response, corrected_response)
+      {:ok, %{corrected_response | object: corrected_value}}
+    else
+      {:error, _category, _message} = error -> error
+      _unavailable -> invalid_output("AI provider JSON does not match the requested schema")
+    end
+  end
+
+  defp corrected_prompt_json_value(response, schema) do
+    case prompt_json_value(response, schema) do
+      {:ok, value} ->
+        {:ok, value}
+
+      {:schema_mismatch, _text, _hint} ->
+        invalid_output("AI provider JSON does not match the requested schema")
+
+      {:error, _category, _message} = error ->
+        error
+    end
+  end
+
+  defp correction_context(messages, invalid_text, hint) do
+    ReqLLM.Context.append(messages, [
+      ReqLLM.Context.assistant(invalid_text),
+      ReqLLM.Context.user(
+        "That JSON did not validate against the current output schema. " <>
+          "Validation error: #{hint}. Return one corrected JSON value only. " <>
+          "Copy enum values exactly, include every required field, and add no unsupported field."
+      )
+    ])
+  end
+
+  defp schema_hint(%{reason: reason}) when is_binary(reason),
+    do: String.slice(reason, 0, @max_schema_hint_bytes)
+
+  defp schema_hint(_validation), do: "The JSON value does not match the schema"
+
+  defp combine_response_usage(first_response, corrected_response) do
+    first = ReqLLM.Response.usage(first_response) || %{}
+    corrected = ReqLLM.Response.usage(corrected_response) || %{}
+
+    combined =
+      Map.merge(first, corrected, fn _key, first_value, corrected_value ->
+        if is_number(first_value) and is_number(corrected_value),
+          do: first_value + corrected_value,
+          else: corrected_value
+      end)
+
+    %{corrected_response | usage: combined}
   end
 
   defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
