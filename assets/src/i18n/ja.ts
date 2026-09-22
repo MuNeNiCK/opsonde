@@ -93,7 +93,6 @@ const ja = {
       chooseAITypeDescription: "Opsondeが利用するサービスを選択し、その接続を設定します。",
       choiceOpenAI: "APIキーと任意の互換EndpointでOpenAIモデルへ接続します。",
       choiceAnthropic: "APIキーと任意のEndpointでAnthropic Claudeモデルへ接続します。",
-      choiceOllama: "Ollama Cloudまたは運用者が管理するOllama Endpointへ接続します。",
       aiCreated: "AI接続を作成しました。有効化する前に接続確認してください。",
       secretDescription:
         "認証情報は書き込み専用です。接続を置き換える場合は認証情報を再入力してください。保存値は再表示されません。",
@@ -105,7 +104,7 @@ const ja = {
       timeoutMsDescription: "1回のモデルリクエストを待つ最大時間です。",
       maxTokens: "最大出力トークン数",
       maxTokensDescription: "1回のリクエストで許可するモデル出力の上限です。",
-      apiKey: "APIキー（ローカルOllamaでは不要）",
+      apiKey: "APIキー",
       addConnection: "接続を追加",
       edit: "編集",
       editConnectionDescription:

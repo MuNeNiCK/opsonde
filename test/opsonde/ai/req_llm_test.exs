@@ -58,10 +58,6 @@ defmodule Opsonde.AI.ReqLLMTest do
       end
     end
 
-    defp respond(conn, _request, {:text_decision, decision}) do
-      json(conn, openai_text_response(wire_decision(decision)))
-    end
-
     defp respond(conn, _request, {:raw_text, text}) do
       json(conn, openai_text_response(text, false))
     end
@@ -179,8 +175,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
 
     defp check_decision(body, {:decision, _decision} = mode) do
-      if String.contains?(body, "Return the single value ready"),
-        do: {:decision, %{"value" => "ready"}},
+      if String.contains?(body, "Return the required connection-check object"),
+        do: {:decision, %{"status" => "ready"}},
         else: mode
     end
 
@@ -237,12 +233,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     %{agent: agent, endpoint: "http://127.0.0.1:#{port}"}
   end
 
-  test "one adapter handles OpenAI, Anthropic, and Ollama without putting credentials in prompts",
+  test "one adapter handles OpenAI and Anthropic without putting credentials in prompts",
        context do
     providers = [
       {"openai", context.endpoint <> "/v1", %{"api_key" => "openai-secret"}},
-      {"anthropic", context.endpoint, %{"api_key" => "anthropic-secret"}},
-      {"ollama", context.endpoint <> "/v1", %{}}
+      {"anthropic", context.endpoint, %{"api_key" => "anthropic-secret"}}
     ]
 
     for {provider, endpoint, credentials} <- providers do
@@ -259,8 +254,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert Enum.map(requests, & &1.path) == [
              "/v1/chat/completions",
-             "/v1/messages",
-             "/v1/chat/completions"
+             "/v1/messages"
            ]
 
     refute Enum.any?(requests, &String.contains?(&1.body, "openai-secret"))
@@ -310,9 +304,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
   end
 
-  test "Ollama Cloud forces one schema-validated tool call", context do
-    state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+  test "ReqLLM selects one schema-validated output path", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {:decision, handoff()})
 
@@ -324,9 +317,6 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [request] = requests(context.agent)
     body = Jason.decode!(request.body)
-    refute Map.has_key?(body, "response_format")
-    assert body["temperature"] == 0
-    assert body["reasoning_effort"] == "low"
 
     assert body["tool_choice"] == %{
              "type" => "function",
@@ -338,7 +328,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert get_in(tool, ["function", "strict"]) == true
     assert get_in(tool, ["function", "parameters", "additionalProperties"]) == false
 
-    set_mode(context.agent, {:decision, %{"value" => "ready"}})
+    set_mode(context.agent, {:decision, %{"status" => "ready"}})
     assert :ok = Adapter.check(state, %{})
 
     set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
@@ -348,20 +338,19 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
+    assert {:error, :invalid_output, _message} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
-    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
+    assert {:error, :invalid_output, _message} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
-  test "Ollama Cloud JSON requests preserve timeout and cancellation", context do
+  test "structured output requests preserve timeout and cancellation", context do
     state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{
-        "model" => "test-model:cloud",
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
         "timeout_ms" => 100
       })
 
@@ -460,7 +449,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   test "Resolver schema retries receive explicit bounded correction context", context do
     state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     request = %{
       resolver_request()
@@ -488,9 +477,8 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
-  test "Ollama Cloud rejects schema-invalid tool arguments without a second request", context do
-    state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
+  test "strict output rejects schema-invalid arguments without a second request", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {
       :decision,
@@ -500,7 +488,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     })
 
-    assert {:error, :invalid_output, "AI provider did not produce the required tool call"} =
+    assert {:error, :invalid_output, _message} =
              Adapter.resolve(state, resolver_request(), %{})
 
     assert [_request] = requests(context.agent)
@@ -508,8 +496,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   test "buffered AI calls support the resolver queue concurrency", context do
     state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{
-        "model" => "test-model:cloud",
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
         "timeout_ms" => 8_000
       })
 
@@ -546,7 +533,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     })
 
-    state = state!("ollama", context.endpoint <> "/v1", %{})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     assert {:ok,
             %AI.ResolverDecision{
@@ -577,7 +564,7 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "recovery schema exposes only eligible Target recovery Evidence", context do
-    state = state!("ollama", context.endpoint <> "/v1", %{})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     ordinary = %AI.Evidence{
       id: "observation-1",
@@ -633,7 +620,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     }
 
     set_mode(context.agent, {
-      :text_decision,
+      :decision,
       %{
         "type" => "recovery",
         "reason" => "Fresh verification and monitoring agree",
@@ -688,7 +675,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     }
 
     set_mode(context.agent, {
-      :text_decision,
+      :decision,
       %{
         "type" => "recovery",
         "reason" => "Fresh Target observation confirms recovery",
@@ -713,8 +700,12 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "streamed and buffered responses produce the same decision", context do
-    buffered = state!("ollama", context.endpoint <> "/v1", %{})
-    streamed = state!("ollama", context.endpoint <> "/v1", %{}, %{"stream" => true})
+    buffered = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    streamed =
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
+        "stream" => true
+      })
 
     assert {:ok, buffered_decision} = Adapter.resolve(buffered, resolver_request(), %{})
     set_mode(context.agent, {:stream, handoff()})
@@ -724,7 +715,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   test "review uses an isolated prompt without resolver sessions or Target tools", context do
     set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
-    state = state!("ollama", context.endpoint <> "/v1", %{})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     assert {:ok,
             %AI.ReviewDecision{
@@ -807,7 +798,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     }
 
     set_mode(context.agent, {:decision, decision})
-    state = state!("ollama", context.endpoint <> "/v1", %{})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     assert {:ok,
             %AI.ResolverDecision{
@@ -880,7 +871,10 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "malformed output, deadline, and caller cancellation stay typed", context do
-    state = state!("ollama", context.endpoint <> "/v1", %{}, %{"timeout_ms" => 500})
+    state =
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
+        "timeout_ms" => 500
+      })
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
     assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
@@ -903,33 +897,53 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   test "configuration rejects unknown fields and invalid provider credentials", context do
     base = %{
-      "provider" => "ollama",
+      "provider" => "openai",
       "model" => "test-model",
       "endpoint" => context.endpoint <> "/v1"
     }
 
-    assert {:error, :invalid_configuration} = Adapter.build(Map.put(base, "typo", true), %{})
+    credentials = %{"api_key" => "secret"}
 
     assert {:error, :invalid_configuration} =
-             Adapter.build(%{base | "provider" => "openai"}, %{})
+             Adapter.build(Map.put(base, "typo", true), credentials)
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(base, %{})
 
     assert {:error, :invalid_configuration} =
              Adapter.build(%{base | "provider" => "unknown"}, %{"api_key" => "secret"})
 
     assert {:error, :invalid_configuration} =
-             Adapter.build(Map.put(base, "reasoning_effort", "unbounded"), %{})
+             Adapter.build(Map.put(base, "reasoning_effort", "unbounded"), credentials)
 
-    assert {:error, :invalid_configuration} =
-             Adapter.build(
-               %{base | "provider" => "openai"} |> Map.put("reasoning_effort", "low"),
-               %{"api_key" => "secret"}
-             )
+    assert {:ok, %{reasoning_effort: :low}} =
+             Adapter.build(Map.put(base, "reasoning_effort", "low"), credentials)
   end
 
-  test "Ollama Cloud reasoning effort can be overridden", context do
+  test "known models retain LLMDB metadata while unknown model IDs remain usable", context do
+    known =
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
+        "model" => "gpt-4o-mini"
+      })
+
+    unknown =
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
+        "model" => "model-released-after-opsonde"
+      })
+
+    assert known.model.id == "gpt-4o-mini"
+    assert known.model.capabilities != nil
+    assert known.model.execution != nil
+
+    assert unknown.model.id == "model-released-after-opsonde"
+    assert unknown.model.provider == :openai
+    assert unknown.model.capabilities == nil
+    assert unknown.model.execution == nil
+  end
+
+  test "reasoning effort is passed through the provider-neutral adapter", context do
     state =
-      state!("ollama", context.endpoint <> "/v1", %{}, %{
-        "model" => "test-model:cloud",
+      state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
         "reasoning_effort" => "high"
       })
 

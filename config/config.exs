@@ -24,7 +24,8 @@ config :opsonde, Oban,
 config :req_llm,
   stream_pool_protocols: [:http1],
   stream_pool_size: ai_concurrency,
-  stream_pool_count: 1
+  stream_pool_count: 1,
+  warn_unverified_models: false
 
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new

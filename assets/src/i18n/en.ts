@@ -94,7 +94,6 @@ const en = {
         "Select the service Opsonde will use, then configure that connection.",
       choiceOpenAI: "Connect OpenAI models with an API key and optional compatible endpoint.",
       choiceAnthropic: "Connect Anthropic Claude models with an API key and optional endpoint.",
-      choiceOllama: "Connect Ollama Cloud or an operator-managed Ollama endpoint.",
       aiCreated: "The AI connection was created. Check it before enabling it.",
       secretDescription:
         "Credentials are write-only. To replace a connection, enter its credential again; saved values are never displayed.",
@@ -106,7 +105,7 @@ const en = {
       timeoutMsDescription: "Maximum time allowed for one model request.",
       maxTokens: "Maximum output tokens",
       maxTokensDescription: "Maximum model output allowed for one request.",
-      apiKey: "API key (not required for local Ollama)",
+      apiKey: "API key",
       addConnection: "Add connection",
       edit: "Edit",
       editConnectionDescription:

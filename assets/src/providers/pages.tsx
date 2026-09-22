@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowLeft, Bot, BrainCircuit, Cpu, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, Bot, BrainCircuit, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
@@ -13,13 +13,12 @@ import { AuthoritySetup } from "@/settings/authority-section";
 import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
-type AIService = "openai" | "anthropic" | "ollama";
+type AIService = "openai" | "anthropic";
 type SignalAdapter = "alertmanager-webhook" | "zabbix-webhook";
 
 const aiChoices = {
   openai: { title: "OpenAI", description: "setup.choiceOpenAI", icon: BrainCircuit },
   anthropic: { title: "Anthropic", description: "setup.choiceAnthropic", icon: Bot },
-  ollama: { title: "Ollama", description: "setup.choiceOllama", icon: Cpu },
 } as const;
 
 const signalChoices = {

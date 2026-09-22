@@ -6,7 +6,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   alias Opsonde.Providers.AI
 
-  @providers %{"openai" => :openai, "anthropic" => :anthropic, "ollama" => :ollama}
+  @providers %{"openai" => :openai, "anthropic" => :anthropic}
   @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms reasoning_effort)
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
@@ -35,7 +35,7 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, stream?} <- boolean(configuration, "stream", false),
          {:ok, max_tokens} <- integer(configuration, "max_tokens", 2_048, 1, @max_tokens),
          {:ok, timeout} <- integer(configuration, "timeout_ms", 60_000, 100, @max_timeout),
-         {:ok, reasoning_effort} <- reasoning_effort(provider, model, configuration),
+         {:ok, reasoning_effort} <- reasoning_effort(configuration),
          {:ok, api_key} <- credentials(provider, credentials),
          model_spec <- model_spec(provider, model),
          {:ok, resolved_model} <- ReqLLM.model(model_spec) do
@@ -48,8 +48,7 @@ defmodule Opsonde.AI.ReqLLM do
          max_tokens: max_tokens,
          timeout: timeout,
          reasoning_effort: reasoning_effort,
-         api_key: api_key,
-         output_mode: output_mode(provider, model)
+         api_key: api_key
        }}
     else
       _error -> {:error, :invalid_configuration}
@@ -60,20 +59,24 @@ defmodule Opsonde.AI.ReqLLM do
 
   @impl Opsonde.Providers.Adapter
   def check(state, _input) do
-    output = ReqLLM.Output.choice(["ready"], name: "opsonde_provider_check")
+    output =
+      ReqLLM.Output.object(
+        object_schema(%{"status" => enum_schema(["ready"])}, ["status"]),
+        name: "opsonde_provider_check"
+      )
 
     case invoke(
            state,
            context(
              "You are checking an AI model connection.",
-             "Return the single value ready."
+             "Return the required connection-check object with status ready."
            ),
            output,
            min(state.max_tokens, 128),
            fn -> false end
          ) do
       {:ok, response} ->
-        if ReqLLM.Response.output(response, output) == "ready",
+        if ReqLLM.Response.output(response, output) == %{"status" => "ready"},
           do: :ok,
           else: {:error, :capability, "AI model did not produce structured output"}
 
@@ -156,49 +159,12 @@ defmodule Opsonde.AI.ReqLLM do
       |> maybe_put(:api_key, state.api_key)
       |> maybe_put(:base_url, state.endpoint)
 
-    case state.output_mode do
-      :tool_json ->
-        tool_json_request(state, messages, output, options, parent, stream_ref)
-
-      :native ->
-        options = Keyword.merge(options, output: output, output_validation: :strict)
-        request(state, messages, options, parent, stream_ref)
-    end
+    options = Keyword.merge(options, output: output, output_validation: :strict)
+    request(state, messages, options, parent, stream_ref)
   rescue
     _error -> {:error, :failed, "AI provider failed"}
   catch
     _kind, _reason -> {:error, :failed, "AI provider failed"}
-  end
-
-  defp tool_json_request(state, messages, output, options, parent, stream_ref) do
-    with {:ok, %{compiled_schema: %{schema: schema}}} <- ReqLLM.Output.compile(output),
-         {:ok, tool} <-
-           ReqLLM.Tool.new(
-             name: "structured_output",
-             description: "Return the Opsonde decision matching the required schema",
-             parameter_schema: schema,
-             strict: true,
-             callback: fn _arguments -> {:error, :not_executable} end
-           ),
-         options <-
-           options
-           |> Keyword.put(:temperature, 0.0)
-           |> Keyword.put(:tools, [tool])
-           |> Keyword.put(:tool_choice, %{
-             type: "function",
-             function: %{name: "structured_output"}
-           }),
-         {:ok, response} <- request(state, messages, options, parent, stream_ref),
-         [call] <- ReqLLM.Response.tool_calls(response),
-         %{state: :valid, arguments: value} <-
-           ReqLLM.ToolCall.resolve(call, [tool], json_repair: false),
-         {:ok, _validated} <- ReqLLM.Schema.validate(value, schema),
-         true <- encoded_size(value) <= @max_output_bytes do
-      {:ok, %{response | object: value}}
-    else
-      {:error, _category, _message} = error -> error
-      _invalid -> invalid_output("AI provider did not produce the required tool call")
-    end
   end
 
   defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
@@ -815,7 +781,7 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp credentials(provider, credentials) do
+  defp credentials(_provider, credentials) do
     keys = credentials |> Map.keys() |> Enum.map(&to_string/1)
     api_key = Map.get(credentials, "api_key") || Map.get(credentials, :api_key)
 
@@ -823,39 +789,22 @@ defmodule Opsonde.AI.ReqLLM do
       Enum.any?(keys, &(&1 != "api_key")) ->
         {:error, :invalid_credentials}
 
-      provider in [:openai, :anthropic] and not nonempty?(api_key) ->
+      not nonempty?(api_key) ->
         {:error, :missing_api_key}
-
-      provider == :ollama and not (is_nil(api_key) or nonempty?(api_key)) ->
-        {:error, :invalid_api_key}
 
       true ->
         {:ok, api_key}
     end
   end
 
-  defp model_spec(provider, model), do: %{provider: provider, id: model}
+  defp model_spec(provider, model), do: "#{provider}:#{model}"
 
-  defp output_mode(:ollama, model) do
-    if String.ends_with?(model, ":cloud"), do: :tool_json, else: :native
-  end
-
-  defp output_mode(_provider, _model), do: :native
-
-  defp reasoning_effort(:ollama, model, configuration) do
-    default = if String.ends_with?(model, ":cloud"), do: "low", else: nil
-
-    case Map.get(configuration, "reasoning_effort", default) do
+  defp reasoning_effort(configuration) do
+    case Map.get(configuration, "reasoning_effort") do
       nil -> {:ok, nil}
       effort when effort in @reasoning_efforts -> {:ok, String.to_atom(effort)}
       _invalid -> {:error, :invalid_reasoning_effort}
     end
-  end
-
-  defp reasoning_effort(_provider, _model, configuration) do
-    if is_nil(Map.get(configuration, "reasoning_effort")),
-      do: {:ok, nil},
-      else: {:error, :unsupported_reasoning_effort}
   end
 
   defp known_configuration(configuration) do

@@ -39,7 +39,7 @@ export function AIProviderCreateForm({
   onCreated,
   onError,
 }: {
-  service: "openai" | "anthropic" | "ollama";
+  service: "openai" | "anthropic";
   onCreated: () => void;
   onError: (message: string) => void;
 }) {
@@ -505,7 +505,7 @@ function AIProviderFields({
   idPrefix: string;
   provider?: Provider;
   editing?: boolean;
-  fixedService?: "openai" | "anthropic" | "ollama";
+  fixedService?: "openai" | "anthropic";
 }) {
   const { t } = useTranslation();
   const value = (key: string) => (provider ? configurationValue(provider, key) : "");
@@ -536,7 +536,6 @@ function AIProviderFields({
             options={[
               { value: "openai", label: "OpenAI" },
               { value: "anthropic", label: "Anthropic" },
-              { value: "ollama", label: "Ollama" },
             ]}
           />
         </div>
@@ -594,7 +593,7 @@ function AIProviderFields({
           name="api_key"
           type="password"
           autoComplete="off"
-          required={!editing && fixedService !== "ollama"}
+          required={!editing}
         />
         {editing && (
           <p className="text-xs text-muted-foreground">{t("setup.editConnectionDescription")}</p>
