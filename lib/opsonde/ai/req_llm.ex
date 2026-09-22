@@ -20,6 +20,7 @@ defmodule Opsonde.AI.ReqLLM do
   @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
+  @resolver_intent_types ~w(target_search target_selection target_traversal proposal recovery handoff)
 
   @impl Opsonde.Providers.Adapter
   def type, do: "req-llm"
@@ -233,7 +234,7 @@ defmodule Opsonde.AI.ReqLLM do
 
               {:error, validation} ->
                 if byte_size(text) <= @max_correction_bytes do
-                  {:schema_mismatch, text, schema_hint(validation)}
+                  {:schema_mismatch, text, schema_hint(value, schema, validation)}
                 else
                   invalid_output("AI provider JSON does not match the requested schema")
                 end
@@ -305,10 +306,21 @@ defmodule Opsonde.AI.ReqLLM do
     ])
   end
 
-  defp schema_hint(%{reason: reason}) when is_binary(reason),
+  defp schema_hint(value, schema, validation) do
+    type = get_in(value, ["intent", "type"])
+    allowed = schema_intent_types(schema)
+
+    if is_binary(type) and type not in allowed do
+      "intent.type #{type} is not offered; choose exactly one of: #{Enum.join(allowed, ", ")}"
+    else
+      generic_schema_hint(validation)
+    end
+  end
+
+  defp generic_schema_hint(%{reason: reason}) when is_binary(reason),
     do: String.slice(reason, 0, @max_schema_hint_bytes)
 
-  defp schema_hint(_validation), do: "The JSON value does not match the schema"
+  defp generic_schema_hint(_validation), do: "The JSON value does not match the schema"
 
   defp combine_response_usage(first_response, corrected_response) do
     first = ReqLLM.Response.usage(first_response) || %{}
@@ -383,6 +395,7 @@ defmodule Opsonde.AI.ReqLLM do
       "turn" => request.turn,
       "objective" => request.objective,
       "retry_context" => request.retry_context,
+      "allowed_intents" => allowed_intents(request),
       "alert_state" => to_string(request.alert_state),
       "report_language" => to_string(request.report_language),
       "budget" => plain(request.budget),
@@ -430,7 +443,11 @@ defmodule Opsonde.AI.ReqLLM do
         "the user payload. Keep reason concise and at most 500 characters. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
         "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
-        "in the user payload. If retry_context is present, the previous response was rejected " <>
+        "in the user payload. allowed_intents is the authoritative list of intent types in the " <>
+        "current output schema; never return a type absent from that list. A recovered monitoring " <>
+        "source alone does not make recovery available. When recovery is absent, use an offered " <>
+        "observation or Target traversal to obtain current recovery Evidence. If retry_context " <>
+        "is present, the previous response was rejected " <>
         "before any intent was accepted. When its rejection_code is schema_validation, rebuild " <>
         "the response from the current output schema, copy enum values exactly, include every " <>
         "required field, and add no field that the schema does not allow.",
@@ -686,6 +703,29 @@ defmodule Opsonde.AI.ReqLLM do
       ~w(reason intent)
     )
   end
+
+  defp allowed_intents(request), do: request |> resolver_schema() |> schema_intent_types()
+
+  defp schema_intent_types(schema) do
+    intent_schema = get_in(schema, ["properties", "intent"]) || schema
+    found = collect_intent_types(intent_schema, [])
+
+    @resolver_intent_types
+    |> Enum.filter(&(&1 in found))
+  end
+
+  defp collect_intent_types(%{"properties" => %{"type" => %{"enum" => types}}} = schema, found)
+       when is_list(types) do
+    Enum.reduce(Map.values(schema), types ++ found, &collect_intent_types/2)
+  end
+
+  defp collect_intent_types(value, found) when is_map(value),
+    do: Enum.reduce(Map.values(value), found, &collect_intent_types/2)
+
+  defp collect_intent_types(value, found) when is_list(value),
+    do: Enum.reduce(value, found, &collect_intent_types/2)
+
+  defp collect_intent_types(_value, found), do: found
 
   defp target_search_schema(%{budget: %{remaining_target_requests: remaining}})
        when remaining > 0,

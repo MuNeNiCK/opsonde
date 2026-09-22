@@ -405,7 +405,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     state =
       state!("ollama", context.endpoint <> "/v1", %{}, %{"model" => "test-model:cloud"})
 
-    invalid = Jason.encode!(%{"reason" => "retry", "intent" => %{"type" => "unknown"}})
+    invalid =
+      Jason.encode!(%{
+        "reason" => "The monitoring source recovered",
+        "intent" => %{"type" => "recovery", "evidence_ids" => ["stale-evidence"]}
+      })
 
     set_mode(context.agent, {
       :sequence,
@@ -422,6 +426,10 @@ defmodule Opsonde.AI.ReqLLMTest do
     first_body = Jason.decode!(first.body)
     correction_body = Jason.decode!(correction.body)
 
+    user_payload =
+      first_body["messages"] |> List.last() |> Map.fetch!("content") |> Jason.decode!()
+
+    refute "recovery" in user_payload["allowed_intents"]
     assert length(correction_body["messages"]) == length(first_body["messages"]) + 2
     assert Enum.at(correction_body["messages"], -2)["role"] == "assistant"
     assert Enum.at(correction_body["messages"], -2)["content"] == invalid
@@ -429,7 +437,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert String.contains?(
              Enum.at(correction_body["messages"], -1)["content"],
-             "did not validate"
+             "intent.type recovery is not offered"
            )
   end
 
@@ -525,6 +533,10 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:ok, %AI.ResolverDecision{}} = Adapter.resolve(state, request, %{})
     [ordinary_request] = requests(context.agent)
     ordinary_variants = output_schema(ordinary_request)["properties"]["intent"]["anyOf"]
+    ordinary_payload = user_payload(ordinary_request)
+
+    refute "recovery" in ordinary_payload["allowed_intents"]
+    assert "target_search" in ordinary_payload["allowed_intents"]
 
     refute Enum.any?(ordinary_variants, fn variant ->
              get_in(variant, ["properties", "type", "enum"]) == ["recovery"]
@@ -572,6 +584,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             }} = Adapter.resolve(state, request, %{})
 
     verified_request = requests(context.agent) |> List.last()
+    assert user_payload(verified_request)["allowed_intents"] == ["recovery"]
 
     recovery =
       Enum.find(output_schema(verified_request)["properties"]["intent"]["anyOf"], fn variant ->
@@ -1120,4 +1133,13 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   defp requests(agent),
     do: Agent.get(agent, &Enum.reverse(&1.requests))
+
+  defp user_payload(request) do
+    request.body
+    |> Jason.decode!()
+    |> Map.fetch!("messages")
+    |> List.last()
+    |> Map.fetch!("content")
+    |> Jason.decode!()
+  end
 end
