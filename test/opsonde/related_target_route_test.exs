@@ -72,6 +72,8 @@ defmodule Opsonde.RelatedTargetRouteTest do
     vm_turn = route_traversal!(vm_source)
 
     assert route_traversal!(vm_source).id == vm_turn.id
+    assert vm_turn.intent["evidence_ids"] == [evidence.id]
+    assert vm_turn.intent["reason"] == "The current evidence implicates the adjacent layer"
 
     assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.vm.id
 
@@ -187,8 +189,8 @@ defmodule Opsonde.RelatedTargetRouteTest do
         nil,
         "resumed-relation-signal",
         "signal_event",
-        "alertmanager",
-        source_ref,
+        "zabbix",
+        "secondary-resumed-relation",
         %{"current" => true, "state" => "firing"},
         DateTime.utc_now(),
         authorize?: false

@@ -324,6 +324,139 @@ defmodule Opsonde.ResolverProjectionTest do
     assert :ok = AI.Validator.validate_request(:resolve, request)
   end
 
+  test "projection reserves the latest context from every correlated Signal source", context do
+    incident =
+      Cases.open_case!(
+        :signal,
+        "alertmanager",
+        "alert-fingerprint",
+        "Kubernetes workload is unavailable",
+        :critical,
+        :firing,
+        %{"target_ref" => %{"kind" => "instance", "value" => "cluster-01"}},
+        context.target.id,
+        :en,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    now = DateTime.utc_now()
+
+    stale =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "multi-source-alert-stale",
+        "signal_event",
+        "alertmanager",
+        "alert-fingerprint",
+        %{
+          "current" => true,
+          "state" => "firing",
+          "attributes" => %{"title" => "Stale alert title"}
+        },
+        DateTime.add(now, -2, :second),
+        authorize?: false
+      )
+
+    alertmanager =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "multi-source-alert-current",
+        "signal_event",
+        "alertmanager",
+        "alert-fingerprint",
+        %{
+          "current" => true,
+          "state" => "firing",
+          "attributes" => %{"title" => "Kubernetes workload is unavailable"}
+        },
+        now,
+        authorize?: false
+      )
+
+    zabbix =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "multi-source-zabbix-current",
+        "signal_event",
+        "zabbix",
+        "zabbix-event-42",
+        %{
+          "current" => true,
+          "state" => "firing",
+          "attributes" => %{
+            "title" => "opsonde-validation.service is inactive on linux-01"
+          }
+        },
+        DateTime.add(now, 1, :second),
+        authorize?: false
+      )
+
+    other =
+      Targets.create_target!("candidate-01", "host", "linux", %{}, nil, actor: context.admin)
+
+    searched =
+      Cases.search_case_targets!(
+        incident.id,
+        run.id,
+        "multi-source-search",
+        "candidate-01",
+        20,
+        %{"action" => "search_targets"},
+        "Review Target search",
+        actor: context.operator
+      )
+
+    for index <- 1..50 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "multi-source-history-#{index}",
+        "observation",
+        "fixture",
+        "history-#{index}",
+        %{
+          "target_id" => context.target.id,
+          "payload" => String.duplicate("x", 2_000),
+          "ordinal" => index
+        },
+        DateTime.add(now, index + 1, :second),
+        authorize?: false
+      )
+    end
+
+    started = start!(incident, searched.run, "multi-source-turn")
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               started.value.id,
+               selection(),
+               invocation(%Target.Capabilities{observations: [], effects: []})
+             )
+
+    signal_evidence = Enum.filter(request.evidence, &(&1.kind == "signal_event"))
+
+    assert MapSet.new(Enum.map(signal_evidence, & &1.id)) ==
+             MapSet.new([alertmanager.id, zabbix.id])
+
+    refute Enum.any?(request.evidence, &(&1.id == stale.id))
+
+    assert Enum.any?(signal_evidence, fn evidence ->
+             get_in(evidence.content, ["attributes", "title"]) ==
+               "opsonde-validation.service is inactive on linux-01"
+           end)
+
+    assert Enum.any?(request.target_candidates, &(&1.id == other.id))
+    assert :ok = AI.Validator.validate_request(:resolve, request)
+  end
+
   test "projection keeps only the latest result of an identical Target request", context do
     {incident, run} = open!("repeated-observation", context.operator, context.target)
     now = DateTime.utc_now()

@@ -257,6 +257,10 @@ defmodule Opsonde.Cases do
         action: :source_context,
         args: [:case_id, :source_ref]
 
+      define :signal_context_evidence,
+        action: :signal_contexts,
+        args: [:case_id]
+
       define :target_continuity_evidence,
         action: :target_continuity,
         args: [:case_id]

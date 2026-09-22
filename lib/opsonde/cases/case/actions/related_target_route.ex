@@ -244,6 +244,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
         "relationship_id" => intent["relationship_id"],
         "relationship_revision" => intent["relationship_revision"],
         "selected_target_id" => intent["next_target_id"],
+        "evidence_ids" => intent["evidence_ids"],
         "reason" => intent["reason"]
       }
     )

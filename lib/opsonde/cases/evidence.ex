@@ -54,6 +54,24 @@ defmodule Opsonde.Cases.Evidence do
               )
     end
 
+    read :signal_contexts do
+      argument :case_id, :uuid, allow_nil?: false
+
+      filter expr(case_id == ^arg(:case_id) and kind == "signal_event")
+
+      prepare build(
+                distinct: [:source, :source_ref],
+                distinct_sort: [
+                  source: :asc,
+                  source_ref: :asc,
+                  observed_at: :desc,
+                  inserted_at: :desc,
+                  id: :desc
+                ],
+                sort: [observed_at: :desc, inserted_at: :desc, id: :desc]
+              )
+    end
+
     read :target_continuity do
       argument :case_id, :uuid, allow_nil?: false
 
@@ -125,6 +143,7 @@ defmodule Opsonde.Cases.Evidence do
     policy action([
              :projection_window,
              :source_context,
+             :signal_contexts,
              :target_continuity,
              :by_idempotency,
              :create_record,

@@ -10,13 +10,12 @@ defmodule Opsonde.Cases.EvidenceCitation do
         %{
           case_id: case_id,
           kind: "signal_event",
-          source_ref: source_ref,
-          content: %{"current" => true, "state" => state}
+          content: %{"current" => true}
         } = evidence,
-        %{id: case_id, source_ref: source_ref, alert_state: alert_state},
+        %{id: case_id},
         _run
       ) do
-    state == to_string(alert_state) and latest_source_evidence?(evidence, case_id, source_ref)
+    latest_source_evidence?(evidence, case_id)
   end
 
   def valid?(
@@ -43,9 +42,9 @@ defmodule Opsonde.Cases.EvidenceCitation do
 
   def valid?(_evidence, _incident, _run), do: false
 
-  defp latest_source_evidence?(evidence, case_id, source_ref) do
-    case Cases.source_context_evidence(case_id, source_ref, authorize?: false) do
-      {:ok, [%{id: id} | _rest]} -> id == evidence.id
+  defp latest_source_evidence?(evidence, case_id) do
+    case Cases.signal_context_evidence(case_id, authorize?: false) do
+      {:ok, candidates} -> Enum.any?(candidates, &(&1.id == evidence.id))
       _unavailable -> false
     end
   end

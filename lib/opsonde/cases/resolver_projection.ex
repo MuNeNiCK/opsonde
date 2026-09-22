@@ -74,29 +74,22 @@ defmodule Opsonde.Cases.ResolverProjection do
   end
 
   defp source_context(%{trigger_kind: :signal} = incident, evidence) do
-    with {:ok, candidates} <-
-           Cases.source_context_evidence(incident.id, incident.source_ref, authorize?: false) do
-      {:ok, replace_source_context(evidence, List.first(candidates), incident)}
+    with {:ok, candidates} <- Cases.signal_context_evidence(incident.id, authorize?: false) do
+      {:ok, replace_source_context(evidence, candidates)}
     end
   end
 
   defp source_context(_incident, evidence), do: {:ok, evidence}
 
-  defp replace_source_context(
-         evidence,
-         %{
-           case_id: case_id,
-           kind: "signal_event",
-           source_ref: source_ref,
-           content: %{"current" => true}
-         } = latest,
-         %{id: case_id, source_ref: source_ref}
-       ) do
-    [latest | Enum.reject(evidence, &(&1.kind == "signal_event"))]
-  end
+  defp replace_source_context(evidence, candidates) do
+    current =
+      Enum.filter(candidates, fn
+        %{kind: "signal_event", content: %{"current" => true}} -> true
+        _candidate -> false
+      end)
 
-  defp replace_source_context(evidence, _latest, _incident),
-    do: Enum.reject(evidence, &(&1.kind == "signal_event"))
+    current ++ Enum.reject(evidence, &(&1.kind == "signal_event"))
+  end
 
   defp target_continuity(incident, target, evidence) when not is_nil(target) do
     with {:ok, candidates} <-
@@ -364,8 +357,15 @@ defmodule Opsonde.Cases.ResolverProjection do
       proposal_tools: []
     }
 
+    {source_evidence, other_evidence} =
+      Enum.split_with(evidence, &(&1.kind == "signal_event"))
+
     base
-    |> add_candidate_group(evidence)
+    |> add_items(
+      :evidence,
+      generic_evidence(source_evidence, base.disclosure.allowed_target_ids, incident, run)
+    )
+    |> add_candidate_group(other_evidence)
     |> add_items(:target_relations, relations)
     |> add_items(:observation_tools, observations)
     |> add_items(:proposal_tools, proposals)
@@ -373,7 +373,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       add_items(
         current,
         :evidence,
-        generic_evidence(evidence, current.disclosure.allowed_target_ids, incident, run)
+        generic_evidence(other_evidence, current.disclosure.allowed_target_ids, incident, run)
       )
     end)
     |> then(fn current ->
@@ -424,24 +424,32 @@ defmodule Opsonde.Cases.ResolverProjection do
           }
         }
 
-        case try_update(request, fn current -> %{current | evidence: [compact]} end) do
+        case try_update(request, fn current ->
+               %{current | evidence: current.evidence ++ [compact]}
+             end) do
           {:ok, with_evidence} ->
             Enum.reduce(candidates, with_evidence, fn candidate, current ->
               result =
                 try_update(current, fn value ->
-                  [head | rest] = value.evidence
+                  updated_evidence =
+                    Enum.map(value.evidence, fn
+                      %{id: id} = evidence when id == compact.id ->
+                        %{
+                          evidence
+                          | content: %{
+                              evidence.content
+                              | "candidate_ids" =>
+                                  evidence.content["candidate_ids"] ++ [candidate.id]
+                            }
+                        }
 
-                  updated = %{
-                    head
-                    | content: %{
-                        head.content
-                        | "candidate_ids" => head.content["candidate_ids"] ++ [candidate.id]
-                      }
-                  }
+                      evidence ->
+                        evidence
+                    end)
 
                   %{
                     value
-                    | evidence: [updated | rest],
+                    | evidence: updated_evidence,
                       target_candidates: value.target_candidates ++ [candidate]
                   }
                 end)

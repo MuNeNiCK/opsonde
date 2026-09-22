@@ -1037,8 +1037,8 @@ defmodule Opsonde.OperationDeliveryTest do
     assert request.alert_state == :firing
 
     assert [
-             %AI.Evidence{id: ^verification_id, kind: "target_verification"},
-             %AI.Evidence{id: source_id, kind: "signal_event", content: source_content}
+             %AI.Evidence{id: source_id, kind: "signal_event", content: source_content},
+             %AI.Evidence{id: ^verification_id, kind: "target_verification"}
            ] = request.evidence
 
     assert source_id == source.id
