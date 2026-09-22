@@ -3,6 +3,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
+  alias Opsonde.Targets.Linux.SSH, as: LinuxSSH
   alias Opsonde.Targets.PolicyRequest
 
   @password "correct horse battery staple"
@@ -93,6 +94,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         actor: admin
       )
 
+    Agent.update(context.commands, fn _commands -> [] end)
+
     Map.merge(context, %{
       admin: admin,
       operator: operator,
@@ -164,6 +167,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
 
     assert native_facts["stdout"] == %{"encoding" => "utf-8", "value" => "Linux fixture\n"}
+    assert commands(context) == ["sudo -n uname -a"]
 
     assert get_in(effect.input_schema, [
              "properties",
@@ -260,6 +264,66 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
   end
 
+  test "configured privilege applies to native effects and verification", context do
+    effect =
+      policy_request(
+        context,
+        :effect,
+        "native.ssh",
+        "command.execute",
+        %{},
+        %{"command" => "systemctl restart opsonde-validation.service"}
+      )
+
+    effect_clearance = Targets.clear_target_request!(effect, actor: context.operator)
+
+    assert %Target.EffectResult{status: :applied} =
+             Targets.dispatch_target_effect!(effect_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    verification =
+      policy_request(
+        context,
+        :verification,
+        "native.ssh",
+        "command.observe",
+        %{},
+        %{"command" => "uname -a"},
+        %{"exit_status" => 0}
+      )
+
+    verification_clearance =
+      Targets.clear_target_request!(verification, actor: context.operator)
+
+    assert %Target.Verification{status: :verified} =
+             Targets.dispatch_target_verification!(verification_clearance, %{},
+               actor: context.operator
+             )
+
+    assert commands(context) == [
+             "sudo -n systemctl restart opsonde-validation.service",
+             "sudo -n uname -a"
+           ]
+  end
+
+  test "native commands remain unchanged when privilege is none", context do
+    configuration = Map.put(configuration(context), "privilege", "none")
+    assert {:ok, state} = LinuxSSH.build(configuration, credentials())
+
+    request = %{
+      capability: "native.ssh",
+      operation: "command.observe",
+      selectors: %{},
+      parameters: %{"command" => "uname -a"},
+      connection: %{endpoint: context.endpoint}
+    }
+
+    assert {:ok, %Target.Observation{}} = LinuxSSH.observe(state, request, %{})
+    assert commands(context) == ["uname -a"]
+  end
+
   test "invalid unit stops locally and post-dispatch timeout stays unknown", context do
     invalid =
       policy_request(
@@ -339,7 +403,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       "connect_timeout_ms" => 2_000,
       "operation_timeout_ms" => 500,
       "max_output_bytes" => 32_768,
-      "privilege" => "none"
+      "privilege" => "sudo"
     }
   end
 
@@ -365,7 +429,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       Agent.update(commands, &[command | &1])
 
       cond do
-        command == "uname -a" ->
+        command in ["uname -a", "sudo -n uname -a"] ->
           {:ok, "Linux fixture\n"}
 
         command == "printf 'Kernel='; uname -srm; printf 'MachineId='; cat /etc/machine-id" ->

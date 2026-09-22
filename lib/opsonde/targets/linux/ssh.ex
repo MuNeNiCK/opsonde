@@ -69,8 +69,11 @@ defmodule Opsonde.Targets.Linux.SSH do
     do: {:error, :invalid_configuration, "Linux SSH check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation) do
+  def capabilities(state, _invocation) do
     {native_observation, native_effect} = NativeShell.operations(@native, "Linux shell")
+
+    native_observation = describe_privilege(native_observation, state)
+    native_effect = describe_privilege(native_effect, state)
 
     {:ok,
      %Target.Capabilities{
@@ -142,7 +145,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   def observe(%State{} = state, %{capability: @native} = request, invocation) do
     with {:ok, command} <- NativeShell.observation_command(request, @native),
-         {:ok, result} <- execute(state, request, command, invocation) do
+         {:ok, result} <- execute(state, request, native_command(state, command), invocation) do
       {:ok,
        %Target.Observation{
          facts: NativeShell.facts(result),
@@ -168,7 +171,7 @@ defmodule Opsonde.Targets.Linux.SSH do
   def effect(%State{} = state, %{capability: @native} = request, invocation) do
     with {:ok, command} <- NativeShell.effect_command(request, @native) do
       state
-      |> execute_raw(request, command, invocation)
+      |> execute_raw(request, native_command(state, command), invocation)
       |> effect_result()
     else
       {:error, category, message} -> read_error(category, message)
@@ -204,7 +207,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   def verify(%State{} = state, %{capability: @native} = request, invocation) do
     with {:ok, command} <- NativeShell.command(request, @native, "command.observe"),
-         {:ok, result} <- execute(state, request, command, invocation),
+         {:ok, result} <- execute(state, request, native_command(state, command), invocation),
          facts <- NativeShell.facts(result) do
       {:ok,
        %Target.Verification{
@@ -611,6 +614,19 @@ defmodule Opsonde.Targets.Linux.SSH do
       _error -> value
     end
   end
+
+  defp describe_privilege(operation, %State{privilege: "sudo"}) do
+    %{
+      operation
+      | description:
+          operation.description <>
+            "; the Access Method prefixes this command with configured non-interactive sudo, so do not add sudo"
+    }
+  end
+
+  defp describe_privilege(operation, %State{privilege: "none"}), do: operation
+
+  defp native_command(state, command), do: privileged(state, command)
 
   defp privileged(%State{privilege: "sudo"}, command), do: "sudo -n " <> command
   defp privileged(%State{privilege: "none"}, command), do: command
