@@ -492,6 +492,31 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
+  test "Resolver truncated retry requests one compact complete JSON decision", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    request = %{
+      resolver_request()
+      | retry_context: %{"category" => "invalid_output", "rejection_code" => "truncated"}
+    }
+
+    assert :ok = AI.Validator.validate_request(:resolve, request)
+    set_mode(context.agent, {:decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    body = Jason.decode!(wire_request.body)
+    assert user_payload(wire_request)["retry_context"] == request.retry_context
+
+    assert Enum.any?(body["messages"], fn message ->
+             message["role"] == "system" and
+               String.contains?(message["content"], "rejection_code is truncated") and
+               String.contains?(message["content"], "compact complete JSON object")
+           end)
+  end
+
   test "local validation rejects schema-invalid arguments without a second request", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

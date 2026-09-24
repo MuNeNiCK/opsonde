@@ -280,7 +280,11 @@ defmodule Opsonde.AI.ReqLLM do
         "is present, the previous response was rejected " <>
         "before any intent was accepted. When its rejection_code is schema_validation, correct " <>
         "the field at rejection_path using the current output schema, copy enum values exactly, " <>
-        "include every required field, and add no field that the schema does not allow.",
+        "include every required field, and add no field that the schema does not allow. " <>
+        "When rejection_code is truncated, the previous response reached the output token " <>
+        "limit before a complete JSON object was returned. Keep the same evidence and safety " <>
+        "requirements, but return one compact complete JSON object immediately: use a short " <>
+        "reason, only necessary evidence IDs, and no surrounding explanation.",
       Jason.encode!(payload)
     )
   end

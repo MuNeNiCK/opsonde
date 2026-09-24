@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   require Ash.Query
 
-  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Cases.{Budget, Case, Evidence, EvidenceCitation, Proposal, ResolutionRun, Turn}
   alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
 
@@ -105,7 +105,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     ]
 
     Enum.all?(values, &nonempty?/1) and
-      bounded?(intent["reason"], 500) and
+      Providers.AI.valid_resolver_reason?(intent["reason"]) and
       positive?(intent["target_revision"]) and
       positive?(intent["access_method_revision"]) and
       is_map(intent["selectors"]) and is_map(intent["parameters"]) and
@@ -365,7 +365,6 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp map(_value), do: %{}
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
   defp positive?(value), do: is_integer(value) and value > 0
-  defp bounded?(value, max_bytes), do: nonempty?(value) and byte_size(value) <= max_bytes
 
   defp find_error(%PolicyError{} = error), do: error
 

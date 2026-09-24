@@ -269,6 +269,43 @@ defmodule Opsonde.ResolverDeliveryTest do
            end)
   end
 
+  test "one truncated reply gets a compact corrective turn, then stops if truncated again",
+       context do
+    {incident, run, turn} = turn!("truncated-retry", context.operator)
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI provider JSON was truncated",
+                %AI.Usage{input_tokens: 9, output_tokens: 8}}
+             end)
+
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
+
+    assert successor.intent["rejection_code"] == "truncated"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+    assert Cases.list_proposals!(authorize?: false) == []
+    assert Cases.list_operations!(authorize?: false) == []
+
+    assert :ok =
+             invalid_output(turn, fn -> flunk("completed Turn called AI again") end)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+
+    assert :ok =
+             invalid_output(successor, fn ->
+               {:error, :invalid_output, "AI provider JSON was truncated",
+                %AI.Usage{input_tokens: 5, output_tokens: 4}}
+             end)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 26
+    assert Enum.count(Cases.list_ai_invocations!(authorize?: false)) == 2
+    assert Cases.list_proposals!(authorize?: false) == []
+    assert Cases.list_operations!(authorize?: false) == []
+  end
+
   test "metered invalid response above the remaining budget persists physical usage", context do
     {incident, run, turn} = turn!("metered-overrun", context.operator)
     current = Cases.get_resolution_run!(run.id, authorize?: false)

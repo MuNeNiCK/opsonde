@@ -149,6 +149,24 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
   end
 
+  test "multilingual Proposal reason uses the Resolver codepoint limit through routing",
+       context do
+    reason = String.duplicate("界", 116) <> String.duplicate("a", 196)
+    assert length(String.codepoints(reason)) == 312
+    assert byte_size(reason) == 544
+
+    {_incident, _run, proposal} =
+      proposal!("multilingual-reason", context, :observation, reason)
+
+    assert proposal.reason == reason
+
+    assert {:ok, routed} =
+             Cases.route_downstream_decision(proposal.source_turn_id, authorize?: false)
+
+    assert routed.status == :running
+    assert routed.pending_intent["proposal_id"] == proposal.id
+  end
+
   test "Ask approval is exact, immutable, retryable and only exposes a dispatch reference",
        context do
     configure_mode!(:ask, context.admin)
@@ -1148,7 +1166,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  defp proposal!(suffix, context, request_kind \\ :effect) do
+  defp proposal!(suffix, context, request_kind \\ :effect, reason \\ nil) do
     incident =
       Cases.open_case!(
         :manual,
@@ -1191,6 +1209,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       )
 
     intent = proposal_intent(evidence.id, context, request_kind)
+    intent = if is_binary(reason), do: Map.put(intent, "reason", reason), else: intent
 
     turn =
       Cases.complete_turn!(
