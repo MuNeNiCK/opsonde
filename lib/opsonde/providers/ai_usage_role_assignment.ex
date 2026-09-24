@@ -92,6 +92,8 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
         allow_nil?: false,
         constraints: [min: 1]
 
+      argument :excluded_provider_ids, {:array, :uuid}, allow_nil?: false
+
       run {Opsonde.Providers.AIUsageRoleAssignment.Actions.Select, role: :reviewer}
     end
   end

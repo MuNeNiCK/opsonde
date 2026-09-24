@@ -391,7 +391,8 @@ defmodule Opsonde.Cases do
           :provider_revision,
           :assignment_revision,
           :selection_source,
-          :request_digest
+          :request_digest,
+          :delivery_attempt
         ]
     end
   end

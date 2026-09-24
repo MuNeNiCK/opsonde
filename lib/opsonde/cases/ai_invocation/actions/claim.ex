@@ -158,6 +158,10 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
     |> Ash.read_one(authorize?: false)
   end
 
+  defp idempotency_key(%{role: :reviewer, proposal_id: proposal_id, delivery_attempt: attempt})
+       when is_binary(proposal_id) and is_integer(attempt),
+       do: "reviewer:#{proposal_id}:attempt:#{attempt}"
+
   defp idempotency_key(arguments) do
     subject_id = arguments.turn_id || arguments.proposal_id
     "#{arguments.role}:#{subject_id}:#{arguments.request_digest}"

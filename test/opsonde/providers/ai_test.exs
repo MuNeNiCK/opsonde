@@ -94,11 +94,23 @@ defmodule Opsonde.Providers.AITest do
                resolver_assignment_id,
                resolver_assignment_revision,
                resolver_revision,
+               [],
                actor: context.operator
              )
 
     assert reviewer_id == reviewer_provider.id
     assert reviewer_assignment_id == reviewer_assignment.id
+
+    assert %AI.Selection{provider_id: backup_id, source: :assignment} =
+             Providers.select_reviewer_ai!(
+               resolver_assignment_id,
+               resolver_assignment_revision,
+               resolver_revision,
+               [reviewer_provider.id],
+               actor: context.operator
+             )
+
+    assert backup_id == backup_reviewer.id
 
     Providers.update_ai_usage_role_assignment!(
       reviewer_assignment,
@@ -126,6 +138,16 @@ defmodule Opsonde.Providers.AITest do
                resolver_assignment_id,
                resolver_assignment_revision,
                resolver_revision,
+               [],
+               actor: context.operator
+             )
+
+    assert {:error, _excluded_resolver} =
+             Providers.select_reviewer_ai(
+               resolver_assignment_id,
+               resolver_assignment_revision,
+               resolver_revision,
+               [context.provider.id],
                actor: context.operator
              )
 
@@ -141,6 +163,7 @@ defmodule Opsonde.Providers.AITest do
                resolver_assignment_id,
                resolver_assignment_revision,
                resolver_revision,
+               [],
                actor: context.operator
              )
   end

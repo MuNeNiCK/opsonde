@@ -83,6 +83,8 @@ defmodule Opsonde.Cases.AIInvocation do
         allow_nil?: false,
         constraints: [min_length: 64, max_length: 64]
 
+      argument :delivery_attempt, :integer, constraints: [min: 1]
+
       run Opsonde.Cases.AIInvocation.Actions.Claim
     end
   end

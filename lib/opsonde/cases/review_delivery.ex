@@ -28,8 +28,10 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp select_and_deliver(proposal, opts) do
-    case assigned_selection(proposal, assignment_generation(opts)) do
-      {:ok, selection} -> deliver(proposal, selection, opts)
+    with {:ok, excluded} <- failed_reviewer_provider_ids(proposal),
+         {:ok, selection} <- assigned_selection(proposal, assignment_generation(opts), excluded) do
+      deliver(proposal, selection, opts)
+    else
       {:error, error} -> persist_failure(proposal, error, nil, opts)
     end
   end
@@ -108,11 +110,12 @@ defmodule Opsonde.Cases.ReviewDelivery do
       AIInvocation.request_digest(
         {request, delivery_attempt, selection.provider_id, selection.assignment_id}
       ),
+      delivery_attempt,
       authorize?: false
     )
   end
 
-  defp assigned_selection(proposal, generation) do
+  defp assigned_selection(proposal, generation, excluded) do
     key = assignment_key(proposal.id, generation)
 
     case Cases.case_event_by_idempotency(proposal.case_id, key,
@@ -120,12 +123,12 @@ defmodule Opsonde.Cases.ReviewDelivery do
            not_found_error?: false
          ) do
       {:ok, %CaseEvent{} = event} -> selection_from_event(event, proposal)
-      {:ok, nil} -> create_assignment(proposal, key)
+      {:ok, nil} -> create_assignment(proposal, key, excluded)
       {:error, _error} = error -> error
     end
   end
 
-  defp create_assignment(proposal, key) do
+  defp create_assignment(proposal, key, excluded) do
     resolver = proposal.resolver_identity
 
     with {:ok, %AI.Selection{role: :reviewer} = selection} <-
@@ -133,6 +136,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
              resolver["assignment_id"],
              resolver["assignment_revision"],
              resolver["provider_revision"],
+             excluded,
              authorize?: false
            ),
          {:ok, _event} <-
@@ -156,6 +160,26 @@ defmodule Opsonde.Cases.ReviewDelivery do
           {:ok, %CaseEvent{} = event} -> selection_from_event(event, proposal)
           _missing -> error
         end
+    end
+  end
+
+  defp failed_reviewer_provider_ids(proposal) do
+    case Cases.list_ai_invocations(
+           query: [
+             filter: [
+               proposal_id: proposal.id,
+               role: :reviewer,
+               status: :failed,
+               category: "invalid_output"
+             ]
+           ],
+           authorize?: false
+         ) do
+      {:ok, invocations} ->
+        {:ok, invocations |> Enum.map(& &1.provider_id) |> Enum.uniq()}
+
+      {:error, _error} ->
+        {:error, ai_error(:unavailable, "Reviewer failure history is unavailable")}
     end
   end
 
@@ -312,9 +336,6 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
     with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
       cond do
-        category == "invalid_output" ->
-          stop_delivery(proposal, category, reason)
-
         retryable_failure?(category) and retry_available?(opts) ->
           {:error,
            "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
@@ -491,7 +512,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp retryable_failure?(category),
-    do: category in ["timeout", "unreachable", "rate_limited", "failed"]
+    do: category in ["timeout", "unreachable", "rate_limited", "failed", "invalid_output"]
 
   defp retry_available?(opts), do: delivery_attempt(opts) < max_delivery_attempts(opts)
 
@@ -501,7 +522,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
     do: max(Keyword.get(opts, :max_delivery_attempts, 1), delivery_attempt(opts))
 
   defp assignment_generation(opts),
-    do: max(Keyword.get(opts, :assignment_generation, 1), 1)
+    do: max(Keyword.get(opts, :assignment_generation, delivery_attempt(opts)), 1)
 
   defp accepted_or_existing({:error, error}, proposal_id) do
     case existing_decision(proposal_id) do

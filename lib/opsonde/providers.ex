@@ -91,7 +91,8 @@ defmodule Opsonde.Providers do
         args: [
           :resolver_assignment_id,
           :resolver_assignment_revision,
-          :resolver_provider_revision
+          :resolver_provider_revision,
+          :excluded_provider_ids
         ]
     end
   end

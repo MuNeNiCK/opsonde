@@ -115,6 +115,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
         selection.assignment_revision,
         selection.source,
         AIInvocation.request_digest(request),
+        nil,
         authorize?: false
       )
     end
