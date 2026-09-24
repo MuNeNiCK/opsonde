@@ -60,13 +60,36 @@ defmodule OpsondeWeb.API.V1.ProposalController do
           }
         }
       ) do
-    with {:ok, proposal} <-
-           Cases.decide_proposal(id, revision, digest, decision, reason,
-             actor: conn.assigns.current_user
-           ) do
-      Response.data(conn, WorkflowJSON.proposal(proposal))
+    case Cases.decide_proposal(id, revision, digest, decision, reason,
+           actor: conn.assigns.current_user
+         ) do
+      {:ok, proposal} ->
+        Response.data(conn, WorkflowJSON.proposal(proposal))
+
+      {:error, error} ->
+        if expired_proposal?(error) do
+          Response.error(
+            conn,
+            :conflict,
+            "proposal_expired",
+            "Proposal approval window has expired"
+          )
+        else
+          {:error, error}
+        end
     end
   end
 
   def decide(_conn, _params), do: {:error, :bad_request}
+
+  defp expired_proposal?(%Ash.Error.Changes.InvalidAttribute{
+         field: :expires_at,
+         message: "has expired"
+       }),
+       do: true
+
+  defp expired_proposal?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &expired_proposal?/1)
+
+  defp expired_proposal?(_error), do: false
 end

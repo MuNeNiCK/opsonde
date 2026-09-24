@@ -122,6 +122,13 @@ defmodule Opsonde.Cases.Proposal do
       run {Opsonde.Cases.Proposal.Actions.Authority, operation: :decide}
     end
 
+    action :expire, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :expire}
+    end
+
     action :apply_review, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -151,6 +158,7 @@ defmodule Opsonde.Cases.Proposal do
              :transition,
              :materialize,
              :route_authority,
+             :expire,
              :apply_review,
              :fail_review_delivery
            ]) do

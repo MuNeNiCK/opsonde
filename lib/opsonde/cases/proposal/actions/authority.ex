@@ -11,6 +11,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     Case,
     CaseEvent,
     Proposal,
+    ProposalExpirationWorker,
     ResolutionRun,
     ReviewDecision,
     Turn
@@ -26,6 +27,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
       :decide ->
         decide(input.arguments, context.actor)
+
+      :expire ->
+        expire(input.arguments.proposal_id)
 
       :review ->
         apply_review(input.arguments.proposal_id, input.arguments.review_decision_id)
@@ -94,31 +98,94 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp decide(arguments, actor) do
     with {:ok, current_actor} <- current_actor(actor),
          {:ok, source} <- Cases.get_proposal(arguments.proposal_id, authorize?: false) do
-      Ash.transact([Case, ResolutionRun, Proposal, Approval, Turn, CaseEvent], fn ->
-        with {:ok, incident} <- lock_case(source.case_id),
-             {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
-             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id),
-             {:ok, existing} <- existing_approval(proposal.id) do
-          if existing do
-            replay_human(existing, proposal, arguments, current_actor)
-          else
-            decide_locked(proposal, incident, run, arguments, current_actor)
+      result =
+        Ash.transact([Case, ResolutionRun, Proposal, Approval, Turn, CaseEvent], fn ->
+          with {:ok, incident} <- lock_case(source.case_id),
+               {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
+               {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id),
+               {:ok, existing} <- existing_approval(proposal.id) do
+            if existing do
+              replay_human(existing, proposal, arguments, current_actor)
+            else
+              decide_locked(proposal, incident, run, arguments, current_actor)
+            end
           end
+        end)
+
+      case result do
+        {:ok, %Proposal{status: status} = proposal}
+        when status in [:invalidated, :awaiting_human] ->
+          if expired?(proposal), do: expired_error(), else: result
+
+        _other ->
+          result
+      end
+    end
+  end
+
+  defp decide_locked(proposal, incident, run, arguments, actor) do
+    cond do
+      expired?(proposal) and proposal.status == :awaiting_human ->
+        expire_locked(proposal, incident, run)
+
+      expired?(proposal) and proposal.status == :invalidated ->
+        expired_error()
+
+      true ->
+        with :ok <- expected_proposal(proposal, arguments),
+             :ok <- human_decidable(proposal),
+             :ok <- valid_context(proposal, incident, run),
+             :ok <- available_pending(incident.pending_intent, proposal.id) do
+          case arguments.decision do
+            :approved -> approve_human(proposal, incident, run, arguments.reason, actor)
+            :rejected -> reject_human(proposal, incident, run, arguments.reason, actor)
+          end
+        end
+    end
+  end
+
+  defp expire(proposal_id) do
+    with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do
+      Ash.transact([Case, ResolutionRun, Proposal, CaseEvent], fn ->
+        with {:ok, incident} <- lock_case(source.case_id),
+             {:ok, run} <- lock_run_any(source.resolution_run_id, incident.id),
+             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id) do
+          expire_locked(proposal, incident, run)
         end
       end)
     end
   end
 
-  defp decide_locked(proposal, incident, run, arguments, actor) do
-    with :ok <- expected_proposal(proposal, arguments),
-         :ok <- human_decidable(proposal),
-         :ok <- valid_context(proposal, incident, run),
-         :ok <- available_pending(incident.pending_intent, proposal.id) do
-      case arguments.decision do
-        :approved -> approve_human(proposal, incident, run, arguments.reason, actor)
-        :rejected -> reject_human(proposal, incident, run, arguments.reason, actor)
+  defp expire_locked(%{status: :awaiting_human} = proposal, incident, run) do
+    if expired?(proposal) and incident.status == :running and run.active and
+         run.status == :running and run.generation == proposal.case_generation and
+         incident.pending_intent["action"] == "decide_proposal" and
+         incident.pending_intent["proposal_id"] == proposal.id do
+      with {:ok, invalidated} <- transition(proposal, :invalidated),
+           %Proposal{} <-
+             require_attention(
+               invalidated,
+               incident,
+               run,
+               "Proposal approval window expired",
+               "review_expired_proposal",
+               "Review the expired Proposal and resume the Case"
+             ) do
+        invalidated
       end
+    else
+      proposal
     end
+  end
+
+  defp expire_locked(proposal, _incident, _run), do: proposal
+
+  defp expired?(proposal),
+    do: DateTime.compare(DateTime.utc_now(), proposal.expires_at) != :lt
+
+  defp expired_error do
+    {:error,
+     Ash.Error.Changes.InvalidAttribute.exception(field: :expires_at, message: "has expired")}
   end
 
   defp recommend(proposal, incident, run) do
@@ -166,7 +233,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              "action" => "decide_proposal",
              "proposal_id" => waiting.id,
              "proposal_digest" => waiting.proposal_digest
-           }) do
+           }),
+         :ok <- schedule_expiration(waiting) do
       waiting
     end
   end
@@ -331,7 +399,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              "proposal_digest" => waiting.proposal_digest,
              "review_decision_id" => decision.id,
              "review_reason" => decision.reason
-           }) do
+           }),
+         :ok <- schedule_expiration(waiting) do
       waiting
     end
   end
@@ -623,6 +692,15 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     |> required("Active ResolutionRun is unavailable")
   end
 
+  defp lock_run_any(id, case_id) do
+    ResolutionRun
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(id: id, case_id: case_id)
+    |> Ash.Query.lock(:for_update)
+    |> Ash.read_one(authorize?: false)
+    |> required("ResolutionRun is unavailable")
+  end
+
   defp lock_proposal(id, case_id, run_id) do
     Proposal
     |> Ash.Query.for_read(:read)
@@ -660,6 +738,13 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp schedule_acceptance(proposal) do
     case Opsonde.Cases.OperationAcceptanceWorker.new(%{"proposal_id" => proposal.id})
          |> Oban.insert() do
+      {:ok, _job} -> :ok
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp schedule_expiration(proposal) do
+    case proposal |> ProposalExpirationWorker.job() |> Oban.insert() do
       {:ok, _job} -> :ok
       {:error, _error} = error -> error
     end

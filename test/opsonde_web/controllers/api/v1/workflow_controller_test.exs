@@ -2,6 +2,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
   import OpenApiSpex.TestAssertions
+  import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Targets}
   alias Opsonde.Cases.ReviewDelivery
@@ -471,6 +472,40 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       refute response.resp_body =~ "idempotency_key"
       refute response.resp_body =~ "provider-secret"
     end
+  end
+
+  test "expired Proposal decision returns conflict and stops the Case", context do
+    configure_mode!(:ask, context.admin)
+    setup = proposal_setup!(context)
+    {incident, proposal} = awaiting_proposal!(setup, context.operator)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    Opsonde.Repo.update_all(
+      from(item in Opsonde.Cases.Proposal, where: item.id == ^proposal.id),
+      set: [expires_at: DateTime.add(DateTime.utc_now(), -1, :second)]
+    )
+
+    expired =
+      post_json(
+        "/api/v1/proposals/#{proposal.id}/decision",
+        %{
+          "proposal" => %{
+            "expected_revision" => proposal.revision,
+            "proposal_digest" => proposal.proposal_digest,
+            "decision" => "approved",
+            "reason" => "Approval arrived after expiry"
+          }
+        },
+        context.operator_token
+      )
+
+    assert %{"error" => %{"code" => "proposal_expired"}} = json_response(expired, 409)
+    assert_operation_response(expired)
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
   end
 
   test "auto Reviewer decisions and their exact approval are reconnectable without AI sessions",

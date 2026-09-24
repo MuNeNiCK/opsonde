@@ -6,6 +6,7 @@ defmodule Opsonde.ProposalAuthorityTest do
   alias Opsonde.Cases.{
     OperationAcceptanceWorker,
     OperationWorker,
+    ProposalExpirationWorker,
     ReviewDelivery,
     ReviewProjection,
     ReviewWorker
@@ -879,7 +880,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert [first, second] =
              Cases.list_ai_invocations!(authorize?: false)
-             |> Enum.sort_by(& &1.inserted_at)
+             |> Enum.sort_by(& &1.idempotency_key)
 
     assert %{status: :failed, category: "invalid_output", input_tokens: 11, output_tokens: 7} =
              first
@@ -1130,15 +1131,46 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "expired input and revoked human authority fail without a decision", context do
+  test "durable expiration pauses an awaiting human Case without an effect", context do
     configure_mode!(:ask, context.admin)
-    {_incident, _run, proposal} = proposal!("expired", context)
+    {incident, run, proposal} = proposal!("expired", context)
     waiting = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert [job] =
+             Opsonde.Repo.all(
+               from(item in Oban.Job,
+                 where:
+                   item.worker == ^Oban.Worker.to_string(ProposalExpirationWorker) and
+                     fragment("?->>'proposal_id'", item.args) == ^waiting.id
+               )
+             )
+
+    assert job.state == "scheduled"
 
     Opsonde.Repo.update_all(
       from(item in Opsonde.Cases.Proposal, where: item.id == ^waiting.id),
       set: [expires_at: DateTime.add(DateTime.utc_now(), -1, :second)]
     )
+
+    assert :ok = ProposalExpirationWorker.perform(job)
+    assert :ok = ProposalExpirationWorker.perform(job)
+
+    assert Cases.get_proposal!(waiting.id, authorize?: false).status == :invalidated
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+
+    assert stopped.pending_intent == %{
+             "action" => "review_expired_proposal",
+             "proposal_id" => waiting.id
+           }
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+
+    assert Enum.count(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.event_type == "case_needs_attention")
+           ) == 1
 
     assert {:error, _error} =
              Cases.decide_proposal(
@@ -1149,6 +1181,16 @@ defmodule Opsonde.ProposalAuthorityTest do
                "Expired input must fail",
                actor: context.operator
              )
+
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    refute_receive {:effect, _, _}
+  end
+
+  test "revoked human authority fails without a decision", context do
+    configure_mode!(:ask, context.admin)
+    {_incident, _run, proposal} = proposal!("revoked", context)
+    waiting = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
     Accounts.change_role!(context.operator, :viewer, actor: context.admin)
 
@@ -1164,6 +1206,43 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
+  end
+
+  test "concurrent late approval and expiry stop once without dispatch", context do
+    configure_mode!(:ask, context.admin)
+    {incident, run, proposal} = proposal!("expiry-race", context)
+    waiting = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    Opsonde.Repo.update_all(
+      from(item in Opsonde.Cases.Proposal, where: item.id == ^waiting.id),
+      set: [expires_at: DateTime.add(DateTime.utc_now(), -1, :second)]
+    )
+
+    [decision, expiry] =
+      [
+        Task.async(fn ->
+          Cases.decide_proposal(
+            waiting.id,
+            waiting.revision,
+            waiting.proposal_digest,
+            :approved,
+            "Late concurrent approval",
+            actor: context.operator
+          )
+        end),
+        Task.async(fn ->
+          ProposalExpirationWorker.perform(%Oban.Job{args: %{"proposal_id" => waiting.id}})
+        end)
+      ]
+      |> Task.await_many(10_000)
+
+    assert {:error, _error} = decision
+    assert expiry == :ok
+    assert Cases.get_proposal!(waiting.id, authorize?: false).status == :invalidated
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
   end
 
   defp proposal!(suffix, context, request_kind \\ :effect, reason \\ nil) do

@@ -299,6 +299,7 @@ defmodule Opsonde.Cases do
       define :transition_proposal, action: :transition, args: [:expected_revision]
       define :materialize_proposal, action: :materialize, args: [:turn_id]
       define :route_proposal_authority, action: :route_authority, args: [:proposal_id]
+      define :expire_proposal, action: :expire, args: [:proposal_id]
 
       define :apply_proposal_review,
         action: :apply_review,
