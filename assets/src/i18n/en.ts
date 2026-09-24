@@ -418,6 +418,8 @@ const en = {
         noLogs: "Waiting for the first execution record…",
         reportGenerated: "Report generated",
         technicalDetails: "Show technical details",
+        reasonLanguage: "AI reason in Case language: {{language}}",
+        languages: { en: "English", ja: "Japanese" },
         phases: {
           alert: "Alert received",
           resolution: "Autonomous resolution",
@@ -439,7 +441,9 @@ const en = {
         fields: {
           decision: "AI decision",
           selectedAction: "Next selected action",
-          target: "Target and selectors",
+          target: "Target",
+          selectors: "Selectors",
+          relationship: "Related Target path",
           result: "Result",
           observed: "Observed facts",
           expected: "Expected state",

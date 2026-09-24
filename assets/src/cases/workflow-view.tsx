@@ -69,7 +69,7 @@ export function CaseWorkflowView(props: Props) {
       <Card className="gap-0 overflow-hidden py-0">
         <CardContent className="border-b px-4 py-4 lg:px-6">
           <ol
-            className="mx-auto grid min-w-[36rem] max-w-4xl grid-cols-4"
+            className="mx-auto grid max-w-4xl grid-cols-2 gap-y-3 sm:grid-cols-4"
             aria-label={t("cases.workflow.progress")}
           >
             {phases.map((phase, index) => (
@@ -157,7 +157,7 @@ function ProgressPhase({ phase, first, last }: { phase: Phase; first: boolean; l
       {!first && (
         <span
           className={cn(
-            "absolute left-0 top-1/2 h-px w-1/2 bg-border",
+            "absolute left-0 top-1/2 hidden h-px w-1/2 bg-border sm:block",
             phase.state !== "pending" && "bg-primary/55",
           )}
           aria-hidden="true"
@@ -166,7 +166,7 @@ function ProgressPhase({ phase, first, last }: { phase: Phase; first: boolean; l
       {!last && (
         <span
           className={cn(
-            "absolute right-0 top-1/2 h-px w-1/2 bg-border",
+            "absolute right-0 top-1/2 hidden h-px w-1/2 bg-border sm:block",
             (phase.state === "completed" || active) && "bg-primary/55",
           )}
           aria-hidden="true"
@@ -242,6 +242,14 @@ function ExecutionLogRow({
           <span className="truncate text-[11px] font-medium text-muted-foreground">
             {entry.source}
           </span>
+          {entry.reasonLanguage && (
+            <span
+              className="truncate text-[10px] text-muted-foreground"
+              title={t("cases.workflow.reasonLanguage", { language: entry.reasonLanguage })}
+            >
+              {t("cases.workflow.reasonLanguage", { language: entry.reasonLanguage })}
+            </span>
+          )}
         </span>
         <span
           className={cn(

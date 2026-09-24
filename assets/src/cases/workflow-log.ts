@@ -9,6 +9,7 @@ type Evidence = components["schemas"]["Evidence"];
 type Approval = components["schemas"]["Approval"];
 type Review = components["schemas"]["ReviewDecision"];
 type Report = components["schemas"]["Report"];
+type Target = components["schemas"]["Target"];
 
 export type StageKey =
   | "alert"
@@ -27,6 +28,7 @@ export type WorkflowLogInput = {
   approvals: Approval[];
   reviews: Review[];
   reports: Report[];
+  targets: Target[];
 };
 
 export type LogEntry = {
@@ -38,6 +40,7 @@ export type LogEntry = {
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
   failed?: boolean;
+  reasonLanguage?: string;
 };
 
 const hiddenRoutineEvents = new Set([
@@ -56,6 +59,15 @@ const hiddenRoutineEvents = new Set([
 export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   const entries: LogEntry[] = [];
   const reviewedProposalIds = new Set(props.reviews.map((review) => review.proposal_id));
+  const targetNames = new Map(props.targets.map((target) => [target.id, target.name]));
+  const proposalsByTurn = new Map(
+    props.snapshot.proposals.map((proposal) => [proposal.source_turn_id, proposal]),
+  );
+  const proposalsById = new Map(
+    props.snapshot.proposals.map((proposal) => [proposal.id, proposal]),
+  );
+  const targetName = (id: string) => targetNames.get(id) ?? id;
+  const reasonLanguage = t(`cases.workflow.languages.${props.snapshot.case.report_language}`);
 
   for (const event of props.timeline) {
     if (hiddenRoutineEvents.has(event.type)) continue;
@@ -78,12 +90,20 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       .filter(Boolean)
       .join(" / ");
     const selectors = compactRecord(decision?.selectors);
+    const relationship = recordValue(decision?.relationship);
+    const selectedTargetId =
+      textField(decision, "target_id") ||
+      textField(decision, "next_target_id") ||
+      textField(relationship, "destination_target_id") ||
+      proposalsByTurn.get(turn.id)?.target_id ||
+      "";
     const failure = turn.failure_message ?? "";
     entries.push({
       id: `turn-${turn.id}`,
       at: turn.completed_at ?? turn.updated_at,
       stage: "investigate",
       source: t("cases.workflow.sources.resolver"),
+      reasonLanguage: reason ? reasonLanguage : undefined,
       summary:
         failure ||
         reason ||
@@ -97,7 +117,21 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           label: t("cases.workflow.fields.selectedAction"),
           value: selectedAction,
         },
-        selectors && { label: t("cases.workflow.fields.target"), value: selectors },
+        selectedTargetId && {
+          label: t("cases.workflow.fields.target"),
+          value: targetName(selectedTargetId),
+        },
+        selectors && { label: t("cases.workflow.fields.selectors"), value: selectors },
+        relationship && {
+          label: t("cases.workflow.fields.relationship"),
+          value: [
+            targetName(textField(relationship, "source_target_id")),
+            textField(relationship, "kind"),
+            targetName(textField(relationship, "destination_target_id")),
+          ]
+            .filter(Boolean)
+            .join(" → "),
+        },
         turn.failure_category && {
           label: t("cases.workflow.fields.failure"),
           value: translatedToken(t, "failure", turn.failure_category),
@@ -134,6 +168,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       at: item.decided_at,
       stage: "review",
       source: t("cases.workflow.sources.reviewer"),
+      reasonLanguage,
       summary: `${translatedToken(t, "decision", item.verdict)} · ${item.reason}`,
       facts: compactFacts([
         {
@@ -166,6 +201,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
 
   for (const item of props.snapshot.operations) {
     const selectors = compactRecord(item.selectors);
+    const operationTargetId = proposalsById.get(item.proposal_id)?.target_id;
     entries.push({
       id: `operation-${item.id}`,
       at: item.completed_at ?? item.updated_at,
@@ -173,7 +209,11 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       source: t("cases.workflow.sources.executor"),
       summary: `${item.capability} / ${item.operation} · ${translatedToken(t, "operationStatus", item.status)}`,
       facts: compactFacts([
-        selectors && { label: t("cases.workflow.fields.target"), value: selectors },
+        operationTargetId && {
+          label: t("cases.workflow.fields.target"),
+          value: targetName(operationTargetId),
+        },
+        selectors && { label: t("cases.workflow.fields.selectors"), value: selectors },
         item.outcome_category && {
           label: t("cases.workflow.fields.result"),
           value: item.outcome_category,
@@ -243,7 +283,7 @@ function presentEvidence(item: Evidence, t: TFunction): Pick<LogEntry, "summary"
     textField(annotations, "description") ||
     textField(annotations, "summary") ||
     textField(attributes, "title");
-  const observed = compactRecord(content.facts);
+  const observed = compactRecord(content.facts) || compactRecord(attributes?.facts);
   const target = textField(targetRef, "value") || textField(content, "target_id");
 
   return {

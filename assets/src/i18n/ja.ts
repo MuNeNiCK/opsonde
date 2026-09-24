@@ -405,6 +405,8 @@ const ja = {
         noLogs: "最初の実行記録を待っています…",
         reportGenerated: "レポートを作成",
         technicalDetails: "技術詳細を表示",
+        reasonLanguage: "AIの説明言語: {{language}}",
+        languages: { en: "英語", ja: "日本語" },
         phases: {
           alert: "アラート受信",
           resolution: "自律解決",
@@ -426,7 +428,9 @@ const ja = {
         fields: {
           decision: "AIの判断",
           selectedAction: "次に選んだ処理",
-          target: "対象・選択条件",
+          target: "Target",
+          selectors: "選択条件",
+          relationship: "関連Targetの経路",
           result: "結果",
           observed: "観測結果",
           expected: "期待する状態",
