@@ -13,6 +13,26 @@ import { Spinner } from "@/components/ui/spinner";
 
 type Provider = components["schemas"]["Provider"];
 
+const genericPayloadExample = JSON.stringify(
+  {
+    event_key: "service-unavailable",
+    state: "firing",
+    occurred_at: "2026-09-25T08:00:00Z",
+    title: "Service is unavailable",
+    severity: "error",
+    target_ref: { kind: "hostname", value: "server-01" },
+    facts: { service: "nginx" },
+  },
+  null,
+  2,
+);
+
+const signalEndpointKinds: Record<string, string> = {
+  "alertmanager-webhook": "alertmanager",
+  "generic-webhook": "generic",
+  "zabbix-webhook": "zabbix",
+};
+
 type Props = {
   providers: Provider[];
   canManage: boolean;
@@ -25,7 +45,7 @@ export function SignalProviderCreateForm({
   onCreated,
   onError,
 }: {
-  adapterType: "alertmanager-webhook" | "zabbix-webhook";
+  adapterType: "alertmanager-webhook" | "generic-webhook" | "zabbix-webhook";
   onCreated: () => void;
   onError: (message: string) => void;
 }) {
@@ -159,9 +179,10 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
           const passed =
             provider.check.status === "passed" &&
             provider.check.checked_revision === provider.revision;
-          const endpointKind =
-            provider.adapter_type === "alertmanager-webhook" ? "alertmanager" : "zabbix";
-          const endpoint = `${window.location.origin}/api/v1/signals/${endpointKind}/${provider.id}`;
+          const endpointKind = signalEndpointKinds[provider.adapter_type];
+          const endpoint = endpointKind
+            ? `${window.location.origin}/api/v1/signals/${endpointKind}/${provider.id}`
+            : null;
           return (
             <Card key={provider.id}>
               <CardHeader>
@@ -174,12 +195,27 @@ export function SignalProviderSection({ providers, canManage, onRefresh, onError
                 <CardDescription>{provider.adapter_type}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-md border bg-muted/40 p-3">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {t("cases.webhookUrl")}
-                  </p>
-                  <p className="mt-1 break-all font-mono text-xs">{endpoint}</p>
-                </div>
+                {endpoint && (
+                  <div className="rounded-md border bg-muted/40 p-3">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t("cases.webhookUrl")}
+                    </p>
+                    <p className="mt-1 break-all font-mono text-xs">{endpoint}</p>
+                  </div>
+                )}
+                {provider.adapter_type === "generic-webhook" && (
+                  <details className="rounded-md border p-3 text-xs">
+                    <summary className="cursor-pointer font-medium">
+                      {t("cases.genericPayloadExample")}
+                    </summary>
+                    <pre className="mt-3 overflow-auto whitespace-pre-wrap break-all font-mono">
+                      {genericPayloadExample}
+                    </pre>
+                    <p className="mt-3 text-muted-foreground">
+                      {t("cases.genericPayloadGuidance")}
+                    </p>
+                  </details>
+                )}
                 <div className="flex items-start gap-2 text-sm">
                   {passed ? (
                     <CheckCircle2 className="mt-0.5 size-4 text-success" />

@@ -3,7 +3,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
   import OpenApiSpex.TestAssertions
 
-  alias Opsonde.{Accounts, Providers, Signals}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
   @password "correct horse battery staple"
   @secret "monitoring-webhook-secret"
@@ -15,9 +15,86 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       )
 
     alertmanager = provider!(admin, "alertmanager", "alertmanager-webhook")
+    generic = provider!(admin, "generic", "generic-webhook")
     zabbix = provider!(admin, "zabbix", "zabbix-webhook", %{"timezone" => "Asia/Tokyo"})
 
-    %{admin: admin, alertmanager: alertmanager, zabbix: zabbix}
+    %{admin: admin, alertmanager: alertmanager, generic: generic, zabbix: zabbix}
+  end
+
+  test "Generic webhook authenticates canonical firing and recovery into one Case", context do
+    target =
+      Targets.create_target!("generic-linux", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(target.id, "generic", "hostname", "generic-linux",
+      actor: context.admin
+    )
+
+    path = "/api/v1/signals/generic/#{context.generic.id}"
+    occurred_at = DateTime.utc_now()
+    firing = generic_payload(occurred_at, "firing")
+
+    first = context.conn |> authorized() |> post_json(path, firing)
+    replay = build_conn() |> authorized() |> post_json(path, firing)
+
+    recovered =
+      build_conn()
+      |> authorized()
+      |> post_json(path, generic_payload(DateTime.add(occurred_at, 10, :second), "recovered"))
+
+    assert json_response(first, 202)["receipt_id"] == json_response(replay, 202)["receipt_id"]
+    assert response(recovered, 202)
+    assert_operation_response(first)
+    assert_operation_response(recovered)
+
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 2
+    assert [incident] = Cases.list_cases!(actor: context.admin)
+    assert incident.alert_state == :recovered
+    assert incident.initial_target_id == target.id
+
+    events = Signals.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
+
+    assert Enum.map(events, &{&1.event_key, &1.state, &1.case_id, &1.target_id}) == [
+             {"service-unavailable", :firing, incident.id, target.id},
+             {"service-unavailable", :recovered, incident.id, target.id}
+           ]
+
+    assert hd(events).attributes["facts"] == %{"service" => "nginx"}
+    assert hd(events).incident_key == "site-a-outage"
+  end
+
+  test "Generic webhook rejects malformed canonical fields and wrong credentials", context do
+    path = "/api/v1/signals/generic/#{context.generic.id}"
+    valid = generic_payload(DateTime.utc_now(), "firing")
+
+    unauthorized =
+      context.conn
+      |> put_req_header("authorization", "Bearer wrong-secret-value")
+      |> post_json(path, valid)
+
+    assert json_response(unauthorized, 401)["errors"]["detail"] ==
+             "Webhook authentication failed"
+
+    for invalid <- [
+          Map.put(valid, "state", "resolved"),
+          Map.put(valid, "occurred_at", "yesterday"),
+          Map.put(valid, "target_ref", %{"kind" => "hostname"}),
+          Map.put(valid, "facts", %{"nested" => %{"unsafe" => true}}),
+          Map.put(valid, "unknown", "field"),
+          Map.delete(valid, "event_key")
+        ] do
+      rejected = build_conn() |> authorized() |> post_json(path, invalid)
+      assert rejected.status in [400, 422]
+      if rejected.status == 422, do: assert_operation_response(rejected)
+    end
+
+    wrong_adapter =
+      build_conn()
+      |> authorized()
+      |> post_json("/api/v1/signals/zabbix/#{context.generic.id}", valid)
+
+    assert response(wrong_adapter, 404)
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
+    assert Cases.list_cases!(actor: context.admin) == []
   end
 
   test "Alertmanager authenticates and splits one group into source events", context do
@@ -224,6 +301,19 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
   defp authorized(conn) do
     put_req_header(conn, "authorization", "Bearer #{@secret}")
+  end
+
+  defp generic_payload(occurred_at, state) do
+    %{
+      "event_key" => "service-unavailable",
+      "state" => state,
+      "occurred_at" => DateTime.to_iso8601(occurred_at),
+      "title" => "Nginx is unavailable",
+      "severity" => "error",
+      "incident_key" => "site-a-outage",
+      "target_ref" => %{"kind" => "hostname", "value" => "generic-linux"},
+      "facts" => %{"service" => "nginx"}
+    }
   end
 
   defp post_json(conn, path, payload) do

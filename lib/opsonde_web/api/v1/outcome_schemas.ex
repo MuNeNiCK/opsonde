@@ -7,6 +7,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
   def components do
     %{
       "SignalWebhookPayload" => map(),
+      "CanonicalSignalWebhookPayload" => canonical_signal_webhook_payload(),
       "SignalWebhookAccepted" => webhook_accepted(),
       "SignalWebhookError" => webhook_error(),
       "SignalWebhookValidationError" => webhook_validation_error(),
@@ -35,6 +36,36 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  defp canonical_signal_webhook_payload do
+    object(
+      %{
+        event_key: string(1, 500),
+        state: enum(~w(firing recovered)),
+        occurred_at: Schemas.timestamp(),
+        title: string(1, 200),
+        severity: enum(~w(info warning error critical)),
+        source_sequence: string(1, 500),
+        incident_key: string(1, 500),
+        target_ref: object(%{kind: string(1, 80), value: string(1, 500)}, [:kind, :value], false),
+        facts: %Schema{
+          type: :object,
+          description:
+            "At most 32 flat string, number or boolean facts; encoded facts must be at most 8000 bytes. Keys are 1-120 characters and string values at most 1000 characters.",
+          maxProperties: 32,
+          additionalProperties: %Schema{
+            oneOf: [
+              %Schema{type: :string, maxLength: 1_000},
+              %Schema{type: :number},
+              %Schema{type: :boolean}
+            ]
+          }
+        }
+      },
+      [:event_key, :state, :occurred_at, :title],
+      false
+    )
+  end
 
   defp webhook_accepted do
     object(%{receipt_id: string(1, 500)}, [:receipt_id], false)

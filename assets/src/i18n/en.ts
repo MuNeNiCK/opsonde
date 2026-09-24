@@ -275,6 +275,10 @@ const en = {
         "Receive Prometheus Alertmanager notifications through a dedicated webhook.",
       choiceZabbix:
         "Receive Zabbix events through a dedicated webhook with source timezone handling.",
+      choiceGenericWebhook: "Receive monitoring events in Opsonde's documented Signal format.",
+      genericPayloadExample: "Example Signal payload",
+      genericPayloadGuidance:
+        "Send JSON with the connection's Bearer secret. Reuse event_key for recovery; replace state with recovered and set a later occurred_at. Full field rules are in the OpenAPI schema.",
       signalCreated: "The Signal connection was created. Check it before enabling it.",
       signalSecret:
         "The webhook secret is write-only and must contain at least 16 characters. Create a replacement connection to change it.",

@@ -45,11 +45,24 @@ defmodule OpsondeWeb.SignalWebhookController do
        required: true},
     responses: @webhook_responses
 
+  operation :generic,
+    operation_id: "ingestGenericSignal",
+    summary: "Accept a canonical Opsonde Signal webhook",
+    security: [%{"webhookBearerAuth" => []}],
+    parameters: Schemas.id_parameter(:provider_id),
+    request_body:
+      {"Canonical Signal payload", "application/json",
+       OutcomeSchemas.ref("CanonicalSignalWebhookPayload"), required: true},
+    responses: @webhook_responses
+
   def alertmanager(conn, %{"provider_id" => provider_id}),
     do: ingest(conn, provider_id, "alertmanager-webhook")
 
   def zabbix(conn, %{"provider_id" => provider_id}),
     do: ingest(conn, provider_id, "zabbix-webhook")
+
+  def generic(conn, %{"provider_id" => provider_id}),
+    do: ingest(conn, provider_id, "generic-webhook")
 
   defp ingest(conn, provider_id, adapter_type) do
     with {:ok, provider} <- provider(provider_id, adapter_type),

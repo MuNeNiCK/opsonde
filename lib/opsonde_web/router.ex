@@ -138,6 +138,7 @@ defmodule OpsondeWeb.Router do
     pipe_through :api
 
     post "/signals/alertmanager/:provider_id", SignalWebhookController, :alertmanager
+    post "/signals/generic/:provider_id", SignalWebhookController, :generic
     post "/signals/zabbix/:provider_id", SignalWebhookController, :zabbix
   end
 

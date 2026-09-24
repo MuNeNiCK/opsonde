@@ -5384,6 +5384,97 @@
         ],
         "type": "object"
       },
+      "CanonicalSignalWebhookPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "event_key": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "facts": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "description": "At most 32 flat string, number or boolean facts; encoded facts must be at most 8000 bytes. Keys are 1-120 characters and string values at most 1000 characters.",
+            "maxProperties": 32,
+            "type": "object"
+          },
+          "incident_key": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "source_sequence": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "firing",
+              "recovered"
+            ],
+            "type": "string"
+          },
+          "target_ref": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "value": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_key",
+          "state",
+          "occurred_at",
+          "title"
+        ],
+        "type": "object"
+      },
       "CLISessionDenialResponse": {
         "additionalProperties": false,
         "properties": {
@@ -13222,6 +13313,99 @@
         "summary": "Open a Case",
         "tags": [
           "Cases"
+        ]
+      }
+    },
+    "/api/v1/signals/generic/{provider_id}": {
+      "post": {
+        "callbacks": {},
+        "operationId": "ingestGenericSignal",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalSignalWebhookPayload"
+              }
+            }
+          },
+          "description": "Canonical Signal payload",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookAccepted"
+                }
+              }
+            },
+            "description": "Signal accepted"
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Webhook authentication failed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal endpoint not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookValidationError"
+                }
+              }
+            },
+            "description": "Webhook payload rejected"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalWebhookError"
+                }
+              }
+            },
+            "description": "Signal could not be accepted"
+          }
+        },
+        "security": [
+          {
+            "webhookBearerAuth": []
+          }
+        ],
+        "summary": "Accept a canonical Opsonde Signal webhook",
+        "tags": [
+          "Signal webhooks"
         ]
       }
     },

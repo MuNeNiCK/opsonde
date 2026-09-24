@@ -14,7 +14,7 @@ import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
 type AIService = "openai" | "anthropic";
-type SignalAdapter = "alertmanager-webhook" | "zabbix-webhook";
+type SignalAdapter = "alertmanager-webhook" | "generic-webhook" | "zabbix-webhook";
 
 const aiChoices = {
   openai: { title: "OpenAI", description: "setup.choiceOpenAI", icon: BrainCircuit },
@@ -30,6 +30,11 @@ const signalChoices = {
   "zabbix-webhook": {
     title: "Zabbix",
     description: "cases.choiceZabbix",
+    icon: Webhook,
+  },
+  "generic-webhook": {
+    title: "Generic Webhook",
+    description: "cases.choiceGenericWebhook",
     icon: Webhook,
   },
 } as const;

@@ -266,6 +266,10 @@ const ja = {
       chooseSignalTypeDescription: "Opsondeへアラートを送信する監視基盤を選択します。",
       choiceAlertmanager: "専用WebhookでPrometheus Alertmanagerの通知を受信します。",
       choiceZabbix: "専用WebhookでZabbixイベントを受信し、送信元のタイムゾーンを扱います。",
+      choiceGenericWebhook: "Opsondeの公開Signal形式で監視イベントを受信します。",
+      genericPayloadExample: "Signal形式の例",
+      genericPayloadGuidance:
+        "この接続のsecretをBearerで送信します。復旧通知ではevent_keyを維持し、stateをrecovered、occurred_atを後の時刻にします。全項目の規則はOpenAPIに記載しています。",
       signalCreated: "Signal接続を作成しました。有効化する前に接続確認してください。",
       signalSecret:
         "Webhook secretは書き込み専用で、16文字以上必要です。変更する場合は接続を置き換えます。",

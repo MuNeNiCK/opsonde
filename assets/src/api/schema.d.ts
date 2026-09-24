@@ -1139,6 +1139,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/signals/generic/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept a canonical Opsonde Signal webhook */
+        post: operations["ingestGenericSignal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit-schedules/{id}/deactivate": {
         parameters: {
             query?: never;
@@ -2780,6 +2797,26 @@ export interface components {
             resolution_run_id: string;
             /** @enum {string} */
             source: "human" | "readonly" | "full_access" | "reviewer";
+        };
+        CanonicalSignalWebhookPayload: {
+            event_key: string;
+            /** @description At most 32 flat string, number or boolean facts; encoded facts must be at most 8000 bytes. Keys are 1-120 characters and string values at most 1000 characters. */
+            facts?: {
+                [key: string]: string | number | boolean;
+            };
+            incident_key?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            /** @enum {string} */
+            severity?: "info" | "warning" | "error" | "critical";
+            source_sequence?: string;
+            /** @enum {string} */
+            state: "firing" | "recovered";
+            target_ref?: {
+                kind: string;
+                value: string;
+            };
+            title: string;
         };
         CLISessionDenialResponse: {
             data: {
@@ -8680,6 +8717,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ingestGenericSignal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Canonical Signal payload */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanonicalSignalWebhookPayload"];
+            };
+        };
+        responses: {
+            /** @description Signal accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalWebhookAccepted"];
+                };
+            };
+            /** @description Malformed JSON */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Webhook authentication failed */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalWebhookError"];
+                };
+            };
+            /** @description Signal endpoint not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalWebhookError"];
+                };
+            };
+            /** @description Webhook payload rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalWebhookValidationError"];
+                };
+            };
+            /** @description Signal could not be accepted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalWebhookError"];
                 };
             };
         };
