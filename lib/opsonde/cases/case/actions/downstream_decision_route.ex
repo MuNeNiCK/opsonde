@@ -201,9 +201,9 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          incident,
          run
        )
-       when is_binary(reason) and byte_size(reason) > 0 and byte_size(reason) <= 500 and
-              is_list(evidence_ids) do
-    with :ok <- valid_recovery_state(incident),
+       when is_binary(reason) and is_list(evidence_ids) do
+    with :ok <- valid_reason(reason),
+         :ok <- valid_recovery_state(incident),
          :ok <- valid_case_evidence(evidence_ids, incident.id),
          :ok <- valid_fresh_verification(evidence_ids, turn, incident, run) do
       :ok
@@ -220,13 +220,18 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          _incident,
          _run
        )
-       when is_binary(reason) and byte_size(reason) > 0 and byte_size(reason) <= 500 and
-              is_binary(required_input) and byte_size(required_input) > 0 and
+       when is_binary(reason) and is_binary(required_input) and byte_size(required_input) > 0 and
               byte_size(required_input) <= 1_000,
-       do: :ok
+       do: valid_reason(reason)
 
   defp validate_intent(_intent, _turn, _incident, _run),
     do: {:error, "Downstream Resolver decision is malformed"}
+
+  defp valid_reason(reason) do
+    if Opsonde.Providers.AI.valid_resolver_reason?(reason),
+      do: :ok,
+      else: {:error, "Downstream Resolver decision is malformed"}
+  end
 
   defp valid_recovery_state(%{trigger_kind: :signal, alert_state: :recovered}), do: :ok
 

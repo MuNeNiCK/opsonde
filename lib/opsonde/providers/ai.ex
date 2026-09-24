@@ -2,8 +2,19 @@ defmodule Opsonde.Providers.AI do
   @moduledoc false
 
   @resolver_disclosure_limits %{max_items: 100, max_bytes: 65_536}
+  @resolver_reason_codepoints 500
 
   def resolver_disclosure_limits, do: @resolver_disclosure_limits
+  def resolver_reason_codepoints, do: @resolver_reason_codepoints
+
+  def valid_resolver_reason?(reason) when is_binary(reason) and byte_size(reason) > 0 do
+    case :unicode.characters_to_list(reason) do
+      codepoints when is_list(codepoints) -> length(codepoints) <= @resolver_reason_codepoints
+      _invalid -> false
+    end
+  end
+
+  def valid_resolver_reason?(_reason), do: false
 
   defmodule Disclosure do
     @moduledoc false
@@ -365,28 +376,11 @@ defmodule Opsonde.Providers.AI do
 
   defmodule Error do
     @moduledoc false
-    use Splode.Error, class: :unknown, fields: [:category, :message]
+    use Splode.Error, class: :unknown, fields: [:category, :message, :usage, :dispatched?]
 
     @impl true
     def message(error), do: error.message
   end
-
-  @structured_contract_messages [
-    "AI provider returned no JSON text",
-    "AI provider JSON text is too large",
-    "AI provider output is not valid JSON",
-    "AI provider JSON does not match the requested schema",
-    "AI provider did not return a structured object",
-    "AI provider output is too large"
-  ]
-
-  def structured_contract_failure?(%Error{category: :invalid_output, message: message}),
-    do: message in @structured_contract_messages
-
-  def structured_contract_failure?(%{errors: errors}) when is_list(errors),
-    do: Enum.any?(errors, &structured_contract_failure?/1)
-
-  def structured_contract_failure?(_error), do: false
 
   def resolver_disclosure_items(%ResolverRequest{} = request) do
     request.evidence ++
@@ -431,8 +425,11 @@ defmodule Opsonde.Providers.AI do
            | :cancelled
            | :invalid_output, String.t()}
 
+  @type metered_adapter_error ::
+          {:error, :invalid_output | :failed, String.t(), Usage.t()}
+
   @callback resolve(state :: term(), ResolverRequest.t(), invocation()) ::
-              {:ok, ResolverDecision.t()} | adapter_error()
+              {:ok, ResolverDecision.t()} | adapter_error() | metered_adapter_error()
   @callback review(state :: term(), ReviewRequest.t(), invocation()) ::
-              {:ok, ReviewDecision.t()} | adapter_error()
+              {:ok, ReviewDecision.t()} | adapter_error() | metered_adapter_error()
 end

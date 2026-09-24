@@ -42,8 +42,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       decision = wire_decision(handoff())
 
-      if tool_request?(request.body),
-        do: json(conn, openai_response(decision)),
+      if request.path == "/v1/messages",
+        do: json(conn, anthropic_response(decision)),
         else: json(conn, openai_text_response(decision))
     end
 
@@ -52,14 +52,18 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       cond do
         request.path == "/v1/messages" -> json(conn, anthropic_response(decision))
-        tool_request?(request.body) -> json(conn, openai_response(decision))
-        authorization?(request.headers) -> json(conn, openai_response(decision))
         true -> json(conn, openai_text_response(decision))
       end
     end
 
     defp respond(conn, _request, {:raw_text, text}) do
       json(conn, openai_text_response(text, false))
+    end
+
+    defp respond(conn, _request, {:raw_text_length, text}) do
+      response = openai_text_response(text, false)
+      choices = Enum.map(response["choices"], &Map.put(&1, "finish_reason", "length"))
+      json(conn, %{response | "choices" => choices})
     end
 
     defp respond(conn, _request, {:stream, decision}) do
@@ -104,26 +108,6 @@ defmodule Opsonde.AI.ReqLLMTest do
       |> send_resp(200, Jason.encode!(body))
     end
 
-    defp openai_response(decision) do
-      base_response(
-        %{
-          "role" => "assistant",
-          "content" => nil,
-          "tool_calls" => [
-            %{
-              "id" => "call-test",
-              "type" => "function",
-              "function" => %{
-                "name" => "structured_output",
-                "arguments" => Jason.encode!(decision)
-              }
-            }
-          ]
-        },
-        "tool_calls"
-      )
-    end
-
     defp openai_text_response(decision) do
       openai_text_response(decision, true)
     end
@@ -152,26 +136,15 @@ defmodule Opsonde.AI.ReqLLMTest do
         "type" => "message",
         "role" => "assistant",
         "model" => "test-model",
-        "stop_reason" => "tool_use",
+        "stop_reason" => "end_turn",
         "content" => [
           %{
-            "type" => "tool_use",
-            "id" => "tool-test",
-            "name" => "structured_output",
-            "input" => decision
+            "type" => "text",
+            "text" => Jason.encode!(decision)
           }
         ],
         "usage" => %{"input_tokens" => 7, "output_tokens" => 5}
       }
-    end
-
-    defp authorization?(headers), do: List.keymember?(headers, "authorization", 0)
-
-    defp tool_request?(body) do
-      case Jason.decode(body) do
-        {:ok, %{"tools" => tools}} when is_list(tools) and tools != [] -> true
-        _other -> false
-      end
     end
 
     defp check_decision(body, {:decision, _decision} = mode) do
@@ -304,7 +277,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
   end
 
-  test "ReqLLM selects one schema-validated output path", context do
+  test "ReqLLM returns plain JSON for local schema validation", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {:decision, handoff()})
@@ -318,15 +291,10 @@ defmodule Opsonde.AI.ReqLLMTest do
     [request] = requests(context.agent)
     body = Jason.decode!(request.body)
 
-    assert body["tool_choice"] == %{
-             "type" => "function",
-             "function" => %{"name" => "structured_output"}
-           }
-
-    assert [tool] = body["tools"]
-    assert get_in(tool, ["function", "name"]) == "structured_output"
-    assert get_in(tool, ["function", "strict"]) == true
-    assert get_in(tool, ["function", "parameters", "additionalProperties"]) == false
+    refute Map.has_key?(body, "tool_choice")
+    refute Map.has_key?(body, "tools")
+    refute Map.has_key?(body, "response_format")
+    assert output_schema(hd(requests(context.agent)))["additionalProperties"] == false
 
     set_mode(context.agent, {:decision, %{"status" => "ready"}})
     assert :ok = Adapter.check(state, %{})
@@ -338,17 +306,17 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, _message} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
-    assert {:error, :invalid_output, _message} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
-  test "structured output requests preserve timeout and cancellation", context do
+  test "plain output requests preserve timeout and cancellation", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
         "timeout_ms" => 100
@@ -368,6 +336,50 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :cancelled, _message} =
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
+  end
+
+  test "plain output uses local schema validation with metered rejection",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(context.agent, {:raw_text, ~s({"status":"ready"})})
+    assert :ok = Adapter.check(state, %{})
+
+    valid = %{"reason" => "確認", "intent" => %{"type" => "handoff", "required_input" => "確認"}}
+    set_mode(context.agent, {:raw_text, Jason.encode!(valid)})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "確認"}}} =
+             Adapter.resolve(state, resolver_request(), %{})
+
+    [request] = requests(context.agent)
+    body = Jason.decode!(request.body)
+    refute Map.has_key?(body, "tools")
+    assert String.contains?(request.body, "additionalProperties")
+
+    refute Map.has_key?(body, "response_format")
+
+    set_mode(context.agent, {:raw_text, ~s({"verdict":"rejected","reason":"証拠不足"})})
+
+    assert {:ok, %AI.ReviewDecision{verdict: :rejected, reason: "証拠不足"}} =
+             Adapter.review(state, review_request(), %{})
+
+    set_mode(
+      context.agent,
+      {:raw_text, ~s({"reason":"bad","intent":{"type":"recovery","evidence_ids":["invented"]}})}
+    )
+
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {:raw_text, ~s({"reason":)})
+
+    assert {:error, :invalid_output, "AI provider output is not valid JSON", %AI.Usage{}} =
+             Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {:raw_text_length, Jason.encode!(valid)})
+
+    assert {:error, :invalid_output, "AI provider JSON was truncated", %AI.Usage{}} =
+             Adapter.resolve(state, resolver_request(), %{})
   end
 
   test "eligible Target traversal removes avoidable handoff from the Resolver contract",
@@ -455,9 +467,12 @@ defmodule Opsonde.AI.ReqLLMTest do
       resolver_request()
       | retry_context: %{
           "category" => "invalid_output",
-          "rejection_code" => "schema_validation"
+          "rejection_code" => "schema_validation",
+          "rejection_path" => "/intent/type"
         }
     }
+
+    assert :ok = AI.Validator.validate_request(:resolve, request)
 
     set_mode(context.agent, {:decision, handoff()})
 
@@ -466,7 +481,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [wire_request] = requests(context.agent)
     body = Jason.decode!(wire_request.body)
-    user_payload = body["messages"] |> List.last() |> Map.fetch!("content") |> Jason.decode!()
+    user_payload = user_payload(wire_request)
 
     assert user_payload["retry_context"] == request.retry_context
 
@@ -477,7 +492,7 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
-  test "strict output rejects schema-invalid arguments without a second request", context do
+  test "local validation rejects schema-invalid arguments without a second request", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {
@@ -488,7 +503,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     })
 
-    assert {:error, :invalid_output, _message} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
              Adapter.resolve(state, resolver_request(), %{})
 
     assert [_request] = requests(context.agent)
@@ -520,7 +535,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert length(requests(context.agent)) == 10
   end
 
-  test "multilingual output stays within the byte-bounded AI contract", context do
+  test "multilingual output stays within the codepoint-bounded AI contract", context do
     reason = String.duplicate("界", 500)
     required_input = String.duplicate("界", 250)
 
@@ -560,7 +575,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       %{"type" => "handoff", "reason" => String.duplicate("界", 501), "required_input" => "x"}
     })
 
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, resolver_request(), %{})
   end
 
   test "recovery schema exposes only eligible Target recovery Evidence", context do
@@ -711,6 +727,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:stream, handoff()})
     assert {:ok, streamed_decision} = Adapter.resolve(streamed, resolver_request(), %{})
     assert streamed_decision == buffered_decision
+
+    set_mode(context.agent, {:stream, %{"unexpected" => true}})
+
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(streamed, resolver_request(), %{})
   end
 
   test "review uses an isolated prompt without resolver sessions or Target tools", context do
@@ -860,14 +881,20 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
 
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, request, %{})
 
     set_mode(context.agent, {:decision, Map.delete(decision, "tool_id")})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, request, %{})
 
     malformed = %{decision | "expected_result" => "not-an-object"}
     set_mode(context.agent, {:decision, malformed})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, request, %{})
+
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, request, %{})
   end
 
   test "malformed output, deadline, and caller cancellation stay typed", context do
@@ -877,7 +904,9 @@ defmodule Opsonde.AI.ReqLLMTest do
       })
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
-    assert {:error, :invalid_output, _message} = Adapter.resolve(state, resolver_request(), %{})
+
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+             Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:sleep, 1_000})
     assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
@@ -906,6 +935,9 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :invalid_configuration} =
              Adapter.build(Map.put(base, "typo", true), credentials)
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(Map.put(base, "output_mode", "structured"), credentials)
 
     assert {:error, :invalid_configuration} =
              Adapter.build(base, %{})
@@ -998,13 +1030,32 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
                Providers.ai_review(provider.id, review_request(), %{}, actor: admin)
+
+      set_mode(context.agent, {:decision, %{"unexpected" => true}})
+
+      assert {:error, error} =
+               Providers.ai_resolve(provider.id, resolver_request(), %{}, actor: admin)
+
+      assert %AI.Error{
+               category: :invalid_output,
+               usage: %AI.Usage{input_tokens: 7, output_tokens: 5},
+               dispatched?: true
+             } = ai_error(error)
     end
   end
+
+  defp ai_error(%AI.Error{} = error), do: error
+  defp ai_error(%{errors: errors}), do: Enum.find_value(errors, &ai_error/1)
+  defp ai_error(_error), do: nil
 
   defp state!(provider, endpoint, credentials, extra_configuration \\ %{}) do
     configuration =
       Map.merge(
-        %{"provider" => provider, "model" => "test-model", "endpoint" => endpoint},
+        %{
+          "provider" => provider,
+          "model" => "test-model",
+          "endpoint" => endpoint
+        },
         extra_configuration
       )
 
@@ -1188,23 +1239,9 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   defp output_schema(request) do
     body = Jason.decode!(request.body)
-
-    cond do
-      schema = get_in(body, ["response_format", "json_schema", "schema"]) ->
-        schema
-
-      schema = get_in(body, ["tools", Access.at(0), "function", "parameters"]) ->
-        schema
-
-      schema = get_in(body, ["tools", Access.at(0), "input_schema"]) ->
-        schema
-
-      schema = get_in(body, ["output_format", "schema"]) ->
-        schema
-
-      true ->
-        flunk("structured output schema missing from request: #{inspect(body)}")
-    end
+    schema_message = List.last(body["messages"])["content"]
+    [_, schema] = String.split(schema_message, "Follow this JSON Schema exactly: ", parts: 2)
+    Jason.decode!(schema)
   end
 
   defp set_mode(agent, mode),
@@ -1217,7 +1254,10 @@ defmodule Opsonde.AI.ReqLLMTest do
     request.body
     |> Jason.decode!()
     |> Map.fetch!("messages")
-    |> List.last()
+    |> Enum.find(fn message ->
+      message["role"] == "user" and
+        match?({:ok, %{"case_id" => _}}, Jason.decode(message["content"]))
+    end)
     |> Map.fetch!("content")
     |> Jason.decode!()
   end

@@ -116,7 +116,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
-  test "known timeout starts a bounded autonomous successor without usage charge", context do
+  test "unknown timeout reserves finite usage and requires attention", context do
     {incident, run, turn} = turn!("timeout", context.operator)
 
     assert :ok =
@@ -134,24 +134,18 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.result["outcome"] == "delivery_failed"
     assert completed.result["category"] == "timeout"
 
-    [successor] =
-      Cases.list_turns!(authorize?: false)
-      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
-
     current = Cases.get_case!(incident.id, authorize?: false)
-    assert current.status == :running
-    assert current.stop_reason == nil
-    assert current.required_human_input == nil
+    assert current.status == :needs_attention
+    assert current.stop_reason == "AI usage limit exhausted after Resolver delivery failure"
 
-    assert current.pending_intent == %{
-             "action" => "resolve_turn",
-             "turn_id" => successor.id,
-             "source_turn_id" => turn.id
-           }
+    refute Enum.any?(
+             Cases.list_turns!(authorize?: false),
+             &(&1.resolution_run_id == run.id and &1.status == :started)
+           )
 
     active = Cases.get_resolution_run!(run.id, authorize?: false)
-    assert active.status == :running
-    assert active.ai_usage_units == 0
+    assert active.status == :needs_attention
+    assert active.ai_usage_units == 10_000
 
     record =
       Cases.list_ai_invocations!(authorize?: false)
@@ -161,7 +155,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert record.category == "timeout"
   end
 
-  test "invalid output starts one bounded successor Turn", context do
+  test "unclassified invalid output stops without a blind retry", context do
     {incident, run, turn} = turn!("malformed", context.operator)
 
     assert :ok = invalid_output(turn)
@@ -172,85 +166,33 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert completed.result["outcome"] == "delivery_failed"
     assert completed.result["category"] == "invalid_output"
     assert completed.result["rejection_code"] == "invalid_output"
-    assert completed.progress_kind == :none
+    assert completed.progress_kind == :human_input
 
-    running = Cases.get_resolution_run!(run.id, authorize?: false)
-    assert running.status == :running
-    assert running.turn_count == 2
-    assert running.no_progress_turns == 1
-    assert running.ai_usage_units == 0
-
-    [successor] =
-      Cases.list_turns!(authorize?: false)
-      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
-
-    assert successor.intent == %{
-             "category" => "invalid_output",
-             "objective" => "Continue resolution after a retryable Resolver delivery failure",
-             "rejection_code" => "invalid_output",
-             "source" => "resolver_delivery_failure",
-             "source_turn_id" => turn.id
-           }
+    stopped_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert stopped_run.status == :needs_attention
+    assert stopped_run.turn_count == 1
+    assert stopped_run.ai_usage_units == 2
 
     current = Cases.get_case!(incident.id, authorize?: false)
-    assert current.status == :running
-
-    assert current.pending_intent == %{
-             "action" => "resolve_turn",
-             "turn_id" => successor.id,
-             "source_turn_id" => turn.id
-           }
+    assert current.status == :needs_attention
+    assert current.stop_reason =~ "invalid_output"
 
     assert :ok = invalid_output(turn, fn -> flunk("completed Turn called AI again") end)
     refute_receive {:resolve, _, _}
 
     assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
-             2
-
-    assert :ok = invalid_output(successor)
-    assert_receive {:resolve, %{api_key: @api_key}, _request}
-
-    exhausted = Cases.get_case!(incident.id, authorize?: false)
-    assert exhausted.status == :needs_attention
-    assert exhausted.stop_reason == "No-progress turn limit exhausted"
-
-    exhausted_run = Cases.get_resolution_run!(run.id, authorize?: false)
-    assert exhausted_run.status == :needs_attention
-    assert exhausted_run.turn_count == 2
-    assert exhausted_run.no_progress_turns == 2
-
-    assert Enum.count(Cases.list_turns!(authorize?: false), &(&1.resolution_run_id == run.id)) ==
-             2
+             1
   end
 
-  test "schema contract failure disables the route and selects the next Resolver", context do
-    fallback_key = "fallback-provider-secret"
-
-    fallback_provider =
-      Providers.create_provider!(
-        "fallback-resolver-ai",
-        :ai,
-        "fixture-ai",
-        %{"model" => "fallback-model"},
-        %{"api_key" => fallback_key},
-        actor: context.admin
-      )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
-      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
-
-    fallback_assignment =
-      Providers.create_ai_usage_role_assignment!(
-        fallback_provider.id,
-        :resolver,
-        20,
-        actor: context.admin
-      )
-
+  test "one metered schema rejection gets a corrective turn on the same healthy Provider",
+       context do
     {_incident, _run, turn} = turn!("schema-failover", context.operator)
 
     assert :ok =
              invalid_output(turn, fn ->
-               {:error, :invalid_output, "AI provider JSON does not match the requested schema"}
+               {:error, :invalid_output,
+                "AI provider JSON does not match the requested schema at /intent/type",
+                %AI.Usage{input_tokens: 7, output_tokens: 5}}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
@@ -261,14 +203,17 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert successor.intent["category"] == "invalid_output"
     assert successor.intent["rejection_code"] == "schema_validation"
+    assert successor.intent["rejection_path"] == "/intent/type"
+
+    assert Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false).ai_usage_units ==
+             12
 
     failed_provider = Providers.get_provider!(context.provider.id, authorize?: false)
-    refute failed_provider.enabled
-    assert failed_provider.check_status == :failed
-    assert failed_provider.check_category == :capability
+    assert failed_provider.enabled
+    assert failed_provider.check_status == :passed
 
     decision = %AI.ResolverDecision{
-      intent: %AI.TargetSearch{query: "continue with fallback", reason: "Use the healthy route"},
+      intent: %AI.TargetSearch{query: "continue safely", reason: "Use current evidence"},
       usage: %AI.Usage{input_tokens: 2, output_tokens: 1}
     }
 
@@ -280,28 +225,41 @@ defmodule Opsonde.ResolverDeliveryTest do
                }
              )
 
-    assert_receive {:resolve, %{api_key: ^fallback_key}, _request}
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
 
     assignment_key = Budget.key("turn:resolver_assignment", successor.id)
     event = Cases.case_event_by_idempotency!(successor.case_id, assignment_key, authorize?: false)
-    assert event.data["provider_id"] == fallback_provider.id
-    assert event.data["assignment_id"] == fallback_assignment.id
+    assert event.data["provider_id"] == context.provider.id
+    assert event.data["assignment_id"] == context.assignment.id
   end
 
-  test "schema contract failure stops after one call when no alternate Resolver exists",
+  test "second schema rejection stops the route without disabling the Provider",
        context do
     {incident, run, turn} = turn!("schema-no-fallback", context.operator)
 
     assert :ok =
              invalid_output(turn, fn ->
-               {:error, :invalid_output, "AI provider JSON does not match the requested schema"}
+               {:error, :invalid_output, "AI provider JSON does not match the requested schema",
+                %AI.Usage{input_tokens: 7, output_tokens: 5}}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
 
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
+
+    assert :ok =
+             invalid_output(successor, fn ->
+               {:error, :invalid_output, "AI provider JSON does not match the requested schema",
+                %AI.Usage{input_tokens: 4, output_tokens: 3}}
+             end)
+
     stopped = Cases.get_case!(incident.id, authorize?: false)
     assert stopped.status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 19
+    assert Providers.get_provider!(context.provider.id, authorize?: false).enabled
 
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.result["rejection_code"] == "schema_validation"
@@ -309,6 +267,30 @@ defmodule Opsonde.ResolverDeliveryTest do
     refute Enum.any?(Cases.list_turns!(authorize?: false), fn candidate ->
              candidate.resolution_run_id == run.id and candidate.status == :started
            end)
+  end
+
+  test "metered invalid response above the remaining budget persists physical usage", context do
+    {incident, run, turn} = turn!("metered-overrun", context.operator)
+    current = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    Cases.update_resolution_run_counters!(
+      current,
+      current.revision,
+      %{ai_usage_units: current.max_ai_usage_units - 1},
+      authorize?: false
+    )
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI provider output is not valid JSON",
+                %AI.Usage{input_tokens: 2, output_tokens: 2}}
+             end)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_turn!(turn.id, authorize?: false).result["rejection_code"] == "json_decode"
+
+    assert [%{status: :failed, input_tokens: 2, output_tokens: 2}] =
+             Cases.list_ai_invocations!(authorize?: false)
   end
 
   test "an interrupted dispatch starts one bounded autonomous successor", context do
@@ -1058,7 +1040,13 @@ defmodule Opsonde.ResolverDeliveryTest do
     }
   end
 
-  defp invalid_output(turn, callback \\ fn -> {:ok, %{}} end) do
+  defp invalid_output(
+         turn,
+         callback \\ fn ->
+           {:error, :invalid_output, "AI output is invalid",
+            %AI.Usage{input_tokens: 1, output_tokens: 1}}
+         end
+       ) do
     ResolverDelivery.run(turn.id,
       ai_invocation: %{
         test_pid: self(),

@@ -19,10 +19,6 @@ defmodule Opsonde.Providers do
       define :update_provider, action: :update, args: [:expected_revision]
       define :check_provider, action: :check, args: [:id, :expected_revision, :input]
 
-      define :fail_provider_runtime_contract,
-        action: :fail_runtime_contract,
-        args: [:id, :expected_revision]
-
       define :target_capabilities,
         action: :target_capabilities,
         args: [:provider_id, :expected_revision, :invocation]

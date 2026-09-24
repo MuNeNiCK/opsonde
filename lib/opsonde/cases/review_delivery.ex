@@ -30,7 +30,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp select_and_deliver(proposal, opts) do
     case assigned_selection(proposal, assignment_generation(opts)) do
       {:ok, selection} -> deliver(proposal, selection, opts)
-      {:error, error} -> persist_failure(proposal, nil, error, nil, opts)
+      {:error, error} -> persist_failure(proposal, error, nil, opts)
     end
   end
 
@@ -42,7 +42,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
            claim_invocation(proposal, incident, current, request, delivery_attempt(opts)) do
       dispatch(proposal, current, request, claim, opts)
     else
-      {:error, error} -> persist_failure(proposal, selection, error, nil, opts)
+      {:error, error} -> persist_failure(proposal, error, nil, opts)
     end
   end
 
@@ -58,13 +58,13 @@ defmodule Opsonde.Cases.ReviewDelivery do
             {:error, _error} = error -> error
           end
         else
-          settle_changed_context(claim.invocation)
+          settle_changed_context(proposal, claim.invocation, decision.usage)
         end
 
       {:error, error} ->
         if review_context_current?(proposal),
-          do: persist_failure(proposal, selection, error, claim.invocation, opts),
-          else: settle_changed_context(claim.invocation)
+          do: persist_failure(proposal, error, claim.invocation, opts),
+          else: settle_changed_context(proposal, claim.invocation, error_usage(error))
     end
   end
 
@@ -307,13 +307,13 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp store_decision(attrs),
     do: Cases.create_review_decision_record(attrs, authorize?: false)
 
-  defp persist_failure(proposal, selection, error, invocation, opts) do
+  defp persist_failure(proposal, error, invocation, opts) do
     {category, reason} = failure(error)
 
-    with {:ok, _invocation} <- record_failure(invocation, category) do
+    with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
       cond do
-        AI.structured_contract_failure?(error) and match?(%AI.Selection{}, selection) ->
-          failover_contract(proposal, selection, opts)
+        category == "invalid_output" ->
+          stop_delivery(proposal, category, reason)
 
         retryable_failure?(category) and retry_available?(opts) ->
           {:error,
@@ -322,23 +322,6 @@ defmodule Opsonde.Cases.ReviewDelivery do
         true ->
           stop_delivery(proposal, category, reason)
       end
-    end
-  end
-
-  defp failover_contract(proposal, selection, opts) do
-    case Providers.fail_provider_runtime_contract(
-           selection.provider_id,
-           selection.provider_revision,
-           authorize?: false
-         ) do
-      {:ok, _provider} ->
-        select_and_deliver(
-          proposal,
-          Keyword.put(opts, :assignment_generation, assignment_generation(opts) + 1)
-        )
-
-      {:error, error} ->
-        {:error, error}
     end
   end
 
@@ -409,10 +392,54 @@ defmodule Opsonde.Cases.ReviewDelivery do
     )
   end
 
-  defp record_failure(nil, _category), do: {:ok, nil}
+  defp record_failure(_proposal, nil, _category, _error), do: {:ok, nil}
 
-  defp record_failure(invocation, category),
-    do: record_invocation(invocation, :failed, category: category)
+  defp record_failure(proposal, invocation, category, error),
+    do:
+      settle_failed_usage(proposal, invocation, category, error_usage(error), dispatched?(error))
+
+  defp settle_failed_usage(proposal, invocation, category, usage, dispatched?) do
+    amount =
+      cond do
+        usage -> usage.input_tokens + usage.output_tokens
+        dispatched? -> invocation.reserved_units
+        true -> 0
+      end
+
+    key = if usage, do: "review-result:#{invocation.id}", else: "review-unknown:#{invocation.id}"
+
+    Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent], fn ->
+      with {:ok, _charged} <-
+             charge_usage(
+               proposal,
+               amount,
+               key,
+               %{"action" => "review_ai_usage", "proposal_id" => proposal.id}
+             ),
+           {:ok, recorded} <-
+             record_invocation(invocation, :failed,
+               input_tokens: if(usage, do: usage.input_tokens, else: 0),
+               output_tokens: if(usage, do: usage.output_tokens, else: 0),
+               category: category
+             ) do
+        recorded
+      end
+    end)
+  end
+
+  defp error_usage(error) do
+    case find_error(error) do
+      %AI.Error{usage: %AI.Usage{} = usage} -> usage
+      _other -> nil
+    end
+  end
+
+  defp dispatched?(error) do
+    case find_error(error) do
+      %AI.Error{dispatched?: true} -> true
+      _other -> false
+    end
+  end
 
   defp record_invocation(invocation, status, attrs) do
     Cases.record_ai_invocation_outcome(
@@ -464,7 +491,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp retryable_failure?(category),
-    do: category in ["timeout", "unreachable", "rate_limited", "invalid_output", "failed"]
+    do: category in ["timeout", "unreachable", "rate_limited", "failed"]
 
   defp retry_available?(opts), do: delivery_attempt(opts) < max_delivery_attempts(opts)
 
@@ -505,8 +532,8 @@ defmodule Opsonde.Cases.ReviewDelivery do
     end
   end
 
-  defp settle_changed_context(invocation) do
-    case record_invocation(invocation, :failed, category: "context_changed") do
+  defp settle_changed_context(proposal, invocation, usage) do
+    case settle_failed_usage(proposal, invocation, "context_changed", usage, true) do
       {:ok, _invocation} -> :ok
       {:error, _error} = error -> error
     end

@@ -32,8 +32,17 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
          {:ok, state} <- build_state(adapter, provider),
          {:ok, decision} <-
            call_adapter(operation, adapter, state, request, invocation, provider.credentials),
-         :ok <- AI.Validator.validate_decision(operation, decision, request) do
-      {:ok, Redactor.value(decision, provider.credentials)}
+         validation <- AI.Validator.validate_decision(operation, decision, request) do
+      case validation do
+        :ok ->
+          {:ok, Redactor.value(decision, provider.credentials)}
+
+        {:error, %AI.Error{} = error} ->
+          {:error, %{error | usage: decision.usage, dispatched?: true}}
+
+        error ->
+          error
+      end
     end
   rescue
     _error -> {:error, ai_error(:failed, "AI provider failed")}
@@ -77,10 +86,37 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
 
   defp normalize_adapter_result(_operation, {:error, category, message}, credentials)
        when category in @adapter_failures and is_binary(message),
-       do: {:error, ai_error(category, Redactor.message(message, credentials))}
+       do:
+         {:error,
+          AI.Error.exception(
+            category: category,
+            message: Redactor.message(message, credentials),
+            dispatched?: true
+          )}
+
+  defp normalize_adapter_result(
+         _operation,
+         {:error, category, message, %AI.Usage{} = usage},
+         credentials
+       )
+       when category in @adapter_failures and is_binary(message),
+       do:
+         {:error,
+          AI.Error.exception(
+            category: category,
+            message: Redactor.message(message, credentials),
+            usage: usage,
+            dispatched?: true
+          )}
 
   defp normalize_adapter_result(_operation, _result, _credentials),
-    do: {:error, ai_error(:invalid_output, "AI output is invalid")}
+    do:
+      {:error,
+       AI.Error.exception(
+         category: :invalid_output,
+         message: "AI output is invalid",
+         dispatched?: true
+       )}
 
   defp ensure_not_cancelled(%{cancelled?: cancelled?}) when is_function(cancelled?, 0) do
     if cancelled?.(),

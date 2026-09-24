@@ -14,7 +14,6 @@ defmodule Opsonde.AI.ReqLLM do
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
-  @resolver_reason_codepoints 500
   @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
@@ -59,26 +58,23 @@ defmodule Opsonde.AI.ReqLLM do
 
   @impl Opsonde.Providers.Adapter
   def check(state, _input) do
-    output =
-      ReqLLM.Output.object(
-        object_schema(%{"status" => enum_schema(["ready"])}, ["status"]),
-        name: "opsonde_provider_check"
-      )
+    schema = object_schema(%{"status" => enum_schema(["ready"])}, ["status"])
 
     case invoke(
            state,
            context(
              "You are checking an AI model connection.",
-             "Return the required connection-check object with status ready."
+             "Return the required connection-check object with status ready. " <>
+               "Return exactly one JSON object. Schema: #{Jason.encode!(schema)}"
            ),
-           output,
            min(state.max_tokens, 128),
            fn -> false end
          ) do
       {:ok, response} ->
-        if ReqLLM.Response.output(response, output) == %{"status" => "ready"},
-          do: :ok,
-          else: {:error, :capability, "AI model did not produce structured output"}
+        case decode_output(response, schema) do
+          {:ok, %{"status" => "ready"}} -> :ok
+          _invalid -> {:error, :capability, "AI model did not produce valid JSON output"}
+        end
 
       {:error, category, message} ->
         check_error(category, message)
@@ -87,54 +83,58 @@ defmodule Opsonde.AI.ReqLLM do
 
   @impl Opsonde.Providers.AI
   def resolve(state, %AI.ResolverRequest{} = request, invocation) do
-    output = ReqLLM.Output.object(resolver_schema(request), name: "opsonde_resolver_decision")
+    schema = resolver_schema(request)
 
     with {:ok, response} <-
            invoke(
              state,
-             resolver_context(request),
-             output,
+             with_schema(resolver_context(request), schema),
              min(state.max_tokens, request.budget.remaining_tokens),
              cancelled_callback(invocation)
            ),
-         {:ok, value} <- output(response, output),
-         {:ok, usage} <- usage(response),
-         {:ok, intent} <- resolver_intent(value, request) do
-      {:ok, %AI.ResolverDecision{intent: intent, usage: usage}}
+         result <-
+           decode_decision(response, schema, fn value ->
+             resolver_intent(value, request)
+           end) do
+      case result do
+        {:ok, intent, usage} -> {:ok, %AI.ResolverDecision{intent: intent, usage: usage}}
+        error -> error
+      end
     end
   end
 
   @impl Opsonde.Providers.AI
   def review(state, %AI.ReviewRequest{} = request, invocation) do
-    output = ReqLLM.Output.object(reviewer_schema(), name: "opsonde_review_decision")
+    schema = reviewer_schema()
 
     with {:ok, response} <-
            invoke(
              state,
-             reviewer_context(request),
-             output,
+             with_schema(reviewer_context(request), schema),
              min(state.max_tokens, request.budget.remaining_tokens),
              cancelled_callback(invocation)
            ),
-         {:ok, value} <- output(response, output),
-         {:ok, usage} <- usage(response),
-         {:ok, verdict} <- verdict(value) do
-      {:ok,
-       %AI.ReviewDecision{
-         verdict: verdict,
-         reason: value["reason"],
-         usage: usage
-       }}
+         result <-
+           decode_decision(response, schema, fn value ->
+             with {:ok, verdict} <- verdict(value), do: {:ok, {verdict, value["reason"]}}
+           end) do
+      case result do
+        {:ok, {verdict, reason}, usage} ->
+          {:ok, %AI.ReviewDecision{verdict: verdict, reason: reason, usage: usage}}
+
+        error ->
+          error
+      end
     end
   end
 
-  defp invoke(state, messages, output, max_tokens, cancelled?) do
+  defp invoke(state, messages, max_tokens, cancelled?) do
     parent = self()
     stream_ref = make_ref()
 
     task =
       Task.async(fn ->
-        safe_request(state, messages, output, max_tokens, parent, stream_ref)
+        safe_request(state, messages, max_tokens, parent, stream_ref)
       end)
 
     await(
@@ -146,7 +146,7 @@ defmodule Opsonde.AI.ReqLLM do
     )
   end
 
-  defp safe_request(state, messages, output, max_tokens, parent, stream_ref) do
+  defp safe_request(state, messages, max_tokens, parent, stream_ref) do
     options =
       [
         max_tokens: max_tokens,
@@ -159,7 +159,6 @@ defmodule Opsonde.AI.ReqLLM do
       |> maybe_put(:api_key, state.api_key)
       |> maybe_put(:base_url, state.endpoint)
 
-    options = Keyword.merge(options, output: output, output_validation: :strict)
     request(state, messages, options, parent, stream_ref)
   rescue
     _error -> {:error, :failed, "AI provider failed"}
@@ -271,7 +270,7 @@ defmodule Opsonde.AI.ReqLLM do
         "Choose handoff only when no offered intent can make safe progress and a required value " <>
         "is absent from the supplied input. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
-        "the user payload. Keep reason concise and at most 500 characters. Return exactly " <>
+        "the user payload. Keep reason concise and at most #{AI.resolver_reason_codepoints()} Unicode codepoints. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
         "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
         "in the user payload. allowed_intents is the authoritative list of intent types in the " <>
@@ -279,9 +278,9 @@ defmodule Opsonde.AI.ReqLLM do
         "source alone does not make recovery available. When recovery is absent, use an offered " <>
         "observation or Target traversal to obtain current recovery Evidence. If retry_context " <>
         "is present, the previous response was rejected " <>
-        "before any intent was accepted. When its rejection_code is schema_validation, rebuild " <>
-        "the response from the current output schema, copy enum values exactly, include every " <>
-        "required field, and add no field that the schema does not allow.",
+        "before any intent was accepted. When its rejection_code is schema_validation, correct " <>
+        "the field at rejection_path using the current output schema, copy enum values exactly, " <>
+        "include every required field, and add no field that the schema does not allow.",
       Jason.encode!(payload)
     )
   end
@@ -487,14 +486,110 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp verdict(_value), do: invalid_output()
 
-  defp output(response, descriptor) do
-    value = ReqLLM.Response.output(response, descriptor)
+  defp with_schema(context, schema) do
+    ReqLLM.Context.append(
+      context,
+      ReqLLM.Context.user(
+        "Return exactly one complete JSON object. No Markdown or surrounding text. " <>
+          "Follow this JSON Schema exactly: #{Jason.encode!(schema)}"
+      )
+    )
+  end
 
+  defp decode_decision(response, schema, convert) do
+    with {:ok, usage} <- usage(response) do
+      case decode_output(response, schema) do
+        {:ok, value} ->
+          case convert.(value) do
+            {:ok, decision} -> {:ok, decision, usage}
+            {:error, category, message} -> {:error, category, message, usage}
+          end
+
+        {:error, category, message} ->
+          {:error, category, message, usage}
+      end
+    end
+  end
+
+  defp decode_output(%{finish_reason: reason}, _schema)
+       when reason in [:length, :incomplete],
+       do: invalid_output("AI provider JSON was truncated")
+
+  defp decode_output(response, schema) do
+    case ReqLLM.Response.text(response) do
+      nil ->
+        decode_stream_object(response, schema)
+
+      "" ->
+        decode_stream_object(response, schema)
+
+      text when byte_size(text) > @max_output_bytes ->
+        invalid_output("AI provider JSON text is too large")
+
+      text ->
+        case Jason.decode(text) do
+          {:ok, value} -> validate_output(value, schema)
+          {:error, _error} -> invalid_output("AI provider output is not valid JSON")
+        end
+    end
+  end
+
+  # ReqLLM materializes a streamed complete JSON object as an object content part
+  # after its own strict Jason.decode. Buffered replies retain raw text.
+  defp decode_stream_object(
+         %{message: %{content: [%{type: :object, object: value}], tool_calls: nil}},
+         schema
+       ),
+       do: validate_output(value, schema)
+
+  defp decode_stream_object(_response, _schema),
+    do: invalid_output("AI provider returned no JSON text")
+
+  defp validate_output(value, schema) do
     cond do
       not is_map(value) -> invalid_output("AI provider did not return a structured object")
       encoded_size(value) > @max_output_bytes -> invalid_output("AI provider output is too large")
-      true -> {:ok, value}
+      true -> validate_schema(value, schema)
     end
+  end
+
+  defp validate_schema(value, schema) do
+    with {:ok, root} <- JSV.build(schema, warnings: :silent),
+         {:ok, _validated} <- JSV.validate(value, root, cast: false) do
+      {:ok, value}
+    else
+      {:error, %JSV.ValidationError{} = error} ->
+        invalid_output(
+          "AI provider JSON does not match the requested schema at #{schema_error_path(error)}"
+        )
+
+      _invalid ->
+        invalid_output("AI provider JSON does not match the requested schema")
+    end
+  rescue
+    _error -> invalid_output("AI provider JSON does not match the requested schema")
+  end
+
+  defp schema_error_path(%JSV.ValidationError{errors: errors}) do
+    error = Enum.max_by(errors, &length(&1.data_path), fn -> nil end)
+
+    path =
+      case error do
+        %{kind: :required, args: args, data: data, data_path: data_path} when is_map(data) ->
+          missing = Enum.find(args[:required] || [], &(not Map.has_key?(data, &1)))
+          if missing, do: data_path ++ [missing], else: data_path
+
+        %{data_path: data_path} ->
+          data_path
+
+        _error ->
+          []
+      end
+
+    "/" <>
+      Enum.map_join(path, "/", fn item ->
+        item |> to_string() |> String.replace("~", "~0") |> String.replace("/", "~1")
+      end)
   end
 
   defp usage(response) do
@@ -530,7 +625,7 @@ defmodule Opsonde.AI.ReqLLM do
 
     object_schema(
       %{
-        "reason" => bounded_string_schema(@resolver_reason_codepoints),
+        "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
         "intent" => %{"anyOf" => variants}
       },
       ~w(reason intent)
@@ -892,11 +987,6 @@ defmodule Opsonde.AI.ReqLLM do
   defp normalize_req_llm_error(%ReqLLM.Error.API.Timeout{}),
     do: {:error, :timeout, "AI provider timed out"}
 
-  defp normalize_req_llm_error(%ReqLLM.Error.Validation.Error{
-         tag: :structured_output_validation_failed
-       }),
-       do: invalid_output("AI provider JSON does not match the requested schema")
-
   defp normalize_req_llm_error(%ReqLLM.Error.Validation.Error{}),
     do: {:error, :failed, "AI provider request validation failed"}
 
@@ -911,7 +1001,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp check_error(:authentication, message), do: {:error, :authentication, message}
 
   defp check_error(:invalid_output, _message),
-    do: {:error, :capability, "AI model cannot produce structured output"}
+    do: {:error, :capability, "AI model did not produce valid JSON output"}
 
   defp check_error(_category, message), do: {:error, :unreachable, message}
 

@@ -534,7 +534,7 @@ function AIProviderFields({
             name="service"
             defaultValue={value("provider") || "openai"}
             options={[
-              { value: "openai", label: "OpenAI" },
+              { value: "openai", label: t("setup.openAICompatible") },
               { value: "anthropic", label: "Anthropic" },
             ]}
           />

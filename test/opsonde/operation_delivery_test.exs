@@ -610,6 +610,9 @@ defmodule Opsonde.OperationDeliveryTest do
 
   test "verified Evidence resolves once and produces one immutable Report across replay",
        context do
+    reason = String.duplicate("復", 91) <> String.duplicate("a", 269)
+    assert String.length(reason) == 360
+    assert byte_size(reason) == 542
     {incident, run, proposal} = authorized_proposal!("manual-recovery", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -638,7 +641,7 @@ defmodule Opsonde.OperationDeliveryTest do
           "outcome" => "decision",
           "intent" => %{
             "type" => "recovery_conclusion",
-            "reason" => "Fresh verification satisfies the declared recovery condition",
+            "reason" => reason,
             "evidence_ids" => [pending["verification_evidence_id"]]
           },
           "resolver" => %{},

@@ -302,7 +302,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     do: "Repair Reviewer AI authentication and resume the Case"
 
   defp reviewer_recovery("invalid_output"),
-    do: "Use a Reviewer AI that produces valid structured output and resume the Case"
+    do: "Use a Reviewer AI that produces valid decisions and resume the Case"
 
   defp reviewer_recovery(_category),
     do: "Restore Reviewer AI availability and resume the Case"

@@ -758,7 +758,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert stopped.stop_reason == "Reviewer delivery failed: Reviewer AI timed out"
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 196_608
 
     records = Cases.list_ai_invocations!(authorize?: false)
     assert length(records) == 3
@@ -767,57 +767,37 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "Reviewer schema contract failure immediately uses the next assigned AI", context do
+  test "Reviewer schema rejection charges usage and never approves or disables the Provider",
+       context do
     configure_mode!(:auto, context.admin)
-
-    fallback_provider =
-      ai_provider!(context.admin, "authority-reviewer-fallback", "fallback-model")
-
-    fallback_assignment =
-      Providers.create_ai_usage_role_assignment!(fallback_provider.id, :reviewer, 20,
-        actor: context.admin
-      )
-
-    {_incident, _run, proposal} = proposal!("review-schema-failover", context)
+    {_incident, run, proposal} = proposal!("review-schema-failover", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-
-    calls = start_supervised!({Agent, fn -> 0 end})
-
-    response = %AI.ReviewDecision{
-      verdict: :approved,
-      reason: "The fallback Reviewer approved the bounded operation",
-      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
-    }
 
     assert :ok =
              ReviewDelivery.run(reviewing.id,
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn _request ->
-                   case Agent.get_and_update(calls, &{&1, &1 + 1}) do
-                     0 ->
-                       {:error, :invalid_output,
-                        "AI provider JSON does not match the requested schema"}
-
-                     1 ->
-                       {:ok, response}
-                   end
+                   {:error, :invalid_output,
+                    "AI provider JSON does not match the requested schema",
+                    %AI.Usage{input_tokens: 7, output_tokens: 5}}
                  end
                }
              )
 
     assert_receive {:review, %{model: "reviewer-model"}, _request}
-    assert_receive {:review, %{model: "fallback-model"}, _request}
+    refute_receive {:review, _, _}
 
     failed_provider = Providers.get_provider!(context.reviewer_provider.id, authorize?: false)
-    refute failed_provider.enabled
-    assert failed_provider.check_status == :failed
-    assert failed_provider.check_category == :capability
+    assert failed_provider.enabled
+    assert failed_provider.check_status == :passed
 
-    [decision] = Cases.list_review_decisions!(actor: context.admin)
-    assert decision.provider_id == fallback_provider.id
-    assert decision.assignment_id == fallback_assignment.id
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+
+    assert [%{input_tokens: 7, output_tokens: 5, category: "invalid_output"}] =
+             Cases.list_ai_invocations!(authorize?: false)
   end
 
   test "Reviewer schema contract failure stops after one call without an alternate AI", context do
@@ -977,8 +957,10 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     stopped = Cases.get_case!(incident.id, authorize?: false)
     assert stopped.status == :needs_attention
-    assert stopped.pending_intent["action"] == "restore_reviewer_delivery"
-    assert stopped.required_human_input == "Review the Case AI usage limit and resume the Case"
+    assert stopped.pending_intent["action"] == "review_ai_usage"
+
+    assert stopped.required_human_input ==
+             "Increase the AI usage limit or decide the Proposal manually"
 
     paused = Cases.get_resolution_run!(run.id, authorize?: false)
     assert paused.status == :needs_attention
@@ -987,6 +969,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     [invocation] = Cases.list_ai_invocations!(authorize?: false)
     assert invocation.status == :failed
     assert invocation.category == "budget_exhausted"
+    assert {invocation.input_tokens, invocation.output_tokens} == {2, 2}
     assert Cases.list_approvals!(actor: context.admin) == []
   end
 

@@ -415,6 +415,7 @@ defmodule Opsonde.Cases.ResolverProjection do
        }) do
     %{"category" => category}
     |> maybe_put_retry_code(intent["rejection_code"])
+    |> maybe_put_retry_path(intent["rejection_path"])
   end
 
   defp retry_context(_turn), do: nil
@@ -423,6 +424,11 @@ defmodule Opsonde.Cases.ResolverProjection do
     do: Map.put(context, "rejection_code", code)
 
   defp maybe_put_retry_code(context, _code), do: context
+
+  defp maybe_put_retry_path(context, path) when is_binary(path) and path != "",
+    do: Map.put(context, "rejection_path", path)
+
+  defp maybe_put_retry_path(context, _path), do: context
 
   defp budget(run, turn) do
     %AI.Budget{

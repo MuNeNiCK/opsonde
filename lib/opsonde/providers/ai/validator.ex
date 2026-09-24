@@ -6,7 +6,6 @@ defmodule Opsonde.Providers.AI.Validator do
   @max_output_bytes 65_536
   @max_review_items 100
   @max_review_bytes 65_536
-  @resolver_reason_codepoints 500
   @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
@@ -84,9 +83,13 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_retry_context?(nil), do: true
 
   defp valid_retry_context?(%{"category" => category} = context) do
-    Map.keys(context) -- ["category", "rejection_code"] == [] and
+    Map.keys(context) -- ["category", "rejection_code", "rejection_path"] == [] and
       bounded_retry_value?(category) and
-      (is_nil(context["rejection_code"]) or bounded_retry_value?(context["rejection_code"]))
+      (is_nil(context["rejection_code"]) or bounded_retry_value?(context["rejection_code"])) and
+      (is_nil(context["rejection_path"]) or
+         (is_binary(context["rejection_path"]) and
+            String.starts_with?(context["rejection_path"], "/") and
+            byte_size(context["rejection_path"]) <= 200))
   end
 
   defp valid_retry_context?(_context), do: false
@@ -321,7 +324,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and
          bounded_text?(search.query, @search_query_codepoints) and
-         bounded_text?(search.reason, @resolver_reason_codepoints) do
+         AI.valid_resolver_reason?(search.reason) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI Target search is invalid")}
@@ -338,7 +341,7 @@ defmodule Opsonde.Providers.AI.Validator do
       end)
 
     if not is_nil(candidate) and
-         bounded_text?(selection.reason, @resolver_reason_codepoints) and
+         AI.valid_resolver_reason?(selection.reason) and
          nonempty_list?(selection.evidence_ids) and
          unique?(selection.evidence_ids) and
          Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) do
@@ -359,7 +362,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
     if request.budget.remaining_related_targets > 0 and not is_nil(relationship) and
          traversal_destination?(relationship, request.selected_target_id, traversal) and
-         bounded_text?(traversal.reason, @resolver_reason_codepoints) and
+         AI.valid_resolver_reason?(traversal.reason) and
          nonempty_list?(traversal.evidence_ids) and unique?(traversal.evidence_ids) and
          Enum.all?(traversal.evidence_ids, &(&1 in evidence_ids)) do
       :ok
@@ -383,7 +386,7 @@ defmodule Opsonde.Providers.AI.Validator do
              ) and
              exact_proposal?(proposal, tool) and
              valid_request_verification?(proposal, tool, request.observation_tools) and
-             bounded_text?(proposal.reason, @resolver_reason_codepoints) and
+             AI.valid_resolver_reason?(proposal.reason) and
              valid_request_evidence_ids?(proposal, evidence_ids) do
           :ok
         else
@@ -399,7 +402,7 @@ defmodule Opsonde.Providers.AI.Validator do
     recovery_evidence_ids = AI.recovery_evidence_ids(request)
 
     if request.alert_state in [:recovered, :not_applicable] and
-         bounded_text?(conclusion.reason, @resolver_reason_codepoints) and
+         AI.valid_resolver_reason?(conclusion.reason) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) do
       :ok
@@ -409,7 +412,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_resolver_intent(%AI.Handoff{} = handoff, _request) do
-    if bounded_text?(handoff.reason, @resolver_reason_codepoints) and
+    if AI.valid_resolver_reason?(handoff.reason) and
          bounded_text?(handoff.required_input, @handoff_input_codepoints),
        do: :ok,
        else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
@@ -441,7 +444,7 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(proposal.access_method_revision) and
       proposal.request_kind in [:observation, :effect] and nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and
-      bounded_text?(proposal.reason, @resolver_reason_codepoints) and is_map(proposal.selectors) and
+      AI.valid_resolver_reason?(proposal.reason) and is_map(proposal.selectors) and
       valid_request_evidence_ids?(proposal, evidence_ids) and
       valid_review_verification?(proposal)
   end

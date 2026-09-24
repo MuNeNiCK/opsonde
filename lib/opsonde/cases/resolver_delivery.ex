@@ -71,10 +71,10 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
       {:error, error} ->
         if resolver_context_current?(request) do
-          handle_failure(turn, error, claim.invocation, selection)
+          handle_failure(turn, error, claim.invocation)
         else
           with {:ok, _invocation} <-
-                 record_invocation(claim.invocation, :failed, category: "context_changed") do
+                 settle_failed_usage(turn, claim.invocation, "context_changed", error) do
             retry_changed_context(turn)
           end
         end
@@ -88,7 +88,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
            {:ok, _result} <- accept(turn, invocation, decision, result, request) do
         :ok
       else
-        {:error, error} -> handle_failure(turn, error, invocation, selection)
+        {:error, error} -> handle_failure(turn, error, invocation)
       end
     else
       with {:ok, _result} <- settle_unused_result(turn, invocation, decision, "context_changed") do
@@ -569,7 +569,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp handle_failure(turn, error, invocation \\ nil, selection \\ nil) do
+  defp handle_failure(turn, error, invocation \\ nil) do
     cond do
       case_cancelled?(turn.case_id) ->
         {:cancel, "Case resolution was cancelled"}
@@ -580,16 +580,14 @@ defmodule Opsonde.Cases.ResolverDelivery do
       true ->
         {category, message} = failure(error)
         rejection_code = rejection_code(error)
-        contract_failure? = AI.structured_contract_failure?(error)
 
         case persist_failure(
                turn,
                invocation,
-               selection,
+               error,
                category,
                message,
-               rejection_code,
-               contract_failure?
+               rejection_code
              ) do
           {:ok, _incident} ->
             :ok
@@ -603,66 +601,49 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp persist_failure(
          turn,
          invocation,
-         selection,
+         error,
          category,
          message,
-         rejection_code,
-         contract_failure?
+         rejection_code
        ) do
     cond do
-      contract_failure? and match?(%AI.Selection{}, selection) ->
-        persist_contract_failure(
+      category == "invalid_output" ->
+        persist_invalid_decision_failure(
           turn,
           invocation,
-          selection,
+          error,
           category,
           message,
           rejection_code
         )
 
       retryable_failure?(category) ->
-        persist_retryable_failure(turn, invocation, category, message, rejection_code)
+        persist_retryable_failure(turn, invocation, error, category, message, rejection_code)
 
       true ->
-        persist_attention_failure(turn, invocation, category, message, rejection_code)
+        persist_attention_failure(turn, invocation, error, category, message, rejection_code)
     end
   end
 
-  defp persist_contract_failure(
+  defp persist_invalid_decision_failure(
          turn,
          invocation,
-         selection,
+         error,
          category,
          message,
          rejection_code
        ) do
-    with :ok <- mark_provider_unhealthy(selection),
-         {:ok, %AI.Selection{}} <- Providers.select_resolver_ai(authorize?: false) do
-      persist_retryable_failure(turn, invocation, category, message, rejection_code)
-    else
-      {:error, error} ->
-        case find_error(error) do
-          %AI.Error{category: :unavailable} ->
-            persist_attention_failure(turn, invocation, category, message, rejection_code)
-
-          _other ->
-            {:error, error}
-        end
-    end
+    if retryable_schema_failure?(turn, rejection_code),
+      do: persist_retryable_failure(turn, invocation, error, category, message, rejection_code),
+      else: persist_attention_failure(turn, invocation, error, category, message, rejection_code)
   end
 
-  defp mark_provider_unhealthy(selection) do
-    case Providers.fail_provider_runtime_contract(
-           selection.provider_id,
-           selection.provider_revision,
-           authorize?: false
-         ) do
-      {:ok, _provider} -> :ok
-      {:error, error} -> {:error, error}
-    end
-  end
+  defp retryable_schema_failure?(turn, "schema_validation"),
+    do: turn.intent["rejection_code"] != "schema_validation"
 
-  defp persist_retryable_failure(turn, invocation, category, message, rejection_code) do
+  defp retryable_schema_failure?(_turn, _code), do: false
+
+  defp persist_retryable_failure(turn, invocation, error, category, message, rejection_code) do
     intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
@@ -685,27 +666,59 @@ defmodule Opsonde.Cases.ResolverDelivery do
                "Review Resolver limits or continue the Case manually",
                authorize?: false
              ),
-           {:ok, _invocation} <- record_failure(invocation, category),
-           {:ok, next_turn} <-
-             Cases.start_turn(
-               turn.case_id,
-               turn.resolution_run_id,
-               "resolver:delivery-retry:#{turn.id}",
-               retry_turn_intent(turn, category, rejection_code),
-               intent,
-               "Review Resolver limits or continue the Case manually",
-               authorize?: false
-             ),
-           {:ok, next_turn} <- set_retry_pending(next_turn, turn.id) do
-        %{completed: completed, next_turn: next_turn}
+           {:ok, _invocation} <- record_failure(turn, invocation, category, error) do
+        continue_after_failure(turn, completed, error, category, rejection_code, intent)
       end
     end)
   end
 
-  defp retryable_failure?(category),
-    do: category in ["timeout", "unreachable", "rate_limited", "invalid_output", "failed"]
+  defp continue_after_failure(turn, completed, error, category, rejection_code, intent) do
+    with {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
+      cond do
+        run.status == :needs_attention ->
+          with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
+            %{completed: completed, case: incident}
+          end
 
-  defp retry_turn_intent(turn, category, rejection_code) do
+        run.ai_usage_units >= run.max_ai_usage_units ->
+          with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
+               {:ok, stopped} <-
+                 Cases.require_case_attention(
+                   turn.case_id,
+                   incident.revision,
+                   run.id,
+                   run.revision,
+                   "resolver-usage-exhausted:#{turn.id}",
+                   "AI usage limit exhausted after Resolver delivery failure",
+                   %{"action" => "retry_resolver", "turn_id" => turn.id},
+                   "Increase the AI usage limit or review the Case",
+                   authorize?: false
+                 ) do
+            %{completed: completed, case: stopped}
+          end
+
+        true ->
+          with {:ok, next_turn} <-
+                 Cases.start_turn(
+                   turn.case_id,
+                   turn.resolution_run_id,
+                   "resolver:delivery-retry:#{turn.id}",
+                   retry_turn_intent(turn, category, rejection_code, rejection_path(error)),
+                   intent,
+                   "Review Resolver limits or continue the Case manually",
+                   authorize?: false
+                 ),
+               {:ok, next_turn} <- set_retry_pending(next_turn, turn.id) do
+            %{completed: completed, next_turn: next_turn}
+          end
+      end
+    end
+  end
+
+  defp retryable_failure?(category),
+    do: category in ["timeout", "unreachable", "rate_limited", "failed"]
+
+  defp retry_turn_intent(turn, category, rejection_code, rejection_path) do
     %{
       "objective" => "Continue resolution after a retryable Resolver delivery failure",
       "source" => "resolver_delivery_failure",
@@ -715,6 +728,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
     |> then(fn intent ->
       if is_binary(rejection_code) and rejection_code != "",
         do: Map.put(intent, "rejection_code", rejection_code),
+        else: intent
+    end)
+    |> then(fn intent ->
+      if is_binary(rejection_path),
+        do: Map.put(intent, "rejection_path", rejection_path),
         else: intent
     end)
   end
@@ -747,12 +765,12 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end
   end
 
-  defp persist_attention_failure(turn, invocation, category, message, rejection_code) do
+  defp persist_attention_failure(turn, invocation, error, category, message, rejection_code) do
     reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
     intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
-      with {:ok, completed} <-
+      with {:ok, _completed} <-
              Cases.complete_turn(
                turn.id,
                turn.revision,
@@ -767,18 +785,25 @@ defmodule Opsonde.Cases.ResolverDelivery do
                "Review the Resolver delivery failure",
                authorize?: false
              ),
-           {:ok, _invocation} <- record_failure(invocation, category),
+           {:ok, _invocation} <- record_failure(turn, invocation, category, error),
+           {:ok, current_case} <- Cases.get_case(turn.case_id, authorize?: false),
+           {:ok, current_run} <-
+             Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
            {:ok, incident} <-
-             Cases.require_case_attention(
-               turn.case_id,
-               completed.case.revision,
-               turn.resolution_run_id,
-               completed.run.revision,
-               "resolver-failure:#{turn.id}",
-               reason,
-               intent,
-               "Review the Resolver delivery failure",
-               authorize?: false
+             if(current_case.status == :needs_attention,
+               do: {:ok, current_case},
+               else:
+                 Cases.require_case_attention(
+                   turn.case_id,
+                   current_case.revision,
+                   turn.resolution_run_id,
+                   current_run.revision,
+                   "resolver-failure:#{turn.id}",
+                   reason,
+                   intent,
+                   "Review the Resolver delivery failure",
+                   authorize?: false
+                 )
              ) do
         incident
       end
@@ -806,10 +831,48 @@ defmodule Opsonde.Cases.ResolverDelivery do
     end)
   end
 
-  defp record_failure(nil, _category), do: {:ok, nil}
+  defp record_failure(_turn, nil, _category, _error), do: {:ok, nil}
 
-  defp record_failure(invocation, category),
-    do: record_invocation(invocation, :failed, category: category)
+  defp record_failure(turn, invocation, category, error),
+    do: settle_failed_usage(turn, invocation, category, error)
+
+  defp settle_failed_usage(turn, invocation, category, error) do
+    usage = error_usage(error)
+
+    amount =
+      cond do
+        usage -> usage.input_tokens + usage.output_tokens
+        dispatched?(error) -> invocation.reserved_units
+        true -> 0
+      end
+
+    key =
+      if usage, do: "resolver-result:#{invocation.id}", else: "resolver-unknown:#{invocation.id}"
+
+    with {:ok, _charged} <- charge_usage(turn, amount, key),
+         {:ok, recorded} <-
+           record_invocation(invocation, :failed,
+             input_tokens: if(usage, do: usage.input_tokens, else: 0),
+             output_tokens: if(usage, do: usage.output_tokens, else: 0),
+             category: category
+           ) do
+      {:ok, recorded}
+    end
+  end
+
+  defp error_usage(error) do
+    case find_error(error) do
+      %AI.Error{usage: %AI.Usage{} = usage} -> usage
+      _other -> nil
+    end
+  end
+
+  defp dispatched?(error) do
+    case find_error(error) do
+      %AI.Error{dispatched?: true} -> true
+      _other -> false
+    end
+  end
 
   defp record_invocation(invocation, status, attrs) do
     Cases.record_ai_invocation_outcome(
@@ -872,10 +935,14 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp invalid_output_code("AI provider JSON does not match the requested schema"),
     do: "schema_validation"
 
+  defp invalid_output_code("AI provider JSON does not match the requested schema at " <> _path),
+    do: "schema_validation"
+
   defp invalid_output_code("AI provider did not return a structured object"),
     do: "missing_structured_object"
 
   defp invalid_output_code("AI provider output is too large"), do: "output_too_large"
+  defp invalid_output_code("AI provider JSON was truncated"), do: "truncated"
   defp invalid_output_code("AI provider did not return token usage"), do: "usage_missing"
   defp invalid_output_code("AI token usage is invalid"), do: "usage_invalid"
   defp invalid_output_code("AI Resolver output is too large"), do: "output_too_large"
@@ -888,6 +955,17 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp invalid_output_code("AI handoff is invalid"), do: "handoff"
   defp invalid_output_code("AI Resolver intent is invalid"), do: "resolver_intent"
   defp invalid_output_code(_message), do: "invalid_output"
+
+  defp rejection_path(error) do
+    case find_error(error) do
+      %AI.Error{message: "AI provider JSON does not match the requested schema at " <> path}
+      when byte_size(path) <= 200 ->
+        path
+
+      _other ->
+        nil
+    end
+  end
 
   defp turn_completed?(turn_id) do
     match?({:ok, %{status: :completed}}, Cases.get_turn(turn_id, authorize?: false))

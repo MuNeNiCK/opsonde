@@ -92,13 +92,14 @@ const en = {
       chooseAIType: "Choose an AI provider",
       chooseAITypeDescription:
         "Select the service Opsonde will use, then configure that connection.",
-      choiceOpenAI: "Connect OpenAI models with an API key and optional compatible endpoint.",
+      choiceOpenAI: "Connect an OpenAI-compatible API with an API key and optional endpoint.",
       choiceAnthropic: "Connect Anthropic Claude models with an API key and optional endpoint.",
       aiCreated: "The AI connection was created. Check it before enabling it.",
       secretDescription:
         "Credentials are write-only. To replace a connection, enter its credential again; saved values are never displayed.",
       name: "Name",
       service: "Service",
+      openAICompatible: "OpenAI-compatible API",
       model: "Model",
       endpoint: "Custom endpoint (optional)",
       timeoutMs: "Request timeout (milliseconds)",
