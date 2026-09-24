@@ -613,7 +613,14 @@ defmodule Opsonde.OperationDeliveryTest do
     reason = String.duplicate("復", 91) <> String.duplicate("a", 269)
     assert String.length(reason) == 360
     assert byte_size(reason) == 542
-    {incident, run, proposal} = authorized_proposal!("manual-recovery", context)
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal} =
+      authorized_proposal!("signal-multilingual-recovery", context,
+        trigger_kind: :signal,
+        alert_state: :firing
+      )
+
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     assert :ok =
@@ -632,6 +639,12 @@ defmodule Opsonde.OperationDeliveryTest do
     assert_receive {:verify, _, _}
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    recovered =
+      Cases.record_case_source_recovery!(current.id, current.revision, actor: context.operator)
+
+    assert recovered.alert_state == :recovered
 
     completed =
       Cases.complete_turn!(
@@ -667,7 +680,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert [report] = Reports.list_reports!(actor: context.admin)
 
     assert resolved.status == :resolved
-    assert resolved.alert_state == :not_applicable
+    assert resolved.alert_state == :recovered
     assert report.case_id == resolved.id
     assert report.case_revision == resolved.revision
     assert report.outcome == :resolved
