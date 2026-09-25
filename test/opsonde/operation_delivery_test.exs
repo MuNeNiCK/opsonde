@@ -67,9 +67,8 @@ defmodule Opsonde.OperationDeliveryTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     resolver_assignment =
-      Providers.create_ai_usage_role_assignment!(resolver_provider.id, :resolver, 10,
-        actor: admin
-      )
+      Opsonde.TestAIUsage.configure!(resolver_provider.id, :resolver, 10, admin)
+      |> Map.fetch!(:resolver)
 
     configure_mode!(admin, :full_access)
 

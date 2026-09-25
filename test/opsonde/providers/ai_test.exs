@@ -950,7 +950,8 @@ defmodule Opsonde.Providers.AITest do
   end
 
   defp assign!(admin, provider, role, priority) do
-    Providers.create_ai_usage_role_assignment!(provider.id, role, priority, actor: admin)
+    Opsonde.TestAIUsage.configure!(provider.id, role, priority, admin)
+    |> Map.fetch!(role)
   end
 
   defp resolve(context, request, respond) do

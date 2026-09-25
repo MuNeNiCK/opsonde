@@ -4471,6 +4471,48 @@
         ],
         "type": "object"
       },
+      "ConfigureAIUsageRequest": {
+        "properties": {
+          "usage": {
+            "properties": {
+              "expected_resolver_revision": {
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              "expected_reviewer_revision": {
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              "priority": {
+                "maximum": 10000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scope": {
+                "enum": [
+                  "all",
+                  "resolver",
+                  "reviewer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope",
+              "priority",
+              "expected_resolver_revision",
+              "expected_reviewer_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "usage"
+        ],
+        "type": "object"
+      },
       "SignalEventPage": {
         "additionalProperties": false,
         "properties": {
@@ -5071,6 +5113,19 @@
               "name": {
                 "maxLength": 120,
                 "minLength": 1,
+                "type": "string"
+              },
+              "usage_priority": {
+                "maximum": 10000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "usage_scope": {
+                "enum": [
+                  "all",
+                  "resolver",
+                  "reviewer"
+                ],
                 "type": "string"
               }
             },
@@ -11269,6 +11324,114 @@
         "summary": "Update an account role",
         "tags": [
           "Accounts"
+        ]
+      }
+    },
+    "/api/v1/providers/{id}/ai-usage": {
+      "put": {
+        "callbacks": {},
+        "operationId": "configureAIUsage",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureAIUsageRequest"
+              }
+            }
+          },
+          "description": "AI usage",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "AI usage configured"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Set an AI connection's usage and selection priority",
+        "tags": [
+          "Providers"
         ]
       }
     },

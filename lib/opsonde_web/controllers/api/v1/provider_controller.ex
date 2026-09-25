@@ -112,6 +112,25 @@ defmodule OpsondeWeb.API.V1.ProviderController do
           :internal_server_error
         ])
 
+  operation :configure_ai_usage,
+    operation_id: "configureAIUsage",
+    summary: "Set an AI connection's usage and selection priority",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"AI usage", "application/json", ProviderSchemas.ref("ConfigureAIUsageRequest"),
+       required: true},
+    responses:
+      [no_content: {"AI usage configured", nil, nil}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   operation :target_capabilities,
     operation_id: "getProviderTargetCapabilities",
     summary: "Get Target capabilities from a Provider",
@@ -190,22 +209,30 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   def create(
         conn,
         %{
-          "provider" => %{
-            "name" => name,
-            "kind" => kind,
-            "adapter_type" => adapter_type,
-            "configuration" => configuration,
-            "credentials" => credentials
-          }
+          "provider" =>
+            %{
+              "name" => name,
+              "kind" => kind,
+              "adapter_type" => adapter_type,
+              "configuration" => configuration,
+              "credentials" => credentials
+            } = input
         }
       ) do
-    with {:ok, provider} <-
+    usage =
+      input
+      |> Map.take(["usage_scope", "usage_priority"])
+      |> Enum.into(%{}, fn {key, value} -> {String.to_existing_atom(key), value} end)
+
+    with :ok <- validate_usage_kind(kind, usage),
+         {:ok, provider} <-
            Providers.create_provider(
              name,
              kind,
              adapter_type,
              configuration,
              credentials,
+             usage,
              actor: conn.assigns.current_user
            ) do
       Response.data(conn, ProviderJSON.data(provider), :created)
@@ -243,6 +270,33 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   end
 
   def delete(_conn, _params), do: {:error, :bad_request}
+
+  def configure_ai_usage(
+        conn,
+        %{
+          "id" => id,
+          "usage" => %{
+            "scope" => scope,
+            "priority" => priority,
+            "expected_resolver_revision" => resolver_revision,
+            "expected_reviewer_revision" => reviewer_revision
+          }
+        }
+      ) do
+    with {:ok, true} <-
+           Providers.configure_ai_usage(
+             id,
+             scope,
+             priority,
+             resolver_revision,
+             reviewer_revision,
+             actor: conn.assigns.current_user
+           ) do
+      send_resp(conn, :no_content, "")
+    end
+  end
+
+  def configure_ai_usage(_conn, _params), do: {:error, :bad_request}
 
   def check(
         conn,
@@ -296,6 +350,11 @@ defmodule OpsondeWeb.API.V1.ProviderController do
 
   defp change_enabled(provider, revision, :disable, conn),
     do: Providers.disable_provider(provider, revision, actor: conn.assigns.current_user)
+
+  defp validate_usage_kind("ai", _usage), do: :ok
+  defp validate_usage_kind(_kind, usage) when map_size(usage) == 0, do: :ok
+
+  defp validate_usage_kind(_kind, _usage), do: {:error, :bad_request}
 
   defp attributes(input, fields) do
     fields

@@ -79,6 +79,25 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       change optimistic_lock(:revision)
     end
 
+    action :configure, :boolean do
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :scope, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:all, :resolver, :reviewer]]
+
+      argument :priority, :integer,
+        allow_nil?: false,
+        constraints: [min: 0, max: 10_000]
+
+      argument :expected_resolver_revision, :integer, constraints: [min: 1]
+      argument :expected_reviewer_revision, :integer, constraints: [min: 1]
+
+      run Opsonde.Providers.AIUsageRoleAssignment.Actions.Configure
+    end
+
     action :select_resolver, :struct do
       constraints instance_of: Opsonde.Providers.AI.Selection
       run {Opsonde.Providers.AIUsageRoleAssignment.Actions.Select, role: :resolver}
@@ -104,6 +123,10 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
   end
 
   policies do
+    policy action(:configure) do
+      authorize_if actor_attribute_equals(:role, :admin)
+    end
+
     policy action([:create, :update]) do
       authorize_if actor_attribute_equals(:role, :admin)
     end

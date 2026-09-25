@@ -13,6 +13,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       "UpdateProviderRequest" => update_provider_request(),
       "ProviderRevisionRequest" => provider_revision_request(),
       "CheckProviderRequest" => check_provider_request(),
+      "ConfigureAIUsageRequest" => configure_ai_usage_request(),
       "TargetCapabilitiesResponse" => Schemas.data(target_capabilities()),
       "AIUsageRoleAssignment" => assignment(),
       "AIUsageRoleAssignmentResponse" => Schemas.data(ref("AIUsageRoleAssignment")),
@@ -81,7 +82,9 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
               kind: provider_kind(),
               adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
               configuration: map(),
-              credentials: %Schema{type: :object, additionalProperties: true, writeOnly: true}
+              credentials: %Schema{type: :object, additionalProperties: true, writeOnly: true},
+              usage_scope: %Schema{type: :string, enum: ~w(all resolver reviewer)},
+              usage_priority: priority()
             },
             [:name, :kind, :adapter_type, :configuration, :credentials]
           )
@@ -105,6 +108,29 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
           )
       },
       [:provider]
+    )
+  end
+
+  defp configure_ai_usage_request do
+    object(
+      %{
+        usage:
+          object(
+            %{
+              scope: %Schema{type: :string, enum: ~w(all resolver reviewer)},
+              priority: priority(),
+              expected_resolver_revision: %Schema{type: :integer, minimum: 1, nullable: true},
+              expected_reviewer_revision: %Schema{type: :integer, minimum: 1, nullable: true}
+            },
+            [
+              :scope,
+              :priority,
+              :expected_resolver_revision,
+              :expected_reviewer_revision
+            ]
+          )
+      },
+      [:usage]
     )
   end
 

@@ -46,6 +46,7 @@ defmodule OpsondeWeb.Router do
     get "/providers/:id", ProviderController, :show
     patch "/providers/:id", ProviderController, :update
     delete "/providers/:id", ProviderController, :delete
+    put "/providers/:id/ai-usage", ProviderController, :configure_ai_usage
     post "/providers/:id/check", ProviderController, :check
     post "/providers/:id/target-capabilities", ProviderController, :target_capabilities
     post "/providers/:id/enable", ProviderController, :enable

@@ -187,7 +187,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{"data" => %{"enabled" => false}} = json_response(disabled, 200)
   end
 
-  test "AI providers receive independent Resolver and Reviewer roles", context do
+  test "AI connection usage defaults to ALL and changes both roles atomically", context do
     ai =
       create_provider!(
         context.admin_token,
@@ -198,59 +198,121 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         %{"api_key" => "role-secret"}
       )
 
-    resolver = create_assignment!(context.admin_token, ai["id"], "resolver", 20)
-    reviewer = create_assignment!(context.admin_token, ai["id"], "reviewer", 10)
+    [resolver, reviewer] = assignments_for!(context.admin_token, ai["id"])
 
     assert resolver["provider_id"] == reviewer["provider_id"]
     assert resolver["role"] == "resolver"
     assert reviewer["role"] == "reviewer"
 
-    duplicate =
-      post_json(
-        "/api/v1/ai-usage-role-assignments",
-        %{"assignment" => %{"provider_id" => ai["id"], "role" => "resolver", "priority" => 30}},
-        context.admin_token
-      )
+    assert resolver["enabled"] && reviewer["enabled"]
+    assert resolver["priority"] == 100
 
-    assert %{"error" => %{"code" => "conflict"}} = json_response(duplicate, 409)
+    body = %{
+      "usage" => %{
+        "scope" => "reviewer",
+        "priority" => 5,
+        "expected_resolver_revision" => resolver["revision"],
+        "expected_reviewer_revision" => reviewer["revision"]
+      }
+    }
 
-    updated =
-      patch_json(
-        "/api/v1/ai-usage-role-assignments/#{resolver["id"]}",
-        %{"assignment" => %{"expected_revision" => 1, "priority" => 5, "enabled" => false}},
-        context.admin_token
-      )
+    assert response(
+             put_json("/api/v1/providers/#{ai["id"]}/ai-usage", body, context.admin_token),
+             204
+           ) == ""
 
-    assert %{"data" => %{"priority" => 5, "enabled" => false, "revision" => 2}} =
-             json_response(updated, 200)
+    [updated_resolver, updated_reviewer] = assignments_for!(context.admin_token, ai["id"])
+    assert updated_resolver["id"] == resolver["id"]
+    assert updated_reviewer["id"] == reviewer["id"]
+    assert updated_resolver["priority"] == 5
+    refute updated_resolver["enabled"]
+    assert updated_reviewer["enabled"]
+    assert updated_reviewer["revision"] == 2
 
     stale =
-      patch_json(
-        "/api/v1/ai-usage-role-assignments/#{resolver["id"]}",
-        %{"assignment" => %{"expected_revision" => 1, "enabled" => true}},
-        context.admin_token
-      )
+      put_json("/api/v1/providers/#{ai["id"]}/ai-usage", body, context.admin_token)
 
     assert %{"error" => %{"code" => "conflict"}} = json_response(stale, 409)
 
-    target = create_target!(context.admin_token, "reachable", "target-role-secret")
-
-    wrong_kind =
-      post_json(
-        "/api/v1/ai-usage-role-assignments",
+    partially_stale =
+      put_json(
+        "/api/v1/providers/#{ai["id"]}/ai-usage",
         %{
-          "assignment" => %{"provider_id" => target["id"], "role" => "reviewer", "priority" => 10}
+          "usage" => %{
+            "scope" => "all",
+            "priority" => 8,
+            "expected_resolver_revision" => updated_resolver["revision"],
+            "expected_reviewer_revision" => reviewer["revision"]
+          }
         },
         context.admin_token
       )
 
+    assert %{"error" => %{"code" => "conflict"}} = json_response(partially_stale, 409)
+
+    assert [^updated_resolver, ^updated_reviewer] =
+             assignments_for!(context.admin_token, ai["id"])
+
+    target = create_target!(context.admin_token, "reachable", "target-role-secret")
+
+    wrong_kind =
+      put_json("/api/v1/providers/#{target["id"]}/ai-usage", body, context.admin_token)
+
     assert %{"error" => %{"code" => "validation_failed"}} =
              json_response(wrong_kind, 422)
+
+    assert %{"error" => %{"code" => "forbidden"}} =
+             put_json("/api/v1/providers/#{ai["id"]}/ai-usage", body, context.operator_token)
+             |> json_response(403)
 
     listed = get_json("/api/v1/ai-usage-role-assignments?limit=1", context.viewer_token)
     assert %{"data" => [_one], "page" => %{"next" => cursor}} = json_response(listed, 200)
     assert is_binary(cursor)
     assert_secret_free(listed, ["role-secret", "target-role-secret"])
+  end
+
+  test "AI creation accepts an initial usage choice and rejects usage on other kinds", context do
+    created =
+      post_json(
+        "/api/v1/providers",
+        %{
+          "provider" => %{
+            "name" => "review-only",
+            "kind" => "ai",
+            "adapter_type" => "fixture-ai",
+            "configuration" => %{"model" => "test-model"},
+            "credentials" => %{"api_key" => "initial-secret"},
+            "usage_scope" => "reviewer",
+            "usage_priority" => 7
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{"data" => %{"id" => id}} = json_response(created, 201)
+    [resolver, reviewer] = assignments_for!(context.admin_token, id)
+    refute resolver["enabled"]
+    assert reviewer["enabled"]
+    assert resolver["priority"] == 7
+    assert reviewer["priority"] == 7
+
+    rejected =
+      post_json(
+        "/api/v1/providers",
+        %{
+          "provider" => %{
+            "name" => "target-with-ai-usage",
+            "kind" => "target",
+            "adapter_type" => "fixture-target",
+            "configuration" => %{"endpoint" => "reachable"},
+            "credentials" => %{"token" => "test-token"},
+            "usage_scope" => "all"
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(rejected, 400)
   end
 
   test "administrator deletes an AI connection and revokes its active use", context do
@@ -267,8 +329,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         %{"api_key" => secret}
       )
 
-    resolver = create_assignment!(context.admin_token, ai["id"], "resolver", 10)
-    reviewer = create_assignment!(context.admin_token, ai["id"], "reviewer", 10)
+    [resolver, reviewer] = assignments_for!(context.admin_token, ai["id"])
 
     incident =
       Cases.open_case!(
@@ -400,13 +461,20 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
              get_json("/api/v1/providers/#{ai["id"]}", context.admin_token)
              |> json_response(404)
 
-    assert %{"error" => %{"code" => "validation_failed"}} =
-             patch_json(
-               "/api/v1/ai-usage-role-assignments/#{resolver["id"]}",
-               %{"assignment" => %{"expected_revision" => 2, "enabled" => true}},
+    assert %{"error" => %{"code" => "not_found"}} =
+             put_json(
+               "/api/v1/providers/#{ai["id"]}/ai-usage",
+               %{
+                 "usage" => %{
+                   "scope" => "all",
+                   "priority" => 10,
+                   "expected_resolver_revision" => 2,
+                   "expected_reviewer_revision" => 2
+                 }
+               },
                context.admin_token
              )
-             |> json_response(422)
+             |> json_response(404)
 
     assert {:ok, stored} = Providers.get_provider(ai["id"], authorize?: false)
     assert stored.retired_at
@@ -581,14 +649,12 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     |> Map.fetch!("data")
   end
 
-  defp create_assignment!(token, provider_id, role, priority) do
-    post_json(
-      "/api/v1/ai-usage-role-assignments",
-      %{"assignment" => %{"provider_id" => provider_id, "role" => role, "priority" => priority}},
-      token
-    )
-    |> json_response(201)
+  defp assignments_for!(token, provider_id) do
+    get_json("/api/v1/ai-usage-role-assignments", token)
+    |> json_response(200)
     |> Map.fetch!("data")
+    |> Enum.filter(&(&1["provider_id"] == provider_id))
+    |> Enum.sort_by(& &1["role"])
   end
 
   defp token!(email) do
@@ -607,6 +673,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
 
   defp post_json(path, body, token \\ nil), do: request(:post, path, body, token)
   defp patch_json(path, body, token), do: request(:patch, path, body, token)
+  defp put_json(path, body, token), do: request(:put, path, body, token)
   defp delete_json(path, body, token), do: request(:delete, path, body, token)
   defp get_json(path, token), do: request(:get, path, nil, token)
 
@@ -619,6 +686,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   defp dispatch_request(conn, :get, path, _body), do: get(conn, path)
   defp dispatch_request(conn, :post, path, body), do: post(conn, path, body)
   defp dispatch_request(conn, :patch, path, body), do: patch(conn, path, body)
+  defp dispatch_request(conn, :put, path, body), do: put(conn, path, body)
   defp dispatch_request(conn, :delete, path, body), do: delete(conn, path, body)
 
   defp maybe_authorize(conn, nil), do: conn

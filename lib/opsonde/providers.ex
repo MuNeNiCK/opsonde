@@ -82,6 +82,16 @@ defmodule Opsonde.Providers do
         action: :create,
         args: [:provider_id, :role, :priority]
 
+      define :configure_ai_usage,
+        action: :configure,
+        args: [
+          :provider_id,
+          :scope,
+          :priority,
+          :expected_resolver_revision,
+          :expected_reviewer_revision
+        ]
+
       define :update_ai_usage_role_assignment,
         action: :update,
         args: [:expected_revision]

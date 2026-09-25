@@ -55,16 +55,14 @@ defmodule Opsonde.ProposalAuthorityTest do
     resolver_provider = ai_provider!(admin, "authority-resolver", "resolver-model")
 
     resolver_assignment =
-      Providers.create_ai_usage_role_assignment!(resolver_provider.id, :resolver, 10,
-        actor: admin
-      )
+      Opsonde.TestAIUsage.configure!(resolver_provider.id, :resolver, 10, admin)
+      |> Map.fetch!(:resolver)
 
     reviewer_provider = ai_provider!(admin, "authority-reviewer", "reviewer-model")
 
     reviewer_assignment =
-      Providers.create_ai_usage_role_assignment!(reviewer_provider.id, :reviewer, 10,
-        actor: admin
-      )
+      Opsonde.TestAIUsage.configure!(reviewer_provider.id, :reviewer, 10, admin)
+      |> Map.fetch!(:reviewer)
 
     %{
       admin: admin,
@@ -824,7 +822,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     {incident, run, proposal} = proposal!("review-invalid-alternate", context)
     backup = ai_provider!(context.admin, "authority-reviewer-backup", "backup-reviewer-model")
 
-    Providers.create_ai_usage_role_assignment!(backup.id, :reviewer, 20, actor: context.admin)
+    Opsonde.TestAIUsage.configure!(backup.id, :reviewer, 20, context.admin)
 
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 

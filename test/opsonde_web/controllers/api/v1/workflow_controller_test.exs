@@ -719,7 +719,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
     assignment =
-      Providers.create_ai_usage_role_assignment!(resolver.id, :resolver, 10, actor: context.admin)
+      Opsonde.TestAIUsage.configure!(resolver.id, :resolver, 10, context.admin)
+      |> Map.fetch!(:resolver)
 
     reviewer =
       Providers.create_provider!(
@@ -734,7 +735,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
     reviewer_assignment =
-      Providers.create_ai_usage_role_assignment!(reviewer.id, :reviewer, 10, actor: context.admin)
+      Opsonde.TestAIUsage.configure!(reviewer.id, :reviewer, 10, context.admin)
+      |> Map.fetch!(:reviewer)
 
     %{
       provider: provider,

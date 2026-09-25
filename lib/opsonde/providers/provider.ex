@@ -73,7 +73,19 @@ defmodule Opsonde.Providers.Provider do
     create :create do
       primary? true
       accept [:name, :kind, :adapter_type, :configuration, :credentials]
+
+      argument :usage_scope, :atom,
+        allow_nil?: false,
+        default: :all,
+        constraints: [one_of: [:all, :resolver, :reviewer]]
+
+      argument :usage_priority, :integer,
+        allow_nil?: false,
+        default: 100,
+        constraints: [min: 0, max: 10_000]
+
       change Opsonde.Providers.Provider.Changes.ValidateAdapter
+      change Opsonde.Providers.Provider.Changes.InitializeAIUsage
     end
 
     update :update do
