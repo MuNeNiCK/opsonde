@@ -29,6 +29,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.Case do
       define :list_cases, action: :read
+      define :report_cases, action: :report_period, args: [:from, :to, :target_id]
 
       define :page_cases,
         action: :page,

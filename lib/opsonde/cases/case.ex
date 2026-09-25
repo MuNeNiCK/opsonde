@@ -35,6 +35,21 @@ defmodule Opsonde.Cases.Case do
   actions do
     defaults [:read]
 
+    read :report_period do
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 100
+      argument :from, :utc_datetime_usec, allow_nil?: false
+      argument :to, :utc_datetime_usec, allow_nil?: false
+      argument :target_id, :uuid
+
+      filter expr(
+               inserted_at >= ^arg(:from) and inserted_at < ^arg(:to) and
+                 (is_nil(^arg(:target_id)) or selected_target_id == ^arg(:target_id) or
+                    (is_nil(selected_target_id) and initial_target_id == ^arg(:target_id)))
+             )
+
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
 
@@ -414,7 +429,7 @@ defmodule Opsonde.Cases.Case do
       forbid_if always()
     end
 
-    policy action([:read, :page, :reconnect]) do
+    policy action([:read, :page, :report_period, :reconnect]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

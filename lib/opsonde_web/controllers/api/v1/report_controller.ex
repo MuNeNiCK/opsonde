@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.ReportController do
   use OpsondeWeb, :api_controller
 
+  alias OpenApiSpex.Schema
+
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Reports
@@ -37,6 +39,24 @@ defmodule OpsondeWeb.API.V1.ReportController do
     responses:
       [ok: {"Report", "application/json", OutcomeSchemas.ref("ReportResponse")}] ++ @show_errors
 
+  operation :summary,
+    operation_id: "getPeriodOperationsSummary",
+    summary: "Summarize Cases and scheduled audits opened in a UTC half-open period",
+    parameters: [
+      {:from, [in: :query, required: true, schema: Schemas.timestamp()]},
+      {:to, [in: :query, required: true, schema: Schemas.timestamp()]},
+      {:target_id, [in: :query, schema: %Schema{type: :string, format: :uuid}]}
+    ],
+    responses:
+      [ok: {"Period summary", "application/json", OutcomeSchemas.ref("PeriodSummaryResponse")}] ++
+        Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   operation :generate,
     operation_id: "generateCaseReport",
     summary: "Generate a Case Report",
@@ -68,6 +88,26 @@ defmodule OpsondeWeb.API.V1.ReportController do
       Response.data(conn, OutcomeJSON.report(report))
     end
   end
+
+  def summary(conn, %{"from" => from, "to" => to} = params) do
+    with {:ok, from_time, _offset} <- DateTime.from_iso8601(from),
+         {:ok, to_time, _offset} <- DateTime.from_iso8601(to),
+         {:ok, result} <-
+           Reports.period_summary(
+             from_time,
+             to_time,
+             Map.get(params, "target_id"),
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, result)
+    else
+      {:error, :invalid_format} -> {:error, :bad_request}
+      {:error, :missing_offset} -> {:error, :bad_request}
+      other -> other
+    end
+  end
+
+  def summary(_conn, _params), do: {:error, :bad_request}
 
   def generate(
         conn,

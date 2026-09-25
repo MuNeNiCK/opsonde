@@ -58,6 +58,14 @@ defmodule Opsonde.Reports.Report do
       argument :expected_case_revision, :integer, allow_nil?: false, constraints: [min: 1]
       run Opsonde.Reports.Report.Actions.Generate
     end
+
+    action :period_summary, :map do
+      transaction? false
+      argument :from, :utc_datetime_usec, allow_nil?: false
+      argument :to, :utc_datetime_usec, allow_nil?: false
+      argument :target_id, :uuid
+      run Opsonde.Reports.Report.Actions.PeriodSummary
+    end
   end
 
   policies do
@@ -70,7 +78,7 @@ defmodule Opsonde.Reports.Report do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :for_case]) do
+    policy action([:read, :page, :for_case, :period_summary]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

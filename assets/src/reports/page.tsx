@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Plus, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import { Plus, Printer, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
@@ -206,6 +206,9 @@ export function ReportPage() {
           <p className="mt-2 text-muted-foreground">{t("reports.description")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/reports/operations">{t("reports.periodTitle")}</Link>
+          </Button>
           <Button variant="outline" onClick={() => void refresh()}>
             <RefreshCw />
             {t("reports.refresh")}
@@ -461,8 +464,13 @@ export function ReportPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <ReportSummary content={detailReport.content} />
+              <ReportDocument report={detailReport} />
               <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm" variant="outline">
+                  <Link to={`/reports/${detailReport.id}/print`}>
+                    <Printer /> {t("reports.print")}
+                  </Link>
+                </Button>
                 <Button asChild size="sm" variant="outline">
                   <Link to={`/cases/${detailReport.case_id}`}>{t("reports.openCase")}</Link>
                 </Button>
@@ -552,58 +560,53 @@ export function ReportPage() {
   );
 }
 
-function ReportSummary({ content }: { content: Record<string, unknown> }) {
-  const { t } = useTranslation();
-  const unresolved = objectValue(content.unresolved);
-  const requiredInput = unresolved ? stringValue(unresolved.required_human_input) : "";
+function ReportDocument({ report }: { report: Report }) {
   return (
-    <div className="space-y-3">
-      <p className="text-sm">{stringValue(content.outcome_label)}</p>
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <Metric label={t("reports.runs")} value={String(arrayLength(content.resolution_runs))} />
-        <Metric label={t("reports.operations")} value={String(arrayLength(content.operations))} />
-        <Metric
-          label={t("reports.verifications")}
-          value={String(arrayLength(content.verifications))}
-        />
-        <Metric label={t("reports.targetPath")} value={String(arrayLength(content.target_path))} />
-      </dl>
-      {requiredInput && (
-        <Alert>
-          <AlertDescription>
-            <p>{t("cases.actionInputRequired")}</p>
-            <details className="mt-2 text-xs">
-              <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-              <p className="mt-1">{requiredInput}</p>
-            </details>
-          </AlertDescription>
-        </Alert>
-      )}
-    </div>
+    <article className="rounded-lg border bg-background p-5 text-sm leading-7 sm:p-8">
+      <div className="whitespace-pre-wrap break-words">{report.document.text}</div>
+    </article>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+export function ReportPrintPage() {
+  const { reportId } = useParams();
+  const { t } = useTranslation();
+  const [report, setReport] = useState<Report | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!reportId) return;
+    let active = true;
+    apiClient
+      .GET("/api/v1/reports/{id}", { params: { path: { id: reportId } } })
+      .then((response) => apiData(response).data)
+      .then((result) => active && setReport(result))
+      .catch(() => active && setError(true));
+    return () => {
+      active = false;
+    };
+  }, [reportId]);
+
+  if (error) return <p className="p-8">{t("reports.requestFailed")}</p>;
+  if (!report) return <Loading />;
+
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="font-medium">{value}</dd>
-    </div>
+    <main className="mx-auto max-w-4xl space-y-6 p-6 text-foreground print:max-w-none print:p-0">
+      <div className="flex items-center justify-between gap-3 print:hidden">
+        <Button asChild variant="outline">
+          <Link to="/reports">{t("reports.backToReports")}</Link>
+        </Button>
+        <Button onClick={() => window.print()}>
+          <Printer /> {t("reports.print")}
+        </Button>
+      </div>
+      <ReportDocument report={report} />
+    </main>
   );
 }
 
 function arrayLength(value: unknown) {
   return Array.isArray(value) ? value.length : 0;
-}
-
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : "";
 }
 
 function Loading() {

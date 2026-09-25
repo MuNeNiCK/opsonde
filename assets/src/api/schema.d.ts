@@ -795,6 +795,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/operations-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Summarize Cases and scheduled audits opened in a UTC half-open period */
+        get: operations["getPeriodOperationsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/management-boundaries/{id}/deactivate": {
         parameters: {
             query?: never;
@@ -1503,6 +1520,76 @@ export interface components {
             data: components["schemas"]["Approval"][];
             page: components["schemas"]["Page"];
         };
+        PeriodSummary: {
+            /** Format: date-time */
+            as_of: string;
+            audit_count: number;
+            audit_sources_truncated: boolean;
+            audit_status: {
+                cancelled: number;
+                case_opened: number;
+                failed: number;
+                queued: number;
+                running: number;
+                skipped: number;
+            };
+            audits: {
+                /** Format: uuid */
+                case_id: string | null;
+                /** Format: uuid */
+                id: string;
+                reason: string | null;
+                /** Format: date-time */
+                scheduled_for: string;
+                /** @enum {string} */
+                status: "queued" | "running" | "case_opened" | "skipped" | "cancelled" | "failed";
+                /** Format: uuid */
+                target_id: string | null;
+            }[];
+            case_count: number;
+            case_sources_truncated: boolean;
+            case_status: {
+                cancelled: number;
+                needs_attention: number;
+                resolved: number;
+                running: number;
+            };
+            case_trigger: {
+                audit: number;
+                manual: number;
+                signal: number;
+            };
+            cases: {
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                opened_at: string;
+                /** @enum {string} */
+                status: "running" | "needs_attention" | "resolved" | "cancelled";
+                /** Format: uuid */
+                target_id: string | null;
+                title: string;
+                /** @enum {string} */
+                trigger_kind: "manual" | "signal" | "audit";
+            }[];
+            daily: {
+                audits: number;
+                cases: number;
+                /** Format: date */
+                date: string;
+            }[];
+            /** Format: date-time */
+            from: string;
+            recovery: {
+                average_seconds: number | null;
+                measured_cases: number;
+                unmeasured_resolved_cases: number;
+            };
+            /** Format: uuid */
+            target_id: string | null;
+            /** Format: date-time */
+            to: string;
+        };
         ProviderResponse: {
             data: components["schemas"]["Provider"];
         };
@@ -1582,6 +1669,9 @@ export interface components {
         };
         SignalWebhookAccepted: {
             receipt_id: string;
+        };
+        PeriodSummaryResponse: {
+            data: components["schemas"]["PeriodSummary"];
         };
         CreateCLISessionRequest: {
             request: {
@@ -1679,6 +1769,7 @@ export interface components {
                 [key: string]: unknown;
             };
             content_digest: string;
+            document: components["schemas"]["ReportDocument"];
             /** Format: date-time */
             generated_at: string;
             /** Format: uuid */
@@ -2206,6 +2297,60 @@ export interface components {
                 /** @enum {string} */
                 role: "admin" | "operator" | "viewer";
             };
+        };
+        ReportDocument: {
+            actions: {
+                /** Format: date-time */
+                completed_at: string | null;
+                detail: string | null;
+                /** Format: uuid */
+                id: string;
+                name: string;
+                outcome_category: string | null;
+                status: string;
+            }[];
+            /** Format: uuid */
+            case_id: string;
+            case_revision: number;
+            conclusion: string | null;
+            /** Format: uuid */
+            conclusion_turn_id: string | null;
+            condition: {
+                /** Format: uuid */
+                evidence_id: string;
+                text: string;
+            } | null;
+            digest: string;
+            /** Format: date-time */
+            finished_at: string;
+            /** Format: date-time */
+            opened_at: string;
+            outcome: string;
+            recovery_observation: {
+                /** Format: uuid */
+                evidence_id: string;
+                facts: string;
+                /** Format: date-time */
+                observed_at: string;
+            } | null;
+            required_human_input: string | null;
+            severity: string;
+            source: string;
+            source_ref: string;
+            stop_reason: string | null;
+            /** Format: uuid */
+            target_id: string | null;
+            text: string;
+            title: string;
+            verifications: {
+                facts: string | null;
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                observed_at: string | null;
+                outcome_category: string | null;
+                status: string;
+            }[];
         };
         ManagementBoundaryPage: {
             data: components["schemas"]["ManagementBoundary"][];
@@ -6878,6 +7023,75 @@ export interface operations {
             };
             /** @description Request body is invalid */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPeriodOperationsSummary: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                target_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Period summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeriodSummaryResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

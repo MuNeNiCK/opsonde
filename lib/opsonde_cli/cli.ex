@@ -21,6 +21,9 @@ defmodule OpsondeCLI.CLI do
     input: :string,
     limit: :integer,
     after: :string,
+    from: :string,
+    to: :string,
+    target_id: :string,
     interval: :integer,
     timeout: :integer,
     server: :string
@@ -144,7 +147,7 @@ defmodule OpsondeCLI.CLI do
         result = outcome(route.outcome, response)
 
         with :ok <- maybe_clear_logout(route, runtime_options) do
-          print(with_outcome(response, result))
+          print_response(route, response, result)
           Map.fetch!(@exit, result)
         else
           {:error, message} -> local_error(message)
@@ -299,6 +302,13 @@ defmodule OpsondeCLI.CLI do
     |> maybe_query(:after, options[:after])
   end
 
+  defp query(%Route{outcome: :period_summary}, options) do
+    []
+    |> maybe_query(:from, options[:from])
+    |> maybe_query(:to, options[:to])
+    |> maybe_query(:target_id, options[:target_id])
+  end
+
   defp query(_route, _options), do: []
   defp maybe_query(query, _key, nil), do: query
   defp maybe_query(query, key, value), do: [{key, value} | query]
@@ -331,6 +341,18 @@ defmodule OpsondeCLI.CLI do
     do: Map.put(response, "outcome", Atom.to_string(result))
 
   defp print(value), do: IO.puts(Jason.encode!(value, pretty: true))
+
+  defp print_response(
+         %Commands.Route{outcome: :report_read},
+         %{
+           "data" => %{"document" => %{"text" => text}}
+         },
+         _result
+       )
+       when is_binary(text),
+       do: IO.puts(text)
+
+  defp print_response(_route, response, result), do: print(with_outcome(response, result))
 
   defp http_error(status, body) do
     print_error(Map.merge(%{"outcome" => "failed", "http_status" => status}, map_body(body)))
@@ -373,13 +395,16 @@ defmodule OpsondeCLI.CLI do
       opsonde auth status | logout
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
+      opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
+      opsonde report read ID
 
     Resources:
       account provider ai-role boundary target identity access-method relationship policy
       inventory authority case proposal operation verification signal audit audit-run report delivery
 
     Input JSON contains the resource fields directly; the CLI adds the API envelope.
-    Output is fixed-English JSON. Exit codes: 0 succeeded/resolved, 2 usage, 3 authentication,
+    Output is fixed-English JSON, except report read ID prints the Report language text.
+    Exit codes: 0 succeeded/resolved, 2 usage, 3 authentication,
     4 rejected, 5 transport, 10 accepted/resolving, 11 approval required, 12 needs attention,
     13 failed, 14 partial, 15 unknown, 16 cancellation requested.
     """)

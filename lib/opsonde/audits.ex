@@ -30,6 +30,7 @@ defmodule Opsonde.Audits do
 
     resource Opsonde.Audits.AuditRun do
       define :list_audit_runs, action: :read
+      define :report_audit_runs, action: :report_period, args: [:from, :to, :target_id]
       define :page_audit_runs, action: :page
       define :get_audit_run, action: :read, get_by: [:id]
 

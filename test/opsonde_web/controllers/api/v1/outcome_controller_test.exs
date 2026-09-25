@@ -319,6 +319,23 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert listed_report_id == report_id
     assert_operation_response(reports)
 
+    shown_report = get_json("/api/v1/reports/#{report_id}", context.viewer_token)
+    assert_operation_response(shown_report)
+
+    assert %{
+             "data" => %{
+               "document" => %{
+                 "title" => "Resolved service incident",
+                 "condition" => nil,
+                 "recovery_observation" => nil,
+                 "text" => text
+               }
+             }
+           } = json_response(shown_report, 200)
+
+    assert text =~ "Resolved service incident"
+    assert text =~ "Not established"
+
     duplicate_report =
       post_json(
         "/api/v1/cases/#{terminal.id}/reports",
@@ -417,6 +434,45 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert %{"error" => %{"code" => "forbidden"}} = json_response(viewer_forbidden, 403)
 
     assert length(Notifications.list_deliveries!(actor: context.admin)) == 2
+  end
+
+  test "period Report API uses the same scoped Ash summary for viewers", context do
+    incident =
+      Cases.open_case!(
+        :manual,
+        "api",
+        "period-api",
+        "Period API Case",
+        :warning,
+        :not_applicable,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    from = incident.inserted_at |> DateTime.add(-60) |> DateTime.to_iso8601()
+    to = incident.inserted_at |> DateTime.add(60) |> DateTime.to_iso8601()
+    path = "/api/v1/reports/operations-summary?" <> URI.encode_query(%{from: from, to: to})
+    response = get_json(path, context.viewer_token)
+
+    assert_operation_response(response)
+
+    assert %{"data" => %{"case_count" => 1, "audit_count" => 0, "cases" => [source]}} =
+             json_response(response, 200)
+
+    assert source["id"] == incident.id
+
+    invalid = get_json("/api/v1/reports/operations-summary?from=bad&to=bad", context.viewer_token)
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+
+    too_long =
+      get_json(
+        "/api/v1/reports/operations-summary?from=2025-01-01T00%3A00%3A00Z&to=2026-09-01T00%3A00%3A00Z",
+        context.viewer_token
+      )
+
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(too_long, 422)
   end
 
   defp post_data!(path, body, token) do

@@ -4,6 +4,7 @@ defmodule Opsonde.Notifications.DeliveryDispatch do
   alias Opsonde.{Notifications, Providers, Reports}
   alias Opsonde.Notifications.DeliveryClaim
   alias Opsonde.Providers.Notification
+  alias Opsonde.Reports.Report.Document
 
   def run(delivery_id, invocation \\ %{}) do
     case Notifications.claim_delivery_dispatch(delivery_id, authorize?: false) do
@@ -27,7 +28,7 @@ defmodule Opsonde.Notifications.DeliveryDispatch do
         destination_id: delivery.destination_id,
         destination_revision: delivery.destination_revision,
         idempotency_key: delivery.idempotency_key,
-        payload: report.content
+        payload: Document.build(report)
       }
 
       outcome =

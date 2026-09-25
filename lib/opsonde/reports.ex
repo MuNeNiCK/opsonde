@@ -16,6 +16,7 @@ defmodule Opsonde.Reports do
 
       define :create_report_record, action: :create_record
       define :generate_report, action: :generate, args: [:case_id, :expected_case_revision]
+      define :period_summary, action: :period_summary, args: [:from, :to, :target_id]
     end
   end
 end

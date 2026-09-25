@@ -1,6 +1,8 @@
 defmodule OpsondeWeb.API.V1.OutcomeJSON do
   @moduledoc false
 
+  alias Opsonde.Reports.Report.Document
+
   def receipt(receipt) do
     %{
       id: receipt.id,
@@ -78,6 +80,7 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
       case_revision: report.case_revision,
       language: report.language,
       outcome: report.outcome,
+      document: Document.build(report),
       content: report.content,
       content_digest: report.content_digest,
       generated_at: report.generated_at,

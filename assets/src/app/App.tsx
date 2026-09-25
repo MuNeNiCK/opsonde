@@ -68,6 +68,12 @@ const AuditPage = lazy(() =>
 const ReportPage = lazy(() =>
   import("@/reports/page").then((module) => ({ default: module.ReportPage })),
 );
+const ReportPrintPage = lazy(() =>
+  import("@/reports/page").then((module) => ({ default: module.ReportPrintPage })),
+);
+const PeriodReportPage = lazy(() =>
+  import("@/reports/period-page").then((module) => ({ default: module.PeriodReportPage })),
+);
 const CLILoginPage = lazy(() =>
   import("@/auth/cli-login-page").then((module) => ({ default: module.CLILoginPage })),
 );
@@ -180,6 +186,22 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/reports/:reportId/print"
+          element={
+            <AuthenticationGate>
+              <ReportPrintPage />
+            </AuthenticationGate>
+          }
+        />
+        <Route
+          path="/reports/operations/print"
+          element={
+            <AuthenticationGate>
+              <PeriodReportPage print />
+            </AuthenticationGate>
+          }
+        />
+        <Route
           element={
             <AuthenticationGate>
               <AppShell />
@@ -209,6 +231,7 @@ function AppRoutes() {
           <Route path="providers" element={<Navigate to="/ai" replace />} />
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />
+          <Route path="reports/operations" element={<PeriodReportPage />} />
           <Route path="settings" element={<SetupPage />} />
           <Route path="*" element={<FoundationPage title="pages.notFound" />} />
         </Route>

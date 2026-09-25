@@ -4,6 +4,8 @@ defmodule Opsonde.CaseReportTest do
   alias Opsonde.{Accounts, Cases, Reports}
   alias Opsonde.Cases.{Case, Operation, VerificationAttempt}
   alias Opsonde.Reports.Report.Content
+  alias Opsonde.Reports.Report.Document
+  alias Opsonde.Reports.Report
   alias Opsonde.Reports.GenerationWorker
 
   @password "correct horse battery staple"
@@ -118,6 +120,13 @@ defmodule Opsonde.CaseReportTest do
 
     assert report.content["unresolved"]["required_human_input"] ==
              "ディスクLEDを確認してください"
+
+    document = Document.build(report)
+    assert document["title"] == "Case ja-report"
+    assert document["condition"] == nil
+    assert document["required_human_input"] == "ディスクLEDを確認してください"
+    assert document["text"] =~ "未確認"
+    assert document["text"] =~ "ディスクLEDを確認してください"
 
     serialized = Jason.encode!(report.content)
     refute serialized =~ "pending_intent"
@@ -234,6 +243,58 @@ defmodule Opsonde.CaseReportTest do
              "remote acceptance cannot be confirmed"
 
     assert content["verifications"] |> hd() |> Map.fetch!("status") == "unknown"
+  end
+
+  test "readable projection cites observation after the applied change", _context do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    later = DateTime.utc_now() |> DateTime.add(1, :second) |> DateTime.to_iso8601()
+    evidence_id = Ash.UUID.generate()
+    proposal_id = Ash.UUID.generate()
+    turn_id = Ash.UUID.generate()
+
+    report = %Report{
+      case_id: Ash.UUID.generate(),
+      case_revision: 2,
+      language: :en,
+      content_digest: String.duplicate("a", 64),
+      content: %{
+        "case" => %{"title" => "Service restored", "inserted_at" => now, "updated_at" => later},
+        "outcome_label" => "Resolved",
+        "resolver_turns" => [
+          %{
+            "id" => turn_id,
+            "decision" => %{"type" => "recovery_conclusion", "reason" => "Service is running"}
+          }
+        ],
+        "operations" => [
+          %{
+            "id" => Ash.UUID.generate(),
+            "proposal_id" => proposal_id,
+            "request_kind" => "effect",
+            "status" => "applied",
+            "completed_at" => now,
+            "operation" => "service.restart"
+          }
+        ],
+        "proposals" => [%{"id" => proposal_id, "evidence_ids" => []}],
+        "raw_evidence" => [
+          %{
+            "id" => evidence_id,
+            "kind" => "observation",
+            "observed_at" => later,
+            "content" => %{"facts" => %{"active_state" => "active"}}
+          }
+        ]
+      }
+    }
+
+    document = Document.build(report)
+    assert document["recovery_observation"]["evidence_id"] == evidence_id
+    assert document["recovery_observation"]["facts"] == "active_state=active"
+    assert document["text"] =~ "Post-action observation: active_state=active"
+    assert document["text"] =~ evidence_id
+    assert document["conclusion_turn_id"] == turn_id
+    assert document["text"] =~ "Resolver assessment\nService is running"
   end
 
   defp open!(source_ref, actor) do

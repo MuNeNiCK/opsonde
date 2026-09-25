@@ -7,11 +7,35 @@ msgstr ""
 msgid "Approvals"
 msgstr "承認"
 
+msgid "Actions"
+msgstr "実施した操作"
+
+msgid "Case"
+msgstr "ケース"
+
+msgid "Conclusion"
+msgstr "結論"
+
+msgid "Resolver assessment"
+msgstr "Resolverの判断"
+
 msgid "Cancelled"
 msgstr "キャンセル済み"
 
 msgid "Needs attention"
 msgstr "対応が必要"
+
+msgid "Not established"
+msgstr "未確認"
+
+msgid "Observed condition"
+msgstr "確認された状態"
+
+msgid "Opened at"
+msgstr "受付日時"
+
+msgid "Outcome"
+msgstr "結果"
 
 msgid "Operations"
 msgstr "実行操作"
@@ -28,6 +52,48 @@ msgstr "解決試行"
 msgid "Resolved"
 msgstr "解決済み"
 
+msgid "Recovery verification"
+msgstr "復旧確認"
+
+msgid "Post-action observation"
+msgstr "変更後の観測結果"
+
+msgid "Source"
+msgstr "発生元"
+
+msgid "Severity"
+msgstr "重要度"
+
+msgid "Evidence"
+msgstr "証拠"
+
+msgid "Turn"
+msgstr "判断記録"
+
+msgid "Queued"
+msgstr "待機中"
+
+msgid "In progress"
+msgstr "実行中"
+
+msgid "Applied"
+msgstr "適用済み"
+
+msgid "Failed"
+msgstr "失敗"
+
+msgid "Partial"
+msgstr "一部実行"
+
+msgid "Unknown"
+msgstr "結果不明"
+
+msgid "Verified"
+msgstr "確認済み"
+
+msgid "Not verified"
+msgstr "未確認"
+
 msgid "Resolver decisions"
 msgstr "Resolverの判断"
 
@@ -39,6 +105,12 @@ msgstr "概要"
 
 msgid "Target path"
 msgstr "対象の調査経路"
+
+msgid "Target"
+msgstr "対象"
+
+msgid "Finished at"
+msgstr "終了日時"
 
 msgid "Timeline"
 msgstr "時系列"

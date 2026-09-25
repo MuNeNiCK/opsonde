@@ -170,6 +170,54 @@ defmodule OpsondeCLI.CLITest do
     assert output =~ ~s("outcome": "succeeded")
   end
 
+  test "reads a Case Report as text and requests a UTC period summary", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "GET"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+
+      case conn.request_path do
+        "/api/v1/reports/report-1" ->
+          Req.Test.json(conn, %{data: %{document: %{text: "Case result\nNot established"}}})
+
+        "/api/v1/reports/operations-summary" ->
+          assert URI.decode_query(conn.query_string) == %{
+                   "from" => "2026-09-01T00:00:00Z",
+                   "to" => "2026-10-01T00:00:00Z",
+                   "target_id" => "target-1"
+                 }
+
+          Req.Test.json(conn, %{data: %{case_count: 2, audit_count: 1}})
+      end
+    end)
+
+    report_text =
+      capture_io(fn -> assert CLI.run(["report", "read", "report-1"], runtime(context)) == 0 end)
+
+    assert report_text == "Case result\nNot established\n"
+
+    summary =
+      capture_io(fn ->
+        assert CLI.run(
+                 [
+                   "report",
+                   "summary",
+                   "--from",
+                   "2026-09-01T00:00:00Z",
+                   "--to",
+                   "2026-10-01T00:00:00Z",
+                   "--target-id",
+                   "target-1"
+                 ],
+                 runtime(context)
+               ) == 0
+      end)
+
+    assert summary =~ ~s("case_count": 2)
+    assert summary =~ ~s("audit_count": 1)
+  end
+
   test "a new process resumes a case by id using read-only polling", context do
     save_session(context)
     {:ok, counter} = Agent.start_link(fn -> 0 end)

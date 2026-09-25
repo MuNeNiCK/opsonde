@@ -25,8 +25,11 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "AuditRunResponse" => Schemas.data(ref("AuditRun")),
       "AuditRunPage" => Schemas.page(ref("AuditRun")),
       "Report" => report(),
+      "ReportDocument" => report_document(),
       "ReportResponse" => Schemas.data(ref("Report")),
       "ReportPage" => Schemas.page(ref("Report")),
+      "PeriodSummary" => period_summary(),
+      "PeriodSummaryResponse" => Schemas.data(ref("PeriodSummary")),
       "GenerateReportRequest" => generate_report_request(),
       "Delivery" => delivery(),
       "DeliveryResponse" => Schemas.data(ref("Delivery")),
@@ -197,12 +200,179 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         case_revision: positive_integer(),
         language: enum(~w(en ja)),
         outcome: enum(~w(resolved needs_attention cancelled)),
+        document: ref("ReportDocument"),
         content: map(),
         content_digest: digest(),
         generated_at: Schemas.timestamp(),
         revision: positive_integer()
       },
-      ~w(id case_id case_revision language outcome content content_digest generated_at revision)a,
+      ~w(id case_id case_revision language outcome document content content_digest generated_at revision)a,
+      false
+    )
+  end
+
+  defp report_document do
+    action =
+      object(
+        %{
+          id: Schemas.uuid(),
+          name: %Schema{type: :string},
+          status: %Schema{type: :string},
+          outcome_category: nullable_string(500),
+          detail: nullable_string(10_000),
+          completed_at: nullable_timestamp()
+        },
+        ~w(id name status outcome_category detail completed_at)a,
+        false
+      )
+
+    verification =
+      object(
+        %{
+          id: Schemas.uuid(),
+          status: %Schema{type: :string},
+          outcome_category: nullable_string(500),
+          facts: nullable_string(10_000),
+          observed_at: nullable_timestamp()
+        },
+        ~w(id status outcome_category facts observed_at)a,
+        false
+      )
+
+    object(
+      %{
+        title: %Schema{type: :string},
+        outcome: %Schema{type: :string},
+        opened_at: Schemas.timestamp(),
+        finished_at: Schemas.timestamp(),
+        target_id: nullable_uuid(),
+        source: %Schema{type: :string},
+        source_ref: %Schema{type: :string},
+        severity: %Schema{type: :string},
+        condition: %Schema{
+          type: :object,
+          properties: %{text: %Schema{type: :string}, evidence_id: Schemas.uuid()},
+          required: [:text, :evidence_id],
+          additionalProperties: false,
+          nullable: true
+        },
+        actions: %Schema{type: :array, items: action},
+        verifications: %Schema{type: :array, items: verification},
+        recovery_observation: %Schema{
+          type: :object,
+          properties: %{
+            evidence_id: Schemas.uuid(),
+            facts: %Schema{type: :string},
+            observed_at: Schemas.timestamp()
+          },
+          required: ~w(evidence_id facts observed_at)a,
+          additionalProperties: false,
+          nullable: true
+        },
+        conclusion: nullable_string(10_000),
+        conclusion_turn_id: nullable_uuid(),
+        stop_reason: nullable_string(10_000),
+        required_human_input: nullable_string(10_000),
+        case_id: Schemas.uuid(),
+        case_revision: positive_integer(),
+        digest: digest(),
+        text: %Schema{type: :string}
+      },
+      ~w(title outcome opened_at finished_at target_id source source_ref severity condition actions verifications recovery_observation conclusion conclusion_turn_id stop_reason required_human_input case_id case_revision digest text)a,
+      false
+    )
+  end
+
+  defp period_summary do
+    case_source =
+      object(
+        %{
+          id: Schemas.uuid(),
+          title: %Schema{type: :string},
+          status: enum(~w(running needs_attention resolved cancelled)),
+          trigger_kind: enum(~w(manual signal audit)),
+          opened_at: Schemas.timestamp(),
+          target_id: nullable_uuid()
+        },
+        ~w(id title status trigger_kind opened_at target_id)a,
+        false
+      )
+
+    audit_source =
+      object(
+        %{
+          id: Schemas.uuid(),
+          status: enum(~w(queued running case_opened skipped cancelled failed)),
+          scheduled_for: Schemas.timestamp(),
+          target_id: nullable_uuid(),
+          case_id: nullable_uuid(),
+          reason: nullable_string(10_000)
+        },
+        ~w(id status scheduled_for target_id case_id reason)a,
+        false
+      )
+
+    object(
+      %{
+        from: Schemas.timestamp(),
+        to: Schemas.timestamp(),
+        as_of: Schemas.timestamp(),
+        target_id: nullable_uuid(),
+        case_count: %Schema{type: :integer},
+        case_status:
+          object(
+            Map.new(
+              ~w(running needs_attention resolved cancelled),
+              &{String.to_atom(&1), %Schema{type: :integer}}
+            ),
+            ~w(running needs_attention resolved cancelled)a,
+            false
+          ),
+        case_trigger:
+          object(
+            Map.new(~w(manual signal audit), &{String.to_atom(&1), %Schema{type: :integer}}),
+            ~w(manual signal audit)a,
+            false
+          ),
+        recovery:
+          object(
+            %{
+              measured_cases: %Schema{type: :integer},
+              unmeasured_resolved_cases: %Schema{type: :integer},
+              average_seconds: %Schema{type: :integer, nullable: true}
+            },
+            ~w(measured_cases unmeasured_resolved_cases average_seconds)a,
+            false
+          ),
+        audit_count: %Schema{type: :integer},
+        audit_status:
+          object(
+            Map.new(
+              ~w(queued running case_opened skipped cancelled failed),
+              &{String.to_atom(&1), %Schema{type: :integer}}
+            ),
+            ~w(queued running case_opened skipped cancelled failed)a,
+            false
+          ),
+        daily: %Schema{
+          type: :array,
+          items:
+            object(
+              %{
+                date: %Schema{type: :string, format: :date},
+                cases: %Schema{type: :integer},
+                audits: %Schema{type: :integer}
+              },
+              ~w(date cases audits)a,
+              false
+            )
+        },
+        cases: %Schema{type: :array, items: case_source},
+        audits: %Schema{type: :array, items: audit_source},
+        case_sources_truncated: %Schema{type: :boolean},
+        audit_sources_truncated: %Schema{type: :boolean}
+      },
+      ~w(from to as_of target_id case_count case_status case_trigger recovery audit_count audit_status daily cases audits case_sources_truncated audit_sources_truncated)a,
       false
     )
   end

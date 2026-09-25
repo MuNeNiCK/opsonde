@@ -6,6 +6,7 @@ defmodule Opsonde.NotificationDeliveryTest do
   alias Opsonde.{Accounts, Cases, Notifications, Providers, Reports}
   alias Opsonde.Notifications.{DeliveryDispatch, DeliveryWorker}
   alias Opsonde.Providers.Notification
+  alias Opsonde.Reports.Report.Document
 
   @password "correct horse battery staple"
 
@@ -98,7 +99,8 @@ defmodule Opsonde.NotificationDeliveryTest do
       assert request.destination_id == context.provider.id
       assert request.destination_revision == context.provider.revision
       assert request.idempotency_key == "delivery-#{status}"
-      assert request.payload == context.report.content
+      assert request.payload == Document.build(context.report)
+      assert request.payload["text"] =~ "Notification delivery report"
       refute_receive {:delivery, _, _}
     end
   end

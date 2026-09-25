@@ -344,6 +344,7 @@ export function AuditPage() {
           {snapshot.runs.map((run) => (
             <div
               key={run.id}
+              id={`audit-run-${run.id}`}
               className="flex flex-wrap items-center justify-between gap-4 p-4 text-sm"
             >
               <div className="min-w-0">
