@@ -817,6 +817,7 @@ const en = {
       periodNoRecords: "No records in this period.",
       periodSourceCases: "Contributing Cases",
       periodSourceAudits: "Contributing audit runs",
+      periodDetailedRecords: "Open breakdown and source records",
       periodAuditCase: "Open linked Case",
       periodSourceLimit:
         "Totals include every record. The first 100 source records are shown here.",

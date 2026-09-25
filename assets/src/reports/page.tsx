@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { NotificationProviderSection } from "@/providers/notification-section";
+import { CaseReportDocument } from "@/reports/case-document";
 
 type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
@@ -464,7 +465,7 @@ export function ReportPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <ReportDocument report={detailReport} />
+              <CaseReportDocument report={detailReport} />
               <div className="flex flex-wrap gap-2">
                 <Button asChild size="sm" variant="outline">
                   <Link to={`/reports/${detailReport.id}/print`}>
@@ -560,14 +561,6 @@ export function ReportPage() {
   );
 }
 
-function ReportDocument({ report }: { report: Report }) {
-  return (
-    <article className="rounded-lg border bg-background p-5 text-sm leading-7 sm:p-8">
-      <div className="whitespace-pre-wrap break-words">{report.document.text}</div>
-    </article>
-  );
-}
-
 export function ReportPrintPage() {
   const { reportId } = useParams();
   const { t } = useTranslation();
@@ -600,7 +593,7 @@ export function ReportPrintPage() {
           <Printer /> {t("reports.print")}
         </Button>
       </div>
-      <ReportDocument report={report} />
+      <CaseReportDocument report={report} />
     </main>
   );
 }

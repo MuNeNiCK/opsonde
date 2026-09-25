@@ -1,0 +1,440 @@
+@page {
+  size: A4;
+  margin: 15mm 17mm;
+}
+
+.report-sheet {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 2.25rem;
+  background: white;
+  color: #20272c;
+  border: 1px solid #d9e1e3;
+  box-shadow: 0 12px 36px rgb(16 37 42 / 6%);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.report-masthead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #006f63;
+}
+.report-brand {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+.report-brand-mark {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-right: 0.35rem;
+  background: #006f63;
+  transform: rotate(45deg);
+}
+.report-kind {
+  color: #64737a;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.report-issued {
+  color: #657178;
+  font-size: 0.73rem;
+}
+.report-heading {
+  margin: 1.5rem 0 1.15rem;
+}
+.report-eyebrow {
+  color: #006f63;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+.report-heading h1 {
+  margin: 0.35rem 0 1.1rem;
+  font-size: 1.5rem;
+  line-height: 1.3;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+.report-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  padding: 0.72rem 1rem;
+  border-left: 4px solid #006f63;
+  background: #eaf5f1;
+}
+.report-outcome strong {
+  font-size: 1rem;
+}
+.report-outcome span {
+  font-size: 0.75rem;
+  color: #4c5d61;
+}
+.report-outcome-attention {
+  border-color: #a96d17;
+  background: #fff5e6;
+}
+.report-outcome-cancelled {
+  border-color: #738087;
+  background: #f3f5f5;
+}
+.report-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem 1rem;
+  margin: 1.2rem 0 1.6rem;
+}
+.report-facts div {
+  min-width: 0;
+  border-bottom: 1px solid #dce3e3;
+  padding-bottom: 0.45rem;
+}
+.report-facts dt {
+  color: #657178;
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+.report-facts dd {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.report-body {
+  display: grid;
+  gap: 1.4rem;
+}
+.report-section {
+  break-inside: auto;
+}
+.report-section h2 {
+  display: flex;
+  gap: 0.7rem;
+  align-items: baseline;
+  margin: 0 0 0.55rem;
+  border-bottom: 1px solid #b9c8c9;
+  padding-bottom: 0.28rem;
+  font-size: 0.98rem;
+  font-weight: 750;
+  break-after: avoid;
+}
+.report-section h2 span {
+  font-size: 0.68rem;
+  color: #006f63;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.report-prose {
+  margin: 0.35rem 0;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.report-ref,
+.report-list small,
+.report-observation small {
+  display: block;
+  margin-top: 0.35rem;
+  color: #68777b;
+  font-size: 0.66rem;
+  overflow-wrap: anywhere;
+}
+.report-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.report-list li {
+  break-inside: avoid;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid #e4e9e9;
+}
+.report-list li:first-child {
+  padding-top: 0;
+}
+.report-list li:last-child {
+  border-bottom: 0;
+}
+.report-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.2rem 0.8rem;
+}
+.report-list-head strong {
+  overflow-wrap: anywhere;
+}
+.report-list-head span {
+  font-size: 0.72rem;
+  color: #657178;
+}
+.report-list p {
+  margin: 0.1rem 0;
+  overflow-wrap: anywhere;
+}
+.report-observation {
+  break-inside: avoid;
+  margin-top: 0.55rem;
+  padding: 0.7rem 0.85rem;
+  background: #f2f6f5;
+  border-left: 2px solid #71958e;
+}
+.report-observation p {
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+.report-outstanding {
+  border-left: 3px solid #a96d17;
+  padding-left: 0.8rem;
+}
+.report-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  margin-top: 1.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid #b9c8c9;
+  color: #68777b;
+  font-size: 0.65rem;
+  overflow-wrap: anywhere;
+  break-inside: avoid;
+}
+.report-footer strong {
+  color: #35464b;
+}
+
+.report-period-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid #b9c8c9;
+}
+.report-period-range strong {
+  font-size: 1rem;
+}
+.report-period-range span {
+  color: #657178;
+}
+.report-period-highlights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1.35rem;
+}
+.report-period-highlights > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 5.8rem;
+  padding: 0.7rem 0.8rem;
+  background: #f2f6f5;
+  border-top: 3px solid #006f63;
+  break-inside: avoid;
+}
+.report-period-highlights .report-highlight-attention {
+  background: #fff5e6;
+  border-color: #a96d17;
+}
+.report-period-highlights span {
+  font-size: 0.68rem;
+  color: #4c5d61;
+}
+.report-period-highlights strong {
+  font-size: 1.8rem;
+  line-height: 1.1;
+}
+.report-period-highlights small {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #657178;
+}
+.report-period-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.6rem;
+  margin-bottom: 1.3rem;
+}
+.report-period-counts {
+  margin: 0;
+}
+.report-period-counts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0;
+}
+.report-period-counts dd {
+  font-weight: 750;
+}
+.report-period-note {
+  margin: 0.45rem 0 0.7rem;
+  color: #5d6c70;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+.report-period-recovery {
+  margin-bottom: 1.25rem;
+}
+.report-period-recovery-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+.report-period-recovery-content strong {
+  flex: none;
+  font-size: 1.35rem;
+  color: #006f63;
+}
+.report-period-recovery-content p {
+  margin: 0;
+}
+.report-period-days {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.18rem 1.2rem;
+}
+.report-period-day {
+  display: grid;
+  grid-template-columns: 3.15rem 1fr 1.5rem 1.5rem;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.73rem;
+  break-inside: avoid;
+}
+.report-period-day time {
+  color: #536267;
+}
+.report-period-day strong,
+.report-period-day small {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.report-period-day small {
+  color: #78878b;
+}
+.report-period-bar-track {
+  height: 0.4rem;
+  background: #e4ecea;
+}
+.report-period-bar-track span {
+  display: block;
+  height: 100%;
+  background: #006f63;
+}
+.report-period-attention {
+  margin-top: 1.3rem;
+}
+.report-period-attention-list {
+  list-style: decimal;
+  padding-left: 1.3rem;
+  margin: 0;
+}
+.report-period-attention-list li {
+  padding: 0.18rem 0;
+  break-inside: avoid;
+}
+.report-period-attention-list a {
+  text-decoration: underline;
+  text-decoration-color: #a5b8b8;
+  text-underline-offset: 2px;
+}
+.report-period-attention-list span {
+  margin-left: 0.5rem;
+  color: #657178;
+  font-size: 0.7rem;
+}
+.report-period-footer a {
+  color: #006f63;
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .report-sheet {
+    padding: 1.25rem;
+  }
+  .report-facts,
+  .report-period-pair,
+  .report-period-days {
+    grid-template-columns: 1fr;
+  }
+  .report-period-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media print {
+  html,
+  body {
+    background: white !important;
+    color: #20272c !important;
+  }
+  .report-sheet {
+    max-width: none;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+    font-size: 9pt;
+  }
+  .report-masthead {
+    padding-bottom: 0.55rem;
+  }
+  .report-heading {
+    margin: 0.9rem 0 0.75rem;
+  }
+  .report-heading h1 {
+    font-size: 17pt;
+    margin-bottom: 0.7rem;
+  }
+  .report-facts {
+    margin: 0.7rem 0 1rem;
+    gap: 0.4rem 0.8rem;
+  }
+  .report-body {
+    gap: 0.85rem;
+  }
+  .report-list li {
+    padding: 0.35rem 0;
+  }
+  .report-footer {
+    margin-top: 0.9rem;
+  }
+  .report-period-highlights {
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+  }
+  .report-period-highlights > div {
+    min-height: 4.4rem;
+    padding: 0.45rem 0.6rem;
+  }
+  .report-period-highlights strong {
+    font-size: 1.4rem;
+  }
+  .report-period-pair {
+    gap: 1rem;
+    margin-bottom: 0.9rem;
+  }
+  .report-period-attention {
+    margin-top: 0.9rem;
+  }
+  .report-period-days {
+    grid-template-columns: 1fr 1fr;
+  }
+  .report-sheet,
+  .report-period-sheet {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

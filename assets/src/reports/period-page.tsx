@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PeriodReportDocument } from "@/reports/period-document";
 import {
   Table,
   TableBody,
@@ -226,180 +227,192 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
       {pending && !summary && <p>{t("common.loading")}</p>}
 
       {summary && (
-        <article className="space-y-7" aria-label={t("reports.periodTitle")}>
-          <div>
-            <h1 className="text-xl font-semibold">{t("reports.periodTitle")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {from} – {to} UTC · {targetName} · {t("reports.periodAsOf")}{" "}
-              {new Date(summary.as_of).toLocaleString(i18n.resolvedLanguage)}
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">{t("reports.periodSemantics")}</p>
-          </div>
+        <PeriodReportDocument summary={summary} from={from} to={to} targetName={targetName} />
+      )}
+      {summary && !print && (
+        <details className="rounded-lg border bg-card p-5">
+          <summary className="cursor-pointer font-semibold">
+            {t("reports.periodDetailedRecords")}
+          </summary>
+          <article className="mt-6 space-y-7" aria-label={t("reports.periodTitle")}>
+            <div>
+              <h1 className="text-xl font-semibold">{t("reports.periodTitle")}</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {from} – {to} UTC · {targetName} · {t("reports.periodAsOf")}{" "}
+                {new Date(summary.as_of).toLocaleString(i18n.resolvedLanguage)}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">{t("reports.periodSemantics")}</p>
+            </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric title={t("reports.periodCases")} value={summary.case_count} />
-            <Metric title={t("reports.periodResolved")} value={summary.case_status.resolved} />
-            <Metric
-              title={t("reports.periodAttention")}
-              value={summary.case_status.needs_attention}
-            />
-            <Metric title={t("reports.periodAudits")} value={summary.audit_count} />
-          </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric title={t("reports.periodCases")} value={summary.case_count} />
+              <Metric title={t("reports.periodResolved")} value={summary.case_status.resolved} />
+              <Metric
+                title={t("reports.periodAttention")}
+                value={summary.case_status.needs_attention}
+              />
+              <Metric title={t("reports.periodAudits")} value={summary.audit_count} />
+            </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t("reports.periodCaseBreakdown")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {Object.entries(summary.case_status).map(([status, count]) => (
+                    <CountRow key={status} label={t(`cases.status.${status}`)} count={count} />
+                  ))}
+                  <p className="border-t pt-3 text-muted-foreground">
+                    {t("reports.periodTriggerBreakdown", {
+                      signal: summary.case_trigger.signal,
+                      audit: summary.case_trigger.audit,
+                      manual: summary.case_trigger.manual,
+                    })}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t("reports.periodAuditBreakdown")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {Object.entries(summary.audit_status).map(([status, count]) => (
+                    <CountRow key={status} label={t(`audits.runStatus.${status}`)} count={count} />
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
+
             <Card>
               <CardHeader>
-                <CardTitle>{t("reports.periodCaseBreakdown")}</CardTitle>
+                <CardTitle>{t("reports.periodRecovery")}</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {Object.entries(summary.case_status).map(([status, count]) => (
-                  <CountRow key={status} label={t(`cases.status.${status}`)} count={count} />
-                ))}
-                <p className="border-t pt-3 text-muted-foreground">
-                  {t("reports.periodTriggerBreakdown", {
-                    signal: summary.case_trigger.signal,
-                    audit: summary.case_trigger.audit,
-                    manual: summary.case_trigger.manual,
+              <CardContent className="text-sm">
+                <p>
+                  {summary.recovery.average_seconds === null
+                    ? t("reports.periodNoRecoveryMeasurement")
+                    : t("reports.periodAverageRecovery", {
+                        seconds: summary.recovery.average_seconds,
+                        count: summary.recovery.measured_cases,
+                      })}
+                </p>
+                <p className="mt-2 text-muted-foreground">
+                  {t("reports.periodUnmeasured", {
+                    count: summary.recovery.unmeasured_resolved_cases,
                   })}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("reports.periodRecoveryDefinition")}
                 </p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("reports.periodAuditBreakdown")}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {Object.entries(summary.audit_status).map(([status, count]) => (
-                  <CountRow key={status} label={t(`audits.runStatus.${status}`)} count={count} />
-                ))}
-              </CardContent>
-            </Card>
-          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("reports.periodRecovery")}</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm">
-              <p>
-                {summary.recovery.average_seconds === null
-                  ? t("reports.periodNoRecoveryMeasurement")
-                  : t("reports.periodAverageRecovery", {
-                      seconds: summary.recovery.average_seconds,
-                      count: summary.recovery.measured_cases,
-                    })}
-              </p>
-              <p className="mt-2 text-muted-foreground">
-                {t("reports.periodUnmeasured", {
-                  count: summary.recovery.unmeasured_resolved_cases,
-                })}
-              </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t("reports.periodRecoveryDefinition")}
-              </p>
-            </CardContent>
-          </Card>
-
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">{t("reports.periodDaily")}</h2>
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("reports.periodDay")}</TableHead>
-                    <TableHead>{t("reports.periodCases")}</TableHead>
-                    <TableHead>{t("reports.periodAudits")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {summary.daily.map((day) => (
-                    <TableRow key={day.date}>
-                      <TableCell>{day.date}</TableCell>
-                      <TableCell>{day.cases}</TableCell>
-                      <TableCell>{day.audits}</TableCell>
-                    </TableRow>
-                  ))}
-                  {summary.daily.length === 0 && (
+            <section>
+              <h2 className="mb-3 text-lg font-semibold">{t("reports.periodDaily")}</h2>
+              <div className="overflow-x-auto rounded-lg border bg-card">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={3}>{t("reports.periodNoRecords")}</TableCell>
+                      <TableHead>{t("reports.periodDay")}</TableHead>
+                      <TableHead>{t("reports.periodCases")}</TableHead>
+                      <TableHead>{t("reports.periodAudits")}</TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                  </TableHeader>
+                  <TableBody>
+                    {summary.daily.map((day) => (
+                      <TableRow key={day.date}>
+                        <TableCell>{day.date}</TableCell>
+                        <TableCell>{day.cases}</TableCell>
+                        <TableCell>{day.audits}</TableCell>
+                      </TableRow>
+                    ))}
+                    {summary.daily.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={3}>{t("reports.periodNoRecords")}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
 
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">{t("reports.periodSourceCases")}</h2>
-            {summary.case_sources_truncated && (
-              <p className="mb-3 text-sm text-muted-foreground">{t("reports.periodSourceLimit")}</p>
-            )}
-            <div className="divide-y rounded-lg border bg-card">
-              {summary.cases.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
-                >
-                  <Link
-                    className="font-medium underline-offset-4 hover:underline"
-                    to={`/cases/${item.id}`}
+            <section>
+              <h2 className="mb-3 text-lg font-semibold">{t("reports.periodSourceCases")}</h2>
+              {summary.case_sources_truncated && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {t("reports.periodSourceLimit")}
+                </p>
+              )}
+              <div className="divide-y rounded-lg border bg-card">
+                {summary.cases.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                   >
-                    {item.title}
-                  </Link>
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    <Badge variant="secondary">{t(`cases.status.${item.status}`)}</Badge>
-                    {new Date(item.opened_at).toLocaleString(i18n.resolvedLanguage)}
-                  </span>
-                </div>
-              ))}
-              {summary.cases.length === 0 && (
-                <p className="p-3 text-sm">{t("reports.periodNoRecords")}</p>
-              )}
-            </div>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">{t("reports.periodSourceAudits")}</h2>
-            {summary.audit_sources_truncated && (
-              <p className="mb-3 text-sm text-muted-foreground">{t("reports.periodSourceLimit")}</p>
-            )}
-            <div className="divide-y rounded-lg border bg-card">
-              {summary.audits.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
-                >
-                  <div className="min-w-0">
                     <Link
-                      className="break-all font-mono text-xs underline-offset-4 hover:underline"
-                      to={`/audits#audit-run-${item.id}`}
+                      className="font-medium underline-offset-4 hover:underline"
+                      to={`/cases/${item.id}`}
                     >
-                      {item.id}
+                      {item.title}
                     </Link>
-                    {item.reason && (
-                      <p className="mt-1 break-words text-muted-foreground">{item.reason}</p>
-                    )}
-                    {item.case_id && (
-                      <Link
-                        className="mt-1 block text-xs text-primary underline-offset-4 hover:underline"
-                        to={`/cases/${item.case_id}`}
-                      >
-                        {t("reports.periodAuditCase")}
-                      </Link>
-                    )}
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Badge variant="secondary">{t(`cases.status.${item.status}`)}</Badge>
+                      {new Date(item.opened_at).toLocaleString(i18n.resolvedLanguage)}
+                    </span>
                   </div>
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    <Badge variant="secondary">{t(`audits.runStatus.${item.status}`)}</Badge>
-                    {new Date(item.scheduled_for).toLocaleString(i18n.resolvedLanguage)}
-                  </span>
-                </div>
-              ))}
-              {summary.audits.length === 0 && (
-                <p className="p-3 text-sm">{t("reports.periodNoRecords")}</p>
+                ))}
+                {summary.cases.length === 0 && (
+                  <p className="p-3 text-sm">{t("reports.periodNoRecords")}</p>
+                )}
+              </div>
+            </section>
+
+            <section>
+              <h2 className="mb-3 text-lg font-semibold">{t("reports.periodSourceAudits")}</h2>
+              {summary.audit_sources_truncated && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {t("reports.periodSourceLimit")}
+                </p>
               )}
-            </div>
-          </section>
-        </article>
+              <div className="divide-y rounded-lg border bg-card">
+                {summary.audits.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <Link
+                        className="break-all font-mono text-xs underline-offset-4 hover:underline"
+                        to={`/audits#audit-run-${item.id}`}
+                      >
+                        {item.id}
+                      </Link>
+                      {item.reason && (
+                        <p className="mt-1 break-words text-muted-foreground">{item.reason}</p>
+                      )}
+                      {item.case_id && (
+                        <Link
+                          className="mt-1 block text-xs text-primary underline-offset-4 hover:underline"
+                          to={`/cases/${item.case_id}`}
+                        >
+                          {t("reports.periodAuditCase")}
+                        </Link>
+                      )}
+                    </div>
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Badge variant="secondary">{t(`audits.runStatus.${item.status}`)}</Badge>
+                      {new Date(item.scheduled_for).toLocaleString(i18n.resolvedLanguage)}
+                    </span>
+                  </div>
+                ))}
+                {summary.audits.length === 0 && (
+                  <p className="p-3 text-sm">{t("reports.periodNoRecords")}</p>
+                )}
+              </div>
+            </section>
+          </article>
+        </details>
       )}
     </Container>
   );

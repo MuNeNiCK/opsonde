@@ -798,6 +798,7 @@ const ja = {
       periodNoRecords: "この期間の記録はありません。",
       periodSourceCases: "対象のCase",
       periodSourceAudits: "対象の監査Run",
+      periodDetailedRecords: "集計内訳と出典記録を開く",
       periodAuditCase: "関連Caseを開く",
       periodSourceLimit: "合計は全件です。ここには先頭100件の記録を表示しています。",
       viewDetails: "詳細",
