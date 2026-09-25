@@ -70,6 +70,10 @@ const en = {
       title: "Settings",
       description: "Manage operator accounts and authentication.",
       manageAuthority: "AI authority and limits",
+      authorityEntryDescription:
+        "Set how proposed changes are approved and how far a Case may run.",
+      currentAuthorityMode: "Current authority mode",
+      openAuthority: "Open authority settings",
       checklist: "Operational readiness",
       readOnly: "Your account can view these settings. An administrator must change them.",
       ready: "Ready",

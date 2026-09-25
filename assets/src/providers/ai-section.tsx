@@ -379,22 +379,14 @@ export function ProviderSetup({
           <h1 className="text-2xl font-semibold tracking-tight">{t("setup.aiTitle")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline">
-            <Link to="/ai/authority">
-              <ShieldCheck />
-              {t("setup.manageAuthority")}
+        {canManage && (
+          <Button asChild>
+            <Link to="/ai/new">
+              <Plus />
+              {t("setup.addAI")}
             </Link>
           </Button>
-          {canManage && (
-            <Button asChild>
-              <Link to="/ai/new">
-                <Plus />
-                {t("setup.addAI")}
-              </Link>
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
       {localError && (
@@ -672,6 +664,25 @@ export function ProviderSetup({
           </p>
         )}
       </div>
+
+      <Card id="ai-authority" className="scroll-mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-4 text-primary" />
+            {t("setup.manageAuthority")}
+          </CardTitle>
+          <CardDescription>{t("setup.authorityEntryDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <span>{t("setup.currentAuthorityMode")}</span>
+            <Badge variant="outline">{t(`setup.modes.${authorityMode}.name`)}</Badge>
+          </div>
+          <Button asChild variant="outline" className="w-full sm:w-auto">
+            <Link to="/ai/authority">{t("setup.openAuthority")}</Link>
+          </Button>
+        </CardContent>
+      </Card>
     </section>
   );
 }
