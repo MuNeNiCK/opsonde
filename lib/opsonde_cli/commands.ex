@@ -33,9 +33,8 @@ defmodule OpsondeCLI.Commands do
       Route.new(:post, "/providers/:id/target-capabilities", 1, "provider"),
     {"provider", "enable"} => Route.new(:post, "/providers/:id/enable", 1, "provider"),
     {"provider", "disable"} => Route.new(:post, "/providers/:id/disable", 1, "provider"),
+    {"provider", "usage"} => Route.new(:put, "/providers/:id/ai-usage", 1, "usage"),
     {"ai-role", "list"} => Route.page("/ai-usage-role-assignments"),
-    {"ai-role", "create"} => Route.new(:post, "/ai-usage-role-assignments", 0, "assignment"),
-    {"ai-role", "update"} => Route.new(:patch, "/ai-usage-role-assignments/:id", 1, "assignment"),
     {"boundary", "list"} => Route.page("/management-boundaries"),
     {"boundary", "create"} =>
       Route.new(:post, "/management-boundaries", 0, "management_boundary"),

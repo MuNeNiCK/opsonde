@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/spinner";
 
 type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
 type Provider = components["schemas"]["Provider"];
+type UsageScope = "all" | "resolver" | "reviewer";
 
 type Props = {
   providers: Provider[];
@@ -32,6 +33,23 @@ function configurationValue(provider: Provider, key: string) {
 function configurationNumber(provider: Provider, key: string, fallback: number) {
   const value = provider.configuration[key];
   return typeof value === "number" ? value : fallback;
+}
+
+function usageScope(assignments: AIUsageRoleAssignment[]): UsageScope | null {
+  const resolver = assignments.find((assignment) => assignment.role === "resolver")?.enabled;
+  const reviewer = assignments.find((assignment) => assignment.role === "reviewer")?.enabled;
+  if (resolver && reviewer) return "all";
+  if (resolver) return "resolver";
+  if (reviewer) return "reviewer";
+  return null;
+}
+
+function usageOptions(t: (key: string) => string) {
+  return [
+    { value: "all", label: t("setup.usageAll") },
+    { value: "resolver", label: "Resolver" },
+    { value: "reviewer", label: "Reviewer" },
+  ];
 }
 
 export function AIProviderCreateForm({
@@ -55,6 +73,8 @@ export function AIProviderCreateForm({
     const apiKey = form.get("api_key");
     const timeoutMs = form.get("timeout_ms");
     const maxTokens = form.get("max_tokens");
+    const usageScope = form.get("usage_scope");
+    const usagePriority = form.get("usage_priority");
 
     if (
       typeof name !== "string" ||
@@ -62,7 +82,9 @@ export function AIProviderCreateForm({
       typeof endpoint !== "string" ||
       typeof apiKey !== "string" ||
       typeof timeoutMs !== "string" ||
-      typeof maxTokens !== "string"
+      typeof maxTokens !== "string" ||
+      (usageScope !== "all" && usageScope !== "resolver" && usageScope !== "reviewer") ||
+      typeof usagePriority !== "string"
     ) {
       onError(t("setup.requestFailed"));
       return;
@@ -87,6 +109,8 @@ export function AIProviderCreateForm({
             adapter_type: "req-llm",
             configuration,
             credentials: apiKey ? { api_key: apiKey } : {},
+            usage_scope: usageScope,
+            usage_priority: Number(usagePriority),
           },
         },
       });
@@ -107,6 +131,30 @@ export function AIProviderCreateForm({
       <CardContent>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
           <AIProviderFields idPrefix="provider" fixedService={service} />
+          <div className="space-y-2">
+            <Label htmlFor="provider-usage-scope">{t("setup.usageScope")}</Label>
+            <FormSelect
+              id="provider-usage-scope"
+              name="usage_scope"
+              defaultValue="all"
+              options={usageOptions(t)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="provider-usage-priority">{t("setup.priority")}</Label>
+            <Input
+              id="provider-usage-priority"
+              name="usage_priority"
+              type="number"
+              min={0}
+              max={10000}
+              defaultValue={100}
+              required
+            />
+          </div>
+          <p className="text-sm text-muted-foreground md:col-span-2">
+            {t("setup.priorityDescription")}
+          </p>
           <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending}>
             {pending ? <Spinner /> : <Plus />}
             {t("setup.addConnection")}
@@ -236,43 +284,57 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     }
   }
 
-  async function createAssignment(event: FormEvent<HTMLFormElement>) {
+  async function saveUsage(provider: Provider, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const providerId = form.get("provider_id");
-    const role = form.get("role");
+    const scope = form.get("scope");
     const priority = form.get("priority");
 
     if (
-      typeof providerId !== "string" ||
-      (role !== "resolver" && role !== "reviewer") ||
+      (scope !== "all" && scope !== "resolver" && scope !== "reviewer") ||
       typeof priority !== "string"
     ) {
       onError(t("setup.requestFailed"));
       return;
     }
 
-    await mutate("create-assignment", () =>
-      apiClient.POST("/api/v1/ai-usage-role-assignments", {
+    const assigned = assignments.filter((assignment) => assignment.provider_id === provider.id);
+    const saved = await mutate(`${provider.id}-usage`, () =>
+      apiClient.PUT("/api/v1/providers/{id}/ai-usage", {
+        params: { path: { id: provider.id } },
         body: {
-          assignment: { provider_id: providerId, role, priority: Number(priority) },
-        },
-      }),
-    );
-  }
-
-  async function toggleAssignment(assignment: AIUsageRoleAssignment) {
-    await mutate(`assignment-${assignment.id}`, () =>
-      apiClient.PATCH("/api/v1/ai-usage-role-assignments/{id}", {
-        params: { path: { id: assignment.id } },
-        body: {
-          assignment: {
-            expected_revision: assignment.revision,
-            enabled: !assignment.enabled,
+          usage: {
+            scope,
+            priority: Number(priority),
+            expected_resolver_revision:
+              assigned.find((item) => item.role === "resolver")?.revision ?? null,
+            expected_reviewer_revision:
+              assigned.find((item) => item.role === "reviewer")?.revision ?? null,
           },
         },
       }),
     );
+    if (saved) setSuccess(t("setup.usageSaved", { name: provider.name }));
+  }
+
+  function ordered(role: "resolver" | "reviewer") {
+    return assignments
+      .filter((assignment) => {
+        const provider = aiProviders.find((item) => item.id === assignment.provider_id);
+        return (
+          assignment.role === role &&
+          assignment.enabled &&
+          provider?.enabled &&
+          provider.check.status === "passed" &&
+          provider.check.checked_revision === provider.revision
+        );
+      })
+      .sort(
+        (a, b) =>
+          a.priority - b.priority ||
+          a.inserted_at.localeCompare(b.inserted_at) ||
+          a.id.localeCompare(b.id),
+      );
   }
 
   return (
@@ -308,6 +370,12 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         {aiProviders.map((provider) => {
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
+          const assigned = assignments.filter(
+            (assignment) => assignment.provider_id === provider.id,
+          );
+          const scope = usageScope(assigned);
+          const priority =
+            assigned.find((assignment) => assignment.role === "resolver")?.priority ?? 100;
           return (
             <Card key={provider.id}>
               <CardHeader>
@@ -338,6 +406,59 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                       </details>
                     )}
                   </div>
+                </div>
+                <div className="rounded-md border p-3 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{t("setup.currentUsage")}</span>
+                    <Badge variant="secondary">
+                      {scope
+                        ? usageOptions(t).find((option) => option.value === scope)?.label
+                        : t("setup.usageUnset")}
+                    </Badge>
+                  </div>
+                  {canManage ? (
+                    <form
+                      key={`${provider.id}-${assigned.map((item) => `${item.role}:${item.revision}`).join("-")}`}
+                      className="grid gap-3 sm:grid-cols-[1fr_8rem_auto]"
+                      onSubmit={(event) => void saveUsage(provider, event)}
+                    >
+                      <div className="space-y-2">
+                        <Label htmlFor={`${provider.id}-scope`}>{t("setup.usageScope")}</Label>
+                        <FormSelect
+                          id={`${provider.id}-scope`}
+                          name="scope"
+                          defaultValue={scope ?? "all"}
+                          options={usageOptions(t)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`${provider.id}-priority`}>{t("setup.priority")}</Label>
+                        <Input
+                          id={`${provider.id}-priority`}
+                          name="priority"
+                          type="number"
+                          min={0}
+                          max={10000}
+                          defaultValue={priority}
+                          required
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="self-end"
+                        disabled={pending !== null}
+                      >
+                        {pending === `${provider.id}-usage` ? <Spinner /> : <Save />}
+                        {t("setup.saveUsage")}
+                      </Button>
+                    </form>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {t("setup.priority")} {priority}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">{t("setup.priorityDescription")}</p>
                 </div>
                 {canManage && (
                   <>
@@ -456,97 +577,36 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         })}
       </div>
 
-      <Card id="ai-roles" className="scroll-mt-6">
+      <Card id="ai-order" className="scroll-mt-6">
         <CardHeader>
-          <CardTitle>{t("setup.rolesTitle")}</CardTitle>
-          <CardDescription>{t("setup.rolesDescription")}</CardDescription>
+          <CardTitle>{t("setup.selectionOrder")}</CardTitle>
+          <CardDescription>{t("setup.selectionOrderDescription")}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          {canManage && aiProviders.length > 0 && (
-            <form
-              className="grid gap-4 md:grid-cols-[1fr_1fr_8rem_auto]"
-              onSubmit={createAssignment}
-            >
-              <div className="space-y-2">
-                <Label htmlFor="role-provider">{t("setup.connection")}</Label>
-                <FormSelect
-                  id="role-provider"
-                  name="provider_id"
-                  defaultValue={aiProviders[0]?.id}
-                  options={aiProviders.map((provider) => ({
-                    value: provider.id,
-                    label: provider.name,
-                  }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role-name">{t("setup.role")}</Label>
-                <FormSelect
-                  id="role-name"
-                  name="role"
-                  defaultValue="resolver"
-                  options={[
-                    { value: "resolver", label: "Resolver" },
-                    { value: "reviewer", label: "Reviewer" },
-                  ]}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role-priority">{t("setup.priority")}</Label>
-                <Input
-                  id="role-priority"
-                  name="priority"
-                  type="number"
-                  min={0}
-                  max={10000}
-                  defaultValue={100}
-                  required
-                />
-              </div>
-              <Button type="submit" className="self-end" disabled={pending !== null}>
-                {pending === "create-assignment" ? <Spinner /> : <KeyRound />}
-                {t("setup.assign")}
-              </Button>
-            </form>
-          )}
-
-          <div className="divide-y rounded-md border">
-            {assignments.map((assignment) => {
-              const provider = providers.find((item) => item.id === assignment.provider_id);
-              return (
-                <div
-                  key={assignment.id}
-                  className="flex flex-wrap items-center justify-between gap-3 p-3"
-                >
-                  <div>
-                    <p className="font-medium">{provider?.name ?? assignment.provider_id}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {assignment.role === "resolver" ? "Resolver" : "Reviewer"} ·{" "}
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          {(["resolver", "reviewer"] as const).map((role) => (
+            <div key={role} className="space-y-2">
+              <h3 className="font-medium">{role === "resolver" ? "Resolver" : "Reviewer"}</h3>
+              <ol className="divide-y rounded-md border">
+                {ordered(role).map((assignment, index) => (
+                  <li
+                    key={assignment.id}
+                    className="flex items-center justify-between gap-3 p-3 text-sm"
+                  >
+                    <span>
+                      {index + 1}.{" "}
+                      {aiProviders.find((provider) => provider.id === assignment.provider_id)?.name}
+                    </span>
+                    <span className="text-muted-foreground">
                       {t("setup.priority")} {assignment.priority}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={assignment.enabled ? "default" : "secondary"}>
-                      {t(assignment.enabled ? "setup.enabled" : "setup.disabled")}
-                    </Badge>
-                    {canManage && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={pending !== null}
-                        onClick={() => void toggleAssignment(assignment)}
-                      >
-                        {t(assignment.enabled ? "setup.disable" : "setup.enable")}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {assignments.length === 0 && (
-              <p className="p-4 text-sm text-muted-foreground">{t("setup.noRoles")}</p>
-            )}
-          </div>
+                    </span>
+                  </li>
+                ))}
+                {ordered(role).length === 0 && (
+                  <li className="p-3 text-sm text-muted-foreground">{t("setup.noEligibleAI")}</li>
+                )}
+              </ol>
+            </div>
+          ))}
         </CardContent>
       </Card>
     </section>

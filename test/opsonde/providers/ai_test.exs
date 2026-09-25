@@ -35,10 +35,7 @@ defmodule Opsonde.Providers.AITest do
     end
 
     assert {:error, _error} =
-             Providers.create_ai_usage_role_assignment(
-               context.provider.id,
-               :resolver,
-               30,
+             Providers.configure_ai_usage(context.provider.id, :resolver, 30, nil, nil,
                actor: context.admin
              )
 
@@ -53,14 +50,11 @@ defmodule Opsonde.Providers.AITest do
       )
 
     assert {:error, wrong_kind} =
-             Providers.create_ai_usage_role_assignment(
-               target_provider.id,
-               :reviewer,
-               10,
+             Providers.configure_ai_usage(target_provider.id, :reviewer, 10, nil, nil,
                actor: context.admin
              )
 
-    assert Exception.message(wrong_kind) =~ "must reference an AI provider"
+    assert Exception.message(wrong_kind) =~ "only AI connections have usage roles"
   end
 
   test "selection uses priority and reviewer fallback reuses the exact resolver provider",
@@ -69,7 +63,7 @@ defmodule Opsonde.Providers.AITest do
     reviewer_provider = create_ai_provider!(context.admin, "reviewer-provider", "review-model")
     reviewer_assignment = assign!(context.admin, reviewer_provider, :reviewer, 10)
     backup_reviewer = create_ai_provider!(context.admin, "backup-reviewer", "backup-model")
-    backup_assignment = assign!(context.admin, backup_reviewer, :reviewer, 20)
+    assign!(context.admin, backup_reviewer, :reviewer, 20)
 
     assert %AI.Selection{
              role: :resolver,
@@ -112,19 +106,9 @@ defmodule Opsonde.Providers.AITest do
 
     assert backup_id == backup_reviewer.id
 
-    Providers.update_ai_usage_role_assignment!(
-      reviewer_assignment,
-      reviewer_assignment.revision,
-      %{enabled: false},
-      actor: context.admin
-    )
+    Opsonde.TestAIUsage.configure!(reviewer_provider.id, :resolver, 10, context.admin)
 
-    Providers.update_ai_usage_role_assignment!(
-      backup_assignment,
-      backup_assignment.revision,
-      %{enabled: false},
-      actor: context.admin
-    )
+    Opsonde.TestAIUsage.configure!(backup_reviewer.id, :resolver, 20, context.admin)
 
     assert %AI.Selection{
              role: :reviewer,
@@ -151,12 +135,7 @@ defmodule Opsonde.Providers.AITest do
                actor: context.operator
              )
 
-    Providers.update_ai_usage_role_assignment!(
-      resolver_assignment,
-      resolver_assignment.revision,
-      %{priority: 40},
-      actor: context.admin
-    )
+    Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 40, context.admin)
 
     assert {:error, _stale_resolver} =
              Providers.select_reviewer_ai(

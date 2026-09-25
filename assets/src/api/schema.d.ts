@@ -778,23 +778,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/ai-usage-role-assignments/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update an AI usage-role assignment */
-        patch: operations["updateAIUsageRoleAssignment"];
-        trace?: never;
-    };
     "/api/v1/cli/session-requests": {
         parameters: {
             query?: never;
@@ -844,6 +827,23 @@ export interface paths {
         head?: never;
         /** Update an account role */
         patch: operations["updateAccountRole"];
+        trace?: never;
+    };
+    "/api/v1/providers/{id}/ai-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set an AI connection's usage and selection priority */
+        put: operations["configureAIUsage"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/audit-runs/{id}": {
@@ -1357,8 +1357,7 @@ export interface paths {
         /** List AI usage-role assignments */
         get: operations["listAIUsageRoleAssignments"];
         put?: never;
-        /** Assign an AI Provider role */
-        post: operations["createAIUsageRoleAssignment"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1506,13 +1505,6 @@ export interface components {
         };
         ProviderResponse: {
             data: components["schemas"]["Provider"];
-        };
-        UpdateAIUsageRoleAssignmentRequest: {
-            assignment: {
-                enabled?: boolean;
-                expected_revision: number;
-                priority?: number;
-            };
         };
         AuditRun: {
             /** Format: uuid */
@@ -1974,9 +1966,6 @@ export interface components {
         AuditSchedulePage: {
             data: components["schemas"]["AuditSchedule"][];
             page: components["schemas"]["Page"];
-        };
-        AIUsageRoleAssignmentResponse: {
-            data: components["schemas"]["AIUsageRoleAssignment"];
         };
         ProviderRevisionRequest: {
             provider: {
@@ -2562,18 +2551,18 @@ export interface components {
         AccountResponse: {
             data: components["schemas"]["Account"];
         };
+        ConfigureAIUsageRequest: {
+            usage: {
+                expected_resolver_revision: number | null;
+                expected_reviewer_revision: number | null;
+                priority: number;
+                /** @enum {string} */
+                scope: "all" | "resolver" | "reviewer";
+            };
+        };
         SignalEventPage: {
             data: components["schemas"]["SignalEvent"][];
             page: components["schemas"]["Page"];
-        };
-        CreateAIUsageRoleAssignmentRequest: {
-            assignment: {
-                priority: number;
-                /** Format: uuid */
-                provider_id: string;
-                /** @enum {string} */
-                role: "resolver" | "reviewer";
-            };
         };
         ManualInventoryPreviewRequest: {
             inventory_import: {
@@ -2720,6 +2709,9 @@ export interface components {
                 /** @enum {string} */
                 kind: "ai" | "signal" | "target" | "inventory" | "notification";
                 name: string;
+                usage_priority?: number;
+                /** @enum {string} */
+                usage_scope?: "all" | "resolver" | "reviewer";
             };
         };
         ExchangeCLISessionResponse: {
@@ -6861,96 +6853,6 @@ export interface operations {
             };
         };
     };
-    updateAIUsageRoleAssignment: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        /** @description AI usage-role assignment update */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateAIUsageRoleAssignmentRequest"];
-            };
-        };
-        responses: {
-            /** @description AI usage-role assignment updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIUsageRoleAssignmentResponse"];
-                };
-            };
-            /** @description Request body is invalid */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource was not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource state conflicts with the request */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     createCLISessionRequest: {
         parameters: {
             query?: never;
@@ -7147,6 +7049,94 @@ export interface operations {
             };
             /** @description Resource was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    configureAIUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description AI usage */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigureAIUsageRequest"];
+            };
+        };
+        responses: {
+            /** @description AI usage configured */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9873,85 +9863,6 @@ export interface operations {
             };
             /** @description The operation is not permitted */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    createAIUsageRoleAssignment: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description AI usage-role assignment */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateAIUsageRoleAssignmentRequest"];
-            };
-        };
-        responses: {
-            /** @description AI usage-role assignment created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AIUsageRoleAssignmentResponse"];
-                };
-            };
-            /** @description Request body is invalid */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource state conflicts with the request */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

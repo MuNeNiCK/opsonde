@@ -261,9 +261,11 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{"error" => %{"code" => "validation_failed"}} =
              json_response(wrong_kind, 422)
 
-    assert %{"error" => %{"code" => "forbidden"}} =
-             put_json("/api/v1/providers/#{ai["id"]}/ai-usage", body, context.operator_token)
-             |> json_response(403)
+    for token <- [context.operator_token, context.viewer_token] do
+      assert %{"error" => %{"code" => "forbidden"}} =
+               put_json("/api/v1/providers/#{ai["id"]}/ai-usage", body, token)
+               |> json_response(403)
+    end
 
     listed = get_json("/api/v1/ai-usage-role-assignments?limit=1", context.viewer_token)
     assert %{"data" => [_one], "page" => %{"next" => cursor}} = json_response(listed, 200)

@@ -509,34 +509,6 @@
         ],
         "type": "object"
       },
-      "UpdateAIUsageRoleAssignmentRequest": {
-        "properties": {
-          "assignment": {
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "expected_revision": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "priority": {
-                "maximum": 10000,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "expected_revision"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "assignment"
-        ],
-        "type": "object"
-      },
       "AuditRun": {
         "additionalProperties": false,
         "properties": {
@@ -2262,18 +2234,6 @@
         "required": [
           "data",
           "page"
-        ],
-        "type": "object"
-      },
-      "AIUsageRoleAssignmentResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/AIUsageRoleAssignment"
-          }
-        },
-        "required": [
-          "data"
         ],
         "type": "object"
       },
@@ -4529,40 +4489,6 @@
         "required": [
           "data",
           "page"
-        ],
-        "type": "object"
-      },
-      "CreateAIUsageRoleAssignmentRequest": {
-        "properties": {
-          "assignment": {
-            "properties": {
-              "priority": {
-                "maximum": 10000,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "provider_id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "role": {
-                "enum": [
-                  "resolver",
-                  "reviewer"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "provider_id",
-              "role",
-              "priority"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "assignment"
         ],
         "type": "object"
       },
@@ -10927,121 +10853,6 @@
         ]
       }
     },
-    "/api/v1/ai-usage-role-assignments/{id}": {
-      "patch": {
-        "callbacks": {},
-        "operationId": "updateAIUsageRoleAssignment",
-        "parameters": [
-          {
-            "description": "",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateAIUsageRoleAssignmentRequest"
-              }
-            }
-          },
-          "description": "AI usage-role assignment update",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AIUsageRoleAssignmentResponse"
-                }
-              }
-            },
-            "description": "AI usage-role assignment updated"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request body is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource was not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource state conflicts with the request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "Update an AI usage-role assignment",
-        "tags": [
-          "AI usage roles"
-        ]
-      }
-    },
     "/api/v1/cli/session-requests": {
       "post": {
         "callbacks": {},
@@ -14958,98 +14769,6 @@
           }
         },
         "summary": "List AI usage-role assignments",
-        "tags": [
-          "AI usage roles"
-        ]
-      },
-      "post": {
-        "callbacks": {},
-        "operationId": "createAIUsageRoleAssignment",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateAIUsageRoleAssignmentRequest"
-              }
-            }
-          },
-          "description": "AI usage-role assignment",
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AIUsageRoleAssignmentResponse"
-                }
-              }
-            },
-            "description": "AI usage-role assignment created"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request body is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource state conflicts with the request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "Assign an AI Provider role",
         "tags": [
           "AI usage roles"
         ]

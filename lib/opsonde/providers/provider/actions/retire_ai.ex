@@ -67,12 +67,13 @@ defmodule Opsonde.Providers.Provider.Actions.RetireAI do
     |> case do
       {:ok, assignments} ->
         Enum.reduce_while(assignments, :ok, fn assignment, _acc ->
-          case Providers.update_ai_usage_role_assignment(
-                 assignment,
-                 assignment.revision,
-                 %{enabled: false},
+          case assignment
+               |> Ash.Changeset.for_update(
+                 :update,
+                 %{expected_revision: assignment.revision, enabled: false},
                  authorize?: false
-               ) do
+               )
+               |> Ash.update(authorize?: false) do
             {:ok, _updated} -> {:cont, :ok}
             {:error, error} -> {:halt, {:error, error}}
           end

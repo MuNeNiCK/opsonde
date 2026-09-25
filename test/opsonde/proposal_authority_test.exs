@@ -542,12 +542,7 @@ defmodule Opsonde.ProposalAuthorityTest do
   test "Auto uses isolated Resolver fallback and reconsiders a rejected proposal once", context do
     configure_mode!(:auto, context.admin)
 
-    Providers.update_ai_usage_role_assignment!(
-      context.reviewer_assignment,
-      context.reviewer_assignment.revision,
-      %{enabled: false},
-      actor: context.admin
-    )
+    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :resolver, 10, context.admin)
 
     {incident, run, proposal} = proposal!("review-fallback", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)

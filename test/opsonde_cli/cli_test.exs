@@ -112,6 +112,43 @@ defmodule OpsondeCLI.CLITest do
     assert output =~ "target-1"
   end
 
+  test "configures AI usage through the connection API", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "PUT"
+      assert conn.request_path == "/api/v1/providers/ai-1/ai-usage"
+      {:ok, encoded, conn} = read_body(conn)
+
+      assert Jason.decode!(encoded) == %{
+               "usage" => %{
+                 "scope" => "all",
+                 "priority" => 10,
+                 "expected_resolver_revision" => 2,
+                 "expected_reviewer_revision" => 1
+               }
+             }
+
+      send_resp(conn, 204, "")
+    end)
+
+    input =
+      ~s({"scope":"all","priority":10,"expected_resolver_revision":2,"expected_reviewer_revision":1})
+
+    output =
+      capture_io(input, fn ->
+        assert CLI.run(["provider", "usage", "ai-1", "--input", "-"], runtime(context)) == 0
+      end)
+
+    assert output =~ ~s("outcome": "succeeded")
+
+    for action <- ["create", "update"] do
+      assert capture_io(:stderr, fn ->
+               assert CLI.run(["ai-role", action, "ai-1"], runtime(context)) == 2
+             end) =~ "Unknown or incomplete command"
+    end
+  end
+
   test "passes pagination without changing the shared API contract", context do
     save_session(context)
 

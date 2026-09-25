@@ -16,10 +16,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       "ConfigureAIUsageRequest" => configure_ai_usage_request(),
       "TargetCapabilitiesResponse" => Schemas.data(target_capabilities()),
       "AIUsageRoleAssignment" => assignment(),
-      "AIUsageRoleAssignmentResponse" => Schemas.data(ref("AIUsageRoleAssignment")),
-      "AIUsageRoleAssignmentPage" => Schemas.page(ref("AIUsageRoleAssignment")),
-      "CreateAIUsageRoleAssignmentRequest" => create_assignment_request(),
-      "UpdateAIUsageRoleAssignmentRequest" => update_assignment_request()
+      "AIUsageRoleAssignmentPage" => Schemas.page(ref("AIUsageRoleAssignment"))
     }
   end
 
@@ -194,40 +191,6 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       },
       [:id, :provider_id, :role, :priority, :enabled, :revision, :inserted_at, :updated_at],
       false
-    )
-  end
-
-  defp create_assignment_request do
-    object(
-      %{
-        assignment:
-          object(
-            %{
-              provider_id: Schemas.uuid(),
-              role: %Schema{type: :string, enum: ~w(resolver reviewer)},
-              priority: priority()
-            },
-            [:provider_id, :role, :priority]
-          )
-      },
-      [:assignment]
-    )
-  end
-
-  defp update_assignment_request do
-    object(
-      %{
-        assignment:
-          object(
-            %{
-              expected_revision: positive_integer(),
-              priority: priority(),
-              enabled: %Schema{type: :boolean}
-            },
-            [:expected_revision]
-          )
-      },
-      [:assignment]
     )
   end
 

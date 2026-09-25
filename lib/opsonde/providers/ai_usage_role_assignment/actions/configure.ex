@@ -83,33 +83,40 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment.Actions.Configure do
         case Map.get(assignments, role) do
           nil ->
             with {:ok, assignment} <-
-                   Providers.create_ai_usage_role_assignment(
-                     args.provider_id,
-                     role,
-                     args.priority,
+                   AIUsageRoleAssignment
+                   |> Ash.Changeset.for_create(
+                     :create,
+                     %{provider_id: args.provider_id, role: role, priority: args.priority},
                      authorize?: false
-                   ) do
+                   )
+                   |> Ash.create(authorize?: false) do
               if enabled,
                 do: {:ok, assignment},
                 else:
-                  Providers.update_ai_usage_role_assignment(
-                    assignment,
-                    assignment.revision,
-                    %{enabled: false},
+                  assignment
+                  |> Ash.Changeset.for_update(
+                    :update,
+                    %{expected_revision: assignment.revision, enabled: false},
                     authorize?: false
                   )
+                  |> Ash.update(authorize?: false)
             end
 
           %{enabled: ^enabled, priority: priority} when priority == args.priority ->
             {:ok, :unchanged}
 
           assignment ->
-            Providers.update_ai_usage_role_assignment(
-              assignment,
-              assignment.revision,
-              %{enabled: enabled, priority: args.priority},
+            assignment
+            |> Ash.Changeset.for_update(
+              :update,
+              %{
+                expected_revision: assignment.revision,
+                enabled: enabled,
+                priority: args.priority
+              },
               authorize?: false
             )
+            |> Ash.update(authorize?: false)
         end
 
       case result do

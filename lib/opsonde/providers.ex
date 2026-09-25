@@ -78,10 +78,6 @@ defmodule Opsonde.Providers do
         action: :resolver_fallback,
         args: [:id, :expected_assignment_revision, :expected_provider_revision]
 
-      define :create_ai_usage_role_assignment,
-        action: :create,
-        args: [:provider_id, :role, :priority]
-
       define :configure_ai_usage,
         action: :configure,
         args: [
@@ -91,10 +87,6 @@ defmodule Opsonde.Providers do
           :expected_resolver_revision,
           :expected_reviewer_revision
         ]
-
-      define :update_ai_usage_role_assignment,
-        action: :update,
-        args: [:expected_revision]
 
       define :select_resolver_ai, action: :select_resolver
 

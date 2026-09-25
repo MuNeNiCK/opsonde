@@ -53,8 +53,6 @@ defmodule OpsondeWeb.Router do
     post "/providers/:id/disable", ProviderController, :disable
 
     get "/ai-usage-role-assignments", AIUsageRoleAssignmentController, :index
-    post "/ai-usage-role-assignments", AIUsageRoleAssignmentController, :create
-    patch "/ai-usage-role-assignments/:id", AIUsageRoleAssignmentController, :update
 
     get "/management-boundaries", TargetSetupController, :boundaries_index
     post "/management-boundaries", TargetSetupController, :boundaries_create

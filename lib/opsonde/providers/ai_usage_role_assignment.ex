@@ -128,7 +128,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
     end
 
     policy action([:create, :update]) do
-      authorize_if actor_attribute_equals(:role, :admin)
+      forbid_if always()
     end
 
     policy action([:eligible, :resolver_fallback]) do
