@@ -22,7 +22,7 @@ export function SetupPage() {
   }, [hash]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6 lg:py-8">
+    <div className="space-y-8 p-6 lg:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t("setup.title")}</h1>
         <p className="mt-2 text-muted-foreground">{t("setup.description")}</p>
