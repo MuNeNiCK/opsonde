@@ -1,8 +1,10 @@
-import { useState, type FormEvent } from "react";
-import { Save } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { ArrowLeft, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient } from "@/api/client";
+import { Link } from "react-router-dom";
+import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
+import { useAuthentication } from "@/auth/context";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +28,63 @@ const modes = ["readonly", "ask", "auto", "full_access"] as const;
 function integer(form: FormData, name: string) {
   const value = form.get(name);
   return typeof value === "string" ? Number(value) : Number.NaN;
+}
+
+export function AuthorityPage() {
+  const { t } = useTranslation();
+  const { account } = useAuthentication();
+  const [setting, setSetting] = useState<AuthoritySetting | null>(null);
+  const [error, setError] = useState("");
+
+  async function refresh() {
+    const result = await apiClient.GET("/api/v1/authority-setting").then(apiData);
+    setSetting(result.data);
+  }
+
+  useEffect(() => {
+    let active = true;
+    apiClient
+      .GET("/api/v1/authority-setting")
+      .then(apiData)
+      .then((result) => {
+        if (active) setSetting(result.data);
+      })
+      .catch(() => {
+        if (active) setError(t("setup.requestFailed"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [t]);
+
+  return (
+    <div className="space-y-6 p-6 lg:p-8">
+      <Button asChild size="sm" variant="ghost" className="-ml-3">
+        <Link to="/settings">
+          <ArrowLeft />
+          {t("setup.backToSettings")}
+        </Link>
+      </Button>
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {setting ? (
+        <AuthoritySetup
+          key={setting.setting_revision}
+          setting={setting}
+          canManage={account?.role === "admin"}
+          onRefresh={refresh}
+          onError={setError}
+        />
+      ) : !error ? (
+        <div className="flex justify-center py-16">
+          <Spinner />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props) {

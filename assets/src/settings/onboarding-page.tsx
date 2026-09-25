@@ -68,8 +68,8 @@ export function OnboardingPage() {
   const firstTarget = snapshot.targets.find((target) => target.active);
   const steps: Step[] = [
     { key: "ai", icon: <Bot />, href: "/ai/new" },
-    { key: "resolver", icon: <Bot />, href: "/ai#ai-order" },
-    { key: "authority", icon: <ShieldCheck />, href: "/ai#authority" },
+    { key: "resolver", icon: <Bot />, href: "/ai#ai-connections" },
+    { key: "authority", icon: <ShieldCheck />, href: "/settings/authority" },
     { key: "signal", icon: <RadioTower />, href: "/signals/new" },
     {
       key: "target",

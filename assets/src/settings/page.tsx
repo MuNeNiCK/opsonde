@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bot, Check, CircleDashed, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { AccountSection } from "@/settings/account-section";
@@ -119,6 +120,10 @@ export function SetupPage() {
           }
         />
       </section>
+
+      <Button asChild variant="outline">
+        <Link to="/settings/authority">{t("setup.manageAuthority")}</Link>
+      </Button>
 
       {canManage && account && <AccountSection currentAccountId={account.id} />}
       <OIDCSetup canManage={canManage} onError={setError} />

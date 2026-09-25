@@ -1,5 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { CheckCircle2, CircleAlert, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleAlert,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
@@ -168,6 +177,7 @@ export function AIProviderCreateForm({
 export function ProviderSetup({ providers, assignments, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
+  const [managingProviderId, setManagingProviderId] = useState<string | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
   const [localError, setLocalError] = useState("");
@@ -278,6 +288,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     );
 
     if (deleted) {
+      setManagingProviderId(null);
       setDeletingProviderId(null);
       setEditingProviderId(null);
       setSuccess(t("setup.connectionDeleted", { name: provider.name }));
@@ -314,7 +325,10 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         },
       }),
     );
-    if (saved) setSuccess(t("setup.usageSaved", { name: provider.name }));
+    if (saved) {
+      setManagingProviderId(null);
+      setSuccess(t("setup.usageSaved", { name: provider.name }));
+    }
   }
 
   function ordered(role: "resolver" | "reviewer") {
@@ -335,6 +349,15 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
           a.inserted_at.localeCompare(b.inserted_at) ||
           a.id.localeCompare(b.id),
       );
+  }
+
+  const resolverOrder = ordered("resolver");
+  const reviewerOrder = ordered("reviewer");
+
+  function toggleManagement(id: string) {
+    setManagingProviderId(managingProviderId === id ? null : id);
+    setEditingProviderId(null);
+    setDeletingProviderId(null);
   }
 
   return (
@@ -366,7 +389,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         </Alert>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div id="ai-connections" className="grid scroll-mt-6 gap-3">
         {aiProviders.map((provider) => {
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
@@ -375,240 +398,242 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
           );
           const scope = usageScope(assigned);
           const priority =
-            assigned.find((assignment) => assignment.role === "resolver")?.priority ?? 100;
+            assigned.find((assignment) => assignment.role === "resolver")?.priority ??
+            assigned.find((assignment) => assignment.role === "reviewer")?.priority ??
+            100;
+          const resolverRank = resolverOrder.findIndex((item) => item.provider_id === provider.id);
+          const reviewerRank = reviewerOrder.findIndex((item) => item.provider_id === provider.id);
+          const expanded = managingProviderId === provider.id;
           return (
-            <Card key={provider.id}>
+            <Card key={provider.id} size="sm">
               <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle>{provider.name}</CardTitle>
-                  <Badge variant={provider.enabled ? "default" : "secondary"}>
-                    {t(provider.enabled ? "setup.enabled" : "setup.disabled")}
-                  </Badge>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <CardTitle className="break-words">{provider.name}</CardTitle>
+                    <CardDescription className="break-all">
+                      {configurationValue(provider, "provider")} ·{" "}
+                      {configurationValue(provider, "model")}
+                    </CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={expanded}
+                    aria-controls={expanded ? `ai-connection-${provider.id}` : undefined}
+                    aria-label={`${provider.name}: ${t(expanded ? "setup.hideConnectionDetails" : "setup.showConnectionDetails")}`}
+                    disabled={pending !== null}
+                    onClick={() => toggleManagement(provider.id)}
+                  >
+                    {t(expanded ? "setup.hideConnectionDetails" : "setup.showConnectionDetails")}
+                    <ChevronDown className={expanded ? "rotate-180" : ""} />
+                  </Button>
                 </div>
-                <CardDescription>
-                  {configurationValue(provider, "provider")} ·{" "}
-                  {configurationValue(provider, "model")}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-start gap-2 text-sm">
-                  {passed ? (
-                    <CheckCircle2 className="mt-0.5 size-4 text-success" />
-                  ) : (
-                    <CircleAlert className="mt-0.5 size-4 text-warning" />
-                  )}
-                  <div>
-                    <p>{t(passed ? "setup.checkPassed" : "setup.checkRequired")}</p>
-                    {provider.check.message && (
-                      <details className="text-muted-foreground">
-                        <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-                        <p>{provider.check.message}</p>
-                      </details>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={provider.enabled && passed ? "default" : "secondary"}>
+                    {t(
+                      !passed
+                        ? "setup.checkNeededShort"
+                        : provider.enabled
+                          ? "setup.enabled"
+                          : "setup.disabled",
                     )}
-                  </div>
+                  </Badge>
+                  <span>
+                    {scope
+                      ? usageOptions(t).find((option) => option.value === scope)?.label
+                      : t("setup.usageUnset")}
+                  </span>
+                  <span>
+                    · {t("setup.priority")} {priority}
+                  </span>
+                  {resolverRank >= 0 && <span>· Resolver #{resolverRank + 1}</span>}
+                  {reviewerRank >= 0 && <span>· Reviewer #{reviewerRank + 1}</span>}
                 </div>
-                <div className="rounded-md border p-3 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium">{t("setup.currentUsage")}</span>
-                    <Badge variant="secondary">
-                      {scope
-                        ? usageOptions(t).find((option) => option.value === scope)?.label
-                        : t("setup.usageUnset")}
-                    </Badge>
-                  </div>
-                  {canManage ? (
-                    <form
-                      key={`${provider.id}-${assigned.map((item) => `${item.role}:${item.revision}`).join("-")}`}
-                      className="grid gap-3 sm:grid-cols-[1fr_8rem_auto]"
-                      onSubmit={(event) => void saveUsage(provider, event)}
-                    >
-                      <div className="space-y-2">
-                        <Label htmlFor={`${provider.id}-scope`}>{t("setup.usageScope")}</Label>
-                        <FormSelect
-                          id={`${provider.id}-scope`}
-                          name="scope"
-                          defaultValue={scope ?? "all"}
-                          options={usageOptions(t)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor={`${provider.id}-priority`}>{t("setup.priority")}</Label>
-                        <Input
-                          id={`${provider.id}-priority`}
-                          name="priority"
-                          type="number"
-                          min={0}
-                          max={10000}
-                          defaultValue={priority}
-                          required
-                        />
-                      </div>
-                      <Button
-                        type="submit"
-                        size="sm"
-                        className="self-end"
-                        disabled={pending !== null}
-                      >
-                        {pending === `${provider.id}-usage` ? <Spinner /> : <Save />}
-                        {t("setup.saveUsage")}
-                      </Button>
-                    </form>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      {t("setup.priority")} {priority}
-                    </p>
-                  )}
-                  <p className="text-xs text-muted-foreground">{t("setup.priorityDescription")}</p>
-                </div>
-                {canManage && (
-                  <>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={pending !== null}
-                        onClick={() =>
-                          setEditingProviderId(
-                            editingProviderId === provider.id ? null : provider.id,
-                          )
-                        }
-                      >
-                        {editingProviderId === provider.id ? <X /> : <Pencil />}
-                        {t(editingProviderId === provider.id ? "common.cancel" : "setup.edit")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={pending !== null}
-                        onClick={() => void providerAction(provider, "check")}
-                      >
-                        {pending === `${provider.id}-check` && <Spinner />}
-                        {t("setup.check")}
-                      </Button>
-                      {!provider.enabled && (
-                        <Button
-                          size="sm"
-                          disabled={!passed || pending !== null}
-                          onClick={() => void providerAction(provider, "enable")}
-                        >
-                          {pending === `${provider.id}-enable` && <Spinner />}
-                          {t("setup.enable")}
-                        </Button>
+              </CardHeader>
+              {expanded && (
+                <CardContent
+                  id={`ai-connection-${provider.id}`}
+                  className="space-y-4 border-t pt-4"
+                >
+                  <div className="flex items-start gap-2 text-sm">
+                    {passed ? (
+                      <CheckCircle2 className="mt-0.5 size-4 text-success" />
+                    ) : (
+                      <CircleAlert className="mt-0.5 size-4 text-warning" />
+                    )}
+                    <div>
+                      <p>{t(passed ? "setup.checkPassed" : "setup.checkRequired")}</p>
+                      {provider.check.message && (
+                        <details className="text-muted-foreground">
+                          <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
+                          <p>{provider.check.message}</p>
+                        </details>
                       )}
-                      {provider.enabled && (
+                    </div>
+                  </div>
+                  {canManage && (
+                    <div className="space-y-3">
+                      <form
+                        key={`${provider.id}-${assigned.map((item) => `${item.role}:${item.revision}`).join("-")}`}
+                        className="grid gap-3 sm:grid-cols-[1fr_8rem_auto]"
+                        onSubmit={(event) => void saveUsage(provider, event)}
+                      >
+                        <div className="space-y-2">
+                          <Label htmlFor={`${provider.id}-scope`}>{t("setup.usageScope")}</Label>
+                          <FormSelect
+                            id={`${provider.id}-scope`}
+                            name="scope"
+                            defaultValue={scope ?? "all"}
+                            options={usageOptions(t)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`${provider.id}-priority`}>{t("setup.priority")}</Label>
+                          <Input
+                            id={`${provider.id}-priority`}
+                            name="priority"
+                            type="number"
+                            min={0}
+                            max={10000}
+                            defaultValue={priority}
+                            required
+                          />
+                        </div>
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="self-end"
+                          disabled={pending !== null}
+                        >
+                          {pending === `${provider.id}-usage` ? <Spinner /> : <Save />}
+                          {t("setup.saveUsage")}
+                        </Button>
+                      </form>
+                      <p className="text-xs text-muted-foreground">{t("setup.priorityHint")}</p>
+                    </div>
+                  )}
+                  {canManage && (
+                    <>
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
                           variant="outline"
                           disabled={pending !== null}
-                          onClick={() => void providerAction(provider, "disable")}
+                          onClick={() =>
+                            setEditingProviderId(
+                              editingProviderId === provider.id ? null : provider.id,
+                            )
+                          }
                         >
-                          {pending === `${provider.id}-disable` && <Spinner />}
-                          {t("setup.disable")}
+                          {editingProviderId === provider.id ? <X /> : <Pencil />}
+                          {t(editingProviderId === provider.id ? "common.cancel" : "setup.edit")}
                         </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-destructive"
-                        disabled={pending !== null}
-                        onClick={() =>
-                          setDeletingProviderId(
-                            deletingProviderId === provider.id ? null : provider.id,
-                          )
-                        }
-                      >
-                        <Trash2 />
-                        {t("setup.deleteConnection")}
-                      </Button>
-                    </div>
-
-                    {deletingProviderId === provider.id && (
-                      <Alert variant="destructive">
-                        <AlertDescription className="space-y-3">
-                          <p>{t("setup.deleteConnectionConfirm", { name: provider.name })}</p>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={pending !== null}
-                              onClick={() => void deleteProvider(provider)}
-                            >
-                              {pending === `${provider.id}-delete` ? <Spinner /> : <Trash2 />}
-                              {t("setup.confirmDeleteConnection")}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={pending !== null}
-                              onClick={() => setDeletingProviderId(null)}
-                            >
-                              {t("common.cancel")}
-                            </Button>
-                          </div>
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
-                    {editingProviderId === provider.id && (
-                      <form
-                        className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
-                        onSubmit={(event) => void updateProvider(provider, event)}
-                      >
-                        <AIProviderFields
-                          idPrefix={`provider-${provider.id}`}
-                          provider={provider}
-                          editing
-                        />
                         <Button
-                          type="submit"
-                          className="md:col-span-2 md:w-fit"
+                          size="sm"
+                          variant="outline"
                           disabled={pending !== null}
+                          onClick={() => void providerAction(provider, "check")}
                         >
-                          {pending === `${provider.id}-update` ? <Spinner /> : <Save />}
-                          {t("setup.saveConnection")}
+                          {pending === `${provider.id}-check` && <Spinner />}
+                          {t("setup.check")}
                         </Button>
-                      </form>
-                    )}
-                  </>
-                )}
-              </CardContent>
+                        {!provider.enabled && (
+                          <Button
+                            size="sm"
+                            disabled={!passed || pending !== null}
+                            onClick={() => void providerAction(provider, "enable")}
+                          >
+                            {pending === `${provider.id}-enable` && <Spinner />}
+                            {t("setup.enable")}
+                          </Button>
+                        )}
+                        {provider.enabled && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={pending !== null}
+                            onClick={() => void providerAction(provider, "disable")}
+                          >
+                            {pending === `${provider.id}-disable` && <Spinner />}
+                            {t("setup.disable")}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-destructive"
+                          disabled={pending !== null}
+                          onClick={() =>
+                            setDeletingProviderId(
+                              deletingProviderId === provider.id ? null : provider.id,
+                            )
+                          }
+                        >
+                          <Trash2 />
+                          {t("setup.deleteConnection")}
+                        </Button>
+                      </div>
+
+                      {deletingProviderId === provider.id && (
+                        <Alert variant="destructive">
+                          <AlertDescription className="space-y-3">
+                            <p>{t("setup.deleteConnectionConfirm", { name: provider.name })}</p>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={pending !== null}
+                                onClick={() => void deleteProvider(provider)}
+                              >
+                                {pending === `${provider.id}-delete` ? <Spinner /> : <Trash2 />}
+                                {t("setup.confirmDeleteConnection")}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={pending !== null}
+                                onClick={() => setDeletingProviderId(null)}
+                              >
+                                {t("common.cancel")}
+                              </Button>
+                            </div>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
+                      {editingProviderId === provider.id && (
+                        <form
+                          className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
+                          onSubmit={(event) => void updateProvider(provider, event)}
+                        >
+                          <AIProviderFields
+                            idPrefix={`provider-${provider.id}`}
+                            provider={provider}
+                            editing
+                          />
+                          <Button
+                            type="submit"
+                            className="md:col-span-2 md:w-fit"
+                            disabled={pending !== null}
+                          >
+                            {pending === `${provider.id}-update` ? <Spinner /> : <Save />}
+                            {t("setup.saveConnection")}
+                          </Button>
+                        </form>
+                      )}
+                    </>
+                  )}
+                </CardContent>
+              )}
             </Card>
           );
         })}
+        {aiProviders.length === 0 && (
+          <p className="rounded-lg border p-6 text-sm text-muted-foreground">
+            {t("setup.noAIConnections")}
+          </p>
+        )}
       </div>
-
-      <Card id="ai-order" className="scroll-mt-6">
-        <CardHeader>
-          <CardTitle>{t("setup.selectionOrder")}</CardTitle>
-          <CardDescription>{t("setup.selectionOrderDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
-          {(["resolver", "reviewer"] as const).map((role) => (
-            <div key={role} className="space-y-2">
-              <h3 className="font-medium">{role === "resolver" ? "Resolver" : "Reviewer"}</h3>
-              <ol className="divide-y rounded-md border">
-                {ordered(role).map((assignment, index) => (
-                  <li
-                    key={assignment.id}
-                    className="flex items-center justify-between gap-3 p-3 text-sm"
-                  >
-                    <span>
-                      {index + 1}.{" "}
-                      {aiProviders.find((provider) => provider.id === assignment.provider_id)?.name}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {t("setup.priority")} {assignment.priority}
-                    </span>
-                  </li>
-                ))}
-                {ordered(role).length === 0 && (
-                  <li className="p-3 text-sm text-muted-foreground">{t("setup.noEligibleAI")}</li>
-                )}
-              </ol>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
     </section>
   );
 }

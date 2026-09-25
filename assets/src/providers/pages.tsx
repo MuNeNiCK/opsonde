@@ -9,7 +9,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { AIProviderCreateForm, ProviderSetup } from "@/providers/ai-section";
 import { ProviderChoiceCard } from "@/providers/choice-card";
 import { SignalProviderCreateForm, SignalProviderSection } from "@/providers/signal-section";
-import { AuthoritySetup } from "@/settings/authority-section";
 import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
@@ -103,22 +102,13 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
         </Alert>
       )}
       {kind === "ai" ? (
-        <>
-          <ProviderSetup
-            providers={snapshot.providers}
-            assignments={snapshot.assignments}
-            canManage={canManage}
-            onRefresh={refresh}
-            onError={setError}
-          />
-          <AuthoritySetup
-            key={snapshot.authority.setting_revision}
-            setting={snapshot.authority}
-            canManage={canManage}
-            onRefresh={refresh}
-            onError={setError}
-          />
-        </>
+        <ProviderSetup
+          providers={snapshot.providers}
+          assignments={snapshot.assignments}
+          canManage={canManage}
+          onRefresh={refresh}
+          onError={setError}
+        />
       ) : (
         <SignalProviderSection
           providers={snapshot.providers}

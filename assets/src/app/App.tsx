@@ -22,6 +22,9 @@ const SignalDiagnosticsPage = lazy(() =>
 const SetupPage = lazy(() =>
   import("@/settings/page").then((module) => ({ default: module.SetupPage })),
 );
+const AuthorityPage = lazy(() =>
+  import("@/settings/authority-section").then((module) => ({ default: module.AuthorityPage })),
+);
 const AIProviderPage = lazy(() =>
   import("@/providers/pages").then((module) => ({ default: module.AIProviderPage })),
 );
@@ -158,7 +161,7 @@ function AppRoutes() {
                           ? "pages.audits"
                           : path === "/reports"
                             ? "pages.reports"
-                            : path === "/settings" || path === "/providers"
+                            : path.startsWith("/settings") || path === "/providers"
                               ? "pages.settings"
                               : "pages.notFound";
     document.title = `${t(key)} · Opsonde`;
@@ -206,6 +209,7 @@ function AppRoutes() {
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />
           <Route path="settings" element={<SetupPage />} />
+          <Route path="settings/authority" element={<AuthorityPage />} />
           <Route path="*" element={<FoundationPage title="pages.notFound" />} />
         </Route>
       </Routes>
