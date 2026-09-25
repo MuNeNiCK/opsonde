@@ -200,6 +200,7 @@ function AppRoutes() {
           <Route path="targets/imports" element={<TargetImportPage />} />
           <Route path="targets/:targetId" element={<TargetDetailPage />} />
           <Route path="ai" element={<AIProviderPage />} />
+          <Route path="ai/authority" element={<AuthorityPage />} />
           <Route path="ai/new" element={<AIProviderCreatePage />} />
           <Route path="ai/new/:providerType" element={<AIProviderCreatePage />} />
           <Route path="signals" element={<SignalProviderPage />} />
@@ -209,7 +210,6 @@ function AppRoutes() {
           <Route path="audits" element={<AuditPage />} />
           <Route path="reports" element={<ReportPage />} />
           <Route path="settings" element={<SetupPage />} />
-          <Route path="settings/authority" element={<AuthorityPage />} />
           <Route path="*" element={<FoundationPage title="pages.notFound" />} />
         </Route>
       </Routes>

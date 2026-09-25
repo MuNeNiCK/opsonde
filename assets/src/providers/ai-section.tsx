@@ -6,6 +6,7 @@ import {
   Pencil,
   Plus,
   Save,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -367,14 +368,22 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
           <h1 className="text-2xl font-semibold tracking-tight">{t("setup.aiTitle")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("setup.aiDescription")}</p>
         </div>
-        {canManage && (
-          <Button asChild>
-            <Link to="/ai/new">
-              <Plus />
-              {t("setup.addAI")}
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/ai/authority">
+              <ShieldCheck />
+              {t("setup.manageAuthority")}
             </Link>
           </Button>
-        )}
+          {canManage && (
+            <Button asChild>
+              <Link to="/ai/new">
+                <Plus />
+                {t("setup.addAI")}
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {localError && (

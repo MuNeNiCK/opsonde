@@ -60,9 +60,9 @@ export function AuthorityPage() {
   return (
     <div className="space-y-6 p-6 lg:p-8">
       <Button asChild size="sm" variant="ghost" className="-ml-3">
-        <Link to="/settings">
+        <Link to="/ai">
           <ArrowLeft />
-          {t("setup.backToSettings")}
+          {t("setup.backToAI")}
         </Link>
       </Button>
       {error && (
@@ -130,7 +130,7 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
   return (
     <section id="authority" className="scroll-mt-6 space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("setup.authorityTitle")}</h2>
+        <h1 className="text-2xl font-semibold">{t("setup.authorityTitle")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.authorityDescription")}</p>
       </div>
       <Card>
