@@ -743,7 +743,7 @@ const en = {
     reports: {
       automaticTitle: "Automatic Case reports",
       automaticDescription:
-        "Generate a report when autonomous resolution completes a Case. Reports skipped while this is off are not generated later; use manual generation if needed. A report already being generated may still complete.",
+        "Generate reports for Cases resolved automatically. Manual generation remains available when off.",
       automaticAdminOnly: "Only administrators can change this setting.",
       automaticOn: "On",
       automaticOff: "Off",
