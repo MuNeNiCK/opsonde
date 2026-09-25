@@ -78,13 +78,18 @@ const ja = {
       connectionPending: "接続が必要",
       resolverStatus: "Resolver役割",
       resolverPending: "割り当てが必要",
-      reviewerReady: "独立したReviewer役割が割り当てられています。",
-      reviewerFallback:
-        "Reviewerは任意です。未設定時はResolverモデルの独立セッションを使用します。",
+      reviewerReady: "Reviewer用途のAI接続が割り当てられています。",
+      reviewerNotAssigned:
+        "Reviewer用途のAI接続はありません。Resolver専用の接続はReviewerに使用しません。",
+      reviewerRequired: "Reviewerの割り当てが必要",
+      autoReviewerWarning:
+        "権限モードは「自動」ですが、利用可能なReviewer用途のAI接続がありません。変更提案時にケースは停止し、運用者の対応が必要になります。Resolver専用の接続をReviewerに流用しません。",
+      autoReviewerChangeWarning:
+        "この変更を保存するとReviewer用途の接続がなくなります。「自動」モードのケースは変更提案時に停止します。Resolver専用の接続はReviewerに流用しません。",
       authorityStatus: "常設権限",
       authorityPending: "確認が必要",
-      automationOn: "Signalからの自動解決は有効です。",
-      automationOff: "Signalからの自動解決は無効です。",
+      automationOn: "Signal受信時にケースを自動開始します。",
+      automationOff: "Signal受信時にケースを自動開始しません。",
       aiTitle: "AI接続",
       aiDescription: "接続を登録・確認し、用途と選択順を設定します。",
       addAI: "AI接続を追加",
@@ -204,7 +209,7 @@ const ja = {
         ask: { name: "毎回確認", description: "提案された変更ごとに人間の判断を求めます。" },
         auto: {
           name: "自動",
-          description: "独立したAI Reviewerが承認した変更だけを許可します。",
+          description: "Reviewer用途に明示的に割り当てたAIが承認した変更だけを許可します。",
         },
         full_access: {
           name: "フルアクセス",
@@ -240,6 +245,8 @@ const ja = {
           title: "権限と制限",
           description: "運用モードと有限の制限を確認し、明示的に保存します。",
           action: "権限を確認",
+          reviewerRequired: "「自動」モードで変更を承認するにはReviewer用途のAI接続が必要です。",
+          assignReviewer: "Reviewerを割り当て",
         },
         signal: {
           title: "受信Signal",

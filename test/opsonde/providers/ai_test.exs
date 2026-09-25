@@ -57,7 +57,7 @@ defmodule Opsonde.Providers.AITest do
     assert Exception.message(wrong_kind) =~ "only AI connections have usage roles"
   end
 
-  test "selection uses priority and reviewer fallback reuses the exact resolver provider",
+  test "selection uses role assignments and never borrows a Resolver for review",
        context do
     resolver_assignment = assign!(context.admin, context.provider, :resolver, 50)
     reviewer_provider = create_ai_provider!(context.admin, "reviewer-provider", "review-model")
@@ -70,8 +70,7 @@ defmodule Opsonde.Providers.AITest do
              provider_id: resolver_id,
              provider_revision: resolver_revision,
              source: :assignment,
-             assignment_id: resolver_assignment_id,
-             assignment_revision: resolver_assignment_revision
+             assignment_id: resolver_assignment_id
            } = Providers.select_resolver_ai!(actor: context.operator)
 
     assert resolver_id == context.provider.id
@@ -84,25 +83,13 @@ defmodule Opsonde.Providers.AITest do
              source: :assignment,
              assignment_id: reviewer_assignment_id
            } =
-             Providers.select_reviewer_ai!(
-               resolver_assignment_id,
-               resolver_assignment_revision,
-               resolver_revision,
-               [],
-               actor: context.operator
-             )
+             Providers.select_reviewer_ai!([], actor: context.operator)
 
     assert reviewer_id == reviewer_provider.id
     assert reviewer_assignment_id == reviewer_assignment.id
 
     assert %AI.Selection{provider_id: backup_id, source: :assignment} =
-             Providers.select_reviewer_ai!(
-               resolver_assignment_id,
-               resolver_assignment_revision,
-               resolver_revision,
-               [reviewer_provider.id],
-               actor: context.operator
-             )
+             Providers.select_reviewer_ai!([reviewer_provider.id], actor: context.operator)
 
     assert backup_id == backup_reviewer.id
 
@@ -110,41 +97,25 @@ defmodule Opsonde.Providers.AITest do
 
     Opsonde.TestAIUsage.configure!(backup_reviewer.id, :resolver, 20, context.admin)
 
+    assert {:error, no_reviewer} = Providers.select_reviewer_ai([], actor: context.operator)
+    assert Exception.message(no_reviewer) =~ "No eligible Reviewer AI is assigned"
+
+    both = Opsonde.TestAIUsage.configure!(context.provider.id, :all, 40, context.admin)
+
     assert %AI.Selection{
              role: :reviewer,
              provider_id: ^resolver_id,
-             provider_revision: ^resolver_revision,
-             source: :resolver_fallback,
-             assignment_id: ^resolver_assignment_id,
-             assignment_revision: ^resolver_assignment_revision
-           } =
-             Providers.select_reviewer_ai!(
-               resolver_assignment_id,
-               resolver_assignment_revision,
-               resolver_revision,
-               [],
-               actor: context.operator
-             )
+             source: :assignment,
+             assignment_id: reviewer_assignment_id
+           } = Providers.select_reviewer_ai!([], actor: context.operator)
 
-    assert {:error, _excluded_resolver} =
-             Providers.select_reviewer_ai(
-               resolver_assignment_id,
-               resolver_assignment_revision,
-               resolver_revision,
-               [context.provider.id],
-               actor: context.operator
-             )
+    assert reviewer_assignment_id == both.reviewer.id
 
-    Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 40, context.admin)
-
-    assert {:error, _stale_resolver} =
-             Providers.select_reviewer_ai(
-               resolver_assignment_id,
-               resolver_assignment_revision,
-               resolver_revision,
-               [],
-               actor: context.operator
-             )
+    Opsonde.TestAIUsage.configure!(context.provider.id, :reviewer, 40, context.admin)
+    Opsonde.TestAIUsage.configure!(reviewer_provider.id, :reviewer, 10, context.admin)
+    Opsonde.TestAIUsage.configure!(backup_reviewer.id, :reviewer, 20, context.admin)
+    assert {:error, no_resolver} = Providers.select_resolver_ai(actor: context.operator)
+    assert Exception.message(no_resolver) =~ "No eligible Resolver AI is assigned"
   end
 
   test "Resolver returns exactly one Target request, recovery or handoff intent",

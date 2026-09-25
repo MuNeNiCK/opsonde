@@ -99,7 +99,7 @@ defmodule Opsonde.Cases.ReviewDecision do
 
     attribute :selection_source, :atom do
       public? true
-      constraints one_of: [:assignment, :resolver_fallback]
+      constraints one_of: [:assignment]
     end
 
     attribute :provider_revision, :integer do

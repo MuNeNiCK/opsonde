@@ -309,7 +309,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         verdict: enum(~w(approved rejected needs_human)),
         category: nullable_string(80),
         reason: string(1, 1_000),
-        selection_source: nullable_enum(~w(assignment resolver_fallback)),
+        selection_source: nullable_enum(~w(assignment)),
         provider_revision: nullable_positive_integer(),
         input_tokens: non_negative_integer(),
         output_tokens: non_negative_integer(),

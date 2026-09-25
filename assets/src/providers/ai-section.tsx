@@ -30,6 +30,7 @@ type UsageScope = "all" | "resolver" | "reviewer";
 type Props = {
   providers: Provider[];
   assignments: AIUsageRoleAssignment[];
+  authorityMode: components["schemas"]["AuthoritySetting"]["authority_mode"];
   canManage: boolean;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
@@ -175,12 +176,20 @@ export function AIProviderCreateForm({
   );
 }
 
-export function ProviderSetup({ providers, assignments, canManage, onRefresh, onError }: Props) {
+export function ProviderSetup({
+  providers,
+  assignments,
+  authorityMode,
+  canManage,
+  onRefresh,
+  onError,
+}: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
   const [managingProviderId, setManagingProviderId] = useState<string | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
+  const [draftScope, setDraftScope] = useState<UsageScope | null>(null);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
   const aiProviders = providers.filter((provider) => provider.kind === "ai");
@@ -328,6 +337,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     );
     if (saved) {
       setManagingProviderId(null);
+      setDraftScope(null);
       setSuccess(t("setup.usageSaved", { name: provider.name }));
     }
   }
@@ -357,6 +367,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
 
   function toggleManagement(id: string) {
     setManagingProviderId(managingProviderId === id ? null : id);
+    setDraftScope(null);
     setEditingProviderId(null);
     setDeletingProviderId(null);
   }
@@ -395,6 +406,13 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
         <Alert>
           <CheckCircle2 />
           <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
+
+      {authorityMode === "auto" && reviewerOrder.length === 0 && (
+        <Alert className="border-warning/60 [&>svg]:text-warning">
+          <CircleAlert />
+          <AlertDescription>{t("setup.autoReviewerWarning")}</AlertDescription>
         </Alert>
       )}
 
@@ -522,7 +540,11 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                           <FormSelect
                             id={`${provider.id}-scope`}
                             name="scope"
-                            defaultValue={scope ?? "all"}
+                            value={draftScope ?? scope ?? "all"}
+                            onValueChange={(value) => {
+                              if (value === "all" || value === "resolver" || value === "reviewer")
+                                setDraftScope(value);
+                            }}
                             options={usageOptions(t)}
                           />
                         </div>
@@ -548,6 +570,17 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                           {t("setup.saveUsage")}
                         </Button>
                       </form>
+                      {authorityMode === "auto" &&
+                        draftScope === "resolver" &&
+                        reviewerOrder.length === 1 &&
+                        reviewerOrder[0].provider_id === provider.id && (
+                          <Alert className="border-warning/60 [&>svg]:text-warning">
+                            <CircleAlert />
+                            <AlertDescription>
+                              {t("setup.autoReviewerChangeWarning")}
+                            </AlertDescription>
+                          </Alert>
+                        )}
                       <p className="text-xs text-muted-foreground">{t("setup.priorityHint")}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">

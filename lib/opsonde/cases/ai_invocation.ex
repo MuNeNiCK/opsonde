@@ -77,7 +77,7 @@ defmodule Opsonde.Cases.AIInvocation do
 
       argument :selection_source, :atom,
         allow_nil?: false,
-        constraints: [one_of: [:assignment, :resolver_fallback]]
+        constraints: [one_of: [:assignment]]
 
       argument :request_digest, :string,
         allow_nil?: false,
@@ -121,7 +121,7 @@ defmodule Opsonde.Cases.AIInvocation do
 
     attribute :selection_source, :atom,
       allow_nil?: false,
-      constraints: [one_of: [:assignment, :resolver_fallback]]
+      constraints: [one_of: [:assignment]]
 
     attribute :reserved_units, :integer, allow_nil?: false, constraints: [min: 1]
     attribute :input_tokens, :integer, allow_nil?: false, default: 0, constraints: [min: 0]

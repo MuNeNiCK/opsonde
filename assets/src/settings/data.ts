@@ -49,6 +49,7 @@ export async function loadSettingsSnapshot(): Promise<SettingsSnapshot> {
 export type Readiness = {
   ai: boolean;
   resolver: boolean;
+  reviewer: boolean;
   authority: boolean;
   signal: boolean;
   target: boolean;
@@ -79,7 +80,13 @@ export function readiness(snapshot: SettingsSnapshot): Readiness {
     (assignment) =>
       assignment.role === "resolver" && assignment.enabled && aiIds.has(assignment.provider_id),
   );
-  const authority = snapshot.authority.changed_by_id !== null;
+  const reviewer = snapshot.assignments.some(
+    (assignment) =>
+      assignment.role === "reviewer" && assignment.enabled && aiIds.has(assignment.provider_id),
+  );
+  const authority =
+    snapshot.authority.changed_by_id !== null &&
+    (snapshot.authority.authority_mode !== "auto" || reviewer);
   const signal = snapshot.providers.some(
     (provider) => provider.kind === "signal" && checkedProviders.has(provider.id),
   );
@@ -92,6 +99,7 @@ export function readiness(snapshot: SettingsSnapshot): Readiness {
   return {
     ai,
     resolver,
+    reviewer,
     authority,
     signal,
     target,

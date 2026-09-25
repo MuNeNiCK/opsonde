@@ -53,23 +53,7 @@ export function SetupPage() {
   const status = readiness(snapshot);
   const activeAI = status.ai;
   const resolverReady = status.resolver;
-  const activeAIIds = new Set(
-    snapshot.providers
-      .filter(
-        (provider) =>
-          provider.kind === "ai" &&
-          provider.enabled &&
-          provider.check.status === "passed" &&
-          provider.check.checked_revision === provider.revision,
-      )
-      .map((provider) => provider.id),
-  );
-  const reviewerConfigured = snapshot.assignments.some(
-    (assignment) =>
-      assignment.role === "reviewer" &&
-      assignment.enabled &&
-      activeAIIds.has(assignment.provider_id),
-  );
+  const reviewerRequired = snapshot.authority.authority_mode === "auto" && !status.reviewer;
 
   return (
     <div className="space-y-8 p-6 lg:p-8">
@@ -104,14 +88,14 @@ export function SetupPage() {
           ready={resolverReady}
           readyText={t("setup.ready")}
           pendingText={t("setup.resolverPending")}
-          detail={reviewerConfigured ? t("setup.reviewerReady") : t("setup.reviewerFallback")}
+          detail={status.reviewer ? t("setup.reviewerReady") : t("setup.reviewerNotAssigned")}
         />
         <StatusCard
           icon={<ShieldCheck />}
           title={t("setup.authorityStatus")}
           ready={status.authority}
           readyText={t(`setup.modes.${snapshot.authority.authority_mode}.name`)}
-          pendingText={t("setup.authorityPending")}
+          pendingText={t(reviewerRequired ? "setup.reviewerRequired" : "setup.authorityPending")}
           detail={
             snapshot.authority.signal_automation_enabled
               ? t("setup.automationOn")

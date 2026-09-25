@@ -105,6 +105,7 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
         <ProviderSetup
           providers={snapshot.providers}
           assignments={snapshot.assignments}
+          authorityMode={snapshot.authority.authority_mode}
           canManage={canManage}
           onRefresh={refresh}
           onError={setError}

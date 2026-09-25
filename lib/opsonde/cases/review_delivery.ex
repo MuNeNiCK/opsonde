@@ -129,16 +129,8 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp create_assignment(proposal, key, excluded) do
-    resolver = proposal.resolver_identity
-
     with {:ok, %AI.Selection{role: :reviewer} = selection} <-
-           Providers.select_reviewer_ai(
-             resolver["assignment_id"],
-             resolver["assignment_revision"],
-             resolver["provider_revision"],
-             excluded,
-             authorize?: false
-           ),
+           Providers.select_reviewer_ai(excluded, authorize?: false),
          {:ok, _event} <-
            Cases.create_case_event_record(
              %{
@@ -234,17 +226,8 @@ defmodule Opsonde.Cases.ReviewDelivery do
     end
   end
 
-  defp current_selection(%AI.Selection{source: :resolver_fallback} = selection) do
-    case Providers.load_resolver_ai_usage_role_assignment(
-           selection.assignment_id,
-           selection.assignment_revision,
-           selection.provider_revision,
-           authorize?: false
-         ) do
-      {:ok, _assignment} -> {:ok, selection}
-      {:error, _error} -> {:error, ai_error(:unavailable, "Resolver fallback changed")}
-    end
-  end
+  defp current_selection(_selection),
+    do: {:error, ai_error(:unavailable, "Reviewer assignment is unavailable")}
 
   defp accept(proposal, selection, request, invocation, decision) do
     usage = decision.usage.input_tokens + decision.usage.output_tokens
@@ -615,7 +598,6 @@ defmodule Opsonde.Cases.ReviewDelivery do
     do: Budget.key("proposal:reviewer_assignment:#{generation}", proposal_id)
 
   defp source("assignment"), do: :assignment
-  defp source("resolver_fallback"), do: :resolver_fallback
   defp source(_value), do: nil
   defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
 end

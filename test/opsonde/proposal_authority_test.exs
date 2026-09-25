@@ -539,12 +539,10 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Enum.map(request.cited_evidence, & &1.id) == [prior_evidence.id]
   end
 
-  test "Auto uses isolated Resolver fallback and reconsiders a rejected proposal once", context do
+  test "Auto uses the assigned Reviewer and reconsiders a rejected proposal once", context do
     configure_mode!(:auto, context.admin)
 
-    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :resolver, 10, context.admin)
-
-    {incident, run, proposal} = proposal!("review-fallback", context)
+    {incident, run, proposal} = proposal!("review-rejection", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
     initial_turn_count = length(Cases.list_turns!(actor: context.admin))
 
@@ -565,10 +563,10 @@ defmodule Opsonde.ProposalAuthorityTest do
                }
              )
 
-    assert_receive {:review, %{model: "resolver-model"}, _request}
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
     [decision] = Cases.list_review_decisions!(actor: context.admin)
-    assert decision.selection_source == :resolver_fallback
-    assert decision.provider_id == context.resolver_provider.id
+    assert decision.selection_source == :assignment
+    assert decision.provider_id == context.reviewer_provider.id
 
     rejected = Cases.get_proposal!(proposal.id, authorize?: false)
     assert rejected.status == :rejected
@@ -594,6 +592,26 @@ defmodule Opsonde.ProposalAuthorityTest do
              )
 
     assert length(Cases.list_turns!(actor: context.admin)) == initial_turn_count + 1
+    refute_receive {:effect, _, _}
+  end
+
+  test "Auto stops before review or effect when only Resolver is assigned", context do
+    configure_mode!(:auto, context.admin)
+    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :resolver, 10, context.admin)
+
+    {incident, run, proposal} = proposal!("reviewer-unassigned", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert :ok = ReviewDelivery.run(reviewing.id)
+
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.pending_intent["action"] == "restore_reviewer_delivery"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.list_approvals!(actor: context.admin) == []
+    refute_receive {:review, _, _}
     refute_receive {:effect, _, _}
   end
 

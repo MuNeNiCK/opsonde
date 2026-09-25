@@ -34,7 +34,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc], load: [:provider])
     end
 
-    read :resolver_fallback do
+    read :current_resolver do
       get? true
 
       argument :id, :uuid, allow_nil?: false
@@ -105,17 +105,6 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
 
     action :select_reviewer, :struct do
       constraints instance_of: Opsonde.Providers.AI.Selection
-
-      argument :resolver_assignment_id, :uuid, allow_nil?: false
-
-      argument :resolver_assignment_revision, :integer,
-        allow_nil?: false,
-        constraints: [min: 1]
-
-      argument :resolver_provider_revision, :integer,
-        allow_nil?: false,
-        constraints: [min: 1]
-
       argument :excluded_provider_ids, {:array, :uuid}, allow_nil?: false
 
       run {Opsonde.Providers.AIUsageRoleAssignment.Actions.Select, role: :reviewer}
@@ -131,7 +120,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       forbid_if always()
     end
 
-    policy action([:eligible, :resolver_fallback]) do
+    policy action([:eligible, :current_resolver]) do
       forbid_if always()
     end
 

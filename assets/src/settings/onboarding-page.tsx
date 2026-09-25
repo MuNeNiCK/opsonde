@@ -69,7 +69,14 @@ export function OnboardingPage() {
   const steps: Step[] = [
     { key: "ai", icon: <Bot />, href: "/ai/new" },
     { key: "resolver", icon: <Bot />, href: "/ai#ai-connections" },
-    { key: "authority", icon: <ShieldCheck />, href: "/ai/authority" },
+    {
+      key: "authority",
+      icon: <ShieldCheck />,
+      href:
+        snapshot.authority.authority_mode === "auto" && !status.reviewer
+          ? "/ai#ai-connections"
+          : "/ai/authority",
+    },
     { key: "signal", icon: <RadioTower />, href: "/signals/new" },
     {
       key: "target",
@@ -107,7 +114,11 @@ export function OnboardingPage() {
                     {t(`onboarding.steps.${step.key}.title`)}
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    {t(`onboarding.steps.${step.key}.description`)}
+                    {step.key === "authority" &&
+                    snapshot.authority.authority_mode === "auto" &&
+                    !status.reviewer
+                      ? t("onboarding.steps.authority.reviewerRequired")
+                      : t(`onboarding.steps.${step.key}.description`)}
                   </p>
                 </div>
                 <Badge variant={ready ? "default" : "secondary"}>
@@ -119,7 +130,11 @@ export function OnboardingPage() {
                 <CardContent>
                   <Button asChild size="sm">
                     <Link to={step.href}>
-                      {t(`onboarding.steps.${step.key}.action`)}
+                      {step.key === "authority" &&
+                      snapshot.authority.authority_mode === "auto" &&
+                      !status.reviewer
+                        ? t("onboarding.steps.authority.assignReviewer")
+                        : t(`onboarding.steps.${step.key}.action`)}
                       <ArrowRight />
                     </Link>
                   </Button>

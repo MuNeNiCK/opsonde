@@ -12,8 +12,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment.Actions.Select do
     case Providers.eligible_ai_usage_role_assignments(role, authorize?: false) do
       {:ok, assignments} ->
         case Enum.find(assignments, &(not MapSet.member?(excluded, &1.provider_id))) do
-          nil when role == :reviewer -> fallback_to_resolver(input.arguments, excluded)
-          nil -> {:error, ai_error("No eligible Resolver AI is assigned")}
+          nil -> {:error, ai_error("No eligible #{role_name(role)} AI is assigned")}
           assignment -> {:ok, assigned_selection(assignment, role)}
         end
 
@@ -33,28 +32,8 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment.Actions.Select do
     }
   end
 
-  defp fallback_to_resolver(arguments, excluded) do
-    with {:ok, assignment} <-
-           Providers.load_resolver_ai_usage_role_assignment(
-             arguments.resolver_assignment_id,
-             arguments.resolver_assignment_revision,
-             arguments.resolver_provider_revision,
-             authorize?: false
-           ),
-         false <- MapSet.member?(excluded, assignment.provider_id) do
-      {:ok,
-       %AI.Selection{
-         role: :reviewer,
-         provider_id: assignment.provider_id,
-         provider_revision: assignment.provider.revision,
-         source: :resolver_fallback,
-         assignment_id: assignment.id,
-         assignment_revision: assignment.revision
-       }}
-    else
-      _unavailable -> {:error, ai_error("Resolver AI is not eligible for review fallback")}
-    end
-  end
+  defp role_name(:resolver), do: "Resolver"
+  defp role_name(:reviewer), do: "Reviewer"
 
   defp ai_error(message), do: AI.Error.exception(category: :unavailable, message: message)
 end

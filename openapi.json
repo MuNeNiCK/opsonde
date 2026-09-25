@@ -2637,8 +2637,7 @@
           },
           "selection_source": {
             "enum": [
-              "assignment",
-              "resolver_fallback"
+              "assignment"
             ],
             "nullable": true,
             "type": "string"

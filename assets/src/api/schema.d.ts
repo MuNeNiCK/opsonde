@@ -2088,7 +2088,7 @@ export interface components {
             /** Format: uuid */
             resolution_run_id: string;
             /** @enum {string|null} */
-            selection_source: "assignment" | "resolver_fallback" | null;
+            selection_source: "assignment" | null;
             /** @enum {string} */
             verdict: "approved" | "rejected" | "needs_human";
         };

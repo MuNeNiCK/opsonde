@@ -75,7 +75,7 @@ defmodule Opsonde.Providers do
         args: [:role]
 
       define :load_resolver_ai_usage_role_assignment,
-        action: :resolver_fallback,
+        action: :current_resolver,
         args: [:id, :expected_assignment_revision, :expected_provider_revision]
 
       define :configure_ai_usage,
@@ -92,12 +92,7 @@ defmodule Opsonde.Providers do
 
       define :select_reviewer_ai,
         action: :select_reviewer,
-        args: [
-          :resolver_assignment_id,
-          :resolver_assignment_revision,
-          :resolver_provider_revision,
-          :excluded_provider_ids
-        ]
+        args: [:excluded_provider_ids]
     end
   end
 end
