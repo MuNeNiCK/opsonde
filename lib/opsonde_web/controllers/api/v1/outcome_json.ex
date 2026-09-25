@@ -88,6 +88,16 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
     }
   end
 
+  def report_setting(setting) do
+    %{
+      id: setting.id,
+      automatic_case_reports_enabled: setting.automatic_case_reports_enabled,
+      revision: setting.revision,
+      changed_by_id: setting.changed_by_id,
+      updated_at: setting.updated_at
+    }
+  end
+
   def delivery(delivery) do
     %{
       id: delivery.id,

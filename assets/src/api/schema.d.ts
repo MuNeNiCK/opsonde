@@ -21,6 +21,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/report-setting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get automatic Case Report generation setting */
+        get: operations["getReportSetting"];
+        /** Enable or disable automatic Case Report generation */
+        put: operations["updateReportSetting"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/targets": {
         parameters: {
             query?: never;
@@ -2693,6 +2711,9 @@ export interface components {
             data: components["schemas"]["Delivery"][];
             page: components["schemas"]["Page"];
         };
+        ReportSettingResponse: {
+            data: components["schemas"]["ReportSetting"];
+        };
         AccountResponse: {
             data: components["schemas"]["Account"];
         };
@@ -2890,6 +2911,16 @@ export interface components {
                 }[];
             };
         };
+        ReportSetting: {
+            automatic_case_reports_enabled: boolean;
+            /** Format: uuid */
+            changed_by_id: string | null;
+            /** Format: uuid */
+            id: string;
+            revision: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
         ResolutionRunResponse: {
             data: components["schemas"]["ResolutionRun"];
         };
@@ -3004,6 +3035,12 @@ export interface components {
         OperationResponse: {
             data: components["schemas"]["Operation"];
         };
+        UpdateReportSettingRequest: {
+            report_setting: {
+                automatic_case_reports_enabled: boolean;
+                expected_revision: number;
+            };
+        };
         TargetResponse: {
             data: components["schemas"]["Target"];
         };
@@ -3059,6 +3096,132 @@ export interface operations {
             };
             /** @description Resource was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getReportSetting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Report setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSettingResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateReportSetting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Report setting */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateReportSettingRequest"];
+            };
+        };
+        responses: {
+            /** @description Report setting updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportSettingResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

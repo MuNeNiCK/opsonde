@@ -25,6 +25,9 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "AuditRunResponse" => Schemas.data(ref("AuditRun")),
       "AuditRunPage" => Schemas.page(ref("AuditRun")),
       "Report" => report(),
+      "ReportSetting" => report_setting(),
+      "ReportSettingResponse" => Schemas.data(ref("ReportSetting")),
+      "UpdateReportSettingRequest" => update_report_setting_request(),
       "ReportDocument" => report_document(),
       "ReportResponse" => Schemas.data(ref("Report")),
       "ReportPage" => Schemas.page(ref("Report")),
@@ -379,6 +382,31 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
 
   defp generate_report_request do
     wrapped(:report, %{expected_case_revision: positive_integer()}, [:expected_case_revision])
+  end
+
+  defp report_setting do
+    object(
+      %{
+        id: Schemas.uuid(),
+        automatic_case_reports_enabled: %Schema{type: :boolean},
+        revision: positive_integer(),
+        changed_by_id: nullable_uuid(),
+        updated_at: Schemas.timestamp()
+      },
+      ~w(id automatic_case_reports_enabled revision changed_by_id updated_at)a,
+      false
+    )
+  end
+
+  defp update_report_setting_request do
+    wrapped(
+      :report_setting,
+      %{
+        expected_revision: positive_integer(),
+        automatic_case_reports_enabled: %Schema{type: :boolean}
+      },
+      [:expected_revision, :automatic_case_reports_enabled]
+    )
   end
 
   defp delivery do

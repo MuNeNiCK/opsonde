@@ -723,6 +723,13 @@ const ja = {
       },
     },
     reports: {
+      automaticTitle: "Caseレポートの自動生成",
+      automaticDescription:
+        "自動解決したCaseのレポートを生成します。無効中に解決したCaseは、再び有効にしても遡って生成されません。必要なレポートは手動で生成できます。すでに実行中の生成は完了する場合があります。",
+      automaticAdminOnly: "設定を変更できるのは管理者です。",
+      automaticOn: "有効",
+      automaticOff: "無効",
+      automaticUpdateFailed: "設定を保存できませんでした。状態を再読み込みしました。",
       title: "レポート",
       description: "Caseのレポートを生成し、確認済みの宛先へ配送します。",
       requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",

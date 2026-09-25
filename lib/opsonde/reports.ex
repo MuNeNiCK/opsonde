@@ -18,5 +18,13 @@ defmodule Opsonde.Reports do
       define :generate_report, action: :generate, args: [:case_id, :expected_case_revision]
       define :period_summary, action: :period_summary, args: [:from, :to, :target_id]
     end
+
+    resource Opsonde.Reports.Setting do
+      define :current_setting, action: :current
+
+      define :configure_setting,
+        action: :configure,
+        args: [:expected_revision, :automatic_case_reports_enabled]
+    end
   end
 end

@@ -198,6 +198,86 @@ defmodule Opsonde.CaseReportTest do
     assert event.resolution_run_id == nil
   end
 
+  test "disabling automatic reports suppresses queued work while manual generation remains available",
+       context do
+    setting = Reports.current_setting!(actor: context.admin)
+    assert setting.automatic_case_reports_enabled
+
+    incident = open!("automatic-off", context.operator)
+
+    resolved =
+      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+        authorize?: false
+      )
+
+    queued_job = %Oban.Job{
+      args: %{"case_id" => resolved.id, "case_revision" => resolved.revision},
+      attempt: 1,
+      max_attempts: 3
+    }
+
+    assert {:error, %Ash.Error.Forbidden{}} =
+             Reports.configure_setting(setting, setting.revision, false, actor: context.operator)
+
+    disabled = Reports.configure_setting!(setting, setting.revision, false, actor: context.admin)
+    assert disabled.revision == setting.revision + 1
+    assert disabled.changed_by_id == context.admin.id
+    refute Reports.current_setting!(actor: context.viewer).automatic_case_reports_enabled
+
+    assert :ok = GenerationWorker.perform(queued_job)
+    assert Reports.list_reports!(actor: context.viewer) == []
+
+    manual = Reports.generate_report!(resolved.id, resolved.revision, actor: context.operator)
+    assert manual.case_id == resolved.id
+
+    another = open!("automatic-on", context.operator)
+
+    another_resolved =
+      Cases.update_case_record!(another, another.revision, %{status: :resolved},
+        authorize?: false
+      )
+
+    assert {:error, _stale} =
+             Reports.configure_setting(setting, setting.revision, true, actor: context.admin)
+
+    enabled = Reports.configure_setting!(disabled, disabled.revision, true, actor: context.admin)
+    assert enabled.automatic_case_reports_enabled
+
+    assert :ok =
+             GenerationWorker.perform(%Oban.Job{
+               args: %{
+                 "case_id" => another_resolved.id,
+                 "case_revision" => another_resolved.revision
+               },
+               attempt: 1,
+               max_attempts: 3
+             })
+
+    assert Reports.report_by_case_revision!(another_resolved.id, another_resolved.revision,
+             authorize?: false
+           )
+  end
+
+  test "automatic generation fails closed when its setting cannot be read", context do
+    incident = open!("automatic-setting-unavailable", context.operator)
+
+    resolved =
+      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+        authorize?: false
+      )
+
+    Ecto.Adapters.SQL.query!(Opsonde.Repo, "DELETE FROM report_settings", [])
+
+    assert {:error, _error} =
+             GenerationWorker.perform(%Oban.Job{
+               args: %{"case_id" => resolved.id, "case_revision" => resolved.revision},
+               attempt: 1,
+               max_attempts: 3
+             })
+
+    assert Reports.list_reports!(actor: context.admin) == []
+  end
+
   test "projection preserves multiple operation outcomes and raw uncertainty", _context do
     incident = %Case{
       id: Ash.UUID.generate(),

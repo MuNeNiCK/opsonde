@@ -126,6 +126,8 @@ defmodule OpsondeWeb.Router do
     get "/audit-runs/:id", AuditController, :show_run
 
     get "/reports", ReportController, :index
+    get "/report-setting", ReportSettingController, :show
+    put "/report-setting", ReportSettingController, :update
     get "/reports/operations-summary", ReportController, :summary
     get "/reports/:id", ReportController, :show
     post "/cases/:case_id/reports", ReportController, :generate

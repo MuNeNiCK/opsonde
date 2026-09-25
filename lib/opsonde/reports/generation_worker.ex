@@ -16,8 +16,17 @@ defmodule Opsonde.Reports.GenerationWorker do
         max_attempts: max_attempts
       })
       when is_binary(case_id) and is_integer(case_revision) and case_revision > 0 do
-    case Reports.generate_report(case_id, case_revision, authorize?: false) do
-      {:ok, _report} ->
+    result =
+      with {:ok, setting} <- Reports.current_setting(authorize?: false) do
+        if setting.automatic_case_reports_enabled do
+          Reports.generate_report(case_id, case_revision, authorize?: false)
+        else
+          {:ok, :disabled}
+        end
+      end
+
+    case result do
+      {:ok, _report_or_disabled} ->
         :ok
 
       {:error, error} when attempt >= max_attempts ->

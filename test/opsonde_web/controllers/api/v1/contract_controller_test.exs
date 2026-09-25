@@ -97,6 +97,8 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:get, "/api/v1/audit-runs"},
     {:get, "/api/v1/audit-runs/:id"},
     {:get, "/api/v1/reports"},
+    {:get, "/api/v1/report-setting"},
+    {:put, "/api/v1/report-setting"},
     {:get, "/api/v1/reports/:id"},
     {:post, "/api/v1/cases/:case_id/reports"},
     {:get, "/api/v1/deliveries"},

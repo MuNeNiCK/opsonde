@@ -4921,6 +4921,18 @@
         ],
         "type": "object"
       },
+      "ReportSettingResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReportSetting"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "AccountResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5692,6 +5704,39 @@
         ],
         "type": "object"
       },
+      "ReportSetting": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_case_reports_enabled": {
+            "type": "boolean"
+          },
+          "changed_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "automatic_case_reports_enabled",
+          "revision",
+          "changed_by_id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "ResolutionRunResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6144,6 +6189,30 @@
         ],
         "type": "object"
       },
+      "UpdateReportSettingRequest": {
+        "properties": {
+          "report_setting": {
+            "properties": {
+              "automatic_case_reports_enabled": {
+                "type": "boolean"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision",
+              "automatic_case_reports_enabled"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "report_setting"
+        ],
+        "type": "object"
+      },
       "TargetResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6279,6 +6348,151 @@
         "summary": "List Case evidence",
         "tags": [
           "Cases"
+        ]
+      }
+    },
+    "/api/v1/report-setting": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getReportSetting",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSettingResponse"
+                }
+              }
+            },
+            "description": "Report setting"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get automatic Case Report generation setting",
+        "tags": [
+          "Reports"
+        ]
+      },
+      "put": {
+        "callbacks": {},
+        "operationId": "updateReportSetting",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReportSettingRequest"
+              }
+            }
+          },
+          "description": "Report setting",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSettingResponse"
+                }
+              }
+            },
+            "description": "Report setting updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Enable or disable automatic Case Report generation",
+        "tags": [
+          "Reports"
         ]
       }
     },

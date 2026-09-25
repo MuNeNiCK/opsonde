@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -28,6 +29,7 @@ type Delivery = components["schemas"]["Delivery"];
 type Report = components["schemas"]["Report"];
 type Provider = components["schemas"]["Provider"];
 type Target = components["schemas"]["Target"];
+type ReportSetting = components["schemas"]["ReportSetting"];
 
 type Snapshot = {
   cases: CaseRecord[];
@@ -35,9 +37,10 @@ type Snapshot = {
   deliveries: Delivery[];
   providers: Provider[];
   targets: Target[];
+  setting: ReportSetting;
 };
 async function loadSnapshot(): Promise<Snapshot> {
-  const [cases, reports, deliveries, providers, targets] = await Promise.all([
+  const [cases, reports, deliveries, providers, targets, setting] = await Promise.all([
     collectPages((after) =>
       apiClient
         .GET("/api/v1/cases", { params: { query: { limit: 100, after: after ?? undefined } } })
@@ -63,8 +66,12 @@ async function loadSnapshot(): Promise<Snapshot> {
         .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
         .then(apiData),
     ),
+    apiClient
+      .GET("/api/v1/report-setting")
+      .then(apiData)
+      .then((result) => result.data),
   ]);
-  return { cases, reports, deliveries, providers, targets };
+  return { cases, reports, deliveries, providers, targets, setting };
 }
 
 export function ReportPage() {
@@ -158,7 +165,49 @@ export function ReportPage() {
     }
   }
 
-  if (!snapshot) return <Loading />;
+  async function updateAutomaticGeneration(enabled: boolean) {
+    if (!snapshot || !canManageProviders) return;
+    setPending("setting");
+    setError("");
+    try {
+      const result = await apiClient.PUT("/api/v1/report-setting", {
+        body: {
+          report_setting: {
+            expected_revision: snapshot.setting.revision,
+            automatic_case_reports_enabled: enabled,
+          },
+        },
+      });
+      const setting = apiData(result).data;
+      setSnapshot((current) => (current ? { ...current, setting } : current));
+    } catch {
+      setError(t("reports.automaticUpdateFailed"));
+      await refresh().catch(() => undefined);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  if (!snapshot) {
+    if (!error) return <Loading />;
+    return (
+      <div className="space-y-4 p-6 lg:p-8">
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+        <Button
+          variant="outline"
+          onClick={() =>
+            void refresh()
+              .then(() => setError(""))
+              .catch(() => setError(t("reports.requestFailed")))
+          }
+        >
+          <RefreshCw /> {t("reports.refresh")}
+        </Button>
+      </div>
+    );
+  }
   const reportable = snapshot.cases.filter((item) => item.status !== "running");
   const notificationProviders = snapshot.providers.filter(
     (provider) =>
@@ -241,6 +290,32 @@ export function ReportPage() {
           <AlertDescription>{t("reports.readOnly")}</AlertDescription>
         </Alert>
       )}
+
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-card p-5">
+        <div className="max-w-3xl">
+          <h2 className="font-semibold">{t("reports.automaticTitle")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t("reports.automaticDescription")}</p>
+          {!canManageProviders && (
+            <p className="mt-2 text-xs text-muted-foreground">{t("reports.automaticAdminOnly")}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {pending === "setting" && <Spinner />}
+          <Label htmlFor="automatic-case-reports">
+            {t(
+              snapshot.setting.automatic_case_reports_enabled
+                ? "reports.automaticOn"
+                : "reports.automaticOff",
+            )}
+          </Label>
+          <Switch
+            id="automatic-case-reports"
+            checked={snapshot.setting.automatic_case_reports_enabled}
+            onCheckedChange={(enabled) => void updateAutomaticGeneration(enabled)}
+            disabled={!canManageProviders || pending !== null}
+          />
+        </div>
+      </section>
 
       {panel === "destinations" && (
         <NotificationProviderSection

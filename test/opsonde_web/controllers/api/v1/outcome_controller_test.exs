@@ -30,6 +30,76 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     }
   end
 
+  test "Report setting is readable but only an Admin can change it", context do
+    path = "/api/v1/report-setting"
+    shown = get_json(path, context.viewer_token)
+
+    assert %{"data" => %{"automatic_case_reports_enabled" => true, "revision" => revision}} =
+             json_response(shown, 200)
+
+    assert_operation_response(shown)
+
+    body = %{
+      "report_setting" => %{
+        "expected_revision" => revision,
+        "automatic_case_reports_enabled" => false
+      }
+    }
+
+    forbidden = request(:put, path, body, context.operator_token)
+    assert %{"error" => %{"code" => "forbidden"}} = json_response(forbidden, 403)
+
+    viewer_forbidden = request(:put, path, body, context.viewer_token)
+    assert %{"error" => %{"code" => "forbidden"}} = json_response(viewer_forbidden, 403)
+
+    updated = request(:put, path, body, context.admin_token)
+
+    assert %{
+             "data" => %{
+               "automatic_case_reports_enabled" => false,
+               "revision" => next_revision,
+               "changed_by_id" => changed_by_id
+             }
+           } = json_response(updated, 200)
+
+    assert next_revision == revision + 1
+    assert changed_by_id == context.admin.id
+    assert_operation_response(updated)
+    assert get_data!(path, context.viewer_token)["automatic_case_reports_enabled"] == false
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        "manual-report-with-automatic-off",
+        "Manual report while automatic generation is off",
+        :warning,
+        :not_applicable,
+        %{},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    resolved =
+      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+        authorize?: false
+      )
+
+    manual =
+      post_json(
+        "/api/v1/cases/#{resolved.id}/reports",
+        %{"report" => %{"expected_case_revision" => resolved.revision}},
+        context.operator_token
+      )
+
+    assert %{"data" => %{"case_id" => case_id}} = json_response(manual, 201)
+    assert case_id == resolved.id
+
+    stale = request(:put, path, body, context.admin_token)
+    assert %{"error" => %{"code" => "conflict"}} = json_response(stale, 409)
+  end
+
   test "Signal receipt status is cursor-readable without Provider credentials", context do
     provider =
       Providers.create_provider!(
@@ -509,6 +579,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
   defp dispatch_request(conn, :get, path, _body), do: get(conn, path)
   defp dispatch_request(conn, :post, path, body), do: post(conn, path, body)
+  defp dispatch_request(conn, :put, path, body), do: put(conn, path, body)
 
   defp maybe_authorize(conn, nil), do: conn
   defp maybe_authorize(conn, token), do: put_req_header(conn, "authorization", "Bearer " <> token)
