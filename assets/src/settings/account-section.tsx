@@ -20,6 +20,8 @@ const roles: Role[] = ["admin", "operator", "viewer"];
 export function AccountSection({ currentAccountId }: { currentAccountId: string }) {
   const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -33,6 +35,7 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
       ),
     );
     setAccounts(records);
+    setDraftRoles({});
   }, []);
 
   useEffect(() => {
@@ -77,6 +80,7 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
       });
       await loadAccounts();
       formElement.reset();
+      setShowCreate(false);
       setSuccess(t("setup.accounts.created"));
     } catch {
       setError(t("setup.accounts.requestFailed"));
@@ -108,13 +112,19 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
   }
 
   return (
-    <section id="accounts" className="scroll-mt-6 space-y-4">
-      <div>
-        <h2 className="flex items-center gap-2 text-xl font-semibold">
-          <Users className="size-5 text-primary" />
-          {t("setup.accounts.title")}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t("setup.accounts.description")}</p>
+    <section id="accounts" className="scroll-mt-20 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-semibold">
+            <Users className="size-5 text-primary" />
+            {t("setup.accounts.title")}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t("setup.accounts.description")}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setShowCreate((open) => !open)}>
+          {showCreate ? null : <Plus />}
+          {t(showCreate ? "common.close" : "setup.accounts.createTitle")}
+        </Button>
       </div>
 
       {error && (
@@ -129,72 +139,78 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("setup.accounts.createTitle")}</CardTitle>
-          <CardDescription>{t("setup.accounts.passwordDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="grid gap-4 md:grid-cols-2" onSubmit={createAccount}>
-            <div className="space-y-2">
-              <Label htmlFor="account-email">{t("setup.accounts.email")}</Label>
-              <Input id="account-email" name="email" type="email" autoComplete="off" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="account-password">{t("setup.accounts.password")}</Label>
-              <Input
-                id="account-password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                minLength={12}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="account-role">{t("setup.accounts.role")}</Label>
-              <FormSelect
-                id="account-role"
-                name="role"
-                defaultValue="operator"
-                options={roles.map((role) => ({
-                  value: role,
-                  label: t(`setup.accounts.roles.${role}`),
-                }))}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button type="submit" disabled={pending !== null}>
-                {pending === "create" ? <Spinner /> : <Plus />}
-                {t("setup.accounts.create")}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+      {showCreate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("setup.accounts.createTitle")}</CardTitle>
+            <CardDescription>{t("setup.accounts.passwordDescription")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="grid gap-4 md:grid-cols-2" onSubmit={createAccount}>
+              <div className="space-y-2">
+                <Label htmlFor="account-email">{t("setup.accounts.email")}</Label>
+                <Input id="account-email" name="email" type="email" autoComplete="off" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="account-password">{t("setup.accounts.password")}</Label>
+                <Input
+                  id="account-password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="account-role">{t("setup.accounts.role")}</Label>
+                <FormSelect
+                  id="account-role"
+                  name="role"
+                  defaultValue="operator"
+                  options={roles.map((role) => ({
+                    value: role,
+                    label: t(`setup.accounts.roles.${role}`),
+                  }))}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button type="submit" disabled={pending !== null}>
+                  {pending === "create" ? <Spinner /> : <Plus />}
+                  {t("setup.accounts.create")}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>{t("setup.accounts.listTitle")}</CardTitle>
+        <CardHeader className="border-b">
+          <CardTitle className="text-base">
+            {t("setup.accounts.listTitle")}
+            {accounts && <span className="ml-2 text-muted-foreground">{accounts.length}</span>}
+          </CardTitle>
           <CardDescription>{t("setup.accounts.roleDescription")}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="p-0">
           {accounts === null ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 px-5 py-6 text-sm text-muted-foreground">
               <Spinner />
               {t("common.loading")}
             </div>
           ) : (
             accounts.map((account) => {
               const current = account.id === currentAccountId;
+              const selectedRole = draftRoles[account.id] ?? account.role;
               return (
                 <form
                   key={`${account.id}-${account.role_version}`}
-                  className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-end sm:justify-between"
+                  className="flex flex-col gap-3 border-b px-5 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
                   onSubmit={(event) => void changeRole(account, event)}
                 >
-                  <div className="min-w-0 space-y-1">
-                    <p className="break-all font-medium">{account.email}</p>
+                  <div className="min-w-0 space-y-1.5">
+                    <p className="break-all text-sm font-medium">{account.email}</p>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="secondary">{t(`setup.accounts.roles.${account.role}`)}</Badge>
                       {current && (
@@ -204,27 +220,36 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
                       )}
                     </div>
                   </div>
-                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
-                    <div className="space-y-2 sm:w-40">
-                      <Label htmlFor={`account-role-${account.id}`}>
-                        {t("setup.accounts.role")}
-                      </Label>
+                  {!current && (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       <FormSelect
                         id={`account-role-${account.id}`}
                         name="role"
-                        defaultValue={account.role}
-                        disabled={current || pending !== null}
+                        ariaLabel={`${account.email}: ${t("setup.accounts.role")}`}
+                        className="sm:w-36"
+                        value={selectedRole}
+                        onValueChange={(value) => {
+                          if (isRole(value)) {
+                            setDraftRoles((roles) => ({ ...roles, [account.id]: value }));
+                          }
+                        }}
+                        disabled={pending !== null}
                         options={roles.map((role) => ({
                           value: role,
                           label: t(`setup.accounts.roles.${role}`),
                         }))}
                       />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant="outline"
+                        disabled={selectedRole === account.role || pending !== null}
+                      >
+                        {pending === account.id ? <Spinner /> : <Save />}
+                        {t("setup.accounts.saveRole")}
+                      </Button>
                     </div>
-                    <Button type="submit" variant="outline" disabled={current || pending !== null}>
-                      {pending === account.id ? <Spinner /> : <Save />}
-                      {t("setup.accounts.saveRole")}
-                    </Button>
-                  </div>
+                  )}
                 </form>
               );
             })

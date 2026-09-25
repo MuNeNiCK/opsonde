@@ -24,6 +24,7 @@ export function OIDCSetup({ canManage, onError }: Props) {
   const { linkOIDC, oidcEnabled } = useAuthentication();
   const [provider, setProvider] = useState<OIDCProvider | null>(null);
   const [enabled, setEnabled] = useState(true);
+  const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState<"configure" | "link" | null>(null);
   const [linked, setLinked] = useState(false);
 
@@ -86,6 +87,7 @@ export function OIDCSetup({ canManage, onError }: Props) {
       );
       setProvider(data);
       setEnabled(data.enabled);
+      setEditing(false);
       const secretInput = formElement.elements.namedItem("client_secret");
       if (secretInput instanceof HTMLInputElement) secretInput.value = "";
     } catch {
@@ -112,31 +114,56 @@ export function OIDCSetup({ canManage, onError }: Props) {
   const connectionEnabled = provider?.enabled ?? oidcEnabled;
 
   return (
-    <section id="oidc" className="scroll-mt-6 space-y-4">
+    <section id="oidc" className="scroll-mt-20 space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("setup.oidcTitle")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("setup.oidcDescription")}</p>
       </div>
 
-      {canManage && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <CardTitle>{t("setup.oidcConnection")}</CardTitle>
-                <CardDescription>{t("setup.oidcSecretDescription")}</CardDescription>
-              </div>
-              <Badge variant={connectionEnabled ? "default" : "secondary"}>
-                {t(connectionEnabled ? "setup.enabled" : "setup.disabled")}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
+      <Card>
+        <CardHeader className="border-b">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base">{t("setup.oidcConnection")}</CardTitle>
+            <Badge variant={connectionEnabled ? "default" : "secondary"}>
+              {t(
+                canManage && !provider?.issuer
+                  ? "setup.oidcUnconfiguredStatus"
+                  : connectionEnabled
+                    ? "setup.enabled"
+                    : "setup.disabled",
+              )}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="min-w-0 break-all text-sm text-muted-foreground">
+              {canManage
+                ? provider?.issuer || t("setup.oidcNotConfigured")
+                : t(connectionEnabled ? "setup.oidcAvailable" : "setup.oidcUnavailable")}
+            </p>
+            {canManage && (
+              <Button variant="outline" size="sm" onClick={() => setEditing((open) => !open)}>
+                {t(
+                  editing
+                    ? "common.close"
+                    : provider?.issuer
+                      ? "setup.oidcEdit"
+                      : "setup.oidcConfigure",
+                )}
+              </Button>
+            )}
+          </div>
+
+          {canManage && editing && (
             <form
               key={provider?.revision ?? "new"}
-              className="grid gap-4 md:grid-cols-2"
+              className="grid gap-4 border-t pt-5 md:grid-cols-2"
               onSubmit={configure}
             >
+              <CardDescription className="md:col-span-2">
+                {t("setup.oidcSecretDescription")}
+              </CardDescription>
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="oidc-callback-uri">{t("setup.oidcCallback")}</Label>
                 <Input id="oidc-callback-uri" value={provider?.callback_uri ?? ""} readOnly />
@@ -192,29 +219,30 @@ export function OIDCSetup({ canManage, onError }: Props) {
                 {t("setup.saveOIDC")}
               </Button>
             </form>
-          </CardContent>
-        </Card>
-      )}
+          )}
 
-      {connectionEnabled && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("setup.linkOIDCTitle")}</CardTitle>
-            <CardDescription>{t("setup.linkOIDCDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="outline"
-              disabled={pending !== null}
-              onClick={() => void linkAccount()}
-            >
-              {pending === "link" ? <Spinner /> : <Link />}
-              {t("setup.linkOIDC")}
-            </Button>
-            {linked && <span className="text-sm text-success">{t("setup.oidcLinked")}</span>}
-          </CardContent>
-        </Card>
-      )}
+          {connectionEnabled && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
+              <div>
+                <p className="text-sm font-medium">{t("setup.linkOIDCTitle")}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("setup.linkOIDCDescription")}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending !== null}
+                onClick={() => void linkAccount()}
+              >
+                {pending === "link" ? <Spinner /> : <Link />}
+                {t("setup.linkOIDC")}
+              </Button>
+              {linked && <span className="text-sm text-success">{t("setup.oidcLinked")}</span>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }
