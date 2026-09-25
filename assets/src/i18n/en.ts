@@ -78,14 +78,13 @@ const en = {
       connectionPending: "Connection required",
       resolverStatus: "Resolver role",
       resolverPending: "Assignment required",
-      reviewerReady: "An AI connection is assigned to the Reviewer role.",
-      reviewerNotAssigned:
-        "No AI connection is assigned to the Reviewer role. Resolver-only connections are never used for review.",
-      reviewerRequired: "Reviewer assignment required",
+      reviewerReady: "An AI connection is set to review proposed changes (Reviewer).",
+      reviewerNotAssigned: "No AI connection is set to review proposed changes (Reviewer).",
+      reviewerRequired: "Reviewer setup required",
       autoReviewerWarning:
-        "Authority mode is Auto, but no eligible Reviewer AI connection is assigned. A Case will stop at a change proposal and require operator attention. Resolver-only connections are never used for review.",
+        "Auto mode needs an AI connection to review proposed changes (Reviewer). None is assigned, so changes cannot run automatically. Assign another connection to Reviewer or change an existing connection to Both.",
       autoReviewerChangeWarning:
-        "Saving this change removes the last Reviewer connection. Auto mode Cases will stop at a change proposal. Resolver-only connections are never used for review.",
+        "Saving this setting leaves no AI assigned to review proposed changes (Reviewer). To run changes in Auto mode, assign another connection to Reviewer.",
       authorityStatus: "Standing authority",
       authorityPending: "Confirmation required",
       automationOn: "Incoming Signals start Cases automatically.",
@@ -213,8 +212,7 @@ const en = {
         ask: { name: "Ask", description: "Require a human decision for each proposed effect." },
         auto: {
           name: "Auto",
-          description:
-            "Allow effects only after an AI explicitly assigned to the Reviewer role approves.",
+          description: "Run proposed changes only after a Reviewer approves them.",
         },
         full_access: {
           name: "Full access",
@@ -251,8 +249,7 @@ const en = {
           title: "Authority and limits",
           description: "Review and explicitly save the operating mode and finite limits.",
           action: "Review authority",
-          reviewerRequired:
-            "Auto mode needs an AI connection assigned to the Reviewer role to approve changes.",
+          reviewerRequired: "Auto mode needs an AI connection to review proposed changes.",
           assignReviewer: "Assign Reviewer",
         },
         signal: {
