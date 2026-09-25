@@ -9,7 +9,7 @@ defmodule Opsonde.Providers.Provider.Actions.Check do
     %{id: id, expected_revision: expected_revision, input: check_input} = input.arguments
 
     with {:ok, provider} <-
-           Providers.get_provider(id,
+           Providers.get_active_provider(id,
              actor: context.actor,
              authorize?: false,
              load: [:credentials]

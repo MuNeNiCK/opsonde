@@ -15,6 +15,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
 
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      filter expr(is_nil(provider.retired_at))
       prepare build(sort: [inserted_at: :asc, id: :asc])
     end
 
@@ -25,6 +26,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
 
       filter expr(
                role == ^arg(:role) and enabled == true and provider.kind == :ai and
+                 is_nil(provider.retired_at) and
                  provider.enabled == true and provider.check_status == :passed and
                  provider.checked_revision == provider.revision
              )
@@ -48,6 +50,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       filter expr(
                id == ^arg(:id) and revision == ^arg(:expected_assignment_revision) and
                  role == :resolver and enabled == true and provider.kind == :ai and
+                 is_nil(provider.retired_at) and
                  provider.enabled == true and provider.check_status == :passed and
                  provider.checked_revision == provider.revision and
                  provider.revision == ^arg(:expected_provider_revision)
@@ -65,12 +68,14 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
     update :update do
       primary? true
       accept [:priority, :enabled]
+      require_atomic? false
 
       argument :expected_revision, :integer,
         allow_nil?: false,
         constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
+      validate Opsonde.Providers.AIUsageRoleAssignment.Validations.AIProvider
       change optimistic_lock(:revision)
     end
 

@@ -7,6 +7,7 @@ defmodule Opsonde.Providers do
       define :list_providers, action: :read
       define :page_providers, action: :page
       define :get_provider, action: :read, get_by: [:id]
+      define :get_active_provider, action: :active, args: [:id]
 
       define :load_provider_for_invocation,
         action: :for_invocation,
@@ -61,6 +62,7 @@ defmodule Opsonde.Providers do
 
       define :enable_provider, action: :enable, args: [:expected_revision]
       define :disable_provider, action: :disable, args: [:expected_revision]
+      define :retire_ai_provider, action: :retire_ai, args: [:id, :expected_revision]
     end
 
     resource Opsonde.Providers.AIUsageRoleAssignment do

@@ -14,6 +14,7 @@ defmodule Opsonde.Providers.Provider do
   postgres do
     table "providers"
     repo Opsonde.Repo
+    identity_wheres_to_sql unique_name: "retired_at IS NULL"
   end
 
   field_policies do
@@ -33,7 +34,14 @@ defmodule Opsonde.Providers.Provider do
 
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      filter expr(is_nil(retired_at))
       prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
+    read :active do
+      get? true
+      argument :id, :uuid, allow_nil?: false
+      filter expr(id == ^arg(:id) and is_nil(retired_at))
     end
 
     read :for_invocation do
@@ -54,6 +62,7 @@ defmodule Opsonde.Providers.Provider do
                  revision == ^arg(:expected_revision) and
                  kind == ^arg(:expected_kind) and
                  enabled == true and
+                 is_nil(retired_at) and
                  check_status == :passed and
                  checked_revision == revision
              )
@@ -76,6 +85,7 @@ defmodule Opsonde.Providers.Provider do
         constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
+      validate compare(:retired_at, is_nil: true)
       change set_attribute(:enabled, false)
       change set_attribute(:checked_revision, nil)
       change set_attribute(:check_status, nil)
@@ -97,6 +107,16 @@ defmodule Opsonde.Providers.Provider do
 
       argument :input, :map, allow_nil?: false, default: %{}
       run Opsonde.Providers.Provider.Actions.Check
+    end
+
+    action :retire_ai, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+
+      argument :id, :uuid, allow_nil?: false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      run Opsonde.Providers.Provider.Actions.RetireAI
     end
 
     action :target_capabilities, :struct do
@@ -257,6 +277,7 @@ defmodule Opsonde.Providers.Provider do
       argument :check_message, :string
 
       validate Opsonde.Validations.CurrentRevision
+      validate compare(:retired_at, is_nil: true)
       change set_attribute(:checked_revision, arg(:expected_revision))
       change set_attribute(:check_status, arg(:check_status))
       change set_attribute(:check_category, arg(:check_category))
@@ -283,6 +304,7 @@ defmodule Opsonde.Providers.Provider do
         message: "does not have a current check"
 
       validate Opsonde.Validations.CurrentRevision
+      validate compare(:retired_at, is_nil: true)
       change set_attribute(:enabled, true)
     end
 
@@ -294,16 +316,38 @@ defmodule Opsonde.Providers.Provider do
         constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
+      validate compare(:retired_at, is_nil: true)
       change set_attribute(:enabled, false)
+    end
+
+    update :retire_record do
+      public? false
+      accept [:credentials]
+      require_atomic? false
+
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:kind, :ai)
+      validate compare(:retired_at, is_nil: true)
+      change set_attribute(:enabled, false)
+      change set_attribute(:configuration, %{})
+      change set_attribute(:check_status, nil)
+      change set_attribute(:check_category, nil)
+      change set_attribute(:check_message, nil)
+      change set_attribute(:checked_revision, nil)
+      change set_attribute(:checked_at, nil)
+      change atomic_update(:retired_at, expr(now()))
+      change optimistic_lock(:revision)
     end
   end
 
   policies do
-    policy action([:create, :update, :check, :enable, :disable]) do
+    policy action([:create, :update, :check, :enable, :disable, :retire_ai]) do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action(:record_check) do
+    policy action([:record_check, :retire_record]) do
       forbid_if always()
     end
 
@@ -339,7 +383,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :active]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
@@ -421,10 +465,12 @@ defmodule Opsonde.Providers.Provider do
       public? true
     end
 
+    attribute :retired_at, :utc_datetime_usec
+
     timestamps()
   end
 
   identities do
-    identity :unique_name, [:name]
+    identity :unique_name, [:name], where: expr(is_nil(retired_at))
   end
 end

@@ -93,6 +93,25 @@ defmodule OpsondeWeb.API.V1.ProviderController do
           :internal_server_error
         ])
 
+  operation :delete,
+    operation_id: "deleteAIProvider",
+    summary: "Delete an AI connection and revoke its role assignments",
+    parameters: OpsondeWeb.API.Schemas.id_parameter(),
+    request_body:
+      {"Provider revision", "application/json", ProviderSchemas.ref("ProviderRevisionRequest"),
+       required: true},
+    responses:
+      [no_content: {"AI connection deleted", nil, nil}] ++
+        OpsondeWeb.API.Schemas.errors([
+          :bad_request,
+          :unauthorized,
+          :forbidden,
+          :not_found,
+          :conflict,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   operation :target_capabilities,
     operation_id: "getProviderTargetCapabilities",
     summary: "Get Target capabilities from a Provider",
@@ -163,7 +182,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   end
 
   def show(conn, %{"id" => id}) do
-    with {:ok, provider} <- Providers.get_provider(id, actor: conn.assigns.current_user) do
+    with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user) do
       Response.data(conn, ProviderJSON.data(provider))
     end
   end
@@ -204,7 +223,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
     if map_size(attrs) == 0 do
       {:error, :bad_request}
     else
-      with {:ok, provider} <- Providers.get_provider(id, actor: conn.assigns.current_user),
+      with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user),
            {:ok, updated} <-
              Providers.update_provider(provider, expected_revision, attrs,
                actor: conn.assigns.current_user
@@ -215,6 +234,15 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   end
 
   def update(_conn, _params), do: {:error, :bad_request}
+
+  def delete(conn, %{"id" => id, "provider" => %{"expected_revision" => revision}}) do
+    with {:ok, _provider} <-
+           Providers.retire_ai_provider(id, revision, actor: conn.assigns.current_user) do
+      send_resp(conn, :no_content, "")
+    end
+  end
+
+  def delete(_conn, _params), do: {:error, :bad_request}
 
   def check(
         conn,
@@ -255,7 +283,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
          %{"id" => id, "provider" => %{"expected_revision" => expected_revision}},
          operation
        ) do
-    with {:ok, provider} <- Providers.get_provider(id, actor: conn.assigns.current_user),
+    with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user),
          {:ok, updated} <- change_enabled(provider, expected_revision, operation, conn) do
       Response.data(conn, ProviderJSON.data(updated))
     end

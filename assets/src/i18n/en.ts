@@ -114,6 +114,11 @@ const en = {
       saveConnection: "Save connection",
       connectionUpdated:
         "{{name}} was updated. Check the current configuration before enabling it.",
+      deleteConnection: "Delete",
+      deleteConnectionConfirm:
+        "Delete {{name}}? Its AI roles will be removed and its saved credentials erased. Existing Case history will remain.",
+      confirmDeleteConnection: "Delete AI connection",
+      connectionDeleted: "{{name}} was deleted.",
       enabled: "Enabled",
       disabled: "Disabled",
       checkPassed: "The current configuration passed its connection check.",

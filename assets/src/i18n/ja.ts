@@ -112,6 +112,11 @@ const ja = {
         "保存済みの認証情報を維持する場合はAPIキーを空欄にします。保存すると接続は無効になり、再度の接続確認が必要です。",
       saveConnection: "接続を保存",
       connectionUpdated: "{{name}}を更新しました。有効化する前に現在の設定を接続確認してください。",
+      deleteConnection: "削除",
+      deleteConnectionConfirm:
+        "{{name}}を削除しますか？ AIの役割を解除し、保存された資格情報を消去します。既存のCase履歴は保持します。",
+      confirmDeleteConnection: "AI接続を削除",
+      connectionDeleted: "{{name}}を削除しました。",
       enabled: "有効",
       disabled: "無効",
       checkPassed: "現在の設定で接続確認に成功しました。",

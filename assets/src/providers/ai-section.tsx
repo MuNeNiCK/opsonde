@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, KeyRound, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient } from "@/api/client";
@@ -121,6 +121,7 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
   const aiProviders = providers.filter((provider) => provider.kind === "ai");
@@ -217,6 +218,21 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
     if (updated) {
       setEditingProviderId(null);
       setSuccess(t("setup.connectionUpdated", { name }));
+    }
+  }
+
+  async function deleteProvider(provider: Provider) {
+    const deleted = await mutate(`${provider.id}-delete`, () =>
+      apiClient.DELETE("/api/v1/providers/{id}", {
+        params: { path: { id: provider.id } },
+        body: { provider: { expected_revision: provider.revision } },
+      }),
+    );
+
+    if (deleted) {
+      setDeletingProviderId(null);
+      setEditingProviderId(null);
+      setSuccess(t("setup.connectionDeleted", { name: provider.name }));
     }
   }
 
@@ -369,7 +385,48 @@ export function ProviderSetup({ providers, assignments, canManage, onRefresh, on
                           {t("setup.disable")}
                         </Button>
                       )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive"
+                        disabled={pending !== null}
+                        onClick={() =>
+                          setDeletingProviderId(
+                            deletingProviderId === provider.id ? null : provider.id,
+                          )
+                        }
+                      >
+                        <Trash2 />
+                        {t("setup.deleteConnection")}
+                      </Button>
                     </div>
+
+                    {deletingProviderId === provider.id && (
+                      <Alert variant="destructive">
+                        <AlertDescription className="space-y-3">
+                          <p>{t("setup.deleteConnectionConfirm", { name: provider.name })}</p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={pending !== null}
+                              onClick={() => void deleteProvider(provider)}
+                            >
+                              {pending === `${provider.id}-delete` ? <Spinner /> : <Trash2 />}
+                              {t("setup.confirmDeleteConnection")}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pending !== null}
+                              onClick={() => setDeletingProviderId(null)}
+                            >
+                              {t("common.cancel")}
+                            </Button>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
                     {editingProviderId === provider.id && (
                       <form

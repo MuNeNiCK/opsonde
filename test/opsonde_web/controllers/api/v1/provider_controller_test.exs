@@ -3,7 +3,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
 
   import OpenApiSpex.TestAssertions
 
-  alias Opsonde.Accounts
+  alias Opsonde.{Accounts, Cases, Providers}
 
   @password "correct horse battery staple"
 
@@ -253,6 +253,220 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert_secret_free(listed, ["role-secret", "target-role-secret"])
   end
 
+  test "administrator deletes an AI connection and revokes its active use", context do
+    name = "retired-ai-#{System.unique_integer([:positive])}"
+    secret = "credential-to-erase"
+
+    ai =
+      create_provider!(
+        context.admin_token,
+        name,
+        "ai",
+        "fixture-ai",
+        %{"model" => "test-model"},
+        %{"api_key" => secret}
+      )
+
+    resolver = create_assignment!(context.admin_token, ai["id"], "resolver", 10)
+    reviewer = create_assignment!(context.admin_token, ai["id"], "reviewer", 10)
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "web",
+        "delete-ai-history-#{System.unique_integer([:positive])}",
+        "Historical AI reference",
+        :warning,
+        :not_applicable,
+        %{},
+        nil,
+        :en,
+        authorize?: false
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    turn =
+      Cases.create_turn_record!(
+        %{
+          case_id: incident.id,
+          resolution_run_id: run.id,
+          ordinal: 1,
+          idempotency_key: "historical-turn",
+          status: :started,
+          intent: %{},
+          started_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+
+    invocation =
+      Cases.create_ai_invocation_record!(
+        %{
+          case_id: incident.id,
+          resolution_run_id: run.id,
+          turn_id: turn.id,
+          provider_id: ai["id"],
+          assignment_id: resolver["id"],
+          role: :resolver,
+          idempotency_key: "historical-ai-invocation",
+          request_digest: String.duplicate("a", 64),
+          provider_revision: 1,
+          assignment_revision: 1,
+          selection_source: :assignment,
+          reserved_units: 1,
+          dispatch_started_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+
+    assert %{"data" => %{"check" => %{"status" => "passed"}}} =
+             post_json(
+               "/api/v1/providers/#{ai["id"]}/check",
+               %{"provider" => %{"expected_revision" => 1}},
+               context.admin_token
+             )
+             |> json_response(200)
+
+    assert %{"data" => %{"enabled" => true}} =
+             post_json(
+               "/api/v1/providers/#{ai["id"]}/enable",
+               %{"provider" => %{"expected_revision" => 1}},
+               context.admin_token
+             )
+             |> json_response(200)
+
+    assert {:ok, eligible} =
+             Providers.load_provider_for_invocation(ai["id"], 1, :ai, authorize?: false)
+
+    assert eligible.id == ai["id"]
+
+    assert %{"error" => %{"code" => "forbidden"}} =
+             delete_json(
+               "/api/v1/providers/#{ai["id"]}",
+               %{"provider" => %{"expected_revision" => 1}},
+               context.operator_token
+             )
+             |> json_response(403)
+
+    assert %{"error" => %{"code" => "conflict"}} =
+             delete_json(
+               "/api/v1/providers/#{ai["id"]}",
+               %{"provider" => %{"expected_revision" => 2}},
+               context.admin_token
+             )
+             |> json_response(409)
+
+    deleted =
+      delete_json(
+        "/api/v1/providers/#{ai["id"]}",
+        %{"provider" => %{"expected_revision" => 1}},
+        context.admin_token
+      )
+
+    assert response(deleted, 204) == ""
+    assert_operation_response(deleted)
+
+    assert response(
+             delete_json(
+               "/api/v1/providers/#{ai["id"]}",
+               %{"provider" => %{"expected_revision" => 1}},
+               context.admin_token
+             ),
+             204
+           ) == ""
+
+    assert %{"data" => active} =
+             get_json("/api/v1/providers", context.admin_token) |> json_response(200)
+
+    refute Enum.any?(active, &(&1["id"] == ai["id"]))
+
+    assert %{"data" => roles} =
+             get_json("/api/v1/ai-usage-role-assignments", context.admin_token)
+             |> json_response(200)
+
+    refute Enum.any?(roles, &(&1["provider_id"] == ai["id"]))
+
+    for path <- [
+          "/api/v1/providers/#{ai["id"]}/check",
+          "/api/v1/providers/#{ai["id"]}/enable"
+        ] do
+      assert %{"error" => %{"code" => "not_found"}} =
+               post_json(path, %{"provider" => %{"expected_revision" => 1}}, context.admin_token)
+               |> json_response(404)
+    end
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             get_json("/api/v1/providers/#{ai["id"]}", context.admin_token)
+             |> json_response(404)
+
+    assert %{"error" => %{"code" => "validation_failed"}} =
+             patch_json(
+               "/api/v1/ai-usage-role-assignments/#{resolver["id"]}",
+               %{"assignment" => %{"expected_revision" => 2, "enabled" => true}},
+               context.admin_token
+             )
+             |> json_response(422)
+
+    assert {:ok, stored} = Providers.get_provider(ai["id"], authorize?: false)
+    assert stored.retired_at
+    assert stored.configuration == %{}
+    assert stored.enabled == false
+    assert {:ok, stored} = Ash.load(stored, :credentials, authorize?: false)
+    assert stored.credentials == %{}
+
+    assert {:error, _error} =
+             Providers.load_provider_for_invocation(ai["id"], 1, :ai, authorize?: false)
+
+    assert {:error, _error} = Providers.select_resolver_ai(authorize?: false)
+
+    assert {:ok, retained} =
+             Cases.ai_invocation_by_idempotency("historical-ai-invocation", authorize?: false)
+
+    assert retained.id == invocation.id
+    assert retained.provider_id == ai["id"]
+    assert retained.assignment_id == resolver["id"]
+    assert Cases.get_case!(incident.id, authorize?: false).id == incident.id
+
+    for role_id <- [resolver["id"], reviewer["id"]] do
+      assert {:ok, assignment} =
+               Providers.get_ai_usage_role_assignment(role_id, authorize?: false)
+
+      assert assignment.enabled == false
+    end
+
+    replacement =
+      create_provider!(
+        context.admin_token,
+        name,
+        "ai",
+        "fixture-ai",
+        %{"model" => "replacement-model"},
+        %{"api_key" => "replacement-secret"}
+      )
+
+    refute replacement["id"] == ai["id"]
+    assert replacement["name"] == name
+  end
+
+  test "non-AI Provider cannot be deleted through AI removal", context do
+    target = create_target!(context.admin_token, "reachable", "target-secret")
+
+    assert %{"error" => %{"code" => "validation_failed"}} =
+             delete_json(
+               "/api/v1/providers/#{target["id"]}",
+               %{"provider" => %{"expected_revision" => 1}},
+               context.admin_token
+             )
+             |> json_response(422)
+
+    assert %{"data" => %{"id" => id}} =
+             get_json("/api/v1/providers/#{target["id"]}", context.admin_token)
+             |> json_response(200)
+
+    assert id == target["id"]
+  end
+
   test "operator and viewer can read setup but cannot mutate it", context do
     provider = create_target!(context.admin_token, "reachable", "policy-secret")
 
@@ -393,6 +607,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
 
   defp post_json(path, body, token \\ nil), do: request(:post, path, body, token)
   defp patch_json(path, body, token), do: request(:patch, path, body, token)
+  defp delete_json(path, body, token), do: request(:delete, path, body, token)
   defp get_json(path, token), do: request(:get, path, nil, token)
 
   defp request(method, path, body, token) do
@@ -404,6 +619,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   defp dispatch_request(conn, :get, path, _body), do: get(conn, path)
   defp dispatch_request(conn, :post, path, body), do: post(conn, path, body)
   defp dispatch_request(conn, :patch, path, body), do: patch(conn, path, body)
+  defp dispatch_request(conn, :delete, path, body), do: delete(conn, path, body)
 
   defp maybe_authorize(conn, nil), do: conn
 

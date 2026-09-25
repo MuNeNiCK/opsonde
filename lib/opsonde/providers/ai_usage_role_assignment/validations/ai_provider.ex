@@ -11,8 +11,11 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment.Validations.AIProvider do
     provider_id = Ash.Changeset.get_attribute(changeset, :provider_id)
 
     case Opsonde.Providers.get_provider(provider_id, authorize?: false) do
-      {:ok, %{kind: :ai}} ->
+      {:ok, %{kind: :ai, retired_at: nil}} ->
         :ok
+
+      {:ok, %{kind: :ai}} ->
+        {:error, field: :provider_id, message: "has been deleted"}
 
       {:ok, _provider} ->
         {:error, field: :provider_id, message: "must reference an AI provider"}
