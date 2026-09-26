@@ -28,6 +28,47 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     }
   end
 
+  test "authenticated clients can discover the installed AI object services", context do
+    response = get_json("/api/v1/ai-services", context.viewer_token)
+
+    assert %{"data" => services} = json_response(response, 200)
+    assert_operation_response(response)
+    assert length(services) == 30
+    assert Enum.any?(services, &(&1["id"] == "ollama" && &1["auth"] == "none"))
+    refute Enum.any?(services, &(&1["id"] in ~w(cohere elevenlabs typesafe)))
+  end
+
+  test "service account credentials are write-only in public AI registration", context do
+    secret = ~s({"client_email":"probe@example.com","private_key":"private-probe"})
+
+    response =
+      post_json(
+        "/api/v1/providers",
+        %{
+          "provider" => %{
+            "name" => "vertex-probe",
+            "kind" => "ai",
+            "adapter_type" => "req-llm",
+            "configuration" => %{
+              "provider" => "google_vertex",
+              "model" => "gemini-2.5-flash",
+              "project_id" => "probe-project"
+            },
+            "credentials" => %{"service_account_json" => secret}
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{"data" => %{"id" => id}} = json_response(response, 201)
+    assert_operation_response(response)
+    assert_secret_free(response, [secret, "private-probe"])
+
+    shown = get_json("/api/v1/providers/#{id}", context.viewer_token)
+    assert_operation_response(shown)
+    assert_secret_free(shown, [secret, "private-probe"])
+  end
+
   test "administrator configures every Provider kind without exposing credentials", context do
     providers =
       [
@@ -271,6 +312,46 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{"data" => [_one], "page" => %{"next" => cursor}} = json_response(listed, 200)
     assert is_binary(cursor)
     assert_secret_free(listed, ["role-secret", "target-role-secret"])
+  end
+
+  test "AI request settings persist through the public Provider API", context do
+    configuration = %{
+      "provider" => "openai",
+      "model" => "test-model",
+      "endpoint" => "https://api.example.test/v1",
+      "max_tokens" => 8_192,
+      "reasoning_effort" => "none"
+    }
+
+    provider =
+      create_provider!(
+        context.admin_token,
+        "ai-settings-provider",
+        "ai",
+        "req-llm",
+        configuration,
+        %{"api_key" => "settings-secret"}
+      )
+
+    assert provider["configuration"] == configuration
+
+    updated =
+      patch_json(
+        "/api/v1/providers/#{provider["id"]}",
+        %{
+          "provider" => %{
+            "expected_revision" => provider["revision"],
+            "configuration" => %{configuration | "max_tokens" => 16_384}
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{"data" => %{"configuration" => saved, "enabled" => false}} =
+             json_response(updated, 200)
+
+    assert saved["max_tokens"] == 16_384
+    assert saved["reasoning_effort"] == "none"
   end
 
   test "AI creation accepts an initial usage choice and rejects usage on other kinds", context do

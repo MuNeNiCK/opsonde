@@ -39,25 +39,34 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     defp respond(conn, request, {:sleep, milliseconds}) do
       Process.sleep(milliseconds)
-
-      decision = wire_decision(handoff())
-
-      if request.path == "/v1/messages",
-        do: json(conn, anthropic_response(decision)),
-        else: json(conn, openai_text_response(decision))
+      respond(conn, request, {:decision, handoff()})
     end
 
     defp respond(conn, request, {:decision, decision}) do
       decision = wire_decision(decision)
 
       cond do
-        request.path == "/v1/messages" -> json(conn, anthropic_response(decision))
-        true -> json(conn, openai_text_response(decision))
+        request.path == "/v1/messages" and
+            String.contains?(request.body, "\"output_format\"") ->
+          json(conn, anthropic_text_response(decision))
+
+        request.path == "/v1/messages" ->
+          json(conn, anthropic_response(decision))
+
+        String.contains?(request.body, "\"tool_choice\"") ->
+          json(conn, openai_tool_response(decision))
+
+        true ->
+          json(conn, openai_text_response(decision))
       end
     end
 
     defp respond(conn, _request, {:raw_text, text}) do
       json(conn, openai_text_response(text, false))
+    end
+
+    defp respond(conn, _request, {:raw_tool_arguments, arguments}) do
+      json(conn, openai_tool_response(arguments, :raw))
     end
 
     defp respond(conn, _request, {:raw_text_length, text}) do
@@ -117,6 +126,28 @@ defmodule Opsonde.AI.ReqLLMTest do
       base_response(%{"role" => "assistant", "content" => content}, "stop")
     end
 
+    defp openai_tool_response(decision), do: openai_tool_response(Jason.encode!(decision), :raw)
+
+    defp openai_tool_response(arguments, :raw) do
+      base_response(
+        %{
+          "role" => "assistant",
+          "content" => nil,
+          "tool_calls" => [
+            %{
+              "id" => "call_test",
+              "type" => "function",
+              "function" => %{
+                "name" => "structured_output",
+                "arguments" => arguments
+              }
+            }
+          ]
+        },
+        "tool_calls"
+      )
+    end
+
     defp base_response(message, finish_reason) do
       %{
         "id" => "chatcmpl-test",
@@ -130,17 +161,31 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     end
 
+    defp anthropic_text_response(decision) do
+      %{
+        "id" => "msg_test",
+        "type" => "message",
+        "role" => "assistant",
+        "model" => "test-model",
+        "stop_reason" => "end_turn",
+        "content" => [%{"type" => "text", "text" => Jason.encode!(decision)}],
+        "usage" => %{"input_tokens" => 7, "output_tokens" => 5}
+      }
+    end
+
     defp anthropic_response(decision) do
       %{
         "id" => "msg-test",
         "type" => "message",
         "role" => "assistant",
         "model" => "test-model",
-        "stop_reason" => "end_turn",
+        "stop_reason" => "tool_use",
         "content" => [
           %{
-            "type" => "text",
-            "text" => Jason.encode!(decision)
+            "type" => "tool_use",
+            "id" => "toolu_test",
+            "name" => "structured_output",
+            "input" => decision
           }
         ],
         "usage" => %{"input_tokens" => 7, "output_tokens" => 5}
@@ -252,7 +297,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert MapSet.new(schema["required"]) == MapSet.new(Map.keys(schema["properties"]))
       assert schema["properties"]["reason"]["type"] == "string"
 
-      if Map.has_key?(schema["properties"]["reason"], "maxLength") do
+      if request.path != "/v1/messages" do
         assert schema["properties"]["reason"]["maxLength"] == 500
       end
 
@@ -272,12 +317,14 @@ defmodule Opsonde.AI.ReqLLMTest do
           get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
         end)
 
-      assert get_in(target_search, ["properties", "query", "maxLength"]) == 50
-      assert get_in(handoff, ["properties", "required_input", "maxLength"]) == 250
+      if request.path != "/v1/messages" do
+        assert get_in(target_search, ["properties", "query", "maxLength"]) == 50
+        assert get_in(handoff, ["properties", "required_input", "maxLength"]) == 250
+      end
     end
   end
 
-  test "ReqLLM returns plain JSON for local schema validation", context do
+  test "ReqLLM object responses retain usage when the returned schema is invalid", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {:decision, handoff()})
@@ -291,8 +338,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     [request] = requests(context.agent)
     body = Jason.decode!(request.body)
 
-    refute Map.has_key?(body, "tool_choice")
-    refute Map.has_key?(body, "tools")
+    assert get_in(body, ["tool_choice", "function", "name"]) == "structured_output"
+    assert get_in(body, ["tools", Access.at(0), "function", "name"]) == "structured_output"
     refute Map.has_key?(body, "response_format")
     assert output_schema(hd(requests(context.agent)))["additionalProperties"] == false
 
@@ -306,13 +353,29 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
+             Adapter.resolve(state, resolver_request(), %{})
+  end
+
+  test "ReqLLM repaired object output is rejected with metered usage", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(
+      context.agent,
+      {:raw_tool_arguments,
+       ~s({"reason":"probe","intent":{"type":"handoff","required_input":"human",},})}
+    )
+
+    assert {:error, :invalid_output, "AI provider output required repair",
+            %AI.Usage{input_tokens: 7, output_tokens: 5}, "repair_required"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -338,29 +401,29 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
   end
 
-  test "plain output uses local schema validation with metered rejection",
+  test "object requests reject text-only replies and retain metered usage",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {:raw_text, ~s({"status":"ready"})})
-    assert :ok = Adapter.check(state, %{})
+    assert {:error, :capability, _message} = Adapter.check(state, %{})
 
     valid = %{"reason" => "確認", "intent" => %{"type" => "handoff", "required_input" => "確認"}}
     set_mode(context.agent, {:raw_text, Jason.encode!(valid)})
 
-    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "確認"}}} =
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     [request] = requests(context.agent)
     body = Jason.decode!(request.body)
-    refute Map.has_key?(body, "tools")
-    assert String.contains?(request.body, "additionalProperties")
-
+    assert get_in(body, ["tools", Access.at(0), "function", "name"]) == "structured_output"
     refute Map.has_key?(body, "response_format")
 
     set_mode(context.agent, {:raw_text, ~s({"verdict":"rejected","reason":"証拠不足"})})
 
-    assert {:ok, %AI.ReviewDecision{verdict: :rejected, reason: "証拠不足"}} =
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.review(state, review_request(), %{})
 
     set_mode(
@@ -368,17 +431,20 @@ defmodule Opsonde.AI.ReqLLMTest do
       {:raw_text, ~s({"reason":"bad","intent":{"type":"recovery","evidence_ids":["invented"]}})}
     )
 
-    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, ~s({"reason":)})
 
-    assert {:error, :invalid_output, "AI provider output is not valid JSON", %AI.Usage{}} =
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text_length, Jason.encode!(valid)})
 
-    assert {:error, :invalid_output, "AI provider JSON was truncated", %AI.Usage{}} =
+    assert {:error, :invalid_output, "AI provider JSON was truncated",
+            %AI.Usage{finish_reason: "length"}, "truncated"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -488,7 +554,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.any?(body["messages"], fn message ->
              message["role"] == "system" and
                String.contains?(message["content"], "previous response was rejected") and
-               String.contains?(message["content"], "copy enum values exactly")
+               String.contains?(message["content"], "Copy enum values exactly")
            end)
   end
 
@@ -528,7 +594,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     })
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     assert [_request] = requests(context.agent)
@@ -600,7 +667,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       %{"type" => "handoff", "reason" => String.duplicate("界", 501), "required_input" => "x"}
     })
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -751,11 +819,14 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:ok, buffered_decision} = Adapter.resolve(buffered, resolver_request(), %{})
     set_mode(context.agent, {:stream, handoff()})
     assert {:ok, streamed_decision} = Adapter.resolve(streamed, resolver_request(), %{})
-    assert streamed_decision == buffered_decision
+    assert streamed_decision.intent == buffered_decision.intent
+    assert streamed_decision.usage.input_tokens == buffered_decision.usage.input_tokens
+    assert streamed_decision.usage.output_tokens == buffered_decision.usage.output_tokens
 
     set_mode(context.agent, {:stream, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(streamed, resolver_request(), %{})
   end
 
@@ -907,18 +978,21 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, request, %{})
 
     set_mode(context.agent, {:decision, Map.delete(decision, "tool_id")})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, request, %{})
 
     malformed = %{decision | "expected_result" => "not-an-object"}
     set_mode(context.agent, {:decision, malformed})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "decision_validation"} =
              Adapter.resolve(state, request, %{})
   end
 
@@ -930,7 +1004,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
-    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5}} =
+    assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:sleep, 1_000})
@@ -975,6 +1050,112 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:ok, %{reasoning_effort: :low}} =
              Adapter.build(Map.put(base, "reasoning_effort", "low"), credentials)
+  end
+
+  test "the public service catalog includes every installed object provider and excludes other operations" do
+    services = Adapter.services()
+    registered = ReqLLM.Providers.list() |> Enum.map(&Atom.to_string/1)
+
+    assert Enum.map(services, & &1.id) ==
+             Enum.reject(registered, &(&1 in ~w(cohere elevenlabs typesafe)))
+
+    assert Enum.find(services, &(&1.id == "ollama")).auth == "none"
+    assert Enum.find(services, &(&1.id == "google_vertex")).auth == "service_account_json"
+    assert Enum.find(services, &(&1.id == "openai_codex")).auth == "oauth_access_token"
+  end
+
+  test "every catalog service can build a model connection using its supported credential profile" do
+    for service <- Adapter.services() do
+      configuration =
+        %{"provider" => service.id, "model" => "opsonde-test-model"}
+        |> Map.merge(
+          case service.id do
+            "azure" -> %{"endpoint" => "https://example.openai.azure.com"}
+            "amazon_bedrock" -> %{"region" => "us-east-1"}
+            "google_vertex" -> %{"project_id" => "opsonde-test"}
+            "openai_codex" -> %{"chatgpt_account_id" => "test-account"}
+            _ -> %{}
+          end
+        )
+
+      credentials =
+        case service.auth do
+          "none" ->
+            %{}
+
+          "optional_api_key" ->
+            %{}
+
+          "service_account_json" ->
+            %{
+              "service_account_json" =>
+                ~s({"client_email":"test@example.com","private_key":"test"})
+            }
+
+          "oauth_access_token" ->
+            %{"access_token" => "test-token"}
+
+          "api_key" ->
+            %{"api_key" => "test-key"}
+        end
+
+      assert {:ok, state} = Adapter.build(configuration, credentials), service.id
+      assert state.provider == String.to_existing_atom(service.id)
+      assert state.model.provider == state.provider
+    end
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(%{"provider" => "ollama", "model" => "llama3"}, %{
+               "api_key" => "ignored"
+             })
+
+    assert {:error, :invalid_configuration} =
+             Adapter.build(%{"provider" => "google_vertex", "model" => "gemini"}, %{})
+  end
+
+  test "unsupported Azure model family is reported as capability, not network failure" do
+    assert {:ok, state} =
+             Adapter.build(
+               %{
+                 "provider" => "azure",
+                 "model" => "model-outside-azure-families",
+                 "endpoint" => "https://example.openai.azure.com"
+               },
+               %{"api_key" => "test-key"}
+             )
+
+    assert {:error, :capability, "AI model family is not supported by this service"} =
+             Adapter.check(state, %{})
+  end
+
+  test "OpenRouter catalog structured-output metadata selects its schema path without tools" do
+    assert {:ok, state} =
+             Adapter.build(
+               %{"provider" => "openrouter", "model" => "gryphe/mythomax-l2-13b"},
+               %{"api_key" => "test-key"}
+             )
+
+    assert state.model.extra["structured_output"] == true
+    assert state.model.capabilities == nil
+    assert state.provider_options[:openrouter_structured_output_mode] == :json_schema
+  end
+
+  test "OpenRouter models without tool metadata send a schema request through Resolver",
+       context do
+    state =
+      state!("openrouter", context.endpoint <> "/v1", %{"api_key" => "test-key"}, %{
+        "model" => "gryphe/mythomax-l2-13b"
+      })
+
+    set_mode(context.agent, {:decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, resolver_request(), %{})
+
+    [request] = requests(context.agent)
+    body = Jason.decode!(request.body)
+    assert body["response_format"]["type"] == "json_schema"
+    refute Map.has_key?(body, "tools")
   end
 
   test "known models retain LLMDB metadata while unknown model IDs remain usable", context do
@@ -1023,7 +1204,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     for {provider_name, endpoint} <- [
           {"openai", context.endpoint <> "/v1"},
-          {"anthropic", context.endpoint}
+          {"anthropic", context.endpoint},
+          {"ollama", context.endpoint <> "/v1"}
         ] do
       set_mode(context.agent, {:decision, handoff()})
 
@@ -1037,7 +1219,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             "model" => "test-model",
             "endpoint" => endpoint
           },
-          %{"api_key" => "provider-secret"},
+          if(provider_name == "ollama", do: %{}, else: %{"api_key" => "provider-secret"}),
           actor: admin
         )
 
@@ -1264,9 +1446,15 @@ defmodule Opsonde.AI.ReqLLMTest do
 
   defp output_schema(request) do
     body = Jason.decode!(request.body)
-    schema_message = List.last(body["messages"])["content"]
-    [_, schema] = String.split(schema_message, "Follow this JSON Schema exactly: ", parts: 2)
-    Jason.decode!(schema)
+
+    case request.path do
+      "/v1/messages" ->
+        get_in(body, ["output_format", "schema"]) ||
+          get_in(body, ["tools", Access.at(0), "input_schema"])
+
+      _other ->
+        get_in(body, ["tools", Access.at(0), "function", "parameters"])
+    end
   end
 
   defp set_mode(agent, mode),

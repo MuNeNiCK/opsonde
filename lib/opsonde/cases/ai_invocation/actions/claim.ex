@@ -66,6 +66,7 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
              %{
                status: :unknown,
                category: "response_unknown",
+               failure_code: "response_unknown",
                completed_at: DateTime.utc_now()
              },
              authorize?: false

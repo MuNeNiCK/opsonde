@@ -149,6 +149,24 @@ defmodule OpsondeCLI.CLITest do
     end
   end
 
+  test "lists AI services through the same authenticated catalog as Web", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/api/v1/ai-services"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+      Req.Test.json(conn, %{data: [%{id: "ollama", name: "Ollama", auth: "none"}]})
+    end)
+
+    output =
+      capture_io(fn ->
+        assert CLI.run(["provider", "services"], runtime(context)) == 0
+      end)
+
+    assert output =~ ~s("id": "ollama")
+  end
+
   test "passes pagination without changing the shared API contract", context do
     save_session(context)
 

@@ -253,6 +253,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
                      record_invocation(invocation, :completed,
                        input_tokens: decision.usage.input_tokens,
                        output_tokens: decision.usage.output_tokens,
+                       usage: decision.usage,
                        result_digest: attrs.result_digest
                      ) do
                 {:accepted, stored}
@@ -263,6 +264,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
                      record_invocation(invocation, :completed,
                        input_tokens: decision.usage.input_tokens,
                        output_tokens: decision.usage.output_tokens,
+                       usage: decision.usage,
                        category: "budget_exhausted"
                      ) do
                 {:exhausted, charged.reason}
@@ -400,9 +402,16 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
   defp record_failure(proposal, invocation, category, error),
     do:
-      settle_failed_usage(proposal, invocation, category, error_usage(error), dispatched?(error))
+      settle_failed_usage(
+        proposal,
+        invocation,
+        category,
+        error_usage(error),
+        dispatched?(error),
+        failure_code(error)
+      )
 
-  defp settle_failed_usage(proposal, invocation, category, usage, dispatched?) do
+  defp settle_failed_usage(proposal, invocation, category, usage, dispatched?, failure_code) do
     amount =
       cond do
         usage -> usage.input_tokens + usage.output_tokens
@@ -424,7 +433,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
              record_invocation(invocation, :failed,
                input_tokens: if(usage, do: usage.input_tokens, else: 0),
                output_tokens: if(usage, do: usage.output_tokens, else: 0),
-               category: category
+               usage: usage,
+               category: category,
+               failure_code: failure_code
              ) do
         recorded
       end
@@ -446,6 +457,8 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp record_invocation(invocation, status, attrs) do
+    usage = Keyword.get(attrs, :usage)
+
     Cases.record_ai_invocation_outcome(
       invocation,
       invocation.revision,
@@ -453,7 +466,11 @@ defmodule Opsonde.Cases.ReviewDelivery do
         status: status,
         input_tokens: Keyword.get(attrs, :input_tokens, 0),
         output_tokens: Keyword.get(attrs, :output_tokens, 0),
+        cached_tokens: if(usage, do: usage.cached_tokens),
+        reasoning_tokens: if(usage, do: usage.reasoning_tokens),
+        finish_reason: if(usage, do: usage.finish_reason),
         category: Keyword.get(attrs, :category),
+        failure_code: Keyword.get(attrs, :failure_code),
         result_digest: Keyword.get(attrs, :result_digest),
         completed_at: DateTime.utc_now()
       },
@@ -537,7 +554,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp settle_changed_context(proposal, invocation, usage) do
-    case settle_failed_usage(proposal, invocation, "context_changed", usage, true) do
+    case settle_failed_usage(proposal, invocation, "context_changed", usage, true, nil) do
       {:ok, _invocation} -> :ok
       {:error, _error} = error -> error
     end
@@ -547,6 +564,13 @@ defmodule Opsonde.Cases.ReviewDelivery do
     case find_error(error) do
       %AI.Error{category: category} -> {to_string(category), public_failure(category)}
       _error -> {"failed", "Reviewer delivery failed"}
+    end
+  end
+
+  defp failure_code(error) do
+    case find_error(error) do
+      %AI.Error{failure_code: code} when is_binary(code) -> code
+      _error -> nil
     end
   end
 

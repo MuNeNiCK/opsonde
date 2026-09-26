@@ -384,6 +384,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai-services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List AI generation services */
+        get: operations["listAIServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/accounts": {
         parameters: {
             query?: never;
@@ -1416,6 +1433,14 @@ export interface components {
             resolution_run_id: string | null;
             type: string;
         };
+        AIService: {
+            /** @enum {string} */
+            auth: "api_key" | "optional_api_key" | "none" | "service_account_json" | "oauth_access_token";
+            configuration_fields: string[];
+            endpoint_required: boolean;
+            id: string;
+            name: string;
+        };
         TargetRelationshipPage: {
             data: components["schemas"]["TargetRelationship"][];
             page: components["schemas"]["Page"];
@@ -1764,6 +1789,9 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             value: string;
+        };
+        AIServiceCatalogResponse: {
+            data: components["schemas"]["AIService"][];
         };
         CreateTargetRelationshipRequest: {
             relationship: {
@@ -5153,6 +5181,44 @@ export interface operations {
             };
             /** @description Request validation failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listAIServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI services */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIServiceCatalogResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

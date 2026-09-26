@@ -22,13 +22,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 
 type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
 type Provider = components["schemas"]["Provider"];
 type UsageScope = "all" | "resolver" | "reviewer";
+export type AIService = components["schemas"]["AIService"];
 
 type Props = {
   providers: Provider[];
+  services: AIService[];
   assignments: AIUsageRoleAssignment[];
   authorityMode: components["schemas"]["AuthoritySetting"]["authority_mode"];
   canManage: boolean;
@@ -63,12 +66,29 @@ function usageOptions(t: (key: string) => string) {
   ];
 }
 
+function credentialField(service: AIService) {
+  if (service.auth === "none") return null;
+  if (service.auth === "service_account_json") return "service_account_json";
+  if (service.auth === "oauth_access_token") return "access_token";
+  return "api_key";
+}
+
+function formConfiguration(form: FormData, service: AIService) {
+  const configuration: Record<string, string> = {};
+  for (const field of service.configuration_fields) {
+    const value = form.get(field);
+    if (typeof value !== "string") return null;
+    if (value) configuration[field] = value;
+  }
+  return configuration;
+}
+
 export function AIProviderCreateForm({
   service,
   onCreated,
   onError,
 }: {
-  service: "openai" | "anthropic";
+  service: AIService;
   onCreated: () => void;
   onError: (message: string) => void;
 }) {
@@ -81,9 +101,12 @@ export function AIProviderCreateForm({
     const name = form.get("name");
     const model = form.get("model");
     const endpoint = form.get("endpoint");
-    const apiKey = form.get("api_key");
+    const secretField = credentialField(service);
+    const secret = secretField ? form.get(secretField) : null;
+    const extraConfiguration = formConfiguration(form, service);
     const timeoutMs = form.get("timeout_ms");
     const maxTokens = form.get("max_tokens");
+    const reasoningEffort = form.get("reasoning_effort");
     const usageScope = form.get("usage_scope");
     const usagePriority = form.get("usage_priority");
 
@@ -91,9 +114,12 @@ export function AIProviderCreateForm({
       typeof name !== "string" ||
       typeof model !== "string" ||
       typeof endpoint !== "string" ||
-      typeof apiKey !== "string" ||
+      (secretField !== null && typeof secret !== "string") ||
+      (service.auth !== "none" && service.auth !== "optional_api_key" && !secret) ||
+      extraConfiguration === null ||
       typeof timeoutMs !== "string" ||
       typeof maxTokens !== "string" ||
+      typeof reasoningEffort !== "string" ||
       (usageScope !== "all" && usageScope !== "resolver" && usageScope !== "reviewer") ||
       typeof usagePriority !== "string"
     ) {
@@ -102,12 +128,14 @@ export function AIProviderCreateForm({
     }
 
     const configuration: Record<string, string | number> = {
-      provider: service,
+      provider: service.id,
       model,
       timeout_ms: Number(timeoutMs),
       max_tokens: Number(maxTokens),
     };
     if (endpoint) configuration.endpoint = endpoint;
+    if (reasoningEffort) configuration.reasoning_effort = reasoningEffort;
+    Object.assign(configuration, extraConfiguration);
 
     setPending(true);
     onError("");
@@ -119,7 +147,7 @@ export function AIProviderCreateForm({
             kind: "ai",
             adapter_type: "req-llm",
             configuration,
-            credentials: apiKey ? { api_key: apiKey } : {},
+            credentials: secretField && secret ? { [secretField]: secret } : {},
             usage_scope: usageScope,
             usage_priority: Number(usagePriority),
           },
@@ -137,11 +165,19 @@ export function AIProviderCreateForm({
     <Card>
       <CardHeader>
         <CardTitle>{t("setup.connection")}</CardTitle>
-        <CardDescription>{t("setup.secretDescription")}</CardDescription>
+        <CardDescription>
+          {t(
+            service.id === "ollama"
+              ? "setup.ollamaLocal"
+              : service.auth === "none"
+                ? "setup.noCredential"
+                : "setup.secretDescription",
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={createProvider}>
-          <AIProviderFields idPrefix="provider" fixedService={service} />
+          <AIProviderFields idPrefix="provider" service={service} />
           <div className="space-y-2">
             <Label htmlFor="provider-usage-scope">{t("setup.usageScope")}</Label>
             <FormSelect
@@ -178,6 +214,7 @@ export function AIProviderCreateForm({
 
 export function ProviderSetup({
   providers,
+  services,
   assignments,
   authorityMode,
   canManage,
@@ -239,21 +276,26 @@ export function ProviderSetup({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = form.get("name");
-    const service = form.get("service");
+    const service = services.find((item) => item.id === configurationValue(provider, "provider"));
     const model = form.get("model");
     const endpoint = form.get("endpoint");
-    const apiKey = form.get("api_key");
+    const secretField = service ? credentialField(service) : null;
+    const secret = secretField ? form.get(secretField) : null;
+    const extraConfiguration = service ? formConfiguration(form, service) : null;
     const timeoutMs = form.get("timeout_ms");
     const maxTokens = form.get("max_tokens");
+    const reasoningEffort = form.get("reasoning_effort");
 
     if (
       typeof name !== "string" ||
-      typeof service !== "string" ||
+      !service ||
       typeof model !== "string" ||
       typeof endpoint !== "string" ||
-      typeof apiKey !== "string" ||
+      (secretField !== null && typeof secret !== "string") ||
+      extraConfiguration === null ||
       typeof timeoutMs !== "string" ||
-      typeof maxTokens !== "string"
+      typeof maxTokens !== "string" ||
+      typeof reasoningEffort !== "string"
     ) {
       setLocalError(t("setup.requestFailed"));
       return;
@@ -261,20 +303,24 @@ export function ProviderSetup({
 
     const configuration: Record<string, unknown> = {
       ...provider.configuration,
-      provider: service,
+      provider: service.id,
       model,
       timeout_ms: Number(timeoutMs),
       max_tokens: Number(maxTokens),
     };
     if (endpoint) configuration.endpoint = endpoint;
     else delete configuration.endpoint;
+    if (reasoningEffort) configuration.reasoning_effort = reasoningEffort;
+    else delete configuration.reasoning_effort;
+    for (const field of service.configuration_fields) delete configuration[field];
+    Object.assign(configuration, extraConfiguration);
 
     const providerUpdate: components["schemas"]["UpdateProviderRequest"]["provider"] = {
       expected_revision: provider.revision,
       name,
       configuration,
     };
-    if (apiKey) providerUpdate.credentials = { api_key: apiKey };
+    if (secretField && secret) providerUpdate.credentials = { [secretField]: secret };
 
     const updated = await mutate(`${provider.id}-update`, () =>
       apiClient.PATCH("/api/v1/providers/{id}", {
@@ -410,6 +456,9 @@ export function ProviderSetup({
 
       <div id="ai-connections" className="grid scroll-mt-6 items-start gap-4 xl:grid-cols-2">
         {aiProviders.map((provider) => {
+          const service = services.find(
+            (item) => item.id === configurationValue(provider, "provider"),
+          );
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
           const assigned = assignments.filter(
@@ -433,7 +482,7 @@ export function ProviderSetup({
                   </Badge>
                 </div>
                 <CardDescription className="break-all">
-                  {configurationValue(provider, "provider")} ·{" "}
+                  {service?.name ?? configurationValue(provider, "provider")} ·{" "}
                   {configurationValue(provider, "model")}
                 </CardDescription>
               </CardHeader>
@@ -632,7 +681,7 @@ export function ProviderSetup({
                       </Alert>
                     )}
 
-                    {editingProviderId === provider.id && (
+                    {editingProviderId === provider.id && service && (
                       <form
                         className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
                         onSubmit={(event) => void updateProvider(provider, event)}
@@ -640,6 +689,7 @@ export function ProviderSetup({
                         <AIProviderFields
                           idPrefix={`provider-${provider.id}`}
                           provider={provider}
+                          service={service}
                           editing
                         />
                         <Button
@@ -691,12 +741,12 @@ function AIProviderFields({
   idPrefix,
   provider,
   editing = false,
-  fixedService,
+  service,
 }: {
   idPrefix: string;
   provider?: Provider;
   editing?: boolean;
-  fixedService?: "openai" | "anthropic";
+  service: AIService;
 }) {
   const { t } = useTranslation();
   const value = (key: string) => (provider ? configurationValue(provider, key) : "");
@@ -715,22 +765,6 @@ function AIProviderFields({
           maxLength={120}
         />
       </div>
-      {fixedService ? (
-        <input type="hidden" name="service" value={fixedService} />
-      ) : (
-        <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-service`}>{t("setup.service")}</Label>
-          <FormSelect
-            id={`${idPrefix}-service`}
-            name="service"
-            defaultValue={value("provider") || "openai"}
-            options={[
-              { value: "openai", label: t("setup.openAICompatible") },
-              { value: "anthropic", label: "Anthropic" },
-            ]}
-          />
-        </div>
-      )}
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-model`}>{t("setup.model")}</Label>
         <Input
@@ -742,15 +776,33 @@ function AIProviderFields({
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-endpoint`}>{t("setup.endpoint")}</Label>
+        <Label htmlFor={`${idPrefix}-endpoint`}>
+          {t(service.endpoint_required ? "setup.endpointRequired" : "setup.endpoint")}
+        </Label>
         <Input
           id={`${idPrefix}-endpoint`}
           name="endpoint"
           type="url"
+          required={service.endpoint_required}
           defaultValue={value("endpoint")}
           placeholder="https://…"
         />
       </div>
+      {service.configuration_fields.map((field) => (
+        <div className="space-y-2" key={field}>
+          <Label htmlFor={`${idPrefix}-${field}`}>{t(`setup.aiFields.${field}`)}</Label>
+          <Input
+            id={`${idPrefix}-${field}`}
+            name={field}
+            defaultValue={value(field)}
+            required={
+              field === "project_id" ||
+              field === "chatgpt_account_id" ||
+              (field === "region" && service.id === "amazon_bedrock")
+            }
+          />
+        </div>
+      ))}
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-timeout-ms`}>{t("setup.timeoutMs")}</Label>
         <Input
@@ -777,19 +829,52 @@ function AIProviderFields({
         />
         <p className="text-xs text-muted-foreground">{t("setup.maxTokensDescription")}</p>
       </div>
-      <div className="space-y-2 md:col-span-2">
-        <Label htmlFor={`${idPrefix}-api-key`}>{t("setup.apiKey")}</Label>
-        <Input
-          id={`${idPrefix}-api-key`}
-          name="api_key"
-          type="password"
-          autoComplete="off"
-          required={!editing}
-        />
-        {editing && (
-          <p className="text-xs text-muted-foreground">{t("setup.editConnectionDescription")}</p>
-        )}
-      </div>
+      <details className="space-y-2 md:col-span-2">
+        <summary className="cursor-pointer text-sm font-medium">{t("setup.advancedAI")}</summary>
+        <div className="mt-3 space-y-2">
+          <Label htmlFor={`${idPrefix}-reasoning-effort`}>{t("setup.reasoningEffort")}</Label>
+          <select
+            id={`${idPrefix}-reasoning-effort`}
+            name="reasoning_effort"
+            defaultValue={value("reasoning_effort")}
+            className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+          >
+            <option value="">{t("setup.reasoningEffortDefault")}</option>
+            <option value="none">{t("setup.reasoningNone")}</option>
+            <option value="low">{t("setup.reasoningLow")}</option>
+            <option value="medium">{t("setup.reasoningMedium")}</option>
+            <option value="high">{t("setup.reasoningHigh")}</option>
+            <option value="max">{t("setup.reasoningMax")}</option>
+          </select>
+          <p className="text-xs text-muted-foreground">{t("setup.reasoningEffortDescription")}</p>
+        </div>
+      </details>
+      {credentialField(service) !== null && (
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor={`${idPrefix}-credential`}>
+            {t(`setup.aiFields.${credentialField(service)}`)}
+          </Label>
+          {service.auth === "service_account_json" ? (
+            <Textarea
+              id={`${idPrefix}-credential`}
+              name={credentialField(service)!}
+              autoComplete="off"
+              required={!editing}
+            />
+          ) : (
+            <Input
+              id={`${idPrefix}-credential`}
+              name={credentialField(service)!}
+              type="password"
+              autoComplete="off"
+              required={!editing && service.auth !== "optional_api_key"}
+            />
+          )}
+          {editing && (
+            <p className="text-xs text-muted-foreground">{t("setup.editConnectionDescription")}</p>
+          )}
+        </div>
+      )}
     </>
   );
 }

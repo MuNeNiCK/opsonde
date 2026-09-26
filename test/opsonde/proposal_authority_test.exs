@@ -810,7 +810,13 @@ defmodule Opsonde.ProposalAuthorityTest do
                  respond: fn _request ->
                    {:error, :invalid_output,
                     "AI provider JSON does not match the requested schema",
-                    %AI.Usage{input_tokens: 7, output_tokens: 5}}
+                    %AI.Usage{
+                      input_tokens: 7,
+                      output_tokens: 5,
+                      cached_tokens: 3,
+                      reasoning_tokens: 2,
+                      finish_reason: "stop"
+                    }, "schema_validation"}
                  end
                }
              )
@@ -826,7 +832,17 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
 
-    assert [%{input_tokens: 7, output_tokens: 5, category: "invalid_output"}] =
+    assert [
+             %{
+               input_tokens: 7,
+               output_tokens: 5,
+               cached_tokens: 3,
+               reasoning_tokens: 2,
+               finish_reason: "stop",
+               category: "invalid_output",
+               failure_code: "schema_validation"
+             }
+           ] =
              Cases.list_ai_invocations!(authorize?: false)
   end
 
@@ -992,6 +1008,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert unknown.id == dispatching.id
     assert unknown.status == :unknown
     assert unknown.category == "response_unknown"
+    assert unknown.failure_code == "response_unknown"
     assert unknown.reserved_units == 65_536
 
     assert Cases.list_review_decisions!(actor: context.admin) == []

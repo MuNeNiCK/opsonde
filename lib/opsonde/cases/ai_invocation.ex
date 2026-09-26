@@ -49,7 +49,19 @@ defmodule Opsonde.Cases.AIInvocation do
     end
 
     update :record_outcome do
-      accept [:status, :input_tokens, :output_tokens, :category, :result_digest, :completed_at]
+      accept [
+        :status,
+        :input_tokens,
+        :output_tokens,
+        :cached_tokens,
+        :reasoning_tokens,
+        :finish_reason,
+        :category,
+        :failure_code,
+        :result_digest,
+        :completed_at
+      ]
+
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       filter expr(status == :dispatching)
@@ -126,7 +138,11 @@ defmodule Opsonde.Cases.AIInvocation do
     attribute :reserved_units, :integer, allow_nil?: false, constraints: [min: 1]
     attribute :input_tokens, :integer, allow_nil?: false, default: 0, constraints: [min: 0]
     attribute :output_tokens, :integer, allow_nil?: false, default: 0, constraints: [min: 0]
+    attribute :cached_tokens, :integer, constraints: [min: 0]
+    attribute :reasoning_tokens, :integer, constraints: [min: 0]
+    attribute :finish_reason, :string, constraints: [min_length: 1, max_length: 40]
     attribute :category, :string, constraints: [min_length: 1, max_length: 120]
+    attribute :failure_code, :string, constraints: [min_length: 1, max_length: 120]
     attribute :result_digest, :string, constraints: [min_length: 64, max_length: 64]
     attribute :dispatch_started_at, :utc_datetime_usec, allow_nil?: false
     attribute :completed_at, :utc_datetime_usec

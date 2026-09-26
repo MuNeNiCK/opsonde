@@ -9,6 +9,8 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       "Provider" => provider(),
       "ProviderResponse" => Schemas.data(ref("Provider")),
       "ProviderPage" => Schemas.page(ref("Provider")),
+      "AIServiceCatalogResponse" => Schemas.data(%Schema{type: :array, items: ref("AIService")}),
+      "AIService" => ai_service(),
       "CreateProviderRequest" => create_provider_request(),
       "UpdateProviderRequest" => update_provider_request(),
       "ProviderRevisionRequest" => provider_revision_request(),
@@ -21,6 +23,23 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  defp ai_service do
+    object(
+      %{
+        id: %Schema{type: :string},
+        name: %Schema{type: :string},
+        auth: %Schema{
+          type: :string,
+          enum: ~w(api_key optional_api_key none service_account_json oauth_access_token)
+        },
+        endpoint_required: %Schema{type: :boolean},
+        configuration_fields: %Schema{type: :array, items: %Schema{type: :string}}
+      },
+      [:id, :name, :auth, :endpoint_required, :configuration_fields],
+      false
+    )
+  end
 
   defp provider do
     object(

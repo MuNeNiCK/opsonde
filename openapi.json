@@ -43,6 +43,44 @@
         ],
         "type": "object"
       },
+      "AIService": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "enum": [
+              "api_key",
+              "optional_api_key",
+              "none",
+              "service_account_json",
+              "oauth_access_token"
+            ],
+            "type": "string"
+          },
+          "configuration_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "endpoint_required": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "auth",
+          "endpoint_required",
+          "configuration_fields"
+        ],
+        "type": "object"
+      },
       "TargetRelationshipPage": {
         "additionalProperties": false,
         "properties": {
@@ -1351,6 +1389,21 @@
           "kind",
           "value",
           "active"
+        ],
+        "type": "object"
+      },
+      "AIServiceCatalogResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AIService"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -8964,6 +9017,49 @@
         "summary": "Get a Proposal",
         "tags": [
           "Proposals"
+        ]
+      }
+    },
+    "/api/v1/ai-services": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAIServices",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIServiceCatalogResponse"
+                }
+              }
+            },
+            "description": "AI services"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List AI generation services",
+        "tags": [
+          "Providers"
         ]
       }
     },

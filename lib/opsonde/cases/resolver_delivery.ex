@@ -304,6 +304,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
              record_invocation(invocation, :completed,
                input_tokens: decision.usage.input_tokens,
                output_tokens: decision.usage.output_tokens,
+               usage: decision.usage,
                result_digest: digest(result)
              ),
            {:ok, _job} <- enqueue_route(turn.id) do
@@ -640,7 +641,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp retryable_invalid_decision_failure?(turn, rejection_code)
-       when rejection_code in ["schema_validation", "truncated"],
+       when rejection_code == "schema_validation",
        do: turn.intent["rejection_code"] != rejection_code
 
   defp retryable_invalid_decision_failure?(_turn, _code), do: false
@@ -768,7 +769,16 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp persist_attention_failure(turn, invocation, error, category, message, rejection_code) do
-    reason = String.slice("Resolver delivery #{category}: #{message}", 0, 500)
+    reason =
+      if rejection_code == "truncated",
+        do: "Resolver output reached the configured token limit",
+        else: String.slice("Resolver delivery #{category}: #{message}", 0, 500)
+
+    required_input =
+      if rejection_code == "truncated",
+        do: "Increase this AI connection's max output tokens, then resume the Case",
+        else: "Review the Resolver delivery failure"
+
     intent = %{"action" => "retry_resolver", "turn_id" => turn.id}
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
@@ -784,7 +794,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                },
                :human_input,
                intent,
-               "Review the Resolver delivery failure",
+               required_input,
                authorize?: false
              ),
            {:ok, _invocation} <- record_failure(turn, invocation, category, error),
@@ -803,7 +813,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                    "resolver-failure:#{turn.id}",
                    reason,
                    intent,
-                   "Review the Resolver delivery failure",
+                   required_input,
                    authorize?: false
                  )
              ) do
@@ -825,6 +835,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
              record_invocation(invocation, :completed,
                input_tokens: decision.usage.input_tokens,
                output_tokens: decision.usage.output_tokens,
+               usage: decision.usage,
                category: category,
                result_digest: digest(decision)
              ) do
@@ -856,7 +867,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
            record_invocation(invocation, :failed,
              input_tokens: if(usage, do: usage.input_tokens, else: 0),
              output_tokens: if(usage, do: usage.output_tokens, else: 0),
-             category: category
+             usage: usage,
+             category: category,
+             failure_code: rejection_code(error)
            ) do
       {:ok, recorded}
     end
@@ -877,6 +890,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
   end
 
   defp record_invocation(invocation, status, attrs) do
+    usage = Keyword.get(attrs, :usage)
+
     Cases.record_ai_invocation_outcome(
       invocation,
       invocation.revision,
@@ -884,7 +899,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
         status: status,
         input_tokens: Keyword.get(attrs, :input_tokens, 0),
         output_tokens: Keyword.get(attrs, :output_tokens, 0),
+        cached_tokens: if(usage, do: usage.cached_tokens),
+        reasoning_tokens: if(usage, do: usage.reasoning_tokens),
+        finish_reason: if(usage, do: usage.finish_reason),
         category: Keyword.get(attrs, :category),
+        failure_code: Keyword.get(attrs, :failure_code),
         result_digest: Keyword.get(attrs, :result_digest),
         completed_at: DateTime.utc_now()
       },
@@ -925,6 +944,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp rejection_code(error) do
     case find_error(error) do
+      %AI.Error{category: :invalid_output, failure_code: code} when is_binary(code) -> code
       %AI.Error{category: :invalid_output, message: message} -> invalid_output_code(message)
       _error -> nil
     end

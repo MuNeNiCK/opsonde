@@ -1,24 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowLeft, Bot, BrainCircuit, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
+import { apiClient, apiData } from "@/api/client";
+import type { components } from "@/api/schema";
+import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Label } from "@/components/ui/label";
 import { AIProviderCreateForm, ProviderSetup } from "@/providers/ai-section";
 import { ProviderChoiceCard } from "@/providers/choice-card";
 import { SignalProviderCreateForm, SignalProviderSection } from "@/providers/signal-section";
 import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
-type AIService = "openai" | "anthropic";
+type AIService = components["schemas"]["AIService"];
 type SignalAdapter = "alertmanager-webhook" | "generic-webhook" | "zabbix-webhook";
 
-const aiChoices = {
-  openai: { title: "OpenAI", description: "setup.choiceOpenAI", icon: BrainCircuit },
-  anthropic: { title: "Anthropic", description: "setup.choiceAnthropic", icon: Bot },
-} as const;
+async function loadAIServices(): Promise<AIService[]> {
+  return apiClient
+    .GET("/api/v1/ai-services")
+    .then(apiData)
+    .then((response) => response.data);
+}
 
 const signalChoices = {
   "alertmanager-webhook": {
@@ -43,19 +49,28 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
   const { account } = useAuthentication();
   const location = useLocation();
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
+  const [services, setServices] = useState<AIService[] | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
   const created = (location.state as { created?: ProviderPageKind } | null)?.created === kind;
 
   const refresh = useCallback(async () => {
-    setSnapshot(await loadSettingsSnapshot());
-  }, []);
+    const [nextSnapshot, nextServices] = await Promise.all([
+      loadSettingsSnapshot(),
+      kind === "ai" ? loadAIServices() : Promise.resolve(null),
+    ]);
+    setSnapshot(nextSnapshot);
+    setServices(nextServices);
+  }, [kind]);
 
   useEffect(() => {
     let active = true;
-    loadSettingsSnapshot()
-      .then((next) => {
-        if (active) setSnapshot(next);
+    Promise.all([loadSettingsSnapshot(), kind === "ai" ? loadAIServices() : Promise.resolve(null)])
+      .then(([next, nextServices]) => {
+        if (active) {
+          setSnapshot(next);
+          setServices(nextServices);
+        }
       })
       .catch(() => {
         if (active) setError(t("setup.requestFailed"));
@@ -63,7 +78,7 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
     return () => {
       active = false;
     };
-  }, [t]);
+  }, [kind, t]);
 
   useEffect(() => {
     if (!snapshot || !location.hash) return;
@@ -73,7 +88,16 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
     return () => window.cancelAnimationFrame(frame);
   }, [location.hash, snapshot]);
 
-  if (!snapshot) {
+  if (!snapshot || (kind === "ai" && !services)) {
+    if (error) {
+      return (
+        <div className="p-6">
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
@@ -104,6 +128,7 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
       {kind === "ai" ? (
         <ProviderSetup
           providers={snapshot.providers}
+          services={services ?? []}
           assignments={snapshot.assignments}
           authorityMode={snapshot.authority.authority_mode}
           canManage={canManage}
@@ -136,12 +161,46 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
   const navigate = useNavigate();
   const { providerType } = useParams();
   const [error, setError] = useState("");
+  const [services, setServices] = useState<AIService[] | null>(null);
+  const [selectedService, setSelectedService] = useState<string | null>(null);
   const canManage = account?.role === "admin";
   const overview = kind === "ai" ? "/ai" : "/signals";
-  const choices = kind === "ai" ? aiChoices : signalChoices;
-  const choiceEntries = Object.entries(choices);
+  const choiceEntries = Object.entries(signalChoices);
+  const aiService = services?.find((item) => item.id === providerType);
   const selectedChoice = choiceEntries.find(([id]) => id === providerType)?.[1];
-  const selected = selectedChoice ? providerType : undefined;
+  const selected = kind === "ai" ? aiService?.id : selectedChoice ? providerType : undefined;
+
+  useEffect(() => {
+    if (kind !== "ai") return;
+    let active = true;
+    loadAIServices()
+      .then((items) => {
+        if (active) setServices(items);
+      })
+      .catch(() => {
+        if (active) setError(t("setup.requestFailed"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [kind, t]);
+
+  if (kind === "ai" && !services) {
+    if (error) {
+      return (
+        <div className="p-6">
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      );
+    }
+    return (
+      <div className="p-8">
+        <Spinner />
+      </div>
+    );
+  }
 
   if (providerType && !selected) return <Navigate to={`${overview}/new`} replace />;
 
@@ -163,15 +222,15 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
           </Link>
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">
-          {selectedChoice?.title ??
+          {(kind === "ai" ? aiService?.name : selectedChoice?.title) ??
             t(kind === "ai" ? "setup.chooseAIType" : "cases.chooseSignalType")}
         </h1>
         <p className="mt-2 text-muted-foreground">
           {t(
-            selectedChoice
-              ? selectedChoice.description
-              : kind === "ai"
-                ? "setup.chooseAITypeDescription"
+            kind === "ai"
+              ? "setup.chooseAITypeDescription"
+              : selectedChoice
+                ? selectedChoice.description
                 : "cases.chooseSignalTypeDescription",
           )}
         </p>
@@ -186,6 +245,26 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
         <Alert>
           <AlertDescription>{t("setup.readOnly")}</AlertDescription>
         </Alert>
+      ) : kind === "ai" && !selected ? (
+        <div className="max-w-lg space-y-4">
+          <Label htmlFor="ai-service">{t("setup.service")}</Label>
+          <FormSelect
+            id="ai-service"
+            value={selectedService}
+            onValueChange={setSelectedService}
+            options={(services ?? []).map((service) => ({
+              value: service.id,
+              label: service.name,
+            }))}
+            placeholder={t("setup.chooseAIType")}
+          />
+          <Button
+            disabled={!selectedService}
+            onClick={() => navigate(`/ai/new/${selectedService}`)}
+          >
+            {t("setup.continueAI")}
+          </Button>
+        </div>
       ) : !selected ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {choiceEntries.map(([id, item]) => (
@@ -200,7 +279,7 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
         </div>
       ) : kind === "ai" ? (
         <AIProviderCreateForm
-          service={selected as AIService}
+          service={aiService!}
           onCreated={() => void navigate("/ai", { replace: true, state: { created: "ai" } })}
           onError={setError}
         />

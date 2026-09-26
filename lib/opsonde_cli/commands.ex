@@ -25,6 +25,7 @@ defmodule OpsondeCLI.Commands do
     {"account", "create"} => Route.new(:post, "/accounts", 0, "account"),
     {"account", "change-role"} => Route.new(:patch, "/accounts/:id/role", 1, "account"),
     {"provider", "list"} => Route.page("/providers"),
+    {"provider", "services"} => Route.new(:get, "/ai-services"),
     {"provider", "show"} => Route.new(:get, "/providers/:id", 1),
     {"provider", "create"} => Route.new(:post, "/providers", 0, "provider"),
     {"provider", "update"} => Route.new(:patch, "/providers/:id", 1, "provider"),

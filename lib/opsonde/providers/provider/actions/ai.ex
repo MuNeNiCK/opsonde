@@ -109,6 +109,22 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
             dispatched?: true
           )}
 
+  defp normalize_adapter_result(
+         _operation,
+         {:error, category, message, %AI.Usage{} = usage, failure_code},
+         credentials
+       )
+       when category in @adapter_failures and is_binary(message) and is_binary(failure_code),
+       do:
+         {:error,
+          AI.Error.exception(
+            category: category,
+            message: Redactor.message(message, credentials),
+            usage: usage,
+            dispatched?: true,
+            failure_code: failure_code
+          )}
+
   defp normalize_adapter_result(_operation, _result, _credentials),
     do:
       {:error,

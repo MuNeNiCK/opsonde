@@ -4,12 +4,20 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Providers
+  alias Opsonde.AI.ReqLLM
   alias OpsondeWeb.API.{Pagination, Response}
   alias OpsondeWeb.API.V1.{ProviderJSON, ProviderSchemas}
 
   @update_fields ~w(name configuration credentials)
 
   tags ["Providers"]
+
+  operation :services,
+    operation_id: "listAIServices",
+    summary: "List AI generation services",
+    responses:
+      [ok: {"AI services", "application/json", ProviderSchemas.ref("AIServiceCatalogResponse")}] ++
+        OpsondeWeb.API.Schemas.errors([:unauthorized, :internal_server_error])
 
   operation :index,
     operation_id: "listProviders",
@@ -199,6 +207,8 @@ defmodule OpsondeWeb.API.V1.ProviderController do
       Response.page(conn, providers, &ProviderJSON.data/1)
     end
   end
+
+  def services(conn, _params), do: Response.data(conn, ReqLLM.services())
 
   def show(conn, %{"id" => id}) do
     with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user) do

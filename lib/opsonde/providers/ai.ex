@@ -301,7 +301,7 @@ defmodule Opsonde.Providers.AI do
   defmodule Usage do
     @moduledoc false
     @enforce_keys [:input_tokens, :output_tokens]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [cached_tokens: nil, reasoning_tokens: nil, finish_reason: nil]
     @type t :: %__MODULE__{}
   end
 
@@ -376,7 +376,9 @@ defmodule Opsonde.Providers.AI do
 
   defmodule Error do
     @moduledoc false
-    use Splode.Error, class: :unknown, fields: [:category, :message, :usage, :dispatched?]
+    use Splode.Error,
+      class: :unknown,
+      fields: [:category, :message, :usage, :dispatched?, :failure_code]
 
     @impl true
     def message(error), do: error.message

@@ -393,6 +393,7 @@ defmodule OpsondeCLI.CLI do
       opsonde config show
       opsonde auth login [--server URL] [--timeout SEC]
       opsonde auth status | logout
+      opsonde provider services
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]

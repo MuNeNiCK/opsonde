@@ -42,6 +42,7 @@ defmodule OpsondeWeb.Router do
     post "/cli/session-requests/:id/deny", CLISessionController, :deny
 
     get "/providers", ProviderController, :index
+    get "/ai-services", ProviderController, :services
     post "/providers", ProviderController, :create
     get "/providers/:id", ProviderController, :show
     patch "/providers/:id", ProviderController, :update

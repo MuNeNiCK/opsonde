@@ -6,8 +6,22 @@ defmodule Opsonde.AI.ReqLLM do
 
   alias Opsonde.Providers.AI
 
-  @providers %{"openai" => :openai, "anthropic" => :anthropic}
-  @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms reasoning_effort)
+  @non_generation_providers ~w(cohere elevenlabs typesafe)
+  @service_names %{
+    alibaba_cn: "Alibaba Cloud China",
+    amazon_bedrock: "Amazon Bedrock",
+    fireworks_ai: "Fireworks AI",
+    google_vertex: "Google Vertex AI",
+    openai: "OpenAI-compatible API",
+    openai_codex: "OpenAI Codex",
+    openrouter: "OpenRouter",
+    vllm: "vLLM",
+    xai: "xAI",
+    zai: "Z.AI",
+    zai_coder: "Z.AI Coder",
+    zai_coding_plan: "Z.AI Coding Plan"
+  }
+  @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms reasoning_effort region project_id deployment api_version chatgpt_account_id)
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
   @max_output_bytes 65_536
@@ -25,6 +39,22 @@ defmodule Opsonde.AI.ReqLLM do
   @impl Opsonde.Providers.Adapter
   def kind, do: :ai
 
+  def services do
+    ReqLLM.Providers.list()
+    |> Enum.reject(&(Atom.to_string(&1) in @non_generation_providers))
+    |> Enum.map(fn id ->
+      {:ok, module} = ReqLLM.Providers.get(id)
+
+      %{
+        id: Atom.to_string(id),
+        name: service_name(id, module),
+        auth: auth_kind(id),
+        endpoint_required: id == :azure,
+        configuration_fields: configuration_fields(id)
+      }
+    end)
+  end
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
     with :ok <- known_configuration(configuration),
@@ -35,7 +65,8 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, max_tokens} <- integer(configuration, "max_tokens", 2_048, 1, @max_tokens),
          {:ok, timeout} <- integer(configuration, "timeout_ms", 60_000, 100, @max_timeout),
          {:ok, reasoning_effort} <- reasoning_effort(configuration),
-         {:ok, api_key} <- credentials(provider, credentials),
+         {:ok, provider_options} <- provider_configuration(provider, configuration),
+         {:ok, auth_options} <- credentials(provider, credentials),
          model_spec <- model_spec(provider, model),
          {:ok, resolved_model} <- ReqLLM.model(model_spec) do
       {:ok,
@@ -47,7 +78,11 @@ defmodule Opsonde.AI.ReqLLM do
          max_tokens: max_tokens,
          timeout: timeout,
          reasoning_effort: reasoning_effort,
-         api_key: api_key
+         auth_options: Keyword.delete(auth_options, :provider_options),
+         provider_options:
+           provider_options
+           |> Keyword.merge(Keyword.get(auth_options, :provider_options, []))
+           |> then(&provider_options_for_model(provider, resolved_model, &1))
        }}
     else
       _error -> {:error, :invalid_configuration}
@@ -64,9 +99,9 @@ defmodule Opsonde.AI.ReqLLM do
            state,
            context(
              "You are checking an AI model connection.",
-             "Return the required connection-check object with status ready. " <>
-               "Return exactly one JSON object. Schema: #{Jason.encode!(schema)}"
+             "Return the required connection-check object with status ready."
            ),
+           schema,
            min(state.max_tokens, 128),
            fn -> false end
          ) do
@@ -88,7 +123,8 @@ defmodule Opsonde.AI.ReqLLM do
     with {:ok, response} <-
            invoke(
              state,
-             with_schema(resolver_context(request), schema),
+             resolver_context(request),
+             schema,
              min(state.max_tokens, request.budget.remaining_tokens),
              cancelled_callback(invocation)
            ),
@@ -110,7 +146,8 @@ defmodule Opsonde.AI.ReqLLM do
     with {:ok, response} <-
            invoke(
              state,
-             with_schema(reviewer_context(request), schema),
+             reviewer_context(request),
+             schema,
              min(state.max_tokens, request.budget.remaining_tokens),
              cancelled_callback(invocation)
            ),
@@ -128,13 +165,13 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp invoke(state, messages, max_tokens, cancelled?) do
+  defp invoke(state, messages, schema, max_tokens, cancelled?) do
     parent = self()
     stream_ref = make_ref()
 
     task =
       Task.async(fn ->
-        safe_request(state, messages, max_tokens, parent, stream_ref)
+        safe_request(state, messages, schema, max_tokens, parent, stream_ref)
       end)
 
     await(
@@ -146,36 +183,38 @@ defmodule Opsonde.AI.ReqLLM do
     )
   end
 
-  defp safe_request(state, messages, max_tokens, parent, stream_ref) do
+  defp safe_request(state, messages, schema, max_tokens, parent, stream_ref) do
     options =
       [
         max_tokens: max_tokens,
         max_retries: 0,
         total_timeout: state.timeout,
         receive_timeout: state.timeout,
+        output_validation: :warn,
         telemetry: [payloads: :none]
       ]
       |> maybe_put(:reasoning_effort, state.reasoning_effort)
-      |> maybe_put(:api_key, state.api_key)
+      |> Keyword.merge(state.auth_options)
+      |> maybe_put(:provider_options, state.provider_options)
       |> maybe_put(:base_url, state.endpoint)
 
-    request(state, messages, options, parent, stream_ref)
+    request(state, messages, schema, options, parent, stream_ref)
   rescue
-    _error -> {:error, :failed, "AI provider failed"}
+    error -> request_exception(error)
   catch
     _kind, _reason -> {:error, :failed, "AI provider failed"}
   end
 
-  defp request(%{stream?: false} = state, messages, options, _parent, _stream_ref) do
+  defp request(%{stream?: false} = state, messages, schema, options, _parent, _stream_ref) do
     options = Keyword.put(options, :req_http_options, finch: [pool_timeout: state.timeout])
 
     state.model
-    |> ReqLLM.generate_text(messages, options)
+    |> ReqLLM.generate_object(messages, schema, options)
     |> normalize_req_llm_result()
   end
 
-  defp request(%{stream?: true} = state, messages, options, parent, stream_ref) do
-    case ReqLLM.stream_text(state.model, messages, options) do
+  defp request(%{stream?: true} = state, messages, schema, options, parent, stream_ref) do
+    case ReqLLM.stream_object(state.model, messages, schema, options) do
       {:ok, stream_response} ->
         send(parent, {:opsonde_req_llm_stream, stream_ref, stream_response.cancel})
 
@@ -278,9 +317,10 @@ defmodule Opsonde.AI.ReqLLM do
         "source alone does not make recovery available. When recovery is absent, use an offered " <>
         "observation or Target traversal to obtain current recovery Evidence. If retry_context " <>
         "is present, the previous response was rejected " <>
-        "before any intent was accepted. When its rejection_code is schema_validation, correct " <>
-        "the field at rejection_path using the current output schema, copy enum values exactly, " <>
-        "include every required field, and add no field that the schema does not allow. " <>
+        "before any intent was accepted. When its rejection_code is schema_validation, check " <>
+        "the next response against the current output schema. If rejection_path is present, " <>
+        "correct that field. Copy enum values exactly, include every required field, and add " <>
+        "no field that the schema does not allow. " <>
         "When rejection_code is truncated, the previous response reached the output token " <>
         "limit before a complete JSON object was returned. Keep the same evidence and safety " <>
         "requirements, but return one compact complete JSON object immediately: use a short " <>
@@ -490,27 +530,23 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp verdict(_value), do: invalid_output()
 
-  defp with_schema(context, schema) do
-    ReqLLM.Context.append(
-      context,
-      ReqLLM.Context.user(
-        "Return exactly one complete JSON object. No Markdown or surrounding text. " <>
-          "Follow this JSON Schema exactly: #{Jason.encode!(schema)}"
-      )
-    )
-  end
-
   defp decode_decision(response, schema, convert) do
     with {:ok, usage} <- usage(response) do
       case decode_output(response, schema) do
         {:ok, value} ->
           case convert.(value) do
-            {:ok, decision} -> {:ok, decision, usage}
-            {:error, category, message} -> {:error, category, message, usage}
+            {:ok, decision} ->
+              {:ok, decision, usage}
+
+            {:error, :invalid_output, message} ->
+              {:error, :invalid_output, message, usage, failure_code(message)}
+
+            {:error, category, message} ->
+              {:error, category, message, usage}
           end
 
-        {:error, category, message} ->
-          {:error, category, message, usage}
+        {:error, :invalid_output, message} ->
+          {:error, :invalid_output, message, usage, failure_code(message)}
       end
     end
   end
@@ -520,81 +556,35 @@ defmodule Opsonde.AI.ReqLLM do
        do: invalid_output("AI provider JSON was truncated")
 
   defp decode_output(response, schema) do
-    case ReqLLM.Response.text(response) do
-      nil ->
-        decode_stream_object(response, schema)
+    output = ReqLLM.Output.object(schema)
+    result = ReqLLM.Response.output_result(response, output, policy: :warn)
 
-      "" ->
-        decode_stream_object(response, schema)
-
-      text when byte_size(text) > @max_output_bytes ->
-        invalid_output("AI provider JSON text is too large")
-
-      text ->
-        case Jason.decode(text) do
-          {:ok, value} -> validate_output(value, schema)
-          {:error, _error} -> invalid_output("AI provider output is not valid JSON")
-        end
+    with :ok <- reject_oversized_output(result),
+         :ok <- reject_repaired_output(result),
+         :ok <- accept_object_projection(result) do
+      {:ok, result.value}
     end
   end
 
-  # ReqLLM materializes a streamed complete JSON object as an object content part
-  # after its own strict Jason.decode. Buffered replies retain raw text.
-  defp decode_stream_object(
-         %{message: %{content: [%{type: :object, object: value}], tool_calls: nil}},
-         schema
-       ),
-       do: validate_output(value, schema)
+  defp reject_oversized_output(%{raw: raw})
+       when is_binary(raw) and byte_size(raw) > @max_output_bytes,
+       do: invalid_output("AI provider JSON text is too large")
 
-  defp decode_stream_object(_response, _schema),
-    do: invalid_output("AI provider returned no JSON text")
-
-  defp validate_output(value, schema) do
-    cond do
-      not is_map(value) -> invalid_output("AI provider did not return a structured object")
-      encoded_size(value) > @max_output_bytes -> invalid_output("AI provider output is too large")
-      true -> validate_schema(value, schema)
-    end
+  defp reject_oversized_output(%{value: value}) do
+    if encoded_size(value) > @max_output_bytes,
+      do: invalid_output("AI provider output is too large"),
+      else: :ok
   end
 
-  defp validate_schema(value, schema) do
-    with {:ok, root} <- JSV.build(schema, warnings: :silent),
-         {:ok, _validated} <- JSV.validate(value, root, cast: false) do
-      {:ok, value}
-    else
-      {:error, %JSV.ValidationError{} = error} ->
-        invalid_output(
-          "AI provider JSON does not match the requested schema at #{schema_error_path(error)}"
-        )
+  defp reject_repaired_output(%{repairs: []}), do: :ok
 
-      _invalid ->
-        invalid_output("AI provider JSON does not match the requested schema")
-    end
-  rescue
-    _error -> invalid_output("AI provider JSON does not match the requested schema")
-  end
+  defp reject_repaired_output(_result),
+    do: invalid_output("AI provider output required repair")
 
-  defp schema_error_path(%JSV.ValidationError{errors: errors}) do
-    error = Enum.max_by(errors, &length(&1.data_path), fn -> nil end)
+  defp accept_object_projection(%{valid?: true, value: value}) when is_map(value), do: :ok
 
-    path =
-      case error do
-        %{kind: :required, args: args, data: data, data_path: data_path} when is_map(data) ->
-          missing = Enum.find(args[:required] || [], &(not Map.has_key?(data, &1)))
-          if missing, do: data_path ++ [missing], else: data_path
-
-        %{data_path: data_path} ->
-          data_path
-
-        _error ->
-          []
-      end
-
-    "/" <>
-      Enum.map_join(path, "/", fn item ->
-        item |> to_string() |> String.replace("~", "~0") |> String.replace("/", "~1")
-      end)
-  end
+  defp accept_object_projection(_result),
+    do: invalid_output("AI provider JSON does not match the requested schema")
 
   defp usage(response) do
     usage = ReqLLM.Response.usage(response)
@@ -603,7 +593,14 @@ defmodule Opsonde.AI.ReqLLM do
 
     if is_integer(input_tokens) and input_tokens >= 0 and is_integer(output_tokens) and
          output_tokens >= 0 do
-      {:ok, %AI.Usage{input_tokens: input_tokens, output_tokens: output_tokens}}
+      {:ok,
+       %AI.Usage{
+         input_tokens: input_tokens,
+         output_tokens: output_tokens,
+         cached_tokens: reported_positive(value(usage, :cached_tokens)),
+         reasoning_tokens: reported_positive(value(usage, :reasoning_tokens)),
+         finish_reason: finish_reason(response)
+       }}
     else
       invalid_output("AI provider did not return token usage")
     end
@@ -856,8 +853,15 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp provider(configuration) do
     case Map.get(configuration, "provider") do
-      value when is_map_key(@providers, value) -> {:ok, Map.fetch!(@providers, value)}
-      _value -> {:error, :invalid_provider}
+      value when is_binary(value) ->
+        case Enum.find(ReqLLM.Providers.list(), &(Atom.to_string(&1) == value)) do
+          nil -> {:error, :invalid_provider}
+          _id when value in @non_generation_providers -> {:error, :invalid_provider}
+          id -> {:ok, id}
+        end
+
+      _value ->
+        {:error, :invalid_provider}
     end
   end
 
@@ -880,7 +884,38 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp credentials(_provider, credentials) do
+  defp credentials(:ollama, credentials) when map_size(credentials) == 0, do: {:ok, []}
+  defp credentials(:ollama, _credentials), do: {:error, :invalid_credentials}
+
+  defp credentials(:google_vertex, %{"service_account_json" => json} = credentials)
+       when map_size(credentials) == 1 and is_binary(json) and byte_size(json) > 0 do
+    case Jason.decode(json) do
+      {:ok, %{"client_email" => email, "private_key" => key}}
+      when is_binary(email) and is_binary(key) ->
+        {:ok, [provider_options: [service_account_json: json]]}
+
+      _ ->
+        {:error, :invalid_credentials}
+    end
+  end
+
+  defp credentials(:openai_codex, %{"access_token" => token} = credentials)
+       when map_size(credentials) == 1 and is_binary(token) and byte_size(token) > 0,
+       do: {:ok, [provider_options: [access_token: token, auth_mode: :oauth]]}
+
+  defp credentials(provider, _credentials) when provider in [:google_vertex, :openai_codex],
+    do: {:error, :invalid_credentials}
+
+  defp credentials(provider, credentials) when provider in [:lmstudio, :vllm] do
+    case credentials do
+      %{} = empty when map_size(empty) == 0 -> {:ok, [api_key: "opsonde-local"]}
+      _ -> api_key_credentials(credentials)
+    end
+  end
+
+  defp credentials(_provider, credentials), do: api_key_credentials(credentials)
+
+  defp api_key_credentials(credentials) do
     keys = credentials |> Map.keys() |> Enum.map(&to_string/1)
     api_key = Map.get(credentials, "api_key") || Map.get(credentials, :api_key)
 
@@ -892,7 +927,81 @@ defmodule Opsonde.AI.ReqLLM do
         {:error, :missing_api_key}
 
       true ->
-        {:ok, api_key}
+        {:ok, [api_key: api_key]}
+    end
+  end
+
+  defp provider_configuration(:google_vertex, configuration) do
+    with {:ok, project} <- required_string(configuration, "project_id", 200),
+         {:ok, region} <- optional_string(configuration, "region", 100) do
+      {:ok, [project_id: project] |> maybe_put(:region, region)}
+    end
+  end
+
+  defp provider_configuration(:amazon_bedrock, configuration) do
+    with {:ok, region} <- required_string(configuration, "region", 100) do
+      {:ok, [region: region]}
+    end
+  end
+
+  defp provider_configuration(:openai_codex, configuration) do
+    with {:ok, account_id} <- required_string(configuration, "chatgpt_account_id", 200) do
+      {:ok, [chatgpt_account_id: account_id]}
+    end
+  end
+
+  defp provider_configuration(:azure, configuration) do
+    with {:ok, endpoint} <- endpoint(configuration),
+         true <- is_binary(endpoint),
+         {:ok, deployment} <- optional_string(configuration, "deployment", 200),
+         {:ok, api_version} <- optional_string(configuration, "api_version", 100) do
+      {:ok, [] |> maybe_put(:deployment, deployment) |> maybe_put(:api_version, api_version)}
+    else
+      _ -> {:error, :invalid_configuration}
+    end
+  end
+
+  defp provider_configuration(_provider, _configuration), do: {:ok, []}
+
+  defp provider_options_for_model(:openrouter, model, options) do
+    if get_in(model.capabilities || %{}, [:json, :schema]) == true or
+         get_in(model.extra || %{}, ["structured_output"]) == true do
+      Keyword.put(options, :openrouter_structured_output_mode, :json_schema)
+    else
+      options
+    end
+  end
+
+  defp provider_options_for_model(_provider, _model, options), do: options
+
+  defp auth_kind(:ollama), do: "none"
+  defp auth_kind(provider) when provider in [:lmstudio, :vllm], do: "optional_api_key"
+  defp auth_kind(:google_vertex), do: "service_account_json"
+  defp auth_kind(:openai_codex), do: "oauth_access_token"
+  defp auth_kind(_provider), do: "api_key"
+
+  defp service_name(id, module) do
+    Map.get_lazy(@service_names, id, fn ->
+      if function_exported?(module, :display_name, 0) do
+        module.display_name()
+      else
+        id |> Atom.to_string() |> String.split("_") |> Enum.map_join(" ", &String.capitalize/1)
+      end
+    end)
+  end
+
+  defp configuration_fields(:google_vertex), do: ["project_id", "region"]
+  defp configuration_fields(:amazon_bedrock), do: ["region"]
+  defp configuration_fields(:openai_codex), do: ["chatgpt_account_id"]
+  defp configuration_fields(:azure), do: ["deployment", "api_version"]
+  defp configuration_fields(_provider), do: []
+
+  defp optional_string(map, key, max_bytes) do
+    case Map.get(map, key) do
+      nil -> {:ok, nil}
+      "" -> {:ok, nil}
+      value when is_binary(value) and byte_size(value) <= max_bytes -> {:ok, value}
+      _ -> {:error, :invalid_string}
     end
   end
 
@@ -992,7 +1101,10 @@ defmodule Opsonde.AI.ReqLLM do
     do: {:error, :timeout, "AI provider timed out"}
 
   defp normalize_req_llm_error(%ReqLLM.Error.Validation.Error{}),
-    do: {:error, :failed, "AI provider request validation failed"}
+    do: {:error, :capability, "AI model or service options are unsupported"}
+
+  defp normalize_req_llm_error(%ReqLLM.Error.Invalid.Parameter{}),
+    do: {:error, :capability, "AI model or service options are unsupported"}
 
   defp normalize_req_llm_error(%ReqLLM.Error.API.SchemaValidation{}),
     do: invalid_output("AI provider JSON does not match the requested schema")
@@ -1002,10 +1114,27 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp normalize_req_llm_error(_error), do: {:error, :failed, "AI provider failed"}
 
+  defp request_exception(%ReqLLM.Error.Invalid.Parameter{}),
+    do: {:error, :capability, "AI model or service options are unsupported"}
+
+  defp request_exception(%ArgumentError{message: message}) do
+    if String.starts_with?(message, "Unknown Azure model family") or
+         String.starts_with?(message, "Unsupported model family for:") do
+      {:error, :capability, "AI model family is not supported by this service"}
+    else
+      {:error, :failed, "AI provider failed"}
+    end
+  end
+
+  defp request_exception(_error), do: {:error, :failed, "AI provider failed"}
+
   defp check_error(:authentication, message), do: {:error, :authentication, message}
 
   defp check_error(:invalid_output, _message),
     do: {:error, :capability, "AI model did not produce valid JSON output"}
+
+  defp check_error(:capability, message), do: {:error, :capability, message}
+  defp check_error(:failed, message), do: {:error, :provider_failure, message}
 
   defp check_error(_category, message), do: {:error, :unreachable, message}
 
@@ -1051,6 +1180,24 @@ defmodule Opsonde.AI.ReqLLM do
     do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 
   defp value(_map, _key), do: nil
+
+  # ReqLLM normalizes missing provider breakdown fields to zero. A positive value
+  # is observable; zero cannot distinguish a reported zero from a missing field.
+  defp reported_positive(value) when is_integer(value) and value > 0, do: value
+  defp reported_positive(_value), do: nil
+
+  defp finish_reason(%{finish_reason: reason}) when is_atom(reason), do: Atom.to_string(reason)
+  defp finish_reason(_response), do: nil
+
+  defp failure_code("AI provider JSON was truncated"), do: "truncated"
+  defp failure_code("AI provider JSON text is too large"), do: "json_text_too_large"
+  defp failure_code("AI provider output required repair"), do: "repair_required"
+  defp failure_code("AI provider did not return token usage"), do: "usage_missing"
+
+  defp failure_code("AI provider JSON does not match the requested schema" <> _suffix),
+    do: "schema_validation"
+
+  defp failure_code(_message), do: "decision_validation"
 
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
 

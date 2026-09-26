@@ -270,9 +270,9 @@ defmodule Opsonde.ResolverDeliveryTest do
            end)
   end
 
-  test "one truncated reply gets a compact corrective turn, then stops if truncated again",
+  test "a truncated reply stops before another call at the same output limit",
        context do
-    {incident, run, turn} = turn!("truncated-retry", context.operator)
+    {incident, run, turn} = turn!("truncated-limit", context.operator)
 
     assert :ok =
              invalid_output(turn, fn ->
@@ -280,12 +280,13 @@ defmodule Opsonde.ResolverDeliveryTest do
                 %AI.Usage{input_tokens: 9, output_tokens: 8}}
              end)
 
-    [successor] =
-      Cases.list_turns!(authorize?: false)
-      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
-
-    assert successor.intent["rejection_code"] == "truncated"
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "Resolver output reached the configured token limit"
+    assert stopped.required_human_input =~ "Increase this AI connection's max output tokens"
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+    assert Cases.get_turn!(turn.id, authorize?: false).result["rejection_code"] == "truncated"
+    assert Enum.count(Cases.list_ai_invocations!(authorize?: false)) == 1
     assert Cases.list_proposals!(authorize?: false) == []
     assert Cases.list_operations!(authorize?: false) == []
 
@@ -294,17 +295,9 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
 
-    assert :ok =
-             invalid_output(successor, fn ->
-               {:error, :invalid_output, "AI provider JSON was truncated",
-                %AI.Usage{input_tokens: 5, output_tokens: 4}}
-             end)
-
-    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 26
-    assert Enum.count(Cases.list_ai_invocations!(authorize?: false)) == 2
-    assert Cases.list_proposals!(authorize?: false) == []
-    assert Cases.list_operations!(authorize?: false) == []
+    refute Enum.any?(Cases.list_turns!(authorize?: false), fn candidate ->
+             candidate.resolution_run_id == run.id and candidate.status == :started
+           end)
   end
 
   test "metered invalid response above the remaining budget persists physical usage", context do
@@ -321,13 +314,29 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(turn, fn ->
                {:error, :invalid_output, "AI provider output is not valid JSON",
-                %AI.Usage{input_tokens: 2, output_tokens: 2}}
+                %AI.Usage{
+                  input_tokens: 2,
+                  output_tokens: 2,
+                  cached_tokens: 1,
+                  reasoning_tokens: 1,
+                  finish_reason: "stop"
+                }, "json_decode"}
              end)
 
     assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
     assert Cases.get_turn!(turn.id, authorize?: false).result["rejection_code"] == "json_decode"
 
-    assert [%{status: :failed, input_tokens: 2, output_tokens: 2}] =
+    assert [
+             %{
+               status: :failed,
+               input_tokens: 2,
+               output_tokens: 2,
+               cached_tokens: 1,
+               reasoning_tokens: 1,
+               finish_reason: "stop",
+               failure_code: "json_decode"
+             }
+           ] =
              Cases.list_ai_invocations!(authorize?: false)
   end
 
@@ -405,6 +414,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert unknown.id == dispatching.id
     assert unknown.status == :unknown
     assert unknown.category == "response_unknown"
+    assert unknown.failure_code == "response_unknown"
 
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.status == :completed
