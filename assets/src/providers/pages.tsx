@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ArrowLeft, Webhook } from "lucide-react";
+import { Activity, ArrowLeft, Bot, BrainCircuit, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
 import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
-import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Label } from "@/components/ui/label";
 import { AIProviderCreateForm, ProviderSetup } from "@/providers/ai-section";
@@ -43,6 +43,25 @@ const signalChoices = {
     icon: Webhook,
   },
 } as const;
+
+const aiAuthDescriptions: Record<AIService["auth"], string> = {
+  api_key: "setup.cardApiKey",
+  optional_api_key: "setup.cardOptionalApiKey",
+  none: "setup.cardNoCredential",
+  service_account_json: "setup.cardServiceAccount",
+  oauth_access_token: "setup.cardOAuth",
+};
+
+const featuredAIServices = [
+  "openai",
+  "anthropic",
+  "google",
+  "google_vertex",
+  "azure",
+  "amazon_bedrock",
+  "openrouter",
+  "ollama",
+];
 
 function ProviderPage({ kind }: { kind: ProviderPageKind }) {
   const { t } = useTranslation();
@@ -162,11 +181,27 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
   const { providerType } = useParams();
   const [error, setError] = useState("");
   const [services, setServices] = useState<AIService[] | null>(null);
-  const [selectedService, setSelectedService] = useState<string | null>(null);
+  const [serviceQuery, setServiceQuery] = useState("");
   const canManage = account?.role === "admin";
   const overview = kind === "ai" ? "/ai" : "/signals";
   const choiceEntries = Object.entries(signalChoices);
   const aiService = services?.find((item) => item.id === providerType);
+  const filteredServices = (services ?? [])
+    .filter((service) =>
+      `${service.name} ${service.id}`
+        .toLocaleLowerCase()
+        .includes(serviceQuery.trim().toLocaleLowerCase()),
+    )
+    .sort((left, right) => {
+      const leftRank = featuredAIServices.indexOf(left.id);
+      const rightRank = featuredAIServices.indexOf(right.id);
+      if (leftRank !== -1 || rightRank !== -1) {
+        if (leftRank === -1) return 1;
+        if (rightRank === -1) return -1;
+        return leftRank - rightRank;
+      }
+      return left.name.localeCompare(right.name);
+    });
   const selectedChoice = choiceEntries.find(([id]) => id === providerType)?.[1];
   const selected = kind === "ai" ? aiService?.id : selectedChoice ? providerType : undefined;
 
@@ -246,24 +281,38 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
           <AlertDescription>{t("setup.readOnly")}</AlertDescription>
         </Alert>
       ) : kind === "ai" && !selected ? (
-        <div className="max-w-lg space-y-4">
-          <Label htmlFor="ai-service">{t("setup.service")}</Label>
-          <FormSelect
-            id="ai-service"
-            value={selectedService}
-            onValueChange={setSelectedService}
-            options={(services ?? []).map((service) => ({
-              value: service.id,
-              label: service.name,
-            }))}
-            placeholder={t("setup.chooseAIType")}
-          />
-          <Button
-            disabled={!selectedService}
-            onClick={() => navigate(`/ai/new/${selectedService}`)}
-          >
-            {t("setup.continueAI")}
-          </Button>
+        <div className="space-y-4">
+          <div className="max-w-md space-y-2">
+            <Label htmlFor="ai-service-search">{t("setup.searchAIServices")}</Label>
+            <Input
+              id="ai-service-search"
+              type="search"
+              value={serviceQuery}
+              onChange={(event) => setServiceQuery(event.target.value)}
+              placeholder={t("setup.searchAIServicesPlaceholder")}
+            />
+          </div>
+          {filteredServices.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {filteredServices.map((service) => (
+                <ProviderChoiceCard
+                  key={service.id}
+                  to={`/ai/new/${service.id}`}
+                  title={service.name}
+                  description={t(
+                    service.id === "openai"
+                      ? "setup.choiceOpenAI"
+                      : service.id === "anthropic"
+                        ? "setup.choiceAnthropic"
+                        : aiAuthDescriptions[service.auth],
+                  )}
+                  icon={service.id === "openai" ? BrainCircuit : Bot}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("setup.noAIServicesFound")}</p>
+          )}
         </div>
       ) : !selected ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
