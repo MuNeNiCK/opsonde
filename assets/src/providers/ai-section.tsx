@@ -485,28 +485,30 @@ export function ProviderSetup({
                   {service?.name ?? configurationValue(provider, "provider")} ·{" "}
                   {configurationValue(provider, "model")}
                 </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="rounded-md border bg-muted/40 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>{t("setup.usageScope")}</span>
-                    <span>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {(scope === "all" || scope === "resolver") && (
+                    <Badge variant="outline">Resolver</Badge>
+                  )}
+                  {(scope === "all" || scope === "reviewer") && (
+                    <Badge variant="outline">Reviewer</Badge>
+                  )}
+                  {scope ? (
+                    <span className="text-xs text-muted-foreground">
                       {t("setup.priority")} {priority}
                     </span>
-                  </div>
-                  <p className="mt-1 text-sm font-medium">
-                    {scope
-                      ? usageOptions(t).find((option) => option.value === scope)?.label
-                      : t("setup.usageUnset")}
-                  </p>
-                  {(resolverRank >= 0 || reviewerRank >= 0) && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {resolverRank >= 0 && <span>Resolver #{resolverRank + 1}</span>}
-                      {resolverRank >= 0 && reviewerRank >= 0 && <span> · </span>}
-                      {reviewerRank >= 0 && <span>Reviewer #{reviewerRank + 1}</span>}
-                    </p>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{t("setup.usageUnset")}</span>
                   )}
                 </div>
+                {(resolverRank >= 0 || reviewerRank >= 0) && (
+                  <p className="text-xs text-muted-foreground">
+                    {resolverRank >= 0 && <span>Resolver #{resolverRank + 1}</span>}
+                    {resolverRank >= 0 && reviewerRank >= 0 && <span> · </span>}
+                    {reviewerRank >= 0 && <span>Reviewer #{reviewerRank + 1}</span>}
+                  </p>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="flex items-start gap-2 text-sm">
                   {passed ? (
                     <CheckCircle2 className="mt-0.5 size-4 text-success" />
