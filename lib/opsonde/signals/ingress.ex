@@ -212,7 +212,7 @@ defmodule Opsonde.Signals.Ingress do
          {:ok, _correlation} <-
            update_correlation(correlation, persisted_event, event, current?),
          {:ok, _incident} <-
-           record_case_input(incident, persisted_event, receipt, event, current?) do
+           record_case_input(incident, persisted_event, receipt, event, current?, condition) do
       {:ok, persisted_event}
     end
   end
@@ -267,27 +267,29 @@ defmodule Opsonde.Signals.Ingress do
     )
   end
 
-  defp record_case_input(nil, _persisted_event, _receipt, _event, _current?), do: {:ok, nil}
+  defp record_case_input(nil, _persisted_event, _receipt, _event, _current?, _condition),
+    do: {:ok, nil}
 
   defp record_case_input(
          %{status: status} = incident,
          _persisted_event,
          _receipt,
          _event,
-         _current?
+         _current?,
+         _condition
        )
        when status in [:resolved, :cancelled],
        do: {:ok, incident}
 
-  defp record_case_input(incident, persisted_event, receipt, event, current?) do
+  defp record_case_input(incident, persisted_event, receipt, event, current?, condition) do
     with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
          {:ok, _evidence} <-
-           create_evidence(incident, run, persisted_event, receipt, event, current?) do
+           create_evidence(incident, run, persisted_event, receipt, event, current?, condition) do
       {:ok, incident}
     end
   end
 
-  defp create_evidence(incident, run, persisted_event, receipt, event, current?) do
+  defp create_evidence(incident, run, persisted_event, receipt, event, current?, condition) do
     key = "signal-event:#{persisted_event.id}"
 
     with {:ok, evidence} <-
@@ -302,6 +304,7 @@ defmodule Opsonde.Signals.Ingress do
                content: %{
                  "signal_event_id" => persisted_event.id,
                  "condition_id" => persisted_event.condition_id,
+                 "condition_revision" => condition.revision,
                  "state" => to_string(event.state),
                  "current" => current?,
                  "source_sequence" => sequence(event.source_sequence),

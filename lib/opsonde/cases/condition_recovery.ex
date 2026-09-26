@@ -6,26 +6,31 @@ defmodule Opsonde.Cases.ConditionRecovery do
   @max_evidence 256
 
   def assess_current(incident) do
-    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
-         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
-         {:ok, baseline} <- latest_effect_baseline(operations, incident.inserted_at) do
+    with {:ok, baseline} <- baseline_for_case(incident) do
       assess(incident, baseline)
     end
   end
 
-  defp latest_effect_baseline(operations, opened_at) do
-    operations
-    |> Enum.filter(&(&1.request_kind == :effect))
-    |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
-    |> case do
-      [] ->
-        {:ok, opened_at}
+  def baseline_for_case(incident) do
+    inherited = incident.recovery_baseline_at || incident.inserted_at
 
-      [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
-        {:ok, accepted_at}
+    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"} do
+      operations
+      |> Enum.filter(&(&1.request_kind == :effect))
+      |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
+      |> case do
+        [] ->
+          {:ok, inherited}
 
-      _other ->
-        {:error, "Latest Target effect is not applied"}
+        [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
+          if DateTime.compare(accepted_at, inherited) == :gt,
+            do: {:ok, accepted_at},
+            else: {:ok, inherited}
+
+        _other ->
+          {:error, "Latest Target effect is not applied"}
+      end
     end
   end
 

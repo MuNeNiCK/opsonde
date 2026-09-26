@@ -134,6 +134,7 @@ defmodule Opsonde.Cases.Case do
         :required_human_input,
         :initial_target_id,
         :split_parent_id,
+        :recovery_baseline_at,
         :selected_target_id,
         :selected_target_revision,
         :current_owner_id
@@ -601,6 +602,10 @@ defmodule Opsonde.Cases.Case do
 
     attribute :source_recovered_at, :utc_datetime_usec do
       public? true
+    end
+
+    attribute :recovery_baseline_at, :utc_datetime_usec do
+      public? false
     end
 
     attribute :revision, :integer do

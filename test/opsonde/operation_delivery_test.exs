@@ -785,7 +785,7 @@ defmodule Opsonde.OperationDeliveryTest do
   test "one service verification cannot resolve another recovered service Condition", context do
     enable_signal_automation!(context.admin)
 
-    {incident, _run, proposal, signal_provider} =
+    {incident, run, proposal, signal_provider} =
       authorized_proposal!("two-service-conditions", context,
         trigger_kind: :signal,
         alert_state: :firing,
@@ -832,18 +832,50 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert report_jobs(incident.id) == []
 
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [check_job] = recovery_check_jobs(incident.id)
 
-    reassess =
-      Cases.start_turn!(
-        incident.id,
-        run.id,
-        "two-service-condition-reassessment",
-        %{"objective" => "Check both service Conditions"},
-        %{"action" => "continue_resolution"},
-        "Review Resolver limits",
-        authorize?: false
-      ).value
+    Repo.update_all(
+      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^attempt.id),
+      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
+    )
+
+    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
+    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
+
+    parent = Cases.get_case!(incident.id, authorize?: false)
+    assert parent.status == :resolved
+
+    assert [%{split_parent_id: parent_id} = child] =
+             Cases.list_cases!(actor: context.admin) |> Enum.reject(&(&1.id == parent.id))
+
+    assert parent_id == parent.id
+    assert child.status == :running
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1
+    assert length(Cases.active_conditions_for_case!(child.id, authorize?: false)) == 1
+    assert length(Cases.signal_context_evidence!(parent.id, authorize?: false)) == 1
+    assert length(Cases.signal_context_evidence!(child.id, authorize?: false)) == 1
+    assert child.recovery_baseline_at == operation.accepted_at
+
+    assert {:ok, [%{status: :missing_subject_proof}]} =
+             Opsonde.Cases.ConditionRecovery.assess_current(child)
+
+    child_run = Cases.active_resolution_run!(child.id, authorize?: false)
+    parent_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    for field <- [
+          :max_resolver_turns,
+          :max_target_requests,
+          :max_effects,
+          :max_related_targets,
+          :max_ai_usage_units
+        ] do
+      assert Map.fetch!(parent_run, field) + Map.fetch!(child_run, field) ==
+               Map.fetch!(run, field)
+    end
+
+    assert parent_run.status == :completed
+    assert child_run.effect_count == 0
+    [reassess] = Cases.started_turns_for_run!(child_run.id, authorize?: false)
 
     assert {:ok, request} =
              ResolverProjection.build(
@@ -859,7 +891,100 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert request.alert_state == :recovered
     assert request.recovery_evidence_ids == []
+
+    assert Enum.any?(request.evidence, fn item ->
+             item.kind == "split_lineage" and item.content["operation_id"] == operation.id and
+               item.content["historical_context_only"] == true
+           end)
+
     refute AI.recovery_ready?(request)
+  end
+
+  test "a partial recovery split rolls back when current Signal Evidence is invalid", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, signal_provider} =
+      authorized_proposal!("split-evidence-failure", context,
+        trigger_kind: :signal,
+        alert_state: :firing,
+        additional_event_key: "operation-split-evidence-failure:db",
+        additional_subject: "db.service"
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    recover_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "api-recovered-failure"
+    )
+
+    signal_event!(
+      signal_provider,
+      context,
+      "operation-split-evidence-failure:db",
+      "db-recovered-failure",
+      :recovered,
+      DateTime.utc_now(),
+      %{"labels" => %{"service" => "db.service", "alertname" => "ServiceUnavailable"}}
+    )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    [check_job] = recovery_check_jobs(incident.id)
+
+    Repo.update_all(
+      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^attempt.id),
+      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
+    )
+
+    db_condition =
+      Signals.list_conditions!(actor: context.admin)
+      |> Enum.find(&(&1.subject_ref["name"] == "db.service"))
+
+    db_evidence =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.filter(&(&1.case_id == incident.id and &1.kind == "signal_event"))
+      |> Enum.find(
+        &(&1.content["condition_id"] == db_condition.id and &1.content["state"] == "recovered")
+      )
+
+    assert db_evidence
+
+    Repo.query!(
+      "UPDATE evidences SET content = content - 'condition_revision' WHERE id = $1::uuid",
+      [Ecto.UUID.dump!(db_evidence.id)]
+    )
+
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_members = Cases.active_conditions_for_case!(incident.id, authorize?: false)
+
+    for _attempt <- 1..2 do
+      assert {:error, _reason} = SignalRecoveryCheckWorker.perform(check_job)
+      assert Cases.get_case!(incident.id, authorize?: false).status == :running
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.active_conditions_for_case!(incident.id, authorize?: false) == before_members
+      assert length(Cases.list_cases!(actor: context.admin)) == 1
+
+      refute Enum.any?(
+               Cases.list_case_events!(actor: context.admin),
+               &(&1.event_type in ["case_conditions_split_out", "case_conditions_split_in"])
+             )
+    end
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
