@@ -228,6 +228,7 @@ defmodule Opsonde.Providers.Provider do
 
       argument :request, :struct,
         allow_nil?: false,
+        sensitive?: true,
         constraints: [instance_of: Opsonde.Providers.Target.ObservationRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
@@ -243,6 +244,7 @@ defmodule Opsonde.Providers.Provider do
 
       argument :request, :struct,
         allow_nil?: false,
+        sensitive?: true,
         constraints: [instance_of: Opsonde.Providers.Target.EffectRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
@@ -258,6 +260,7 @@ defmodule Opsonde.Providers.Provider do
 
       argument :request, :struct,
         allow_nil?: false,
+        sensitive?: true,
         constraints: [instance_of: Opsonde.Providers.Target.VerificationRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}

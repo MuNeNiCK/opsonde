@@ -1,32 +1,35 @@
-defmodule Opsonde.Targets.BMCOperation do
+defmodule Opsonde.Targets.BMCSecret do
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Targets,
+    extensions: [AshCloak],
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
-  postgres do
-    table "bmc_operations"
-    repo Opsonde.Repo
+  cloak do
+    vault(Opsonde.Vault)
+    attributes([:value])
+  end
 
-    custom_indexes do
-      index [:access_method_id]
+  postgres do
+    table "bmc_secrets"
+    repo Opsonde.Repo
+  end
+
+  field_policies do
+    private_fields :include
+
+    field_policy :value do
+      forbid_if always()
+    end
+
+    field_policy :* do
+      authorize_if always()
     end
   end
 
   actions do
     defaults [:read]
-
-    read :available_for_method do
-      argument :access_method_id, :uuid, allow_nil?: false
-
-      filter expr(
-               access_method_id == ^arg(:access_method_id) and active == true and
-                 access_method.active == true
-             )
-
-      prepare build(sort: [name: :asc, id: :asc])
-    end
 
     read :for_use do
       get? true
@@ -39,47 +42,23 @@ defmodule Opsonde.Targets.BMCOperation do
                  access_method_id == ^arg(:access_method_id) and active == true and
                  access_method.active == true
              )
+
+      prepare build(load: [:value])
     end
 
     create :create do
       primary? true
-
-      accept [
-        :access_method_id,
-        :name,
-        :description,
-        :request_kind,
-        :protocol_request,
-        :secret_bindings,
-        :parameter_classes,
-        :input_schema,
-        :output_schema,
-        :verification_schema
-      ]
-
-      validate Opsonde.Targets.BMCOperation.Validations.Definition
+      accept [:access_method_id, :name, :value]
+      validate Opsonde.Targets.BMCSecret.Validations.BoundMethod
     end
 
     update :update do
       primary? true
       require_atomic? false
-
-      accept [
-        :name,
-        :description,
-        :request_kind,
-        :protocol_request,
-        :secret_bindings,
-        :parameter_classes,
-        :input_schema,
-        :output_schema,
-        :verification_schema
-      ]
-
+      accept [:name, :value]
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-
       validate Opsonde.Validations.CurrentRevision
-      validate Opsonde.Targets.BMCOperation.Validations.Definition
+      validate Opsonde.Targets.BMCSecret.Validations.BoundMethod
       change optimistic_lock(:revision)
     end
 
@@ -97,14 +76,13 @@ defmodule Opsonde.Targets.BMCOperation do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:available_for_method, :for_use]) do
+    policy action(:for_use) do
       forbid_if always()
     end
 
     policy action(:read) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
-      authorize_if actor_attribute_equals(:role, :viewer)
     end
   end
 
@@ -117,45 +95,10 @@ defmodule Opsonde.Targets.BMCOperation do
       constraints min_length: 1, max_length: 120
     end
 
-    attribute :description, :string do
+    attribute :value, :string do
       allow_nil? false
-      public? true
-      constraints min_length: 1, max_length: 500
-    end
-
-    attribute :request_kind, :atom do
-      allow_nil? false
-      public? true
-      constraints one_of: [:observation, :effect]
-    end
-
-    attribute :protocol_request, :map do
-      allow_nil? false
-      public? true
-    end
-
-    attribute :secret_bindings, :map do
-      allow_nil? false
-      default %{}
-    end
-
-    attribute :parameter_classes, :map do
-      allow_nil? false
-      default %{}
-    end
-
-    attribute :input_schema, :map do
-      allow_nil? false
-      public? true
-    end
-
-    attribute :output_schema, :map do
-      allow_nil? false
-      public? true
-    end
-
-    attribute :verification_schema, :map do
-      public? true
+      sensitive? true
+      constraints min_length: 1, max_length: 4_096
     end
 
     attribute :active, :boolean do

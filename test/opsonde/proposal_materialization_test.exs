@@ -2,6 +2,7 @@ defmodule Opsonde.ProposalMaterializationTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.Targets.BMC.OperationKey
 
   @password "correct horse battery staple"
 
@@ -75,6 +76,124 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert is_binary(proposal.preflight_context["clearance_digest"])
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
     refute_receive {:effect, _, _}
+  end
+
+  test "a BMC secret reference reaches Proposal without plaintext in the Case", context do
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      :full_access,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "BMC secret Proposal test",
+      actor: context.admin
+    )
+
+    endpoint = "https://bmc.example.test:8443"
+
+    target =
+      Targets.create_target!("proposal-physical", "physical_host", "bare_metal", %{}, nil,
+        actor: context.admin
+      )
+
+    bmc_provider =
+      Providers.create_provider!(
+        "proposal-bmc-provider",
+        :target,
+        "bmc-redfish",
+        %{"endpoint" => endpoint},
+        %{"username" => "admin", "password" => "test-only-provider-password"},
+        actor: context.admin
+      )
+
+    checked =
+      Providers.record_provider_check!(bmc_provider, bmc_provider.revision, :passed, nil, nil,
+        authorize?: false
+      )
+
+    bmc_provider =
+      Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        bmc_provider.id,
+        "redfish",
+        "bare_metal",
+        "redfish",
+        endpoint,
+        bmc_provider.revision,
+        10,
+        ["observe.power", "effect.bmc_api"],
+        actor: context.admin
+      )
+
+    value = "test-only-password-value"
+    secret = Targets.create_bmc_secret!(method.id, "next-password", value, actor: context.admin)
+
+    definition =
+      Targets.create_bmc_operation!(
+        method.id,
+        "Rotate manager password",
+        "Rotate manager password using configured secret",
+        :effect,
+        %{"method" => "PATCH", "uri" => "/redfish/v1/Managers/1/Accounts/1"},
+        %{
+          "type" => "object",
+          "properties" => %{
+            "selectors" => %{"type" => "object", "additionalProperties" => false},
+            "parameters" => %{"type" => "object", "additionalProperties" => false}
+          },
+          "required" => ["selectors", "parameters"],
+          "additionalProperties" => false
+        },
+        %{"type" => "object"},
+        nil,
+        %{
+          secret_bindings: %{"/Password" => %{"id" => secret.id, "revision" => secret.revision}},
+          parameter_classes: %{"/Password" => "secret"}
+        },
+        actor: context.admin
+      )
+
+    bmc_context = %{context | target: target, method: method, provider: bmc_provider}
+    {incident, run} = open_case!("bmc-secret", bmc_context)
+    evidence = evidence!(incident, run, "bmc-secret")
+    intent = proposal_intent(evidence.id, bmc_context)
+    operation = OperationKey.format(definition)
+
+    intent =
+      intent
+      |> Map.merge(%{
+        "capability" => "effect.bmc_api",
+        "operation" => operation,
+        "parameters" => %{},
+        "selectors" => %{},
+        "reason" => "Rotate the manager password with the registered secret"
+      })
+      |> put_in(["tool", "capability"], "effect.bmc_api")
+      |> put_in(["tool", "operation"], operation)
+
+    turn = completed_turn!(incident, run, "bmc-secret", intent)
+    assert {:ok, proposal} = Cases.materialize_proposal(turn.id, authorize?: false)
+    assert proposal.status == :proposed
+    assert proposal.parameters == %{}
+    refute inspect(proposal) =~ value
+    refute inspect(Cases.get_turn!(turn.id, authorize?: false)) =~ value
+
+    authorized = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    assert authorized.status == :authorized
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.parameters == %{}
+    refute inspect(operation) =~ value
   end
 
   test "TargetPolicy denial is a durable blocked Proposal under the Case mode", context do

@@ -408,6 +408,40 @@ defmodule Opsonde.Providers.TargetTest do
     refute_receive {:effect, _, _}
   end
 
+  test "bound BMC secret values are redacted from adapter results and errors", context do
+    secret = "test-only-new-password"
+
+    request = %{
+      effect_request(context.provider.revision, "operation-secret")
+      | parameters: %{"Password" => secret},
+        secret_values: %{"/Password" => secret}
+    }
+
+    result = %Target.EffectResult{
+      status: :unknown,
+      details: %{"reason" => "BMC echoed #{secret}"}
+    }
+
+    assert %Target.EffectResult{details: %{"reason" => "BMC echoed [REDACTED]"}} =
+             Providers.target_effect!(context.provider.id, request, invocation(result),
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert_receive {:effect, _, ^request}
+
+    assert {:error, error} =
+             Providers.target_effect(
+               context.provider.id,
+               request,
+               invocation({:error, :failed, "BMC rejected #{secret}"}),
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert target_error(error).message == "BMC rejected [REDACTED]"
+  end
+
   test "verification is independent and malformed or raised adapter results are rejected",
        context do
     request = verification_request(context.provider.revision)

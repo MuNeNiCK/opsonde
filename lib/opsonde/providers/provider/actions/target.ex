@@ -68,28 +68,42 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp invoke(:observe, adapter, state, arguments, invocation, credentials) do
     request = arguments.request
+    redaction_credentials = redaction_credentials(credentials, request)
 
     with :ok <- validate_observation_request(request) do
-      observe(adapter, state, request, invocation, credentials, request.max_attempts)
+      observe(adapter, state, request, invocation, redaction_credentials, request.max_attempts)
     end
   end
 
   defp invoke(:effect, adapter, state, arguments, invocation, credentials) do
+    redaction_credentials = redaction_credentials(credentials, arguments.request)
+
     with :ok <- validate_effect_request(arguments.request) do
       safe_effect_call(
         fn -> adapter.effect(state, arguments.request, invocation) end,
-        credentials
+        redaction_credentials
       )
-      |> normalize_effect(credentials)
+      |> normalize_effect(redaction_credentials)
     end
   end
 
   defp invoke(:verify, adapter, state, arguments, invocation, credentials) do
+    redaction_credentials = redaction_credentials(credentials, arguments.request)
+
     with :ok <- validate_verification_request(arguments.request) do
-      safe_call(fn -> adapter.verify(state, arguments.request, invocation) end, credentials)
-      |> normalize_verification(credentials)
+      safe_call(
+        fn -> adapter.verify(state, arguments.request, invocation) end,
+        redaction_credentials
+      )
+      |> normalize_verification(redaction_credentials)
     end
   end
+
+  defp redaction_credentials(credentials, %{secret_values: values}) when is_map(values) do
+    Map.put(credentials, "bmc_secret", Map.values(values))
+  end
+
+  defp redaction_credentials(credentials, _request), do: credentials
 
   defp observe(adapter, state, request, invocation, credentials, attempts_left) do
     with :ok <- ensure_not_cancelled(invocation) do
@@ -271,6 +285,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
       nonempty_binary?(request.authorization_digest) and bounded_map?(request.selectors) and
       (is_nil(request.protocol_request) or bounded_map?(request.protocol_request)) and
+      bounded_map?(request.secret_values) and
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end
 

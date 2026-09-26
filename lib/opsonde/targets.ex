@@ -204,5 +204,18 @@ defmodule Opsonde.Targets do
       define :update_bmc_operation, action: :update, args: [:expected_revision]
       define :deactivate_bmc_operation, action: :deactivate, args: [:expected_revision]
     end
+
+    resource Opsonde.Targets.BMCSecret do
+      define :list_bmc_secrets, action: :read
+      define :get_bmc_secret, action: :read, get_by: [:id]
+
+      define :load_bmc_secret_for_use,
+        action: :for_use,
+        args: [:id, :expected_revision, :access_method_id]
+
+      define :create_bmc_secret, action: :create, args: [:access_method_id, :name, :value]
+      define :update_bmc_secret, action: :update, args: [:expected_revision]
+      define :deactivate_bmc_secret, action: :deactivate, args: [:expected_revision]
+    end
   end
 end

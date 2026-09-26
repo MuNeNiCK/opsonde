@@ -70,6 +70,7 @@ defmodule Opsonde.Providers.Target do
                   selectors: %{},
                   parameters: %{},
                   protocol_request: nil,
+                  secret_values: %{},
                   max_attempts: 1,
                   authority_mode: nil
                 ]
@@ -102,7 +103,13 @@ defmodule Opsonde.Providers.Target do
     ]
 
     defstruct @enforce_keys ++
-                [selectors: %{}, parameters: %{}, protocol_request: nil, authority_mode: nil]
+                [
+                  selectors: %{},
+                  parameters: %{},
+                  protocol_request: nil,
+                  secret_values: %{},
+                  authority_mode: nil
+                ]
 
     @type t :: %__MODULE__{}
   end
@@ -135,6 +142,7 @@ defmodule Opsonde.Providers.Target do
                   selectors: %{},
                   parameters: %{},
                   protocol_request: nil,
+                  secret_values: %{},
                   reference: nil,
                   expected: %{}
                 ]
