@@ -295,6 +295,10 @@ defmodule Opsonde.Cases do
         action: :apply_review,
         args: [:proposal_id, :review_decision_id]
 
+      define :supersede_proposal_context,
+        action: :supersede_context,
+        args: [:proposal_id]
+
       define :fail_proposal_review_delivery,
         action: :fail_review_delivery,
         args: [:proposal_id, :category, :reason]

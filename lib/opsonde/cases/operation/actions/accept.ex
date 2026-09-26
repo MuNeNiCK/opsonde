@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   require Ash.Query
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Budget, Operation, Proposal}
+  alias Opsonde.Cases.{Budget, ConditionContext, Operation, Proposal}
   alias Opsonde.Targets.{PolicyRequest, RequestClearance}
 
   @impl true
@@ -17,6 +17,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   defp consume(proposal) do
     case Budget.consume(
            case_id: proposal.case_id,
+           admission_lock?: true,
            resolution_run_id: proposal.resolution_run_id,
            kind: budget_kind(proposal.request_kind),
            amount: 1,
@@ -40,6 +41,16 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
       {:ok, %{status: :exhausted}} ->
         {:error, "Target request budget exhausted"}
 
+      {:error, error} ->
+        if condition_context_changed?(error) do
+          with {:ok, _invalidated} <-
+                 Cases.supersede_proposal_context(proposal.id, authorize?: false) do
+            {:error, "Proposal Conditions changed before Operation acceptance"}
+          end
+        else
+          {:error, error}
+        end
+
       other ->
         other
     end
@@ -61,15 +72,36 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   end
 
   defp valid_context(proposal, incident, run) do
-    if proposal.status == :authorized and incident.status == :running and
-         not incident.cancel_requested and run.active and run.status == :running and
-         run.generation == proposal.case_generation and
-         proposal.authority_mode == incident.authority_mode and
-         proposal.authority_mode == run.authority_mode and
-         DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt,
-       do: :ok,
-       else: {:error, "Authorized Proposal is stale"}
+    with true <-
+           (proposal.status == :authorized and incident.status == :running and
+              not incident.cancel_requested and run.active and run.status == :running and
+              run.generation == proposal.case_generation and
+              proposal.authority_mode == incident.authority_mode and
+              proposal.authority_mode == run.authority_mode and
+              DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt) ||
+             {:error, "Authorized Proposal is stale"},
+         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+      :ok
+    else
+      {:ok, false} ->
+        {:error,
+         Ash.Error.Changes.StaleRecord.exception(
+           resource: Proposal,
+           field: :condition_revisions
+         )}
+
+      other ->
+        other
+    end
   end
+
+  defp condition_context_changed?(%Ash.Error.Changes.StaleRecord{field: :condition_revisions}),
+    do: true
+
+  defp condition_context_changed?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &condition_context_changed?/1)
+
+  defp condition_context_changed?(_error), do: false
 
   defp valid_approval(approval, proposal) do
     if approval.decision == :approved and approval.proposal_digest == proposal.proposal_digest and

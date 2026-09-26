@@ -704,6 +704,96 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "native Signal recovery during Reviewer delivery supersedes the Proposal without approval",
+       context do
+    configure_mode!(:auto, context.admin)
+    enable_signal_automation!(context.admin)
+
+    signal_provider =
+      Providers.create_provider!(
+        "authority-native-monitor",
+        :signal,
+        "fixture-signal",
+        %{"source" => "authority-native"},
+        %{"secret" => "authority-native-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    Targets.create_external_identity!(
+      context.target.id,
+      "authority-native",
+      "hostname",
+      context.target.name,
+      actor: context.admin
+    )
+
+    fired_at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    ingest_authority_signal!(
+      signal_provider,
+      context.target.name,
+      "review-firing",
+      :firing,
+      fired_at
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    [source_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
+
+    {_incident, _run, proposal} =
+      proposal_for_case!(incident, "native-review", context, :effect, nil,
+        started: started,
+        evidence: source_evidence
+      )
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    response = %AI.ReviewDecision{
+      verdict: :approved,
+      reason: "Approve the action based on the former firing Condition",
+      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+    }
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   ingest_authority_signal!(
+                     signal_provider,
+                     context.target.name,
+                     "review-recovered",
+                     :recovered,
+                     DateTime.utc_now()
+                   )
+
+                   {:ok, response}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+    [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.category == "context_changed"
+    assert invocation.status == :failed
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.pending_intent["action"] == "resolve_turn"
+    assert current.pending_intent["source_proposal_id"] == proposal.id
+    assert [_reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
+  end
+
   test "Auto stops before review or effect when only Resolver is assigned", context do
     configure_mode!(:auto, context.admin)
     Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :resolver, 10, context.admin)
@@ -1286,53 +1376,104 @@ defmodule Opsonde.ProposalAuthorityTest do
         )
       end
 
+    proposal_for_case!(incident, suffix, context, request_kind, reason)
+  end
+
+  defp ingest_authority_signal!(provider, target_name, receipt_id, state, occurred_at) do
+    Signals.ingest_signal!(
+      provider.id,
+      provider.revision,
+      %Signal.Envelope{body: receipt_id, headers: %{}, received_at: occurred_at},
+      %{
+        authenticate: fn provider_state, _envelope ->
+          {:ok,
+           %Signal.AuthenticatedReceipt{receipt_id: receipt_id, source: provider_state.source}}
+        end,
+        normalize: fn _state, _envelope, _receipt ->
+          {:ok,
+           [
+             %Signal.Event{
+               receipt_id: receipt_id,
+               event_key: "native-review-service",
+               state: state,
+               occurred_at: occurred_at,
+               target_ref: %{kind: :hostname, value: target_name},
+               attributes: %{
+                 "labels" => %{"alertname" => "ServiceUnavailable", "service" => "api.service"}
+               }
+             }
+           ]}
+        end
+      },
+      authorize?: false
+    )
+  end
+
+  defp proposal_for_case!(incident, suffix, context, request_kind, reason, opts \\ []) do
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
     evidence =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "authority-evidence-#{suffix}",
-        "observation",
-        "fixture",
-        "observation-#{suffix}",
-        %{"service" => "unhealthy"},
-        DateTime.utc_now(),
-        authorize?: false
-      )
+      Keyword.get_lazy(opts, :evidence, fn ->
+        Cases.append_evidence!(
+          incident.id,
+          run.id,
+          nil,
+          "authority-evidence-#{suffix}",
+          "observation",
+          "fixture",
+          "observation-#{suffix}",
+          %{"service" => "unhealthy"},
+          DateTime.utc_now(),
+          authorize?: false
+        )
+      end)
 
     started =
-      Cases.start_turn!(
-        incident.id,
-        run.id,
-        "authority-turn-#{suffix}",
-        %{"objective" => "Restore the service"},
-        %{"action" => "continue"},
-        "Review Resolver limits",
-        authorize?: false
-      )
+      Keyword.get_lazy(opts, :started, fn ->
+        Cases.start_turn!(
+          incident.id,
+          run.id,
+          "authority-turn-#{suffix}",
+          %{"objective" => "Restore the service"},
+          %{"action" => "continue"},
+          "Review Resolver limits",
+          authorize?: false
+        ).value
+      end)
 
     intent = proposal_intent(evidence.id, context, request_kind)
     intent = if is_binary(reason), do: Map.put(intent, "reason", reason), else: intent
 
+    result =
+      %{
+        "outcome" => "decision",
+        "intent" => intent,
+        "resolver" => %{
+          "provider_id" => context.resolver_provider.id,
+          "provider_revision" => context.resolver_provider.revision,
+          "assignment_id" => context.resolver_assignment.id,
+          "assignment_revision" => context.resolver_assignment.revision
+        },
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+    result =
+      if incident.trigger_kind == :signal do
+        {:ok, revisions} =
+          Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
+
+        Map.put(result, "condition_revisions", revisions)
+      else
+        result
+      end
+
     turn =
       Cases.complete_turn!(
-        started.value.id,
-        started.value.revision,
-        %{
-          "outcome" => "decision",
-          "intent" => intent,
-          "resolver" => %{
-            "provider_id" => context.resolver_provider.id,
-            "provider_revision" => context.resolver_provider.revision,
-            "assignment_id" => context.resolver_assignment.id,
-            "assignment_revision" => context.resolver_assignment.revision
-          },
-          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-        },
+        started.id,
+        started.revision,
+        result,
         :proposal,
-        %{"action" => "route_resolver_decision", "turn_id" => started.value.id},
+        %{"action" => "route_resolver_decision", "turn_id" => started.id},
         "Review the Resolver decision",
         authorize?: false
       ).value
@@ -1441,6 +1582,25 @@ defmodule Opsonde.ProposalAuthorityTest do
       current.max_ai_usage_units,
       current.max_no_progress_turns,
       "test #{mode} Proposal routing",
+      actor: admin
+    )
+  end
+
+  defp enable_signal_automation!(admin) do
+    current = Cases.current_authority_setting!(actor: admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      true,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Enable native Signal review verification",
       actor: admin
     )
   end

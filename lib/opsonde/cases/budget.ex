@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Budget do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{BudgetResult, Case, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.{BudgetResult, Case, CaseAdmissionLock, CaseEvent, ResolutionRun}
 
   @counter_fields [
     :turn_count,
@@ -24,7 +24,8 @@ defmodule Opsonde.Cases.Budget do
   end
 
   defp consume_locked(opts) do
-    with {:ok, incident} <- lock_case(opts[:case_id]),
+    with :ok <- admission_lock(opts),
+         {:ok, incident} <- lock_case(opts[:case_id]),
          {:ok, run} <- lock_run(opts[:resolution_run_id], incident.id),
          {:ok, event} <- existing_event(incident.id, opts[:ledger_key]) do
       if event do
@@ -33,6 +34,10 @@ defmodule Opsonde.Cases.Budget do
         consume_new(incident, run, opts)
       end
     end
+  end
+
+  defp admission_lock(opts) do
+    if opts[:admission_lock?], do: CaseAdmissionLock.acquire(), else: :ok
   end
 
   defp replay_result(incident, run, event, opts) do

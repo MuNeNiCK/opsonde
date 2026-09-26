@@ -1091,7 +1091,40 @@ defmodule Opsonde.OperationDeliveryTest do
 
     [source] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
-    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert {:error, stale} = Cases.accept_operation(proposal.id, authorize?: false)
+    assert Exception.message(stale) =~ "Conditions changed"
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
+
+    [reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+
+    replacement =
+      Cases.complete_turn!(
+        reassessment.id,
+        reassessment.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => signal_proposal_intent(source.id, context),
+          "condition_revisions" => revisions,
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => reassessment.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(replacement.id, authorize?: false)
+    authorized = Cases.proposal_by_source_turn!(replacement.id, authorize?: false)
+
+    operation = Cases.accept_operation!(authorized.id, authorize?: false)
 
     assert :ok =
              OperationDelivery.run(operation.id,
@@ -1328,25 +1361,36 @@ defmodule Opsonde.OperationDeliveryTest do
         )
       end
 
+    result =
+      %{
+        "outcome" => "decision",
+        "intent" =>
+          if(trigger_kind == :signal,
+            do: signal_proposal_intent(evidence.id, context),
+            else: proposal_intent(evidence.id, context, request_kind)
+          ),
+        "resolver" => %{
+          "provider_id" => context.resolver_provider.id,
+          "provider_revision" => context.resolver_provider.revision,
+          "assignment_id" => context.resolver_assignment.id,
+          "assignment_revision" => context.resolver_assignment.revision
+        },
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+    result =
+      if trigger_kind == :signal do
+        {:ok, revisions} = Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
+        Map.put(result, "condition_revisions", revisions)
+      else
+        result
+      end
+
     turn =
       Cases.complete_turn!(
         started.value.id,
         started.value.revision,
-        %{
-          "outcome" => "decision",
-          "intent" =>
-            if(trigger_kind == :signal,
-              do: signal_proposal_intent(evidence.id, context),
-              else: proposal_intent(evidence.id, context, request_kind)
-            ),
-          "resolver" => %{
-            "provider_id" => context.resolver_provider.id,
-            "provider_revision" => context.resolver_provider.revision,
-            "assignment_id" => context.resolver_assignment.id,
-            "assignment_revision" => context.resolver_assignment.revision
-          },
-          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-        },
+        result,
         :proposal,
         %{"action" => "route_resolver_decision", "turn_id" => started.value.id},
         "Review the Resolver decision",

@@ -1,6 +1,8 @@
 defmodule Opsonde.Cases.ReviewDelivery do
   @moduledoc false
 
+  require Ash.Query
+
   alias Opsonde.{Cases, Providers}
 
   alias Opsonde.Cases.{
@@ -8,7 +10,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
     AIInvocationClaim,
     Budget,
     Case,
+    CaseAdmissionLock,
     CaseEvent,
+    ConditionContext,
     Proposal,
     ResolutionRun,
     ReviewDecision,
@@ -44,6 +48,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
            claim_invocation(proposal, incident, current, request, delivery_attempt(opts)) do
       dispatch(proposal, current, request, claim, opts)
     else
+      {:error, :context_changed} -> supersede_changed_context(proposal)
       {:error, error} -> persist_failure(proposal, error, nil, opts)
     end
   end
@@ -53,20 +58,28 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
     case Providers.ai_review(selection.provider_id, request, invocation, authorize?: false) do
       {:ok, decision} ->
-        if review_context_current?(proposal) do
+        if review_context_current_with_conditions?(proposal) do
           case accept(proposal, selection, request, claim.invocation, decision) do
-            {:ok, {:decision, stored}} -> apply(stored)
-            {:ok, :stopped} -> :ok
-            {:error, _error} = error -> error
+            {:ok, {:decision, stored}} ->
+              apply(stored)
+
+            {:ok, :stopped} ->
+              :ok
+
+            {:error, :context_changed} ->
+              settle_and_supersede(proposal, claim.invocation, decision.usage)
+
+            {:error, _error} = error ->
+              error
           end
         else
-          settle_changed_context(proposal, claim.invocation, decision.usage)
+          settle_and_supersede(proposal, claim.invocation, decision.usage)
         end
 
       {:error, error} ->
-        if review_context_current?(proposal),
+        if review_context_current_with_conditions?(proposal),
           do: persist_failure(proposal, error, claim.invocation, opts),
-          else: settle_changed_context(proposal, claim.invocation, error_usage(error))
+          else: settle_and_supersede(proposal, claim.invocation, error_usage(error))
     end
   end
 
@@ -93,6 +106,25 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp claim_invocation(proposal, incident, selection, request, delivery_attempt) do
+    Ash.transact([AIInvocation, Case, Proposal], fn ->
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, current_case} <- Cases.get_case(incident.id, authorize?: false),
+           true <- review_context_current?(proposal) || {:error, :context_changed},
+           {:ok, true} <- ConditionContext.current?(current_case, proposal.source_turn_id) do
+        do_claim_invocation(proposal, current_case, selection, request, delivery_attempt)
+      else
+        {:ok, false} -> {:error, :context_changed}
+        other -> other
+      end
+    end)
+    |> case do
+      {:ok, {:ok, _claim} = claimed} -> claimed
+      {:ok, {:error, _error} = failed} -> failed
+      other -> other
+    end
+  end
+
+  defp do_claim_invocation(proposal, incident, selection, request, delivery_attempt) do
     Cases.claim_ai_invocation(
       :reviewer,
       proposal.case_id,
@@ -235,7 +267,15 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
     result =
       Ash.transact([AIInvocation, Case, ResolutionRun, Proposal, ReviewDecision], fn ->
-        with {:ok, charged} <-
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock_case(proposal.case_id),
+             {:ok, current_proposal} <- lock_proposal(proposal.id),
+             true <-
+               (incident.status == :running and not incident.cancel_requested and
+                  current_proposal.status == :reviewing and
+                  current_proposal.revision == proposal.revision) || {:error, :context_changed},
+             {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
+             {:ok, charged} <-
                charge_usage(
                  proposal,
                  usage,
@@ -270,6 +310,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
                 {:exhausted, charged.reason}
               end
           end
+        else
+          {:ok, false} -> {:error, :context_changed}
+          other -> other
         end
       end)
 
@@ -279,6 +322,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
       {:ok, {:exhausted, reason}} ->
         with :ok <- stop_delivery(proposal, "budget_exhausted", reason), do: {:ok, :stopped}
+
+      {:error, :context_changed} ->
+        {:error, :context_changed}
 
       {:error, error} ->
         case accepted_or_existing({:error, error}, proposal.id) do
@@ -550,6 +596,45 @@ defmodule Opsonde.Cases.ReviewDelivery do
       revision == proposal.revision
     else
       _changed -> false
+    end
+  end
+
+  defp review_context_current_with_conditions?(proposal) do
+    with true <- review_context_current?(proposal),
+         {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
+         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+      true
+    else
+      _changed -> false
+    end
+  end
+
+  defp lock_case(case_id) do
+    Case
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(id: case_id)
+    |> Ash.Query.lock(:for_update)
+    |> Ash.read_one(authorize?: false)
+  end
+
+  defp lock_proposal(proposal_id) do
+    Proposal
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(id: proposal_id)
+    |> Ash.Query.lock(:for_update)
+    |> Ash.read_one(authorize?: false)
+  end
+
+  defp settle_and_supersede(proposal, invocation, usage) do
+    with :ok <- settle_changed_context(proposal, invocation, usage) do
+      supersede_changed_context(proposal)
+    end
+  end
+
+  defp supersede_changed_context(proposal) do
+    case Cases.supersede_proposal_context(proposal.id, authorize?: false) do
+      {:ok, _proposal} -> :ok
+      {:error, _error} = error -> error
     end
   end
 

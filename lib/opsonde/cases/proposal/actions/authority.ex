@@ -9,7 +9,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     Approval,
     Budget,
     Case,
+    CaseAdmissionLock,
     CaseEvent,
+    ConditionContext,
     Proposal,
     ProposalExpirationWorker,
     ResolutionRun,
@@ -33,6 +35,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
       :review ->
         apply_review(input.arguments.proposal_id, input.arguments.review_decision_id)
+
+      :supersede_context ->
+        supersede_context(input.arguments.proposal_id)
 
       :review_delivery_failure ->
         fail_review_delivery(
@@ -257,7 +262,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          {:ok, decision} <- Cases.review_decision_by_proposal(proposal_id, authorize?: false),
          true <- decision.id == decision_id || {:error, "ReviewDecision does not match Proposal"} do
       Ash.transact([Case, ResolutionRun, Proposal, Approval, ReviewDecision], fn ->
-        with {:ok, incident} <- lock_case(source.case_id),
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock_case(source.case_id),
              {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
              {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id) do
           apply_review_locked(proposal, decision, incident, run)
@@ -289,25 +295,107 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
        do: proposal
 
   defp apply_review_locked(%{status: :reviewing} = proposal, decision, incident, run) do
-    with :ok <- valid_context(proposal, incident, run),
-         true <-
-           decision.proposal_digest == proposal.proposal_digest ||
-             {:error, "ReviewDecision Proposal digest changed"} do
-      case decision.verdict do
-        :approved ->
-          approve_review(proposal, decision, incident, run)
-
-        :rejected ->
-          reject_review(proposal, decision, incident, run)
-
-        :needs_human ->
-          await_human_review(proposal, decision, incident)
+    with {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+      if current? do
+        with :ok <- valid_context(proposal, incident, run),
+             true <-
+               decision.proposal_digest == proposal.proposal_digest ||
+                 {:error, "ReviewDecision Proposal digest changed"} do
+          case decision.verdict do
+            :approved -> approve_review(proposal, decision, incident, run)
+            :rejected -> reject_review(proposal, decision, incident, run)
+            :needs_human -> await_human_review(proposal, decision, incident)
+          end
+        end
+      else
+        supersede_locked(proposal, incident, run)
       end
     end
   end
 
   defp apply_review_locked(_proposal, _decision, _incident, _run),
     do: {:error, "Proposal is not awaiting Reviewer decision"}
+
+  defp supersede_context(proposal_id) do
+    with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do
+      Ash.transact([Case, ResolutionRun, Proposal, Turn, CaseEvent], fn ->
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock_case(source.case_id),
+             {:ok, run} <- lock_run_any(source.resolution_run_id, incident.id),
+             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id),
+             {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+          cond do
+            proposal.status == :invalidated ->
+              proposal
+
+            incident.status != :running or run.status != :running ->
+              proposal
+
+            proposal.status in [:reviewing, :authorized] and not current? ->
+              with {:ok, nil} <-
+                     Cases.operation_by_proposal(proposal.id,
+                       authorize?: false,
+                       not_found_error?: false
+                     ) do
+                supersede_locked(proposal, incident, run)
+              else
+                {:ok, _operation} -> {:error, "Proposal already has an accepted Operation"}
+                {:error, _error} = error -> error
+              end
+
+            proposal.status != :reviewing ->
+              proposal
+
+            true ->
+              {:error, "Proposal context is still current"}
+          end
+        end
+      end)
+    end
+  end
+
+  defp supersede_locked(proposal, incident, run) do
+    intent = %{"action" => "continue_resolution", "source_proposal_id" => proposal.id}
+
+    with true <-
+           incident.pending_intent["proposal_id"] == proposal.id ||
+             {:error, "Case pending decision changed"},
+         {:ok, invalidated} <- transition(proposal, :invalidated),
+         {:ok, _cleared} <-
+           Cases.update_case_record(
+             incident,
+             incident.revision,
+             %{pending_intent: %{}, stop_reason: nil, required_human_input: nil},
+             authorize?: false
+           ),
+         {:ok, started} <-
+           Cases.start_turn(
+             incident.id,
+             run.id,
+             Budget.key("proposal:context-changed", proposal.id),
+             %{
+               "objective" => "Reassess the Case with current Conditions",
+               "source_proposal_id" => proposal.id
+             },
+             intent,
+             "Review Resolver limits",
+             authorize?: false
+           ),
+         {:ok, _pending} <- pending_after_supersede(started, proposal.id) do
+      invalidated
+    end
+  end
+
+  defp pending_after_supersede(%{status: :exhausted}, _proposal_id), do: {:ok, :needs_attention}
+
+  defp pending_after_supersede(%{status: status, case: incident, value: turn}, proposal_id)
+       when status in [:charged, :duplicate] do
+    update_pending(incident, %{
+      "action" => "resolve_turn",
+      "turn_id" => turn.id,
+      "source_proposal_id" => proposal_id
+    })
+  end
 
   defp fail_review_delivery(proposal_id, category, reason) do
     with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do

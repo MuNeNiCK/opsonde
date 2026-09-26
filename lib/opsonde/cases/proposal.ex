@@ -137,6 +137,13 @@ defmodule Opsonde.Cases.Proposal do
       run {Opsonde.Cases.Proposal.Actions.Authority, operation: :review}
     end
 
+    action :supersede_context, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :proposal_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Proposal.Actions.Authority, operation: :supersede_context}
+    end
+
     action :fail_review_delivery, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -160,6 +167,7 @@ defmodule Opsonde.Cases.Proposal do
              :route_authority,
              :expire,
              :apply_review,
+             :supersede_context,
              :fail_review_delivery
            ]) do
       forbid_if always()
