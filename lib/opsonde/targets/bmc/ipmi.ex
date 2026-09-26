@@ -66,7 +66,14 @@ defmodule Opsonde.Targets.BMC.IPMI do
     do: {:error, :invalid_configuration, "IPMI check endpoint must match Provider configuration"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, BMC.capabilities()}
+  def capabilities(_state, _invocation) do
+    capabilities = BMC.capabilities()
+
+    effects =
+      Enum.reject(capabilities.effects, &(&1.operation == "bmc.power.cycle"))
+
+    {:ok, %{capabilities | effects: effects}}
+  end
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
@@ -82,6 +89,9 @@ defmodule Opsonde.Targets.BMC.IPMI do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%State{}, %{operation: "bmc.power.cycle"}, _invocation),
+    do: {:error, :failed, "IPMI power cycle support cannot be verified for this BMC"}
+
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
          {:ok, intent} <- BMC.effect_request(request),
@@ -135,7 +145,6 @@ defmodule Opsonde.Targets.BMC.IPMI do
           case intent.operation do
             "bmc.power.on" -> :power_up
             "bmc.power.off" -> :power_down
-            "bmc.power.cycle" -> :power_cycle
             "bmc.power.reset" -> :hard_reset
           end
 
