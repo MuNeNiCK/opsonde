@@ -3,6 +3,8 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   alias Opsonde.{Cases, Providers, Targets}
   alias Opsonde.Providers.AI
+  alias Opsonde.Providers.Target, as: ProviderTarget
+  alias Opsonde.Targets.BMC.OperationKey
 
   @diagnostic_text_limit 2_000
 
@@ -221,10 +223,24 @@ defmodule Opsonde.Cases.ResolverProjection do
     else
       with {:ok, methods} <-
              Targets.available_access_methods_for_target(target.id, authorize?: false),
-           {:ok, capabilities} <- capabilities(methods, invocation) do
-        {:ok, build_tools(target, run, methods, capabilities)}
+           {:ok, capabilities} <- capabilities(methods, invocation),
+           {:ok, definitions} <- bmc_definitions(methods) do
+        {:ok, build_tools(target, run, methods, capabilities, definitions)}
       end
     end
+  end
+
+  defp bmc_definitions(methods) do
+    Enum.reduce_while(methods, {:ok, %{}}, fn method, {:ok, loaded} ->
+      if method.method in ["redfish", "ipmi"] do
+        case Targets.available_bmc_operations_for_method(method.id, authorize?: false) do
+          {:ok, definitions} -> {:cont, {:ok, Map.put(loaded, method.id, definitions)}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      else
+        {:cont, {:ok, loaded}}
+      end
+    end)
   end
 
   defp capabilities(methods, invocation) do
@@ -245,30 +261,68 @@ defmodule Opsonde.Cases.ResolverProjection do
     end)
   end
 
-  defp build_tools(target, run, methods, capabilities) do
+  defp build_tools(target, run, methods, capabilities, definitions) do
     observation? = remaining(run.max_target_requests, run.target_request_count) > 0
     proposal? = remaining(run.max_effects, run.effect_count) > 0
 
     Enum.reduce(methods, {[], []}, fn method, {observations, proposals} ->
       vocabulary = Map.fetch!(capabilities, {method.provider_id, method.provider_revision})
 
+      advertised =
+        vocabulary.observations
+        |> Kernel.++(vocabulary.effects)
+        |> Enum.map(& &1.capability)
+        |> MapSet.new()
+
+      bmc_operations =
+        definitions
+        |> Map.get(method.id, [])
+        |> Enum.filter(&MapSet.member?(advertised, OperationKey.capability(&1.request_kind)))
+
+      available_observations =
+        vocabulary.observations ++
+          Enum.flat_map(bmc_operations, fn definition ->
+            if definition.request_kind == :observation,
+              do: [bmc_operation_tool(definition)],
+              else: []
+          end)
+
+      effects =
+        vocabulary.effects ++
+          Enum.flat_map(bmc_operations, fn definition ->
+            if definition.request_kind == :effect,
+              do: [bmc_operation_tool(definition)],
+              else: []
+          end)
+
       method_observations =
         if observation?,
-          do: operation_tools(:observation, target, method, vocabulary.observations),
+          do: operation_tools(:observation, target, method, available_observations),
           else: []
 
       observation_requests =
         if observation?,
-          do: operation_tools(:request_observation, target, method, vocabulary.observations),
+          do: operation_tools(:request_observation, target, method, available_observations),
           else: []
 
       effect_requests =
         if proposal?,
-          do: operation_tools(:request_effect, target, method, vocabulary.effects),
+          do: operation_tools(:request_effect, target, method, effects),
           else: []
 
       {observations ++ method_observations, proposals ++ observation_requests ++ effect_requests}
     end)
+  end
+
+  defp bmc_operation_tool(definition) do
+    %ProviderTarget.Operation{
+      capability: OperationKey.capability(definition.request_kind),
+      operation: OperationKey.format(definition),
+      description: definition.description,
+      input_schema: definition.input_schema,
+      output_schema: definition.output_schema,
+      verification_schema: definition.verification_schema
+    }
   end
 
   defp operation_tools(kind, target, method, operations) do

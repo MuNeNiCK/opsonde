@@ -3,6 +3,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target, as: ProviderTarget
+  alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.{PolicyError, PolicyMatcher, PolicyRequest, RequestClearance}
 
   @authority_modes [:readonly, :ask, :auto, :full_access]
@@ -39,7 +40,14 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          :ok <- validate_authority(request),
          :ok <- current_policy_set(context.policies, clearance.policy_revisions),
          :ok <- current_provider(context.access_method, clearance) do
-      invoke(operation, current_actor, context.access_method, clearance, arguments.invocation)
+      invoke(
+        operation,
+        current_actor,
+        context.access_method,
+        context.bmc_operation,
+        clearance,
+        arguments.invocation
+      )
     end
   end
 
@@ -58,8 +66,15 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
              authorize?: false
            ),
          :ok <- same_target(access_method, target),
+         {:ok, bmc_operation} <- bmc_operation(request, access_method),
          {:ok, policies} <- Targets.active_target_policies(target.id, authorize?: false) do
-      {:ok, %{target: target, access_method: access_method, policies: policies}}
+      {:ok,
+       %{
+         target: target,
+         access_method: access_method,
+         bmc_operation: bmc_operation,
+         policies: policies
+       }}
     else
       {:error, %PolicyError{} = error} ->
         {:error, error}
@@ -68,6 +83,36 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
         {:error, policy_error(:stale_context, "Target request context is unavailable")}
     end
   end
+
+  defp bmc_operation(%{capability: capability} = request, method)
+       when capability in ["observe.bmc_api", "effect.bmc_api"] do
+    with {:ok, id, revision} <- OperationKey.parse(request.operation),
+         {:ok, definition} <-
+           Targets.load_bmc_operation_for_use(id, revision, method.id, authorize?: false),
+         true <- OperationKey.capability(definition.request_kind) == capability,
+         true <- request_kind_matches?(request.kind, definition.request_kind),
+         {:ok, root} <- JSV.build(definition.input_schema, warnings: :silent),
+         {:ok, _validated} <-
+           JSV.validate(
+             %{"selectors" => request.selectors, "parameters" => request.parameters},
+             root,
+             cast: false
+           ) do
+      {:ok, definition}
+    else
+      _ ->
+        {:error, policy_error(:denied, "BMC operation is not registered for this Access Method")}
+    end
+  end
+
+  defp bmc_operation(%{operation: "bmc.api:" <> _}, _method),
+    do: {:error, policy_error(:denied, "BMC operation capability does not match")}
+
+  defp bmc_operation(_request, _method), do: {:ok, nil}
+
+  defp request_kind_matches?(:verification, :observation), do: true
+  defp request_kind_matches?(kind, kind), do: true
+  defp request_kind_matches?(_, _), do: false
 
   defp evaluate(policies, request) do
     Enum.reduce_while(policies, :ok, fn policy, :ok ->
@@ -158,7 +203,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     )
   end
 
-  defp invoke(:observe, actor, method, clearance, invocation) do
+  defp invoke(:observe, actor, method, definition, clearance, invocation) do
     request = %ProviderTarget.ObservationRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -172,6 +217,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
       parameters: clearance.parameters,
+      protocol_request: protocol_request(definition),
       max_attempts: clearance.max_attempts
     }
 
@@ -181,7 +227,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     )
   end
 
-  defp invoke(:effect, actor, method, clearance, invocation) do
+  defp invoke(:effect, actor, method, definition, clearance, invocation) do
     request = %ProviderTarget.EffectRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -195,6 +241,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
       parameters: clearance.parameters,
+      protocol_request: protocol_request(definition),
       operation_id: clearance.operation_id,
       idempotency_key: clearance.idempotency_key
     }
@@ -205,7 +252,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     )
   end
 
-  defp invoke(:verify, actor, method, clearance, invocation) do
+  defp invoke(:verify, actor, method, definition, clearance, invocation) do
     request = %ProviderTarget.VerificationRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -218,6 +265,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       authorization_digest: clearance.digest,
       selectors: clearance.selectors,
       parameters: clearance.parameters,
+      protocol_request: protocol_request(definition),
       operation_id: clearance.operation_id,
       reference: clearance.reference,
       expected: clearance.expected
@@ -228,6 +276,9 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       authorize?: false
     )
   end
+
+  defp protocol_request(nil), do: nil
+  defp protocol_request(definition), do: definition.protocol_request
 
   defp validate_request(%PolicyRequest{} = request) do
     cond do

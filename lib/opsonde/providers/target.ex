@@ -66,7 +66,13 @@ defmodule Opsonde.Providers.Target do
     ]
 
     defstruct @enforce_keys ++
-                [selectors: %{}, parameters: %{}, max_attempts: 1, authority_mode: nil]
+                [
+                  selectors: %{},
+                  parameters: %{},
+                  protocol_request: nil,
+                  max_attempts: 1,
+                  authority_mode: nil
+                ]
 
     @type t :: %__MODULE__{}
   end
@@ -95,7 +101,9 @@ defmodule Opsonde.Providers.Target do
       :idempotency_key
     ]
 
-    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, authority_mode: nil]
+    defstruct @enforce_keys ++
+                [selectors: %{}, parameters: %{}, protocol_request: nil, authority_mode: nil]
+
     @type t :: %__MODULE__{}
   end
 
@@ -122,7 +130,15 @@ defmodule Opsonde.Providers.Target do
       :operation_id
     ]
 
-    defstruct @enforce_keys ++ [selectors: %{}, parameters: %{}, reference: nil, expected: %{}]
+    defstruct @enforce_keys ++
+                [
+                  selectors: %{},
+                  parameters: %{},
+                  protocol_request: nil,
+                  reference: nil,
+                  expected: %{}
+                ]
+
     @type t :: %__MODULE__{}
   end
 

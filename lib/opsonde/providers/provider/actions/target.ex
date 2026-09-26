@@ -270,6 +270,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       valid_connection?(request.connection) and
       nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
       nonempty_binary?(request.authorization_digest) and bounded_map?(request.selectors) and
+      (is_nil(request.protocol_request) or bounded_map?(request.protocol_request)) and
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end
 

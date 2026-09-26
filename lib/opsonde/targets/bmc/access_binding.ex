@@ -7,7 +7,7 @@ defmodule Opsonde.Targets.BMC.AccessBinding do
     "bmc-redfish" => "redfish",
     "bmc-ipmi" => "ipmi"
   }
-  @capabilities ~w(observe.power effect.power)
+  @capabilities ~w(observe.power effect.power observe.bmc_api effect.bmc_api)
 
   def validate(changeset, provider) do
     case Map.fetch(@bmc_adapters, provider.adapter_type) do
