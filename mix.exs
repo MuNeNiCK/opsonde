@@ -61,7 +61,7 @@ defmodule Opsonde.MixProject do
       {:ash_state_machine, "~> 0.2.13"},
       {:req_llm, "~> 1.24"},
       {:req, "~> 0.7"},
-      {:rustler, "== 0.38.0"},
+      {:rustler, "== 0.38.0", runtime: false},
       {:saxy, "~> 1.6"},
       {:tzdata, "~> 1.1"},
       {:crontab, "~> 1.2"},
