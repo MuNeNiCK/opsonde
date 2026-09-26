@@ -476,7 +476,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       case_id: incident.id,
       turn: turn.ordinal,
       objective: objective(incident, turn),
-      alert_state: incident.alert_state,
+      alert_state: projected_alert_state(incident, conditions),
       report_language: incident.report_language,
       disclosure: %AI.Disclosure{
         allowed_target_ids: selected_target_ids(target),
@@ -531,6 +531,14 @@ defmodule Opsonde.Cases.ResolverProjection do
       }
     end)
   end
+
+  def projected_alert_state(%{trigger_kind: :signal}, conditions) do
+    if conditions != [] and Enum.all?(conditions, &(&1.state == :recovered)),
+      do: :recovered,
+      else: :firing
+  end
+
+  def projected_alert_state(incident, _conditions), do: incident.alert_state
 
   defp objective(incident, turn) do
     value = %{

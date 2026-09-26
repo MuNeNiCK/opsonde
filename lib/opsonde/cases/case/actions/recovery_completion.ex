@@ -2,6 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   @moduledoc false
 
   alias Opsonde.Cases
+  alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Reports.GenerationWorker
 
   # Internal step shared by Case actions. The caller owns the transaction and
@@ -9,7 +10,8 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   def complete(incident, run, idempotency_key, data) do
     now = DateTime.utc_now()
 
-    with {:ok, resolved} <-
+    with :ok <- condition_completion_ready(incident),
+         {:ok, resolved} <-
            Cases.update_case_record(
              incident,
              incident.revision,
@@ -44,6 +46,36 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
            |> GenerationWorker.new()
            |> Oban.insert() do
       {:ok, resolved}
+    end
+  end
+
+  defp condition_completion_ready(%{trigger_kind: :signal} = incident) do
+    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
+         {:ok, baseline} <- latest_effect_baseline(operations, incident.inserted_at),
+         {:ok, assessments} <- ConditionRecovery.assess(incident, baseline),
+         true <-
+           ConditionRecovery.all_healthy?(assessments) ||
+             {:error, "Some Signal Conditions lack current subject recovery proof"} do
+      :ok
+    end
+  end
+
+  defp condition_completion_ready(_incident), do: :ok
+
+  defp latest_effect_baseline(operations, opened_at) do
+    operations
+    |> Enum.filter(&(&1.request_kind == :effect))
+    |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
+    |> case do
+      [] ->
+        {:ok, opened_at}
+
+      [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
+        {:ok, accepted_at}
+
+      _other ->
+        {:error, "Latest Target effect is not applied"}
     end
   end
 end

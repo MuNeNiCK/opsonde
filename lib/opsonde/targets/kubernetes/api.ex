@@ -619,6 +619,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
     {:ok,
      %{
        "name" => metadata["name"],
+       "namespace" => metadata["namespace"],
        "uid" => metadata["uid"],
        "resource_version" => metadata["resourceVersion"],
        "generation" => metadata["generation"],
@@ -912,6 +913,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
     do:
       facts_schema(%{
         "name" => nullable("string"),
+        "namespace" => nullable("string"),
         "uid" => nullable("string"),
         "resource_version" => nullable("string"),
         "generation" => nullable("integer"),

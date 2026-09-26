@@ -255,6 +255,10 @@ defmodule Opsonde.Cases do
         action: :target_continuity,
         args: [:case_id]
 
+      define :condition_assessment_evidence,
+        action: :condition_assessment_candidates,
+        args: [:case_id, :after]
+
       define :evidence_by_idempotency,
         action: :by_idempotency,
         args: [:case_id, :idempotency_key]

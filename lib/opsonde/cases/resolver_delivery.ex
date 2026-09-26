@@ -265,12 +265,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp resolver_context_matches?(incident, request) do
     incident.status == :running and not incident.cancel_requested and
-      incident.alert_state == request.alert_state and
       incident.selected_target_id == request.selected_target_id and
       incident.selected_target_revision == request.selected_target_revision and
       case ResolverProjection.current_conditions(incident) do
-        {:ok, conditions} -> conditions == request.conditions
-        {:error, _error} -> false
+        {:ok, conditions} ->
+          conditions == request.conditions and
+            ResolverProjection.projected_alert_state(incident, conditions) == request.alert_state
+
+        {:error, _error} ->
+          false
       end
   end
 

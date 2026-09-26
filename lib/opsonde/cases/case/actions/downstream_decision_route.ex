@@ -4,7 +4,19 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Approval, Budget, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
+
+  alias Opsonde.Cases.{
+    Approval,
+    Budget,
+    Case,
+    CaseAdmissionLock,
+    CaseEvent,
+    Evidence,
+    Proposal,
+    ResolutionRun,
+    Turn
+  }
+
   alias Opsonde.Cases.Case.Actions.RecoveryCompletion
 
   @impl true
@@ -16,7 +28,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
         :continue ->
           Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent], fn ->
-            with {:ok, incident} <- lock_case(source_turn.case_id),
+            with :ok <- CaseAdmissionLock.acquire(),
+                 {:ok, incident} <- lock_case(source_turn.case_id),
                  {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
                  {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
                  {:ok, intent} <- downstream_intent(turn),
@@ -209,7 +222,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       else: {:error, "Downstream Resolver decision is malformed"}
   end
 
-  defp valid_recovery_state(%{trigger_kind: :signal, alert_state: :recovered}), do: :ok
+  defp valid_recovery_state(%{trigger_kind: :signal}), do: :ok
 
   defp valid_recovery_state(%{trigger_kind: kind, alert_state: state})
        when kind in [:manual, :audit] and state in [:not_applicable, :recovered],

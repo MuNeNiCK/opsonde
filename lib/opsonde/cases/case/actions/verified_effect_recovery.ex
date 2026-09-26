@@ -3,10 +3,12 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
 
   require Ash.Query
 
-  alias Opsonde.{Cases, Signals}
+  alias Opsonde.Cases
+  alias Opsonde.Cases.ConditionRecovery
 
   alias Opsonde.Cases.{
     Case,
+    CaseAdmissionLock,
     CaseEvent,
     Evidence,
     ResolutionRun,
@@ -21,7 +23,8 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
   @impl true
   def run(input, _opts, _context) do
     Ash.transact([Case, ResolutionRun, Evidence, CaseEvent, Turn], fn ->
-      with {:ok, incident} <- lock_case(input.arguments.id),
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, incident} <- lock_case(input.arguments.id),
            {:ok, attempt} <-
              Cases.get_verification_attempt(input.arguments.verification_attempt_id,
                authorize?: false
@@ -256,35 +259,15 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
     end
   end
 
-  defp all_sources_recovered(
-         %{alert_state: :recovered, source_recovered_at: %DateTime{}} = incident,
-         operation
-       ) do
-    case Signals.signal_correlations_for_case(incident.id, authorize?: false) do
-      {:ok, [_first | _rest] = correlations} ->
-        cond do
-          not Enum.all?(correlations, &(&1.current_state == :recovered)) ->
-            {:error, :source_firing}
-
-          Enum.any?(correlations, fn correlation ->
-            not match?(%DateTime{}, correlation.current_occurred_at) or
-                DateTime.compare(correlation.current_occurred_at, operation.accepted_at) == :lt
-          end) ->
-            {:error, :source_stale}
-
-          true ->
-            :ok
-        end
-
-      {:ok, []} ->
-        {:error, :source_firing}
-
-      {:error, _error} = error ->
-        error
+  defp all_sources_recovered(incident, operation) do
+    with {:ok, assessments} <- ConditionRecovery.assess(incident, operation.accepted_at) do
+      cond do
+        ConditionRecovery.all_healthy?(assessments) -> :ok
+        Enum.any?(assessments, &(&1.status == :stale_source)) -> {:error, :source_stale}
+        true -> {:error, :source_firing}
+      end
     end
   end
-
-  defp all_sources_recovered(_incident, _operation), do: {:error, :source_firing}
 
   defp verification_evidence(attempt) do
     Cases.evidence_by_idempotency(

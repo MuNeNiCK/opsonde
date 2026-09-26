@@ -14,6 +14,8 @@ defmodule Opsonde.OperationDeliveryTest do
     VerificationWorker
   }
 
+  alias Opsonde.Cases.CaseDispatchWorker
+
   alias Opsonde.Providers.{AI, Signal, Target}
   alias Opsonde.Reports.GenerationWorker
 
@@ -611,16 +613,15 @@ defmodule Opsonde.OperationDeliveryTest do
        context do
     enable_signal_automation!(context.admin)
 
-    {incident, run, proposal} =
+    {incident, run, proposal, signal_provider} =
       authorized_proposal!("signal-multilingual-recovery", context,
         trigger_kind: :signal,
-        alert_state: :firing
+        alert_state: :firing,
+        additional_event_key: "operation-signal-multilingual-recovery:secondary"
       )
 
-    signal_provider = signal_provider!(incident, context)
-    correlate_signal!(signal_provider, incident, incident.source_ref)
-    second_event_key = incident.source_ref <> ":secondary"
-    correlate_signal!(signal_provider, incident, second_event_key)
+    first_event_key = incident.initial_context["signal_event_key"]
+    second_event_key = first_event_key <> ":secondary"
 
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -631,29 +632,40 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert_receive {:effect, _, _}
     attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    turns_before = length(Cases.list_turns!(actor: context.admin))
+
+    recover_signal!(signal_provider, context, first_event_key, "primary-recovered")
+    still_firing = Cases.get_case!(incident.id, authorize?: false)
+    assert still_firing.status == :running
+    assert Enum.count(Signals.list_conditions!(actor: context.admin), &(&1.state == :firing)) == 1
+
+    recovered_at = DateTime.utc_now()
+
+    recover_signal!(
+      signal_provider,
+      context,
+      second_event_key,
+      "secondary-recovered",
+      recovered_at
+    )
+
+    recover_signal!(
+      signal_provider,
+      context,
+      second_event_key,
+      "secondary-recovered",
+      recovered_at
+    )
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
-               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
              )
 
     assert_receive {:verify, _, _}
-    waiting = Cases.get_case!(incident.id, authorize?: false)
-    assert waiting.status == :running
-    assert waiting.pending_intent["action"] == "await_source_recovery"
-    assert waiting.pending_intent["verification_attempt_id"] == attempt.id
-    assert [check_job] = recovery_check_jobs(incident.id)
-    turns_before = length(Cases.list_turns!(actor: context.admin))
-
-    recover_signal!(signal_provider, incident.source_ref, "primary-recovered")
-    still_firing = Cases.get_case!(incident.id, authorize?: false)
-    assert still_firing.status == :running
-    assert still_firing.alert_state == :firing
-
-    recovered_at = DateTime.utc_now()
-    recover_signal!(signal_provider, second_event_key, "secondary-recovered", recovered_at)
-    recover_signal!(signal_provider, second_event_key, "secondary-recovered", recovered_at)
-    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
 
     resolved = Cases.get_case!(incident.id, authorize?: false)
     assert [report_job] = report_jobs(resolved.id)
@@ -665,7 +677,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert [report] = Reports.list_reports!(actor: context.admin)
 
     assert resolved.status == :resolved
-    assert resolved.alert_state == :recovered
+    assert Enum.all?(Signals.list_conditions!(actor: context.admin), &(&1.state == :recovered))
     assert length(Cases.list_turns!(actor: context.admin)) == turns_before
     assert report.case_id == resolved.id
     assert report.case_revision == resolved.revision
@@ -678,14 +690,13 @@ defmodule Opsonde.OperationDeliveryTest do
   test "a Signal Case cannot resolve until its monitoring source also recovers", context do
     enable_signal_automation!(context.admin)
 
-    {incident, _run, proposal} =
+    {incident, _run, proposal, signal_provider} =
       authorized_proposal!("signal-recovery", context,
         trigger_kind: :signal,
         alert_state: :firing
       )
 
-    signal_provider = signal_provider!(incident, context)
-    correlate_signal!(signal_provider, incident, incident.source_ref)
+    event_key = incident.initial_context["signal_event_key"]
 
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -697,43 +708,94 @@ defmodule Opsonde.OperationDeliveryTest do
     assert_receive {:effect, _, _}
     attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
 
-    recover_signal!(signal_provider, incident.source_ref, "recovered-before-verification")
+    recover_signal!(signal_provider, context, event_key, "recovered-before-verification")
     before_verification = Cases.get_case!(incident.id, authorize?: false)
     assert before_verification.status == :running
-    assert before_verification.alert_state == :recovered
+    assert [%{state: :recovered}] = Signals.list_conditions!(actor: context.admin)
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
-               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
              )
 
     assert_receive {:verify, _, _}
 
-    source_recovery =
-      Cases.list_evidence!(actor: context.admin)
-      |> Enum.find(&(&1.case_id == incident.id and &1.kind == "source_recovery"))
-
-    assert source_recovery.source_ref == incident.source_ref
-    assert source_recovery.content["alert_state"] == "recovered"
+    assert Enum.any?(
+             Cases.list_evidence!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.kind == "signal_event" and
+                 &1.content["state"] == "recovered")
+           )
 
     resolved = Cases.get_case!(incident.id, authorize?: false)
     assert resolved.status == :resolved
-    assert resolved.alert_state == :recovered
     refute_receive {:effect, _, _}
+  end
+
+  test "one service verification cannot resolve another recovered service Condition", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal, signal_provider} =
+      authorized_proposal!("two-service-conditions", context,
+        trigger_kind: :signal,
+        alert_state: :firing,
+        additional_event_key: "operation-two-service-conditions:db",
+        additional_subject: "db.service"
+      )
+
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    recover_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "api-recovered"
+    )
+
+    signal_event!(
+      signal_provider,
+      context,
+      "operation-two-service-conditions:db",
+      "db-recovered",
+      :recovered,
+      DateTime.utc_now(),
+      %{"labels" => %{"service" => "db.service", "alertname" => "ServiceUnavailable"}}
+    )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    assert Enum.all?(Signals.list_conditions!(actor: context.admin), &(&1.state == :recovered))
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert report_jobs(incident.id) == []
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
        context do
     enable_signal_automation!(context.admin)
 
-    {incident, run, proposal} =
+    {incident, run, proposal, signal_provider} =
       authorized_proposal!("signal-wait-expired", context,
         trigger_kind: :signal,
         alert_state: :firing
       )
 
-    signal_provider = signal_provider!(incident, context)
-    correlate_signal!(signal_provider, incident, incident.source_ref)
+    event_key = incident.initial_context["signal_event_key"]
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     assert :ok =
@@ -745,7 +807,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
-               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
              )
 
     waiting = Cases.get_case!(incident.id, authorize?: false)
@@ -778,8 +843,9 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Cases.list_operations!(actor: context.admin), &(&1.case_id == incident.id)) ==
              1
 
-    recover_signal!(signal_provider, incident.source_ref, "recovered-after-reinvestigation")
-    assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+    recover_signal!(signal_provider, context, event_key, "recovered-after-reinvestigation")
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert [%{state: :recovered}] = Signals.list_conditions!(actor: context.admin)
 
     assert Enum.count(Cases.list_operations!(actor: context.admin), &(&1.case_id == incident.id)) ==
              1
@@ -788,14 +854,13 @@ defmodule Opsonde.OperationDeliveryTest do
   test "a delayed pre-effect recovery event cannot settle a verified Signal Case", context do
     enable_signal_automation!(context.admin)
 
-    {incident, _run, proposal} =
+    {incident, _run, proposal, signal_provider} =
       authorized_proposal!("signal-stale-recovery", context,
         trigger_kind: :signal,
         alert_state: :firing
       )
 
-    signal_provider = signal_provider!(incident, context)
-    correlate_signal!(signal_provider, incident, incident.source_ref)
+    event_key = incident.initial_context["signal_event_key"]
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     assert :ok =
@@ -807,7 +872,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
-               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
              )
 
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
@@ -817,15 +885,16 @@ defmodule Opsonde.OperationDeliveryTest do
 
     recover_signal!(
       signal_provider,
-      incident.source_ref,
+      context,
+      event_key,
       "late-old-recovery",
       recovered_before_effect
     )
 
     current = Cases.get_case!(incident.id, authorize?: false)
-    assert current.alert_state == :recovered
+    assert [%{state: :recovered}] = Signals.list_conditions!(actor: context.admin)
     assert current.status == :running
-    assert current.pending_intent["action"] == "resolve_turn"
+    assert current.pending_intent["action"] == "await_source_recovery"
 
     refute Enum.any?(
              Cases.list_case_events!(actor: context.admin),
@@ -991,49 +1060,36 @@ defmodule Opsonde.OperationDeliveryTest do
        context do
     enable_signal_automation!(context.admin)
 
-    {incident, run, proposal} =
+    {incident, run, proposal, signal_provider} =
       authorized_proposal!("resume-investigation", context,
         trigger_kind: :signal,
         alert_state: :firing
       )
 
-    stale_source =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "resume-investigation-stale-source",
-        "signal_event",
-        "alertmanager",
-        incident.source_ref,
-        %{
-          "current" => false,
-          "state" => "recovered",
-          "attributes" => %{"annotations" => %{"description" => "stale"}}
-        },
-        DateTime.add(DateTime.utc_now(), -60, :second),
-        authorize?: false
-      )
+    event_key = incident.initial_context["signal_event_key"]
 
-    source =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "resume-investigation-current-source",
-        "signal_event",
-        "alertmanager",
-        incident.source_ref,
-        %{
-          "current" => true,
-          "state" => "firing",
-          "attributes" => %{
-            "annotations" => %{"description" => "Restore the service to running"}
-          }
-        },
-        DateTime.utc_now(),
-        authorize?: false
-      )
+    recover_signal!(
+      signal_provider,
+      context,
+      event_key,
+      "resume-investigation-stale-source",
+      DateTime.add(DateTime.utc_now(), -60, :second)
+    )
+
+    signal_event!(
+      signal_provider,
+      context,
+      event_key,
+      "resume-investigation-current-source",
+      :firing,
+      DateTime.utc_now(),
+      %{
+        "labels" => %{"service" => "api.service", "alertname" => "ServiceUnavailable"},
+        "annotations" => %{"description" => "Restore the service to running"}
+      }
+    )
+
+    [source] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -1046,7 +1102,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
-               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
              )
 
     pending_case = Cases.get_case!(incident.id, authorize?: false)
@@ -1131,7 +1190,7 @@ defmodule Opsonde.OperationDeliveryTest do
            ] = request.evidence
 
     assert source_id == source.id
-    refute source_id == stale_source.id
+    refute Enum.any?(request.evidence, &(&1.content["state"] == "recovered"))
 
     assert get_in(source_content, ["attributes", "annotations", "description"]) ==
              "Restore the service to running"
@@ -1219,19 +1278,23 @@ defmodule Opsonde.OperationDeliveryTest do
     alert_state = Keyword.get(opts, :alert_state, :not_applicable)
     request_kind = Keyword.get(opts, :request_kind, :effect)
 
-    incident =
-      Cases.open_case!(
-        trigger_kind,
-        "test",
-        "operation-#{suffix}",
-        "Operation #{suffix}",
-        :warning,
-        alert_state,
-        %{},
-        context.target.id,
-        :en,
-        actor: context.operator
-      )
+    {incident, signal_provider} =
+      if trigger_kind == :signal do
+        signal_case!(suffix, context, opts)
+      else
+        {Cases.open_case!(
+           trigger_kind,
+           "test",
+           "operation-#{suffix}",
+           "Operation #{suffix}",
+           :warning,
+           alert_state,
+           %{},
+           context.target.id,
+           :en,
+           actor: context.operator
+         ), nil}
+      end
 
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
@@ -1250,15 +1313,20 @@ defmodule Opsonde.OperationDeliveryTest do
       )
 
     started =
-      Cases.start_turn!(
-        incident.id,
-        run.id,
-        "operation-turn-#{suffix}",
-        %{"objective" => "Restore the service"},
-        %{"action" => "continue"},
-        "Review Resolver limits",
-        authorize?: false
-      )
+      if trigger_kind == :signal do
+        assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+        %{value: Enum.find(Cases.list_turns!(actor: context.admin), &(&1.case_id == incident.id))}
+      else
+        Cases.start_turn!(
+          incident.id,
+          run.id,
+          "operation-turn-#{suffix}",
+          %{"objective" => "Restore the service"},
+          %{"action" => "continue"},
+          "Review Resolver limits",
+          authorize?: false
+        )
+      end
 
     turn =
       Cases.complete_turn!(
@@ -1266,7 +1334,11 @@ defmodule Opsonde.OperationDeliveryTest do
         started.value.revision,
         %{
           "outcome" => "decision",
-          "intent" => proposal_intent(evidence.id, context, request_kind),
+          "intent" =>
+            if(trigger_kind == :signal,
+              do: signal_proposal_intent(evidence.id, context),
+              else: proposal_intent(evidence.id, context, request_kind)
+            ),
           "resolver" => %{
             "provider_id" => context.resolver_provider.id,
             "provider_revision" => context.resolver_provider.revision,
@@ -1283,7 +1355,21 @@ defmodule Opsonde.OperationDeliveryTest do
 
     proposal = Cases.materialize_proposal!(turn.id, authorize?: false)
     authorized = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-    {incident, run, authorized}
+
+    if signal_provider,
+      do: {incident, run, authorized, signal_provider},
+      else: {incident, run, authorized}
+  end
+
+  defp signal_proposal_intent(evidence_id, context) do
+    proposal_intent(evidence_id, context)
+    |> put_in(["tool", "operation"], "linux.service.restart")
+    |> put_in(["verification_tool", "operation"], "linux.service.inspect")
+    |> Map.put("operation", "linux.service.restart")
+    |> Map.put("selectors", %{"unit" => "api.service"})
+    |> Map.put("expected_result", %{"active_state" => "active"})
+    |> put_in(["verification_intent", "selectors"], %{"unit" => "api.service"})
+    |> put_in(["verification_intent", "expected_result"], %{"active_state" => "active"})
   end
 
   defp proposal_intent(evidence_id, context),
@@ -1439,27 +1525,55 @@ defmodule Opsonde.OperationDeliveryTest do
     |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
   end
 
-  defp correlate_signal!(provider, incident, event_key) do
-    correlation =
-      Signals.create_signal_correlation_record!(
-        %{
-          provider_id: provider.id,
-          source: incident.source,
-          event_key: event_key,
-          current_state: :firing
-        },
-        authorize?: false
-      )
+  defp signal_case!(suffix, context, opts) do
+    provider = signal_provider!(%{id: suffix, source: "test"}, context)
 
-    Signals.update_signal_correlation_record!(
-      correlation,
-      correlation.revision,
-      %{case_id: incident.id},
-      authorize?: false
+    Targets.create_external_identity!(
+      context.target.id,
+      "test",
+      "hostname",
+      context.target.name,
+      actor: context.admin
     )
+
+    fire_signal!(
+      provider,
+      context,
+      "operation-#{suffix}",
+      "initial-#{suffix}",
+      DateTime.add(DateTime.utc_now(), -10, :second)
+    )
+
+    if additional = Keyword.get(opts, :additional_event_key) do
+      signal_event!(
+        provider,
+        context,
+        additional,
+        "additional-#{suffix}",
+        :firing,
+        DateTime.add(DateTime.utc_now(), -9, :second),
+        %{
+          "labels" => %{
+            "service" => Keyword.get(opts, :additional_subject, "api.service"),
+            "alertname" => "ServiceUnavailable"
+          }
+        }
+      )
+    end
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    {incident, provider}
   end
 
-  defp recover_signal!(provider, event_key, receipt_id, now \\ DateTime.utc_now()) do
+  defp fire_signal!(provider, context, event_key, receipt_id, now) do
+    signal_event!(provider, context, event_key, receipt_id, :firing, now)
+  end
+
+  defp recover_signal!(provider, context, event_key, receipt_id, now \\ DateTime.utc_now()) do
+    signal_event!(provider, context, event_key, receipt_id, :recovered, now)
+  end
+
+  defp signal_event!(provider, context, event_key, receipt_id, state, now, attributes \\ nil) do
     Signals.ingest_signal!(
       provider.id,
       provider.revision,
@@ -1474,8 +1588,17 @@ defmodule Opsonde.OperationDeliveryTest do
              %Signal.Event{
                receipt_id: receipt_id,
                event_key: event_key,
-               state: :recovered,
-               occurred_at: now
+               state: state,
+               occurred_at: now,
+               target_ref: %{kind: :hostname, value: context.target.name},
+               attributes:
+                 attributes ||
+                   %{
+                     "labels" => %{
+                       "service" => "api.service",
+                       "alertname" => "ServiceUnavailable"
+                     }
+                   }
              }
            ]}
         end
