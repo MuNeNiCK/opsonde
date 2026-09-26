@@ -1,7 +1,8 @@
 defmodule Opsonde.ProposalMaterializationTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
+  alias Opsonde.Providers.Signal
   alias Opsonde.Targets.BMC.OperationKey
 
   @password "correct horse battery staple"
@@ -354,15 +355,29 @@ defmodule Opsonde.ProposalMaterializationTest do
   end
 
   defp complete_turn!(turn, intent) do
+    incident = Cases.get_case!(turn.case_id, authorize?: false)
+
+    result = %{
+      "outcome" => "decision",
+      "intent" => intent,
+      "resolver" => resolver_identity(),
+      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+    }
+
+    result =
+      if incident.trigger_kind == :signal do
+        {:ok, revisions} =
+          Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
+
+        Map.put(result, "condition_revisions", revisions)
+      else
+        result
+      end
+
     Cases.complete_turn!(
       turn.id,
       turn.revision,
-      %{
-        "outcome" => "decision",
-        "intent" => intent,
-        "resolver" => resolver_identity(),
-        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-      },
+      result,
       :proposal,
       %{"action" => "route_resolver_decision", "turn_id" => turn.id},
       "Review the Resolver decision",
@@ -372,51 +387,56 @@ defmodule Opsonde.ProposalMaterializationTest do
 
   defp resumed_signal_case!(suffix, context) do
     enable_signal_automation!(context.admin)
-    source_ref = "proposal-signal-#{suffix}"
+    source = "proposal-monitor-#{suffix}"
+    event_key = "proposal-signal-#{suffix}"
 
-    incident =
-      Cases.open_case!(
+    provider =
+      Providers.create_provider!(
+        source,
         :signal,
-        "alertmanager",
-        source_ref,
-        "Proposal #{suffix}",
-        :warning,
-        :firing,
-        %{},
-        context.target.id,
-        :en,
-        actor: context.operator
+        "fixture-signal",
+        %{"source" => source},
+        %{"secret" => "proposal-monitor-secret"},
+        actor: context.admin
       )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
+    Targets.create_external_identity!(
+      context.target.id,
+      source,
+      "hostname",
+      context.target.name,
+      actor: context.admin
+    )
+
+    now = DateTime.utc_now()
+
+    for {receipt_id, state, seconds_ago} <- [
+          {"#{suffix}-initial", :firing, 120},
+          {"#{suffix}-recovered", :recovered, 90},
+          {"#{suffix}-refired", :firing, 60}
+        ] do
+      ingest_proposal_signal!(
+        provider,
+        context.target.name,
+        event_key,
+        receipt_id,
+        state,
+        DateTime.add(now, -seconds_ago, :second)
+      )
+    end
+
+    [incident] = Cases.list_cases!(actor: context.admin)
     prior_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [current] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
     stale =
-      Cases.append_evidence!(
-        incident.id,
-        prior_run.id,
-        nil,
-        "proposal-signal-stale-#{suffix}",
-        "signal_event",
-        "alertmanager",
-        source_ref,
-        %{"current" => false, "state" => "recovered"},
-        DateTime.add(DateTime.utc_now(), -60, :second),
-        authorize?: false
-      )
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.find(&(&1.case_id == incident.id and &1.content["state"] == "recovered"))
 
-    current =
-      Cases.append_evidence!(
-        incident.id,
-        prior_run.id,
-        nil,
-        "proposal-signal-current-#{suffix}",
-        "signal_event",
-        "alertmanager",
-        source_ref,
-        %{"current" => true, "state" => "firing"},
-        DateTime.utc_now(),
-        authorize?: false
-      )
+    assert stale.kind == "signal_event"
+    assert current.content["state"] == "firing"
 
     attention =
       Cases.require_case_attention!(
@@ -456,6 +476,39 @@ defmodule Opsonde.ProposalMaterializationTest do
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
     {incident, prior_run, resumed_run, current, stale, resumed_turn}
+  end
+
+  defp ingest_proposal_signal!(provider, target_name, event_key, receipt_id, state, occurred_at) do
+    Signals.ingest_signal!(
+      provider.id,
+      provider.revision,
+      %Signal.Envelope{body: receipt_id, headers: %{}, received_at: occurred_at},
+      %{
+        authenticate: fn provider_state, _envelope ->
+          {:ok,
+           %Signal.AuthenticatedReceipt{receipt_id: receipt_id, source: provider_state.source}}
+        end,
+        normalize: fn _provider_state, _envelope, _receipt ->
+          {:ok,
+           [
+             %Signal.Event{
+               receipt_id: receipt_id,
+               event_key: event_key,
+               state: state,
+               occurred_at: occurred_at,
+               target_ref: %{kind: :hostname, value: target_name},
+               attributes: %{
+                 "labels" => %{
+                   "alertname" => "ServiceUnavailable",
+                   "service" => "api.service"
+                 }
+               }
+             }
+           ]}
+        end
+      },
+      authorize?: false
+    )
   end
 
   defp enable_signal_automation!(admin) do

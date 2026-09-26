@@ -3,15 +3,28 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, Operation, OperationClaim, ResolutionRun}
+
+  alias Opsonde.Cases.{
+    Budget,
+    Case,
+    CaseAdmissionLock,
+    CaseEvent,
+    ConditionContext,
+    Operation,
+    OperationClaim,
+    Proposal,
+    ResolutionRun,
+    Turn
+  }
 
   @terminal [:applied, :failed, :partial, :unknown]
 
   @impl true
   def run(input, _opts, _context) do
     with {:ok, source} <- Cases.get_operation(input.arguments.id, authorize?: false) do
-      Ash.transact([Case, ResolutionRun, Operation], fn ->
-        with {:ok, incident} <- lock(Case, source.case_id),
+      Ash.transact([Case, ResolutionRun, Operation, Turn, CaseEvent], fn ->
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock(Case, source.case_id),
              {:ok, run} <- lock(ResolutionRun, source.resolution_run_id),
              {:ok, operation} <- lock(Operation, source.id) do
           claim(operation, incident, run)
@@ -23,14 +36,21 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
   defp claim(%{status: :queued} = operation, incident, run) do
     if incident.status == :running and not incident.cancel_requested and run.active and
          run.status == :running and run.generation == operation.case_generation do
-      with {:ok, claimed} <-
-             Cases.mark_operation_dispatching(
-               operation,
-               operation.revision,
-               %{dispatch_started_at: DateTime.utc_now()},
-               authorize?: false
-             ) do
-        %OperationClaim{state: :claimed, operation: claimed}
+      with {:ok, proposal} <- lock(Proposal, operation.proposal_id),
+           {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+        if current? do
+          with {:ok, claimed} <-
+                 Cases.mark_operation_dispatching(
+                   operation,
+                   operation.revision,
+                   %{dispatch_started_at: DateTime.utc_now()},
+                   authorize?: false
+                 ) do
+            %OperationClaim{state: :claimed, operation: claimed}
+          end
+        else
+          stop_stale_dispatch(operation, incident, run)
+        end
       end
     else
       with {:ok, terminal} <-
@@ -53,6 +73,50 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
 
   defp claim(%{status: status} = operation, _incident, _run) when status in @terminal,
     do: %OperationClaim{state: :terminal, operation: operation}
+
+  defp stop_stale_dispatch(operation, incident, run) do
+    with {:ok, terminal} <-
+           no_send(operation, "source_context_changed", %{
+             "message" => "Signal Conditions changed before Target dispatch"
+           }),
+         {:ok, started} <-
+           Cases.start_turn(
+             incident.id,
+             run.id,
+             Budget.key("operation:context-changed", operation.id),
+             %{
+               "objective" => "Reassess the Case before another Target request",
+               "source_operation_id" => operation.id
+             },
+             %{"action" => "continue_resolution", "source_operation_id" => operation.id},
+             "Review Resolver limits",
+             authorize?: false
+           ),
+         {:ok, _pending} <- pending_after_context_change(started, operation.id) do
+      %OperationClaim{state: :terminal, operation: terminal}
+    end
+  end
+
+  defp pending_after_context_change(%{status: :exhausted}, _operation_id),
+    do: {:ok, :needs_attention}
+
+  defp pending_after_context_change(%{status: status, case: incident, value: turn}, operation_id)
+       when status in [:charged, :duplicate] do
+    Cases.update_case_record(
+      incident,
+      incident.revision,
+      %{
+        pending_intent: %{
+          "action" => "resolve_turn",
+          "turn_id" => turn.id,
+          "source_operation_id" => operation_id
+        },
+        stop_reason: nil,
+        required_human_input: nil
+      },
+      authorize?: false
+    )
+  end
 
   defp complete(operation, status, category, details) do
     Cases.record_operation_outcome(

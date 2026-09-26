@@ -163,6 +163,18 @@ defmodule Opsonde.Cases.OperationDelivery do
     end
   end
 
+  defp continue_handoff(
+         %{outcome_category: "source_context_changed"} = operation,
+         _proposal,
+         _evidence,
+         incident
+       ) do
+    if incident.pending_intent["source_operation_id"] == operation.id and
+         incident.pending_intent["action"] == "resolve_turn",
+       do: :ok,
+       else: {:error, "Stale Operation has no reassessment Turn"}
+  end
+
   defp continue_handoff(%{request_kind: :effect} = operation, _proposal, _evidence, incident) do
     case available_pending(incident.pending_intent, operation) do
       :ok ->

@@ -388,6 +388,54 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:effect, _, _}
   end
 
+  test "native Signal change after acceptance stops the Target send and starts one reassessment",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, signal_provider} =
+      authorized_proposal!("condition-before-send", context,
+        trigger_kind: :signal,
+        alert_state: :firing
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    event_key = incident.initial_context["signal_event_key"]
+
+    recover_signal!(
+      signal_provider,
+      context,
+      event_key,
+      "condition-before-send-recovered",
+      DateTime.utc_now()
+    )
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("stale Target request was sent") end)
+             )
+
+    stopped = Cases.get_operation!(operation.id, authorize?: false)
+    assert stopped.status == :failed
+    assert stopped.outcome_category == "source_context_changed"
+    assert stopped.dispatch_started_at == nil
+    assert Cases.list_verification_attempts!(actor: context.admin) == []
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.pending_intent["action"] == "resolve_turn"
+    assert current.pending_intent["source_operation_id"] == operation.id
+    assert [_reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    assert %{kind: "operation_outcome"} =
+             Cases.evidence_by_idempotency!(
+               incident.id,
+               "operation:outcome:#{operation.id}",
+               authorize?: false
+             )
+
+    refute_receive {:effect, _, _}
+  end
+
   test "terminal Operation automatically creates one exact VerificationAttempt and job",
        context do
     {_incident, run, proposal} = authorized_proposal!("verification-accept", context)

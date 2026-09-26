@@ -4,14 +4,27 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   require Ash.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{Budget, Case, Evidence, EvidenceCitation, Proposal, ResolutionRun, Turn}
+
+  alias Opsonde.Cases.{
+    Budget,
+    Case,
+    CaseAdmissionLock,
+    ConditionContext,
+    Evidence,
+    EvidenceCitation,
+    Proposal,
+    ResolutionRun,
+    Turn
+  }
+
   alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
 
   @impl true
   def run(input, _opts, _context) do
     with {:ok, source_turn} <- Cases.get_turn(input.arguments.turn_id, authorize?: false) do
       Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal], fn ->
-        with {:ok, incident} <- lock_case(source_turn.case_id),
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock_case(source_turn.case_id),
              {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
              {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
              {:ok, existing} <- existing_proposal(turn.id) do
@@ -27,6 +40,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp materialize(turn, incident, run) do
     with :ok <- ensure_running(incident, run),
+         :ok <- current_conditions(incident, turn.id),
          {:ok, proposal} <- proposal_data(turn),
          {:ok, actor} <- current_actor(incident),
          :ok <-
@@ -58,6 +72,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
              authorize?: false
            ) do
       stored
+    end
+  end
+
+  defp current_conditions(incident, turn_id) do
+    case ConditionContext.current?(incident, turn_id) do
+      {:ok, true} -> :ok
+      {:ok, false} -> {:error, "Completed Resolver Turn Conditions changed"}
+      {:error, _error} = error -> error
     end
   end
 

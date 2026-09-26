@@ -605,12 +605,16 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert second_run.generation == 2
     [started] = Cases.started_turns_for_run!(second_run.id, authorize?: false)
 
+    {:ok, condition_revisions} =
+      Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
+
     turn =
       Cases.complete_turn!(
         started.id,
         started.revision,
         %{
           "outcome" => "decision",
+          "condition_revisions" => condition_revisions,
           "intent" => proposal_intent(prior_evidence.id, context, :observation),
           "resolver" => %{
             "provider_id" => context.resolver_provider.id,

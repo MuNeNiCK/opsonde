@@ -51,10 +51,19 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp route(proposal_id) do
     with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do
       Ash.transact([Case, ResolutionRun, Proposal, Approval, Turn, CaseEvent], fn ->
-        with {:ok, incident} <- lock_case(source.case_id),
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, incident} <- lock_case(source.case_id),
              {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
-             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id) do
-          route_locked(proposal, incident, run)
+             {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id),
+             {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+          if current? do
+            route_locked(proposal, incident, run)
+          else
+            if proposal.status in [:proposed, :blocked] and
+                 incident.pending_intent["proposal_id"] == proposal.id,
+               do: supersede_locked(proposal, incident, run),
+               else: {:error, "Proposal Conditions changed before authority routing"}
+          end
         end
       end)
     end
@@ -105,14 +114,24 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          {:ok, source} <- Cases.get_proposal(arguments.proposal_id, authorize?: false) do
       result =
         Ash.transact([Case, ResolutionRun, Proposal, Approval, Turn, CaseEvent], fn ->
-          with {:ok, incident} <- lock_case(source.case_id),
+          with :ok <- CaseAdmissionLock.acquire(),
+               {:ok, incident} <- lock_case(source.case_id),
                {:ok, run} <- lock_run(source.resolution_run_id, incident.id),
                {:ok, proposal} <- lock_proposal(source.id, incident.id, run.id),
-               {:ok, existing} <- existing_approval(proposal.id) do
-            if existing do
-              replay_human(existing, proposal, arguments, current_actor)
-            else
-              decide_locked(proposal, incident, run, arguments, current_actor)
+               {:ok, existing} <- existing_approval(proposal.id),
+               {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+            cond do
+              existing ->
+                replay_human(existing, proposal, arguments, current_actor)
+
+              not current? and proposal.status == :awaiting_human ->
+                supersede_locked(proposal, incident, run)
+
+              not current? ->
+                {:error, "Proposal Conditions changed before human decision"}
+
+              true ->
+                decide_locked(proposal, incident, run, arguments, current_actor)
             end
           end
         end)
