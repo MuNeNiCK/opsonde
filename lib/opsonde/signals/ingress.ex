@@ -517,7 +517,9 @@ defmodule Opsonde.Signals.Ingress do
 
     case Map.get(labels, "alertname") do
       value when is_binary(value) and byte_size(value) > 0 -> String.slice(value, 0, 500)
-      _other -> title(event, "signal") |> String.slice(0, 500)
+      # A display title can change between notifications for the same native
+      # event. Without an explicit alarm name, preserve a stable unknown type.
+      _other -> "UnclassifiedSignal"
     end
   end
 
