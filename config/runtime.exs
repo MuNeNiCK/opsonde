@@ -23,6 +23,14 @@ end
 config :opsonde, OpsondeWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+case_collect_seconds =
+  case Integer.parse(System.get_env("OPSONDE_CASE_COLLECT_SECONDS", "5")) do
+    {seconds, ""} when seconds in 0..30 -> seconds
+    _other -> raise "OPSONDE_CASE_COLLECT_SECONDS must be an integer from 0 to 30"
+  end
+
+config :opsonde, :case_collect_seconds, case_collect_seconds
+
 if public_url = System.get_env("OPSONDE_PUBLIC_URL") do
   public_url = String.trim_trailing(public_url, "/")
   uri = URI.parse(public_url)

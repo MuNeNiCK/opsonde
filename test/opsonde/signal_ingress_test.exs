@@ -194,6 +194,81 @@ defmodule Opsonde.SignalIngressTest do
     assert {:ok, %{state: :sent}} = Cases.case_dispatch(incident.id, authorize?: false)
   end
 
+  test "first-event collection windows group only arrivals before their fixed deadline",
+       context do
+    enable_signal_automation!(context.admin)
+    original_window = Application.fetch_env!(:opsonde, :case_collect_seconds)
+    on_exit(fn -> Application.put_env(:opsonde, :case_collect_seconds, original_window) end)
+
+    for window <- [0, 5, 10, 30] do
+      Application.put_env(:opsonde, :case_collect_seconds, window)
+      names = Enum.map(1..4, &"window-#{window}-#{&1}")
+
+      for name <- names do
+        target = Targets.create_target!(name, "host", "linux", %{}, nil, actor: context.admin)
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+      end
+
+      targets = Targets.list_targets!(actor: context.admin) |> Map.new(&{&1.name, &1.id})
+
+      for name <- tl(names) do
+        Targets.create_relationship!(targets[hd(names)], targets[name], "connected_to", %{}, nil,
+          actor: context.admin
+        )
+      end
+
+      before_ids = Cases.list_cases!(actor: context.admin) |> MapSet.new(& &1.id)
+      first_at = DateTime.add(DateTime.utc_now(), -400, :second)
+      offsets = [0, max(window - 1, 0), 60, 300]
+
+      for {name, offset} <- Enum.zip(names, offsets) do
+        at = DateTime.add(first_at, offset, :second)
+
+        ingest!(
+          context.provider,
+          envelope(name, at),
+          invocation(name, [
+            event(name, name, :firing, at, target_ref: %{kind: :hostname, value: name})
+          ])
+        )
+      end
+
+      new_cases =
+        Cases.list_cases!(actor: context.admin)
+        |> Enum.reject(&MapSet.member?(before_ids, &1.id))
+
+      assert length(new_cases) == if(window == 0, do: 4, else: 3)
+
+      first_case =
+        Enum.find(new_cases, fn incident ->
+          incident.initial_target_id == targets[hd(names)]
+        end)
+
+      assert {:ok, dispatch} = Cases.case_dispatch(first_case.id, authorize?: false)
+      assert dispatch.due_at == DateTime.add(first_at, window, :second)
+
+      assert length(Cases.active_conditions_for_case!(first_case.id, authorize?: false)) ==
+               if(window == 0, do: 1, else: 2)
+
+      for incident <- new_cases do
+        assert :ok =
+                 Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+                   args: %{"case_id" => incident.id}
+                 })
+
+        assert length(
+                 Cases.started_turns_for_run!(
+                   Cases.active_resolution_run!(incident.id, authorize?: false).id,
+                   authorize?: false
+                 )
+               ) == 1
+      end
+    end
+  end
+
   test "PoE and twenty AP stay together when a coincident core Condition is split",
        context do
     enable_signal_automation!(context.admin)

@@ -11,7 +11,6 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
     ResolutionRun
   }
 
-  @collect_seconds 5
   @max_conditions 32
   @max_graph_nodes 128
 
@@ -94,7 +93,9 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
   defp attachment_reason(_candidate, false), do: "bounded_graph_time_locality"
 
   defp create_dispatch(incident, condition, received_at) do
-    due_at = DateTime.add(received_at, @collect_seconds, :second)
+    due_at =
+      DateTime.add(received_at, Application.fetch_env!(:opsonde, :case_collect_seconds), :second)
+
     state = if incident.status == :running, do: :collecting, else: :disabled
 
     with {:ok, dispatch} <-
