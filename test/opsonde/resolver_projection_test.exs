@@ -182,6 +182,54 @@ defmodule Opsonde.ResolverProjectionTest do
     refute_receive {:resolve, _, _}
   end
 
+  test "registered relation stays visible while traversal requires an available next Access Method",
+       context do
+    guest =
+      Targets.create_target!("guest-without-access", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    relation =
+      Targets.create_relationship!(
+        guest.id,
+        context.target.id,
+        "hosted_by",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    {incident, run} = open!("related-unavailable", context.operator, context.target)
+    started = start!(incident, run, "related-unavailable-turn")
+    capabilities = %Target.Capabilities{observations: [], effects: []}
+
+    assert {:ok, unavailable} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert [%AI.TargetRelation{id: id}] = unavailable.target_relations
+    assert id == relation.id
+    assert unavailable.traversable_relation_ids == []
+
+    Targets.create_access_method!(
+      guest.id,
+      context.provider.id,
+      "guest-ssh",
+      "linux",
+      "ssh",
+      "ssh://guest",
+      context.provider.revision,
+      10,
+      ["observe.system"],
+      actor: context.admin
+    )
+
+    assert {:ok, available} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert [%AI.TargetRelation{id: ^id}] = available.target_relations
+    assert available.traversable_relation_ids == [id]
+  end
+
   test "effect tools require a matching observation fact before disclosure", context do
     {incident, run} = open!("evidence-gate", context.operator, context.target)
     started = start!(incident, run, "evidence-gate-turn")

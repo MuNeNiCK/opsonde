@@ -162,6 +162,7 @@ defmodule Opsonde.Providers.AI.Validator do
            request.target_candidates,
            request.observation_results,
            request.target_relations,
+           request.traversable_relation_ids,
            request.observation_tools,
            request.proposal_tools
          ],
@@ -172,6 +173,7 @@ defmodule Opsonde.Providers.AI.Validator do
           Enum.all?(request.target_candidates, &valid_candidate?/1) and
           Enum.all?(request.observation_results, &valid_observation_result?/1) and
           Enum.all?(request.target_relations, &valid_relation?/1) and
+          Enum.all?(request.traversable_relation_ids, &bounded_identifier?/1) and
           Enum.all?(request.observation_tools, &valid_tool?/1) and
           Enum.all?(request.proposal_tools, &valid_proposal_tool?/1)
 
@@ -183,7 +185,9 @@ defmodule Opsonde.Providers.AI.Validator do
         tool_ids = Enum.map(request.observation_tools ++ request.proposal_tools, & &1.id)
 
         unique?(evidence_ids ++ result_ids ++ relation_ids) and unique?(candidate_ids) and
-          unique?(tool_ids) and valid_preselection_tools?(request)
+          unique?(tool_ids) and unique?(request.traversable_relation_ids) and
+          Enum.all?(request.traversable_relation_ids, &(&1 in relation_ids)) and
+          valid_preselection_tools?(request)
       else
         false
       end
@@ -384,6 +388,7 @@ defmodule Opsonde.Providers.AI.Validator do
       end)
 
     if request.budget.remaining_related_targets > 0 and not is_nil(relationship) and
+         traversal.relationship_id in request.traversable_relation_ids and
          traversal_destination?(relationship, request.selected_target_id, traversal) and
          AI.valid_resolver_reason?(traversal.reason) and
          nonempty_list?(traversal.evidence_ids) and unique?(traversal.evidence_ids) and
@@ -503,7 +508,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_preselection_tools?(%{selected_target_id: nil} = request) do
     request.observation_tools == [] and request.proposal_tools == [] and
-      request.target_relations == []
+      request.target_relations == [] and request.traversable_relation_ids == []
   end
 
   defp valid_preselection_tools?(_request), do: true

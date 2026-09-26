@@ -567,6 +567,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             kind: "hosted_by"
           }
         ],
+        traversable_relation_ids: ["relationship-1"],
         disclosure: %{
           disclosure()
           | allowed_target_ids: ["target-1", "target-2"],
@@ -599,6 +600,18 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute Enum.any?(variants, fn variant ->
              get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
            end)
+
+    set_mode(context.agent, {:decision, handoff()})
+    unavailable = %{request | traversable_relation_ids: []}
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, unavailable, %{})
+
+    [unavailable_request] = requests(context.agent)
+    unavailable_payload = user_payload(unavailable_request)
+    assert length(unavailable_payload["target_relations"]) == 1
+    assert unavailable_payload["traversable_relation_ids"] == []
+    refute "target_traversal" in unavailable_payload["allowed_intents"]
   end
 
   test "Resolver schema retries receive explicit bounded correction context", context do

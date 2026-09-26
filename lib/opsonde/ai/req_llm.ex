@@ -276,6 +276,7 @@ defmodule Opsonde.AI.ReqLLM do
       "selected_target_revision" => request.selected_target_revision,
       "observation_results" => plain(request.observation_results),
       "target_relations" => plain(request.target_relations),
+      "traversable_relation_ids" => request.traversable_relation_ids,
       "observation_tools" => plain(request.observation_tools),
       "proposal_tools" => plain(request.proposal_tools)
     }
@@ -304,6 +305,8 @@ defmodule Opsonde.AI.ReqLLM do
         "request whose output directly examines the unresolved condition. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
         "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
+        "Registered Target relations are inventory context; only IDs listed in " <>
+        "traversable_relation_ids are available for Target traversal. " <>
         "When a current-Target observation can identify the failing dependency, observe it before " <>
         "traversal unless supplied Evidence already identifies the exact downstream resource. " <>
         "After a failed observation or one with no relevant facts, do not repeat the same operation " <>
@@ -417,7 +420,10 @@ defmodule Opsonde.AI.ReqLLM do
   defp intent(%{"type" => "target_traversal"} = value, request) do
     with {:ok, relationship_id} <- string(value, "relationship_id"),
          %AI.TargetRelation{} = relationship <-
-           Enum.find(request.target_relations, &(&1.id == relationship_id)),
+           Enum.find(request.target_relations, fn relation ->
+             relation.id == relationship_id and
+               relation.id in request.traversable_relation_ids
+           end),
          {:ok, next_target} <- traversal_target(relationship, request.selected_target_id),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
          {:ok, reason} <- string(value, "reason") do
@@ -698,7 +704,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp target_traversal_schema(%{budget: %{remaining_related_targets: remaining}} = request)
        when remaining > 0 do
-    relationship_ids = Enum.map(request.target_relations, & &1.id)
+    relationship_ids = request.traversable_relation_ids
     evidence_ids = available_evidence_ids(request)
 
     if relationship_ids != [] and evidence_ids != [] do

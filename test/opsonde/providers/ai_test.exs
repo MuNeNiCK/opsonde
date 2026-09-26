@@ -602,6 +602,37 @@ defmodule Opsonde.Providers.AITest do
              )
   end
 
+  test "Resolver rejects traversal when the registered relation is not executable", context do
+    request = resolver_request(context.provider.revision)
+
+    traversal = %AI.TargetTraversal{
+      relationship_id: "relation-1",
+      relationship_revision: 1,
+      next_target_id: "target-2",
+      next_target_revision: 1,
+      evidence_ids: ["evidence-1"],
+      reason: "Inspect the linked host"
+    }
+
+    assert %AI.ResolverDecision{intent: ^traversal} =
+             resolve!(context, request, fn _ ->
+               {:ok, %AI.ResolverDecision{intent: traversal, usage: usage()}}
+             end)
+
+    unavailable = %{request | traversable_relation_ids: []}
+
+    assert {:error, unavailable_error} =
+             resolve(context, unavailable, fn _ ->
+               {:ok, %AI.ResolverDecision{intent: traversal, usage: usage()}}
+             end)
+
+    assert ai_error(unavailable_error).category == :invalid_output
+
+    unknown = %{request | traversable_relation_ids: ["not-a-disclosed-relation"]}
+    assert {:error, unknown_error} = resolve(context, unknown, unreachable_response())
+    assert ai_error(unknown_error).category == :invalid_input
+  end
+
   test "Resolver rejects invented effects and recovery without fresh recovered evidence",
        context do
     request = resolver_request(context.provider.revision)
@@ -970,6 +1001,7 @@ defmodule Opsonde.Providers.AITest do
           kind: "runs_on"
         }
       ],
+      traversable_relation_ids: ["relation-1"],
       observation_tools: [
         %AI.ObservationTool{
           id: "inspect-system",
@@ -1038,6 +1070,7 @@ defmodule Opsonde.Providers.AITest do
         selected_target_revision: nil,
         target_candidates: [],
         target_relations: [],
+        traversable_relation_ids: [],
         observation_tools: [],
         proposal_tools: [],
         evidence: [%{evidence() | target_id: nil}]

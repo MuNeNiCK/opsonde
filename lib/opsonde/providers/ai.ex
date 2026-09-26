@@ -334,7 +334,12 @@ defmodule Opsonde.Providers.AI do
     ]
 
     defstruct @enforce_keys ++
-                [selected_target_id: nil, selected_target_revision: nil, retry_context: nil]
+                [
+                  selected_target_id: nil,
+                  selected_target_revision: nil,
+                  retry_context: nil,
+                  traversable_relation_ids: []
+                ]
 
     @type t :: %__MODULE__{}
   end
@@ -397,7 +402,8 @@ defmodule Opsonde.Providers.AI do
         objective: request.objective,
         alert_state: request.alert_state,
         report_language: request.report_language,
-        retry_context: request.retry_context
+        retry_context: request.retry_context,
+        traversable_relation_ids: request.traversable_relation_ids
       },
       items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
     }

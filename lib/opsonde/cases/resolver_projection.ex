@@ -22,10 +22,20 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
-         {:ok, relations} <- relations(target, incident, run, turn),
+         {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, invocation),
          request <-
-           request(selection, incident, run, turn, continuity, target, relations, tools),
+           request(
+             selection,
+             incident,
+             run,
+             turn,
+             continuity,
+             target,
+             relations,
+             traversable_relation_ids,
+             tools
+           ),
          :ok <- AI.Validator.validate_request(:resolve, request) do
       {:ok, request}
     end
@@ -139,7 +149,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp prepend_verified_continuity(evidence, _latest, _incident, _target), do: evidence
 
-  defp relations(nil, _incident, _run, _turn), do: {:ok, []}
+  defp relations(nil, _incident, _run, _turn), do: {:ok, {[], []}}
 
   defp relations(
          _target,
@@ -148,21 +158,25 @@ defmodule Opsonde.Cases.ResolverProjection do
          _turn
        )
        when count >= maximum,
-       do: {:ok, []}
+       do: {:ok, {[], []}}
 
   defp relations(target, _incident, _run, turn) do
     with {:ok, relationships} <-
-           Targets.adjacent_relationships_for_traversal(target.id, authorize?: false) do
-      relationships
-      |> Enum.reject(&immediate_reverse?(&1, turn))
-      |> Enum.reduce([], fn relationship, projected ->
-        case relation(relationship, target) do
-          {:ok, value} -> [value | projected]
-          :skip -> projected
-        end
-      end)
-      |> Enum.reverse()
-      |> then(&{:ok, &1})
+           Targets.adjacent_relationships_for_traversal(target.id, authorize?: false),
+         {:ok, projected} <-
+           relationships
+           |> Enum.reject(&immediate_reverse?(&1, turn))
+           |> Enum.reduce_while({:ok, []}, fn relationship, {:ok, projected} ->
+             case relation(relationship, target) do
+               {:ok, value} -> {:cont, {:ok, [value | projected]}}
+               :skip -> {:cont, {:ok, projected}}
+               {:error, error} -> {:halt, {:error, error}}
+             end
+           end) do
+      projected = Enum.reverse(projected)
+
+      {:ok,
+       {Enum.map(projected, &elem(&1, 0)), for({relation, true} <- projected, do: relation.id)}}
     end
   end
 
@@ -180,23 +194,28 @@ defmodule Opsonde.Cases.ResolverProjection do
 
     case Targets.get_target(next_target_id, authorize?: false) do
       {:ok, %{active: true} = next_target} ->
-        current = target_candidate(target)
-        adjacent = target_candidate(next_target)
+        with {:ok, methods} <-
+               Targets.available_access_methods_for_target(next_target.id,
+                 authorize?: false
+               ) do
+          current = target_candidate(target)
+          adjacent = target_candidate(next_target)
 
-        {source, destination} =
-          if relationship.source_target_id == target.id,
-            do: {current, adjacent},
-            else: {adjacent, current}
+          {source, destination} =
+            if relationship.source_target_id == target.id,
+              do: {current, adjacent},
+              else: {adjacent, current}
 
-        {:ok,
-         %AI.TargetRelation{
-           id: relationship.id,
-           revision: relationship.revision,
-           source_target: source,
-           destination_target: destination,
-           kind: relationship.kind,
-           attributes: relationship.facts
-         }}
+          {:ok,
+           {%AI.TargetRelation{
+              id: relationship.id,
+              revision: relationship.revision,
+              source_target: source,
+              destination_target: destination,
+              kind: relationship.kind,
+              attributes: relationship.facts
+            }, methods != []}}
+        end
 
       _unavailable ->
         :skip
@@ -396,6 +415,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          evidence,
          target,
          relations,
+         traversable_relation_ids,
          {observations, proposals}
        ) do
     limits = AI.resolver_disclosure_limits()
@@ -422,6 +442,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       retry_context: retry_context(turn),
       observation_results: [],
       target_relations: [],
+      traversable_relation_ids: [],
       observation_tools: [],
       proposal_tools: []
     }
@@ -449,6 +470,15 @@ defmodule Opsonde.Cases.ResolverProjection do
       %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
+    |> then(fn current ->
+      visible_ids = MapSet.new(Enum.map(current.target_relations, & &1.id))
+
+      %{
+        current
+        | traversable_relation_ids:
+            Enum.filter(traversable_relation_ids, &MapSet.member?(visible_ids, &1))
+      }
+    end)
   end
 
   defp objective(incident, turn) do
