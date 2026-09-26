@@ -326,10 +326,29 @@ defmodule Opsonde.ProposalAuthorityTest do
   test "Auto accepts one isolated assigned Reviewer decision and usage", context do
     configure_mode!(:auto, context.admin)
 
+    initial_target =
+      Targets.create_target!("authority-linked-guest", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    relation =
+      Targets.create_relationship!(
+        initial_target.id,
+        context.target.id,
+        "hosted_by",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
     operator =
       Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
 
-    {incident, run, proposal} = proposal!("review-approved", %{context | operator: operator})
+    {incident, run, proposal} =
+      proposal!(
+        "review-approved",
+        context |> Map.put(:operator, operator) |> Map.put(:initial_target, initial_target)
+      )
 
     source_evidence =
       Cases.append_evidence!(
@@ -373,6 +392,9 @@ defmodule Opsonde.ProposalAuthorityTest do
         assert request.report_language == :ja
         refute request.session_id == request.resolver_session_id
         assert request.proposal.tool_id == proposal.tool_id
+        assert request.initial_target_id == initial_target.id
+        assert [%AI.TargetRelation{id: relation_id}] = request.target_relations
+        assert relation_id == relation.id
         assert Enum.map(request.source_evidence, & &1.id) == [source_evidence.id]
 
         assert get_in(hd(request.source_evidence).content, [
