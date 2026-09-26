@@ -204,22 +204,24 @@ defmodule Opsonde.Targets.BMC.Redfish do
     with {:ok, method, path} <- api_request(state, request, @api_read_methods),
          :ok <- not_cancelled(invocation),
          {:ok, _system} <- system(state),
-         {:ok, status, body, pages} <- read_api_resource(state, method, path, invocation) do
+         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
       facts = sanitize_response(body)
+
+      evidence =
+        %{
+          "source" => "redfish",
+          "method" => request.protocol_request["method"],
+          "uri" => path,
+          "http_status" => status,
+          "pages" => pages
+        }
+        |> maybe_etag(if(pages == 1, do: response_etag(headers), else: nil))
 
       {:ok,
        %Target.Observation{
          facts: facts,
          observed_at: DateTime.utc_now(),
-         evidence: [
-           %{
-             "source" => "redfish",
-             "method" => request.protocol_request["method"],
-             "uri" => path,
-             "http_status" => status,
-             "pages" => pages
-           }
-         ]
+         evidence: [evidence]
        }}
     else
       {:error, category, message} -> read_error(category, message)
@@ -228,12 +230,13 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
   defp api_effect(state, request, invocation) do
     with {:ok, method, path} <- api_request(state, request, @api_write_methods),
+         {:ok, conditional_headers} <- if_match_headers(request.selectors),
          :ok <- not_cancelled(invocation),
          {:ok, _system} <- system(state),
          :ok <- not_cancelled(invocation) do
       body = if method == :delete and request.parameters == %{}, do: nil, else: request.parameters
 
-      case request(state, method, path, body) do
+      case request(state, method, path, body, conditional_headers) do
         {:ok, 202, headers, reply} ->
           location =
             headers
@@ -294,10 +297,10 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
   defp read_api_resource(state, method, path, invocation) do
     case request(state, method, path, nil) do
-      {:ok, status, _headers, body} when status in [200, 204] ->
+      {:ok, status, headers, body} when status in [200, 204] ->
         with {:ok, combined, pages} <-
                collect_pages(state, method, path, body, 1, MapSet.new([path]), invocation) do
-          {:ok, status, combined, pages}
+          {:ok, status, combined, pages, headers}
         end
 
       {:ok, _status, _headers, _body} ->
@@ -357,6 +360,35 @@ defmodule Opsonde.Targets.BMC.Redfish do
     end
   end
 
+  defp response_etag(headers) do
+    case Req.Response.get_header(%Req.Response{headers: headers}, "etag") do
+      [etag] when is_binary(etag) ->
+        if valid_etag?(etag), do: etag, else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  defp maybe_etag(evidence, etag) when is_binary(etag), do: Map.put(evidence, "etag", etag)
+  defp maybe_etag(evidence, _etag), do: evidence
+
+  defp if_match_headers(%{} = selectors) when map_size(selectors) == 0, do: {:ok, []}
+
+  defp if_match_headers(%{"if_match" => etag} = selectors) when map_size(selectors) == 1 do
+    if valid_etag?(etag) and not String.starts_with?(etag, "W/"),
+      do: {:ok, [{"if-match", etag}]},
+      else: {:error, :failed, "Redfish If-Match value is invalid"}
+  end
+
+  defp if_match_headers(_selectors),
+    do: {:error, :failed, "Redfish If-Match selector is invalid"}
+
+  defp valid_etag?(etag) when is_binary(etag) and byte_size(etag) in 1..256,
+    do: etag == "*" or Regex.match?(~r/\A(?:W\/)?"[\x21\x23-\x7E]*"\z/, etag)
+
+  defp valid_etag?(_etag), do: false
+
   defp safe_task_location(_state, nil), do: nil
 
   defp safe_task_location(state, location) do
@@ -389,7 +421,7 @@ defmodule Opsonde.Targets.BMC.Redfish do
   defp sensitive_name?(_key), do: false
 
   defp system(state) do
-    with {:ok, 200, collection, _pages} <-
+    with {:ok, 200, collection, _pages, _headers} <-
            read_api_resource(state, :get, "/redfish/v1/Systems", %{}),
          members when is_list(members) <- collection["Members"],
          true <- Enum.any?(members, &(&1["@odata.id"] == state.system_path)),
@@ -466,14 +498,15 @@ defmodule Opsonde.Targets.BMC.Redfish do
   defp power_state(%{"PowerState" => "Off"}), do: {:ok, "off"}
   defp power_state(_system), do: {:error, :failed, "Redfish PowerState is unavailable"}
 
-  defp request(state, method, path, body) do
+  defp request(state, method, path, body, extra_headers \\ []) do
     host = URI.parse(state.endpoint).host
 
     options = [
       method: method,
       url: state.endpoint <> path,
       auth: state.auth,
-      headers: [{"accept", "application/json"}, {"content-type", "application/json"}],
+      headers:
+        [{"accept", "application/json"}, {"content-type", "application/json"}] ++ extra_headers,
       connect_options: [
         timeout: state.timeout,
         transport_opts: [
@@ -514,6 +547,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
           status in [401, 403] ->
             {:error, :authentication, "Redfish authentication failed"}
+
+          status == 412 ->
+            {:error, :rejected, "Redfish write precondition failed (HTTP 412)"}
 
           true ->
             {:error, :rejected, "Redfish request was rejected (HTTP #{status})"}

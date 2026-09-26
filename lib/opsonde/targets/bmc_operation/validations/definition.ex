@@ -24,7 +24,7 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
          :ok <- valid_request(method.method, kind, protocol_request),
          :ok <- valid_secret_bindings(method, secret_bindings),
          :ok <- valid_schema(changeset, :input_schema),
-         true <- closed_input_schema?(input_schema),
+         true <- closed_input_schema?(input_schema, method.method, kind),
          true <- valid_ipmi_input?(method.method, input_schema, secret_bindings),
          true <- secret_pointers_hidden?(input_schema, secret_bindings),
          true <- classified_parameters?(input_schema, secret_bindings, parameter_classes),
@@ -90,16 +90,37 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
 
   defp valid_secret_bindings(_, _), do: :error
 
-  defp closed_input_schema?(schema) do
+  defp closed_input_schema?(schema, method, kind) do
     properties = schema["properties"]
 
     closed_object?(schema) and is_map(properties) and
       Map.has_key?(properties, "selectors") and
       Map.has_key?(properties, "parameters") and
       closed_object?(properties["selectors"]) and
-      Map.get(properties["selectors"], "properties", %{}) == %{} and
+      valid_selectors?(properties["selectors"], method, kind) and
       closed_object?(properties["parameters"])
   end
+
+  defp valid_selectors?(schema, "redfish", :effect) do
+    properties = Map.get(schema, "properties", %{})
+
+    case Map.keys(properties) do
+      [] ->
+        true
+
+      ["if_match"] ->
+        match?(
+          %{"type" => "string", "maxLength" => length} when length in 1..256,
+          properties["if_match"]
+        )
+
+      _ ->
+        false
+    end
+  end
+
+  defp valid_selectors?(schema, _method, _kind),
+    do: Map.get(schema, "properties", %{}) == %{}
 
   defp closed_object?(%{"type" => "object"} = schema) do
     properties = Map.get(schema, "properties", %{})
