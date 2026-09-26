@@ -9,7 +9,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   def run(input, _opts, context) do
     arguments = input.arguments
 
-    with :ok <- validate_trigger(arguments.trigger_kind, arguments.alert_state),
+    with :ok <- validate_trigger(arguments.trigger_kind, context.actor),
          {:ok, existing} <- existing_case(arguments) do
       if existing do
         {:ok, existing}
@@ -90,7 +90,6 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       source_ref: arguments.source_ref,
       title: arguments.title,
       severity: arguments.severity,
-      alert_state: arguments.alert_state,
       report_language: report_language,
       status: status,
       initial_context: arguments.initial_context,
@@ -172,9 +171,11 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     )
   end
 
-  defp validate_trigger(:signal, :firing), do: :ok
-  defp validate_trigger(kind, :not_applicable) when kind in [:manual, :audit], do: :ok
-  defp validate_trigger(_kind, _state), do: {:error, "Trigger kind and alert state do not match"}
+  defp validate_trigger(:signal, actor) when not is_nil(actor),
+    do: {:error, "Signal Cases must be opened by native Condition admission"}
+
+  defp validate_trigger(kind, _actor) when kind in [:signal, :manual, :audit], do: :ok
+  defp validate_trigger(_kind, _actor), do: {:error, "Case trigger kind is invalid"}
 
   defp load_initial_target(nil), do: {:ok, nil}
 

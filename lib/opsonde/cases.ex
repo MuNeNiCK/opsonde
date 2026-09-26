@@ -33,7 +33,7 @@ defmodule Opsonde.Cases do
 
       define :page_cases,
         action: :page,
-        args: [:query, :status, :alert_state, :sort]
+        args: [:query, :status, :sort]
 
       define :get_case, action: :read, get_by: [:id]
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
@@ -53,7 +53,6 @@ defmodule Opsonde.Cases do
           :source_ref,
           :title,
           :severity,
-          :alert_state,
           :initial_context,
           :initial_target_id,
           :report_language

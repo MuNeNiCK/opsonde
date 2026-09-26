@@ -160,7 +160,6 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
         "cursor-envelope",
         "Verify API collection contracts",
         :info,
-        :not_applicable,
         %{},
         nil,
         :en,

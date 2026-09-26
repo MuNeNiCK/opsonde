@@ -421,7 +421,6 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "delete-ai-history-#{System.unique_integer([:positive])}",
         "Historical AI reference",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,

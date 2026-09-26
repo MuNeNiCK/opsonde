@@ -24,7 +24,6 @@ import {
 type CaseRecord = components["schemas"]["Case"];
 type CasePage = components["schemas"]["CasePage"];
 type QueueStatus = "all" | CaseRecord["status"];
-type AlertState = "all" | CaseRecord["alert_state"];
 type QueueSort = "updated_desc" | "updated_asc" | "severity_desc";
 
 const pollIntervalMs = 5_000;
@@ -39,7 +38,6 @@ export function CaseListPage() {
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<QueueStatus>("all");
-  const [alertState, setAlertState] = useState<AlertState>("all");
   const [sort, setSort] = useState<QueueSort>("updated_desc");
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,7 +92,6 @@ export function CaseListPage() {
               after: cursor ?? undefined,
               query: query.trim() || undefined,
               status: status === "all" ? undefined : status,
-              alert_state: alertState === "all" ? undefined : alertState,
               sort,
             },
           },
@@ -122,7 +119,7 @@ export function CaseListPage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [alertState, cursor, query, retryKey, sort, status, t]);
+  }, [cursor, query, retryKey, sort, status, t]);
 
   if (!page && !error) {
     return (
@@ -287,23 +284,6 @@ export function CaseListPage() {
               ]}
             />
             <FormSelect
-              id="case-alert-filter"
-              className="w-auto min-w-44"
-              value={alertState}
-              onValueChange={(value) => {
-                if (!value) return;
-                resetToFirstPage();
-                setAlertState(value as AlertState);
-              }}
-              ariaLabel={t("cases.filterAlert")}
-              options={[
-                { value: "all", label: t("cases.allAlerts") },
-                { value: "firing", label: t("cases.alert.firing") },
-                { value: "recovered", label: t("cases.alert.recovered") },
-                { value: "not_applicable", label: t("cases.alert.not_applicable") },
-              ]}
-            />
-            <FormSelect
               id="case-sort"
               className="w-auto min-w-44"
               value={sort}
@@ -329,7 +309,7 @@ export function CaseListPage() {
                 <TableHead>{t("cases.case")}</TableHead>
                 <TableHead>{t("cases.severityLabel")}</TableHead>
                 <TableHead>{t("cases.target")}</TableHead>
-                <TableHead>{t("cases.alertState")}</TableHead>
+                <TableHead>{t("cases.conditionsTitle")}</TableHead>
                 <TableHead>{t("cases.resolutionState")}</TableHead>
                 <TableHead>{t("cases.owner")}</TableHead>
                 <TableHead>{t("cases.requiredAction")}</TableHead>
@@ -347,7 +327,7 @@ export function CaseListPage() {
                       {incident.title}
                     </Link>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {incident.source} · {incident.source_ref}
+                      {incident.source}{incident.trigger_kind === "signal" ? "" : ` · ${incident.source_ref}`}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -357,9 +337,11 @@ export function CaseListPage() {
                     {targetName(incident.selected_target_id)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={incident.alert_state === "firing" ? "destructive" : "outline"}>
-                      {t(`cases.alert.${incident.alert_state}`)}
-                    </Badge>
+                    {incident.trigger_kind === "signal" && incident.condition_count !== null ? (
+                      <Badge variant={(incident.firing_condition_count ?? 0) > 0 ? "destructive" : "outline"}>
+                        {incident.firing_condition_count ?? 0} / {incident.condition_count}
+                      </Badge>
+                    ) : "—"}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -391,7 +373,7 @@ export function CaseListPage() {
               {records.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
-                    {query || status !== "all" || alertState !== "all"
+                    {query || status !== "all"
                       ? t("cases.noMatchingCases")
                       : t("cases.noCases")}
                   </TableCell>
@@ -464,9 +446,7 @@ function RequiredAction({ incident }: { incident: CaseRecord }) {
             ? t("cases.actionNone")
             : incident.status === "cancelled"
               ? t("cases.actionReviewCancellation")
-              : incident.alert_state === "recovered"
-                ? t("cases.actionVerifying")
-                : t("cases.actionResolving");
+              : t("cases.actionResolving");
 
   return (
     <span className="flex items-start gap-2">

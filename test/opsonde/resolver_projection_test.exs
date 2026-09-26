@@ -786,7 +786,6 @@ defmodule Opsonde.ResolverProjectionTest do
         source_ref,
         "Case #{source_ref}",
         :warning,
-        :not_applicable,
         %{"symptom" => "service unavailable"},
         target && target.id,
         :en,

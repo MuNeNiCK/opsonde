@@ -19,7 +19,7 @@ defmodule Opsonde.CaseLifecycleTest do
     %{admin: admin, operator: operator, next_operator: next_operator, viewer: viewer}
   end
 
-  test "manual, Signal and Audit Cases copy one exact standing revision without requiring a Target",
+  test "manual and Audit Cases copy one exact standing revision without requiring a Target",
        context do
     target = Targets.create_target!("linux-01", "host", "linux", %{}, nil, actor: context.admin)
 
@@ -33,12 +33,11 @@ defmodule Opsonde.CaseLifecycleTest do
       })
 
     manual =
-      open_case!(:manual, "web", "manual-1", :not_applicable, context.operator, target.id)
+      open_case!(:manual, "web", "manual-1", context.operator, target.id)
 
-    signal = open_case!(:signal, "zabbix", "event-1", :firing, nil)
-    audit = open_case!(:audit, "schedule", "audit-1", :not_applicable, context.operator)
+    audit = open_case!(:audit, "schedule", "audit-1", context.operator)
 
-    for incident <- [manual, signal, audit] do
+    for incident <- [manual, audit] do
       assert incident.authority_setting_id == setting.id
       assert incident.authority_setting_revision == 2
       assert incident.authority_mode == :auto
@@ -53,7 +52,7 @@ defmodule Opsonde.CaseLifecycleTest do
     end
 
     assert manual.initial_target_id == target.id
-    assert is_nil(signal.initial_target_id)
+    assert is_nil(audit.initial_target_id)
 
     updated_setting =
       configure_authority!(context.admin, %{
@@ -69,51 +68,10 @@ defmodule Opsonde.CaseLifecycleTest do
     assert reloaded.authority_mode == :auto
     assert reloaded.max_elapsed_seconds == 7_200
 
-    later = open_case!(:manual, "cli", "manual-2", :not_applicable, context.operator)
+    later = open_case!(:manual, "cli", "manual-2", context.operator)
     assert later.authority_setting_id == updated_setting.id
     assert later.authority_setting_revision == 3
     assert later.authority_mode == :full_access
-  end
-
-  test "disabled Signal automation opens a durable attention state and duplicate delivery is one Case",
-       context do
-    attempts =
-      for _attempt <- 1..2 do
-        Task.async(fn ->
-          Cases.open_case(
-            :signal,
-            "zabbix",
-            "event-disabled",
-            "Disk error",
-            :critical,
-            :firing,
-            %{"host" => "linux-01"},
-            nil,
-            :en,
-            authorize?: false
-          )
-        end)
-      end
-      |> Task.await_many()
-
-    assert [{:ok, first}, {:ok, second}] = attempts
-    assert first.id == second.id
-
-    incident = Cases.get_case!(first.id, actor: context.viewer)
-    assert incident.status == :needs_attention
-    assert incident.stop_reason == "Signal automation is disabled"
-    assert incident.pending_intent == %{"action" => "start_resolution"}
-    assert incident.required_human_input == "Enable automation or claim the Case"
-    assert is_nil(incident.initial_target_id)
-
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    assert run.status == :needs_attention
-    assert length(Cases.list_cases!(actor: context.viewer)) == 1
-    assert length(Cases.list_resolution_runs!(actor: context.viewer)) == 1
-
-    assert Enum.map(Cases.list_case_events!(actor: context.viewer), & &1.event_type) == [
-             "case_opened"
-           ]
   end
 
   test "Case opening and a concurrent standing-setting revision produce one complete snapshot",
@@ -144,7 +102,6 @@ defmodule Opsonde.CaseLifecycleTest do
         "concurrent-open",
         "Concurrent open",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,
@@ -170,7 +127,7 @@ defmodule Opsonde.CaseLifecycleTest do
   end
 
   test "claim, handoff and cancellation are revisioned and retryable", context do
-    incident = open_case!(:manual, "web", "manual-claim", :not_applicable, context.operator)
+    incident = open_case!(:manual, "web", "manual-claim", context.operator)
 
     claimed = Cases.claim_case!(incident.id, incident.revision, actor: context.operator)
     assert claimed.current_owner_id == context.operator.id
@@ -232,7 +189,7 @@ defmodule Opsonde.CaseLifecycleTest do
       Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
 
     incident =
-      open_case!(:manual, "cli", "manual-resume", :not_applicable, operator)
+      open_case!(:manual, "cli", "manual-resume", operator)
 
     assert incident.report_language == :ja
     first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
@@ -320,7 +277,7 @@ defmodule Opsonde.CaseLifecycleTest do
   end
 
   test "cancelling an attention Case retires its active run", context do
-    incident = open_case!(:manual, "web", "cancel-attention", :not_applicable, context.operator)
+    incident = open_case!(:manual, "web", "cancel-attention", context.operator)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
     attention =
@@ -360,7 +317,6 @@ defmodule Opsonde.CaseLifecycleTest do
                "forbidden",
                "Forbidden",
                :warning,
-               :not_applicable,
                %{},
                nil,
                :en,
@@ -381,7 +337,7 @@ defmodule Opsonde.CaseLifecycleTest do
 
   test "resume cannot reduce a prior run limit", context do
     incident =
-      open_case!(:manual, "cli", "manual-no-reduction", :not_applicable, context.operator)
+      open_case!(:manual, "cli", "manual-no-reduction", context.operator)
 
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
@@ -426,7 +382,6 @@ defmodule Opsonde.CaseLifecycleTest do
          kind,
          source,
          source_ref,
-         alert_state,
          actor,
          target_id \\ nil
        ) do
@@ -436,7 +391,6 @@ defmodule Opsonde.CaseLifecycleTest do
       source_ref,
       "#{kind} Case #{source_ref}",
       :warning,
-      alert_state,
       %{"source_ref" => source_ref},
       target_id,
       :en,

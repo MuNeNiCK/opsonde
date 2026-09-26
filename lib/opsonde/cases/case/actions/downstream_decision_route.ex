@@ -228,9 +228,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp valid_recovery_state(%{trigger_kind: :signal}), do: :ok
 
-  defp valid_recovery_state(%{trigger_kind: kind, alert_state: state})
-       when kind in [:manual, :audit] and state in [:not_applicable, :recovered],
-       do: :ok
+  defp valid_recovery_state(%{trigger_kind: kind}) when kind in [:manual, :audit],
+    do: :ok
 
   defp valid_recovery_state(_incident),
     do: {:error, "Monitoring source has not confirmed recovery"}

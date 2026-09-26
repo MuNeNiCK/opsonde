@@ -33,7 +33,8 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       split_parent_id: incident.split_parent_id,
       title: incident.title,
       severity: incident.severity,
-      alert_state: incident.alert_state,
+      condition_count: loaded_count(incident.condition_count),
+      firing_condition_count: loaded_count(incident.firing_condition_count),
       report_language: incident.report_language,
       status: incident.status,
       operator_action: operator_action(incident),
@@ -55,6 +56,9 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       updated_at: incident.updated_at
     }
   end
+
+  defp loaded_count(value) when is_integer(value), do: value
+  defp loaded_count(_value), do: nil
 
   defp operator_action(%{pending_intent: %{"action" => "decide_proposal"}}),
     do: :decision_required

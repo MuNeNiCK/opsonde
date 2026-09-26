@@ -32,7 +32,6 @@ defmodule Opsonde.Audits.AuditRunDispatch do
            "audit-run:#{run.id}",
            "Scheduled audit: #{schedule.name}",
            :info,
-           :not_applicable,
            %{
              "objective" => schedule.objective,
              "audit_schedule_id" => schedule.id,

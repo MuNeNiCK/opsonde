@@ -1,68 +1,6 @@
 import type { TFunction } from "i18next";
 import type { components } from "@/api/schema";
 
-type CaseSnapshot = components["schemas"]["CaseSnapshot"];
-type Proposal = components["schemas"]["Proposal"];
-
-export function describeSituation(
-  incident: CaseSnapshot["case"],
-  awaitingProposal: Proposal | undefined,
-  t: TFunction,
-) {
-  const happened =
-    incident.alert_state === "recovered"
-      ? t("cases.situation.sourceRecovered")
-      : incident.alert_state === "firing"
-        ? t("cases.situation.sourceFiring")
-        : t("cases.situation.caseOpened");
-
-  const doing =
-    incident.status === "resolved"
-      ? t("cases.situation.resolved")
-      : incident.status === "cancelled"
-        ? t("cases.situation.cancelled")
-        : incident.status === "needs_attention"
-          ? t("cases.situation.paused")
-          : incident.alert_state === "recovered"
-            ? t("cases.situation.verifying")
-            : awaitingProposal
-              ? t("cases.situation.waitingApproval")
-              : incident.selected_target_id === null
-                ? t("cases.situation.resolvingTarget")
-                : t("cases.situation.resolving");
-
-  const blockerDiagnostic =
-    incident.required_human_input ??
-    incident.stop_reason ??
-    awaitingProposal?.preflight_reason ??
-    null;
-  const blocker =
-    incident.alert_state === "recovered" && incident.status === "needs_attention"
-      ? t("cases.situation.recoveryNeedsResume")
-      : incident.required_human_input
-        ? t("cases.actionInputRequired")
-        : incident.stop_reason
-          ? t("cases.situation.stoppedAtBoundary")
-          : awaitingProposal?.preflight_reason
-            ? t("cases.situation.preflightBlocked")
-            : null;
-
-  const action =
-    incident.status === "resolved" || incident.status === "cancelled"
-      ? t("cases.actionNone")
-      : awaitingProposal
-        ? t("cases.situation.reviewProposal")
-        : incident.status === "needs_attention"
-          ? t("cases.situation.resumeRequired")
-          : incident.alert_state === "recovered"
-            ? t("cases.situation.waitForVerification")
-            : incident.current_owner_id === null
-              ? t("cases.situation.claimOptional")
-              : t("cases.situation.noAction");
-
-  return { happened, doing, blocker, blockerDiagnostic, action };
-}
-
 export function formValue(form: FormData, name: string) {
   const value = form.get(name);
   return typeof value === "string" ? value : "";

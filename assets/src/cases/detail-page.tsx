@@ -497,7 +497,7 @@ export function CaseDetailPage() {
       {complete ? (
         <>
           <CompletedCaseSummary
-            incident={incident}
+            conditions={detail.snapshot.conditions}
             report={exactReport}
             targetName={selectedTarget?.name ?? t("cases.unresolved")}
             verificationCount={detail.snapshot.verification_attempts.length}
@@ -632,14 +632,14 @@ export function CaseDetailPage() {
 type Report = CaseSnapshot["reports"][number];
 
 function CompletedCaseSummary({
-  incident,
+  conditions,
   report,
   targetName,
   verificationCount,
   progressVisible,
   onToggleProgress,
 }: {
-  incident: CaseSnapshot["case"];
+  conditions: CaseSnapshot["conditions"];
   report: Report;
   targetName: string;
   verificationCount: number;
@@ -760,11 +760,13 @@ function CompletedCaseSummary({
                 {document.recovery_observation.facts}
               </p>
             )}
-            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-              {t("cases.completionSummary.monitoringState", {
-                state: t(`cases.alert.${incident.alert_state}`),
-              })}
-            </p>
+            {conditions.length > 0 && (
+              <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                {t("cases.completionSummary.monitoringState", {
+                  state: conditions.map((condition) => t(`cases.alert.${condition.state}`)).join(", "),
+                })}
+              </p>
+            )}
           </section>
         </div>
 

@@ -314,7 +314,6 @@ defmodule Opsonde.ProposalMaterializationTest do
         "proposal-#{suffix}",
         "Proposal #{suffix}",
         :warning,
-        :not_applicable,
         %{},
         context.target.id,
         :en,

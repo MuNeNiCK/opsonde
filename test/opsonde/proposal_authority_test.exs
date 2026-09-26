@@ -1392,7 +1392,6 @@ defmodule Opsonde.ProposalAuthorityTest do
         "authority-#{suffix}",
         "Authority #{suffix}",
         :warning,
-        :not_applicable,
         %{},
         initial_target.id,
         :en,

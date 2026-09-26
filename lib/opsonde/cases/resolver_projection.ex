@@ -605,7 +605,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       else: :firing
   end
 
-  def projected_alert_state(incident, _conditions), do: incident.alert_state
+  def projected_alert_state(_incident, _conditions), do: :not_applicable
 
   defp objective(incident, turn) do
     value = %{

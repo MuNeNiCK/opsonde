@@ -169,7 +169,6 @@ defmodule Opsonde.NotificationDeliveryTest do
         "notification-delivery-report",
         "Notification delivery report",
         :warning,
-        :not_applicable,
         %{"summary" => "service recovered"},
         nil,
         :en,

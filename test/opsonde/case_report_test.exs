@@ -384,7 +384,6 @@ defmodule Opsonde.CaseReportTest do
       source_ref,
       "Case #{source_ref}",
       :warning,
-      :not_applicable,
       %{"source_ref" => source_ref},
       nil,
       :en,

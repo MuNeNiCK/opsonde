@@ -365,7 +365,6 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
   defp target_registration_wait(%{
          trigger_kind: :signal,
-         alert_state: :firing,
          status: :needs_attention,
          selected_target_id: nil,
          selected_target_revision: nil,

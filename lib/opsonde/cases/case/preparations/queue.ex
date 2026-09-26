@@ -12,6 +12,8 @@ defmodule Opsonde.Cases.Case.Preparations.Queue do
         _other -> [updated_at: :desc, id: :desc]
       end
 
-    Ash.Query.sort(query, sort)
+    query
+    |> Ash.Query.sort(sort)
+    |> Ash.Query.load([:condition_count, :firing_condition_count])
   end
 end

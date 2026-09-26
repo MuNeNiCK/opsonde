@@ -1835,13 +1835,6 @@
         "properties": {
           "case": {
             "properties": {
-              "alert_state": {
-                "enum": [
-                  "firing",
-                  "not_applicable"
-                ],
-                "type": "string"
-              },
               "initial_context": {
                 "additionalProperties": true,
                 "type": "object"
@@ -1878,7 +1871,6 @@
               "trigger_kind": {
                 "enum": [
                   "manual",
-                  "signal",
                   "audit"
                 ],
                 "type": "string"
@@ -3290,14 +3282,6 @@
       "Case": {
         "additionalProperties": false,
         "properties": {
-          "alert_state": {
-            "enum": [
-              "firing",
-              "recovered",
-              "not_applicable"
-            ],
-            "type": "string"
-          },
           "authority_mode": {
             "enum": [
               "readonly",
@@ -3318,10 +3302,20 @@
           "cancel_requested": {
             "type": "boolean"
           },
+          "condition_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "current_owner_id": {
             "format": "uuid",
             "nullable": true,
             "type": "string"
+          },
+          "firing_condition_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "id": {
             "format": "uuid",
@@ -3447,7 +3441,8 @@
           "split_parent_id",
           "title",
           "severity",
-          "alert_state",
+          "condition_count",
+          "firing_condition_count",
           "report_language",
           "status",
           "operator_action",
@@ -14316,20 +14311,6 @@
                 "needs_attention",
                 "resolved",
                 "cancelled"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "description": "",
-            "in": "query",
-            "name": "alert_state",
-            "required": false,
-            "schema": {
-              "enum": [
-                "firing",
-                "recovered",
-                "not_applicable"
               ],
               "type": "string"
             }

@@ -384,7 +384,6 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
         trigger_kind: :signal,
         source_ref: "split:#{Ash.UUID.generate()}",
         title: "#{parent.title} · separate condition" |> String.slice(0, 200),
-        alert_state: :firing,
         status: status,
         initial_context: %{"split_parent_case_id" => parent.id},
         split_parent_id: parent.id,

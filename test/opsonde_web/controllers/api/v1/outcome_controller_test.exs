@@ -6,6 +6,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Signals, Targets}
   alias Opsonde.Notifications.DeliveryDispatch
   alias Opsonde.Providers.Notification
+  alias Opsonde.Providers.Signal
 
   @password "correct horse battery staple"
 
@@ -74,7 +75,6 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "manual-report-with-automatic-off",
         "Manual report while automatic generation is off",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,
@@ -110,64 +110,47 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         %{"secret" => "receipt-provider-secret"},
         actor: context.admin
       )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    target = Targets.create_target!("10601", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(target.id, "zabbix", "hostname", "10601",
+      actor: context.admin
+    )
+
+    now = DateTime.utc_now()
+    receipt_id = "zabbix-event-9001"
 
     receipt =
-      Signals.create_signal_receipt_record!(
+      Signals.ingest_signal!(
+        provider.id,
+        provider.revision,
+        %Signal.Envelope{body: receipt_id, headers: %{}, received_at: now},
         %{
-          provider_id: provider.id,
-          provider_revision: provider.revision,
-          receipt_id: "zabbix-event-9001",
-          source: "zabbix",
-          received_at: DateTime.utc_now(),
-          metadata: %{"normalized" => true},
-          normalized_digest: String.duplicate("a", 64),
-          event_count: 1
-        },
-        authorize?: false
+          authenticate: fn adapter, _envelope ->
+            {:ok, %Signal.AuthenticatedReceipt{receipt_id: receipt_id, source: adapter.source}}
+          end,
+          normalize: fn _adapter, _envelope, _receipt ->
+            {:ok,
+             [
+               %Signal.Event{
+                 receipt_id: receipt_id,
+                 event_key: receipt_id,
+                 state: :firing,
+                 source_sequence: "9001",
+                 occurred_at: now,
+                 target_ref: %{kind: :hostname, value: "10601"},
+                 attributes: %{"private" => "raw-event-detail"},
+                 metadata: %{"private" => "raw-event-metadata"}
+               }
+             ]}
+          end
+        }
       )
 
-    incident =
-      Cases.open_case!(
-        :signal,
-        "zabbix",
-        "zabbix-event-9001",
-        "Linux disk I/O errors",
-        :warning,
-        :firing,
-        %{},
-        nil,
-        :en,
-        actor: context.operator
-      )
-
-    correlation =
-      Signals.create_signal_correlation_record!(
-        %{
-          provider_id: provider.id,
-          source: "zabbix",
-          event_key: "zabbix-event-9001",
-          current_state: :firing,
-          revision: 1
-        },
-        authorize?: false
-      )
-
-    signal_event =
-      Signals.create_signal_event_record!(
-        %{
-          signal_receipt_id: receipt.id,
-          signal_correlation_id: correlation.id,
-          event_key: "zabbix-event-9001",
-          state: :firing,
-          source_sequence: "9001",
-          occurred_at: receipt.received_at,
-          target_ref: %{"kind" => "host_id", "value" => "10601"},
-          attributes: %{"private" => "raw-event-detail"},
-          metadata: %{"private" => "raw-event-metadata"},
-          case_id: incident.id
-        },
-        authorize?: false
-      )
+    [signal_event] = Signals.list_signal_events!(actor: context.admin)
+    incident = Cases.get_case!(signal_event.case_id, actor: context.admin)
 
     list = get_json("/api/v1/signal-receipts?limit=1", context.viewer_token)
 
@@ -204,7 +187,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
                  "event_key" => "zabbix-event-9001",
                  "state" => "firing",
                  "case_id" => case_id,
-                 "target_ref" => %{"kind" => "host_id", "value" => "10601"}
+                 "target_ref" => %{"kind" => "hostname", "value" => "10601"}
                }
              ],
              "page" => %{"next" => nil}
@@ -350,7 +333,6 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "outcome-report",
         "Resolved service incident",
         :warning,
-        :not_applicable,
         %{"summary" => "service recovered"},
         nil,
         :en,
@@ -514,7 +496,6 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "period-api",
         "Period API Case",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,

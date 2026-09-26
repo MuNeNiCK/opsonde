@@ -49,13 +49,6 @@ defmodule OpsondeWeb.API.V1.CaseController do
               enum: ~w(running needs_attention resolved cancelled)
             }
           ],
-          alert_state: [
-            in: :query,
-            schema: %OpenApiSpex.Schema{
-              type: :string,
-              enum: ~w(firing recovered not_applicable)
-            }
-          ],
           sort: [
             in: :query,
             schema: %OpenApiSpex.Schema{
@@ -192,7 +185,6 @@ defmodule OpsondeWeb.API.V1.CaseController do
            Cases.page_cases(
              params["query"],
              params["status"],
-             params["alert_state"],
              params["sort"] || "updated_desc",
              page: page,
              actor: conn.assigns.current_user
@@ -208,14 +200,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def create(conn, %{"case" => input}) do
-    with {:ok, incident} <-
+    with true <- input["trigger_kind"] in ["manual", "audit"] || {:error, :bad_request},
+         {:ok, incident} <-
            Cases.open_case(
              input["trigger_kind"],
              input["source"],
              input["source_ref"],
              input["title"],
              input["severity"],
-             input["alert_state"] || "not_applicable",
              input["initial_context"] || %{},
              input["initial_target_id"],
              nil,

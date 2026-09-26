@@ -137,7 +137,6 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         source_ref,
         "Case #{source_ref}",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,

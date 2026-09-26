@@ -1,7 +1,8 @@
 defmodule Opsonde.PeriodReportTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Audits, Cases, Reports, Targets}
+  alias Opsonde.{Accounts, Audits, Cases, Providers, Reports, Signals, Targets}
+  alias Opsonde.Providers.Signal
 
   @password "correct horse battery staple"
 
@@ -22,7 +23,6 @@ defmodule Opsonde.PeriodReportTest do
         "period-1",
         "Service unavailable",
         :warning,
-        :not_applicable,
         %{},
         target.id,
         :en,
@@ -32,23 +32,50 @@ defmodule Opsonde.PeriodReportTest do
     resolved =
       Cases.update_case_record!(opened, opened.revision, %{status: :resolved}, authorize?: false)
 
-    attention =
-      Cases.open_case!(
+    provider =
+      Providers.create_provider!(
+        "period-signal",
         :signal,
-        "period-test",
-        "period-2",
-        "Another service unavailable",
-        :warning,
-        :firing,
-        %{},
-        target.id,
-        :en,
+        "fixture-signal",
+        %{"source" => "period-test"},
+        %{"secret" => "period-secret"},
         actor: admin
       )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
-    Cases.update_case_record!(attention, attention.revision, %{status: :needs_attention},
-      authorize?: false
+    Targets.create_external_identity!(target.id, "period-test", "hostname", target.name,
+      actor: admin
     )
+
+    occurred_at = DateTime.utc_now()
+
+    Signals.ingest_signal!(
+      provider.id,
+      provider.revision,
+      %Signal.Envelope{body: "period-2", headers: %{}, received_at: occurred_at},
+      %{
+        authenticate: fn adapter, _envelope ->
+          {:ok, %Signal.AuthenticatedReceipt{receipt_id: "period-2", source: adapter.source}}
+        end,
+        normalize: fn _adapter, _envelope, _receipt ->
+          {:ok,
+           [
+             %Signal.Event{
+               receipt_id: "period-2",
+               event_key: "period-2",
+               state: :firing,
+               occurred_at: occurred_at,
+               target_ref: %{kind: :hostname, value: target.name},
+               attributes: %{"title" => "Another service unavailable"}
+             }
+           ]}
+        end
+      }
+    )
+
+    [attention] = Enum.filter(Cases.list_cases!(actor: admin), &(&1.trigger_kind == :signal))
+    assert attention.status == :needs_attention
 
     Cases.open_case!(
       :manual,
@@ -56,7 +83,6 @@ defmodule Opsonde.PeriodReportTest do
       "period-other",
       "Other target",
       :warning,
-      :not_applicable,
       %{},
       other.id,
       :en,
@@ -136,7 +162,6 @@ defmodule Opsonde.PeriodReportTest do
         "case-#{index}",
         "Period Case #{index}",
         :warning,
-        :not_applicable,
         %{},
         nil,
         :en,

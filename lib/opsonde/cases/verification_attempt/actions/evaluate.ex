@@ -69,7 +69,6 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Evaluate do
         "verification_attempt_id" => attempt.id,
         "verification_evidence_id" => evidence.id,
         "verification_status" => to_string(attempt.status),
-        "alert_state" => to_string(incident.alert_state),
         "source_recovery_required" => incident.trigger_kind == :signal
       },
       %{

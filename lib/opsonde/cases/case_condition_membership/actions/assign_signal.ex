@@ -78,7 +78,6 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
              condition.id,
              args.title,
              args.severity,
-             :firing,
              Map.put(args.initial_context, "initial_condition_id", condition.id),
              condition.target_id,
              nil,

@@ -1930,8 +1930,6 @@ export interface components {
         };
         CreateCaseRequest: {
             case: {
-                /** @enum {string} */
-                alert_state?: "firing" | "not_applicable";
                 initial_context?: {
                     [key: string]: unknown;
                 };
@@ -1943,7 +1941,7 @@ export interface components {
                 source_ref: string;
                 title: string;
                 /** @enum {string} */
-                trigger_kind: "manual" | "signal" | "audit";
+                trigger_kind: "manual" | "audit";
             };
         };
         CreateTargetRequest: {
@@ -2326,15 +2324,15 @@ export interface components {
         };
         Case: {
             /** @enum {string} */
-            alert_state: "firing" | "recovered" | "not_applicable";
-            /** @enum {string} */
             authority_mode: "readonly" | "ask" | "auto" | "full_access";
             /** Format: uuid */
             authority_setting_id: string;
             authority_setting_revision: number;
             cancel_requested: boolean;
+            condition_count: number | null;
             /** Format: uuid */
             current_owner_id: string | null;
+            firing_condition_count: number | null;
             /** Format: uuid */
             id: string;
             initial_context: {
@@ -9172,7 +9170,6 @@ export interface operations {
                 after?: string;
                 query?: string;
                 status?: "running" | "needs_attention" | "resolved" | "cancelled";
-                alert_state?: "firing" | "recovered" | "not_applicable";
                 sort?: "updated_desc" | "updated_asc" | "severity_desc";
             };
             header?: never;

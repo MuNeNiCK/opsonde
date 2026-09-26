@@ -58,8 +58,6 @@ defmodule Opsonde.Cases.Case do
       argument :status, :atom,
         constraints: [one_of: [:running, :needs_attention, :resolved, :cancelled]]
 
-      argument :alert_state, :atom, constraints: [one_of: [:firing, :recovered, :not_applicable]]
-
       argument :sort, :atom,
         allow_nil?: false,
         default: :updated_desc,
@@ -68,8 +66,7 @@ defmodule Opsonde.Cases.Case do
       filter expr(
                (is_nil(^arg(:query)) or contains(title, ^arg(:query)) or
                   contains(source, ^arg(:query)) or contains(source_ref, ^arg(:query))) and
-                 (is_nil(^arg(:status)) or status == ^arg(:status)) and
-                 (is_nil(^arg(:alert_state)) or alert_state == ^arg(:alert_state))
+                 (is_nil(^arg(:status)) or status == ^arg(:status))
              )
 
       prepare Opsonde.Cases.Case.Preparations.Queue
@@ -100,8 +97,9 @@ defmodule Opsonde.Cases.Case do
 
     read :unresolved_signals_without_target do
       filter expr(
-               trigger_kind == :signal and alert_state == :firing and
-                 status in [:running, :needs_attention] and is_nil(selected_target_id)
+               trigger_kind == :signal and
+                 status in [:running, :needs_attention] and is_nil(selected_target_id) and
+                 exists(condition_memberships, is_nil(detached_at) and condition.state == :firing)
              )
 
       prepare build(sort: [inserted_at: :asc, id: :asc])
@@ -114,7 +112,6 @@ defmodule Opsonde.Cases.Case do
         :source_ref,
         :title,
         :severity,
-        :alert_state,
         :report_language,
         :status,
         :initial_context,
@@ -157,7 +154,6 @@ defmodule Opsonde.Cases.Case do
         :max_no_progress_turns,
         :status,
         :cancel_requested,
-        :alert_state,
         :resolved_at,
         :stop_reason,
         :pending_intent,
@@ -196,10 +192,6 @@ defmodule Opsonde.Cases.Case do
       argument :severity, :atom,
         allow_nil?: false,
         constraints: [one_of: [:info, :warning, :error, :critical]]
-
-      argument :alert_state, :atom,
-        allow_nil?: false,
-        constraints: [one_of: [:firing, :not_applicable]]
 
       argument :report_language, :atom, constraints: [one_of: [:en, :ja]]
 
@@ -499,12 +491,6 @@ defmodule Opsonde.Cases.Case do
       constraints one_of: [:info, :warning, :error, :critical]
     end
 
-    attribute :alert_state, :atom do
-      allow_nil? false
-      public? true
-      constraints one_of: [:firing, :recovered, :not_applicable]
-    end
-
     attribute :report_language, :atom do
       allow_nil? false
       public? true
@@ -646,6 +632,7 @@ defmodule Opsonde.Cases.Case do
     end
 
     has_many :resolution_runs, Opsonde.Cases.ResolutionRun
+    has_many :condition_memberships, Opsonde.Cases.CaseConditionMembership
     has_many :events, Opsonde.Cases.CaseEvent
     has_many :reports, Opsonde.Reports.Report
   end
@@ -661,6 +648,16 @@ defmodule Opsonde.Cases.Case do
                   true -> 1
                 end
               )
+  end
+
+  aggregates do
+    count :condition_count, :condition_memberships do
+      filter expr(is_nil(detached_at))
+    end
+
+    count :firing_condition_count, :condition_memberships do
+      filter expr(is_nil(detached_at) and condition.state == :firing)
+    end
   end
 
   identities do

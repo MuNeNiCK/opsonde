@@ -132,6 +132,9 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     )
 
     [incident] = Cases.list_cases!(actor: context.admin)
+    listed = get_data!("/api/v1/cases", context.viewer_token)
+    assert [%{"id" => listed_id, "condition_count" => 2, "firing_condition_count" => 2}] = listed
+    assert listed_id == incident.id
     assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
@@ -190,6 +193,11 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     child_snapshot = get_data!("/api/v1/cases/#{child_id}", context.viewer_token)
     assert Enum.map(parent_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["api.service"]
     assert Enum.map(child_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["db.service"]
+
+    assert Enum.sort(
+             Enum.map(get_data!("/api/v1/cases", context.viewer_token), & &1["condition_count"])
+           ) == [1, 1]
+
     assert length(parent_snapshot["condition_history"]) == 2
     assert length(child_snapshot["condition_history"]) == 1
     assert Enum.any?(parent_snapshot["condition_history"], &(&1["detached_at"] != nil))
@@ -892,7 +900,6 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         "proposal-1",
         "Restart unhealthy service",
         :warning,
-        :not_applicable,
         %{},
         setup.target.id,
         :en,
@@ -1031,7 +1038,6 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
             "source_ref" => source_ref,
             "title" => "Investigate #{source_ref}",
             "severity" => severity,
-            "alert_state" => "not_applicable",
             "initial_context" => %{}
           }
         },

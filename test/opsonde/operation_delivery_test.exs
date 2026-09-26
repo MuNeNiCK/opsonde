@@ -393,10 +393,7 @@ defmodule Opsonde.OperationDeliveryTest do
     enable_signal_automation!(context.admin)
 
     {incident, run, proposal, signal_provider} =
-      authorized_proposal!("condition-before-send", context,
-        trigger_kind: :signal,
-        alert_state: :firing
-      )
+      authorized_proposal!("condition-before-send", context, trigger_kind: :signal)
 
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
     event_key = incident.initial_context["signal_event_key"]
@@ -664,7 +661,6 @@ defmodule Opsonde.OperationDeliveryTest do
     {incident, run, proposal, signal_provider} =
       authorized_proposal!("signal-multilingual-recovery", context,
         trigger_kind: :signal,
-        alert_state: :firing,
         additional_event_key: "operation-signal-multilingual-recovery:secondary"
       )
 
@@ -739,10 +735,7 @@ defmodule Opsonde.OperationDeliveryTest do
     enable_signal_automation!(context.admin)
 
     {incident, _run, proposal, signal_provider} =
-      authorized_proposal!("signal-recovery", context,
-        trigger_kind: :signal,
-        alert_state: :firing
-      )
+      authorized_proposal!("signal-recovery", context, trigger_kind: :signal)
 
     event_key = incident.initial_context["signal_event_key"]
 
@@ -788,7 +781,6 @@ defmodule Opsonde.OperationDeliveryTest do
     {incident, run, proposal, signal_provider} =
       authorized_proposal!("two-service-conditions", context,
         trigger_kind: :signal,
-        alert_state: :firing,
         additional_event_key: "operation-two-service-conditions:db",
         additional_subject: "db.service"
       )
@@ -906,7 +898,6 @@ defmodule Opsonde.OperationDeliveryTest do
     {incident, run, proposal, signal_provider} =
       authorized_proposal!("split-evidence-failure", context,
         trigger_kind: :signal,
-        alert_state: :firing,
         additional_event_key: "operation-split-evidence-failure:db",
         additional_subject: "db.service"
       )
@@ -992,10 +983,7 @@ defmodule Opsonde.OperationDeliveryTest do
     enable_signal_automation!(context.admin)
 
     {incident, run, proposal, signal_provider} =
-      authorized_proposal!("signal-wait-expired", context,
-        trigger_kind: :signal,
-        alert_state: :firing
-      )
+      authorized_proposal!("signal-wait-expired", context, trigger_kind: :signal)
 
     event_key = incident.initial_context["signal_event_key"]
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -1057,10 +1045,7 @@ defmodule Opsonde.OperationDeliveryTest do
     enable_signal_automation!(context.admin)
 
     {incident, _run, proposal, signal_provider} =
-      authorized_proposal!("signal-stale-recovery", context,
-        trigger_kind: :signal,
-        alert_state: :firing
-      )
+      authorized_proposal!("signal-stale-recovery", context, trigger_kind: :signal)
 
     event_key = incident.initial_context["signal_event_key"]
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -1317,10 +1302,7 @@ defmodule Opsonde.OperationDeliveryTest do
     enable_signal_automation!(context.admin)
 
     {incident, run, proposal, signal_provider} =
-      authorized_proposal!("resume-investigation", context,
-        trigger_kind: :signal,
-        alert_state: :firing
-      )
+      authorized_proposal!("resume-investigation", context, trigger_kind: :signal)
 
     event_key = incident.initial_context["signal_event_key"]
 
@@ -1564,7 +1546,6 @@ defmodule Opsonde.OperationDeliveryTest do
 
   defp authorized_proposal!(suffix, context, opts \\ []) do
     trigger_kind = Keyword.get(opts, :trigger_kind, :manual)
-    alert_state = Keyword.get(opts, :alert_state, :not_applicable)
     request_kind = Keyword.get(opts, :request_kind, :effect)
 
     {incident, signal_provider} =
@@ -1577,7 +1558,6 @@ defmodule Opsonde.OperationDeliveryTest do
            "operation-#{suffix}",
            "Operation #{suffix}",
            :warning,
-           alert_state,
            %{},
            context.target.id,
            :en,

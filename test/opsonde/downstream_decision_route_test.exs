@@ -209,15 +209,14 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     assert Cases.get_case!(conflict_case.id, authorize?: false).pending_intent == existing
   end
 
-  defp open_case!(source_ref, actor, alert_state \\ :not_applicable, trigger_kind \\ :manual) do
+  defp open_case!(source_ref, actor) do
     incident =
       Cases.open_case!(
-        trigger_kind,
+        :manual,
         "test",
         source_ref,
         "Case #{source_ref}",
         :warning,
-        alert_state,
         %{},
         nil,
         :en,

@@ -148,8 +148,7 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
                "objective" =>
                  "Investigate why monitoring still reports a fault after Target verification",
                "verification_attempt_id" => attempt.id,
-               "verification_evidence_id" => evidence.id,
-               "alert_state" => to_string(incident.alert_state)
+               "verification_evidence_id" => evidence.id
              },
              %{
                "action" => "review_post_verification_limit",

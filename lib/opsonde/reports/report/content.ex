@@ -12,7 +12,6 @@ defmodule Opsonde.Reports.Report.Content do
     :source_ref,
     :title,
     :severity,
-    :alert_state,
     :status,
     :initial_context,
     :initial_target_id,

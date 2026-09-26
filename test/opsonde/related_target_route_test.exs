@@ -386,7 +386,6 @@ defmodule Opsonde.RelatedTargetRouteTest do
         source_ref,
         "Investigate Linux I/O errors",
         :critical,
-        :not_applicable,
         %{"symptom" => "I/O errors are increasing"},
         target.id,
         :en,

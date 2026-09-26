@@ -103,7 +103,8 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         split_parent_id: nullable_uuid(),
         title: string(1, 200),
         severity: enum(~w(info warning error critical)),
-        alert_state: enum(~w(firing recovered not_applicable)),
+        condition_count: nullable_non_negative_integer(),
+        firing_condition_count: nullable_non_negative_integer(),
         report_language: enum(~w(en ja)),
         status: enum(~w(running needs_attention resolved cancelled)),
         operator_action: enum(~w(none decision_required input_required intervention_required)),
@@ -124,7 +125,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref split_parent_id title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref split_parent_id title severity condition_count firing_condition_count report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end
@@ -133,12 +134,11 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     wrapped(
       :case,
       %{
-        trigger_kind: enum(~w(manual signal audit)),
+        trigger_kind: enum(~w(manual audit)),
         source: string(1, 120),
         source_ref: string(1, 500),
         title: string(1, 200),
         severity: enum(~w(info warning error critical)),
-        alert_state: enum(~w(firing not_applicable)),
         initial_context: map(),
         initial_target_id: nullable_uuid()
       },
@@ -573,6 +573,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
   defp positive_integer, do: %Schema{type: :integer, minimum: 1}
   defp nullable_positive_integer, do: %Schema{type: :integer, minimum: 1, nullable: true}
   defp non_negative_integer, do: %Schema{type: :integer, minimum: 0}
+  defp nullable_non_negative_integer, do: %Schema{type: :integer, minimum: 0, nullable: true}
   defp map, do: %Schema{type: :object, additionalProperties: true}
   defp nullable_map, do: %Schema{type: :object, additionalProperties: true, nullable: true}
   defp nullable_uuid, do: %Schema{type: :string, format: :uuid, nullable: true}
