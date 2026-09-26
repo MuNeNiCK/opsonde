@@ -924,6 +924,7 @@ const en = {
       chooseProviderDescription:
         "Select a platform or generic access method, then enter only the settings it needs.",
       choiceLinux: "Manage a Linux host through an authorized SSH connection.",
+      choicePhysicalHost: "Manage a physical host through its Redfish or IPMI BMC connection.",
       choiceCisco: "Manage Cisco IOS XE using SSH/CLI, NETCONF, or RESTCONF.",
       choiceKubernetes: "Manage a Kubernetes cluster through its API and kubeconfig.",
       choiceGeneric: "Register an SSH path for infrastructure without a dedicated adapter.",
@@ -977,6 +978,12 @@ const en = {
         "Select the infrastructure type, then register its identity and management boundary.",
       backToTargetTypes: "Back to Target types",
       targetChoiceLinux: "Register a Linux host as an independently managed Target.",
+      targetChoicePhysicalHost: "Register a physical host for out-of-band power management.",
+      redfishSystemPath: "Redfish System path",
+      redfishSystemUuid: "Expected System UUID",
+      allowPowerControl: "Allow power control through this connection",
+      connectionSavedCheckFailed:
+        "Connection saved, but the check failed. Review its diagnostics below.",
       targetChoiceCisco: "Register a Cisco IOS XE network device as a Target.",
       targetChoiceKubernetes: "Register a Kubernetes cluster as a platform Target.",
       targetChoiceGeneric: "Register infrastructure that does not have a dedicated Target type.",

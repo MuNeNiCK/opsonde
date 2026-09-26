@@ -31,13 +31,19 @@ export function TargetDetailActions({
   const { t } = useTranslation();
   const [action, setAction] = useState<Action | null>(initialAction ?? null);
   const [pending, setPending] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [accessEndpoint, setAccessEndpoint] = useState("");
+  const physicalHost = target.kind === "physical_host" && target.platform === "bare_metal";
   const enabledProviders = providers.filter(
     (provider) =>
       provider.kind === "target" &&
       provider.enabled &&
       provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision,
+      provider.check.checked_revision === provider.revision &&
+      (!provider.adapter_type.startsWith("bmc-") || physicalHost),
   );
+  const selectedProvider = enabledProviders.find((provider) => provider.id === selectedProviderId);
+  const selectedIsBMC = selectedProvider?.adapter_type.startsWith("bmc-") ?? false;
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -73,22 +79,27 @@ export function TargetDetailActions({
           (operation) => operation.capability,
         ),
       ),
+    ).filter(
+      (capability) =>
+        !selectedIsBMC || capability !== "effect.power" || form.has("allow_power_control"),
     );
-    return apiClient.POST("/api/v1/access-methods", {
-      body: {
-        access_method: {
-          target_id: target.id,
-          provider_id: provider.id,
-          name: value(form, "name"),
-          platform: adapter.platform,
-          method: adapter.method,
-          endpoint: value(form, "endpoint"),
-          provider_revision: provider.revision,
-          priority: Number(value(form, "priority")),
-          capabilities,
+    return apiData(
+      await apiClient.POST("/api/v1/access-methods", {
+        body: {
+          access_method: {
+            target_id: target.id,
+            provider_id: provider.id,
+            name: value(form, "name"),
+            platform: adapter.platform,
+            method: adapter.method,
+            endpoint: value(form, "endpoint"),
+            provider_revision: provider.revision,
+            priority: Number(value(form, "priority")),
+            capabilities,
+          },
         },
-      },
-    });
+      }),
+    );
   }
 
   if (!action) {
@@ -162,23 +173,45 @@ export function TargetDetailActions({
             className="grid gap-4 md:grid-cols-2"
             onSubmit={(event) => void submit(event, createAccessMethod)}
           >
-            <LabeledSelect
-              label={t("targets.connection")}
-              name="provider_id"
-              required
-              placeholder={t("targets.chooseConnection")}
-              options={enabledProviders.map((provider) => ({
-                value: provider.id,
-                label: `${provider.name} · ${provider.adapter_type}`,
-              }))}
-            />
+            <div className="space-y-2">
+              <Label htmlFor="target-action-provider_id">{t("targets.connection")}</Label>
+              <FormSelect
+                id="target-action-provider_id"
+                name="provider_id"
+                required
+                placeholder={t("targets.chooseConnection")}
+                value={selectedProviderId}
+                onValueChange={(id) => {
+                  setSelectedProviderId(id ?? "");
+                  const provider = enabledProviders.find((item) => item.id === id);
+                  setAccessEndpoint(
+                    typeof provider?.configuration.endpoint === "string"
+                      ? provider.configuration.endpoint
+                      : "",
+                  );
+                }}
+                options={enabledProviders.map((provider) => ({
+                  value: provider.id,
+                  label: `${provider.name} · ${provider.adapter_type}`,
+                }))}
+              />
+            </div>
             <Field label={t("targets.name")} name="name" required />
             <Field
               label={t("targets.endpoint")}
               name="endpoint"
-              placeholder="ssh://host:22"
+              placeholder={selectedIsBMC ? "" : "ssh://host:22"}
+              value={accessEndpoint}
+              onChange={(event) => setAccessEndpoint(event.target.value)}
+              readOnly={selectedIsBMC}
               required
             />
+            {selectedIsBMC && (
+              <label className="flex items-center gap-2 text-sm md:col-span-2">
+                <input type="checkbox" name="allow_power_control" className="size-4" />
+                {t("targets.allowPowerControl")}
+              </label>
+            )}
             <Field
               label={t("targets.priority")}
               name="priority"

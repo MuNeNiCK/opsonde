@@ -2,6 +2,7 @@ defmodule Opsonde.Targets.Validations.TargetProvider do
   use Ash.Resource.Validation
 
   alias Opsonde.Providers
+  alias Opsonde.Targets.BMC.AccessBinding
 
   @impl true
   def init(opts), do: {:ok, opts}
@@ -17,8 +18,8 @@ defmodule Opsonde.Targets.Validations.TargetProvider do
            :target,
            authorize?: false
          ) do
-      {:ok, _provider} ->
-        :ok
+      {:ok, provider} ->
+        AccessBinding.validate(changeset, provider)
 
       {:error, _error} ->
         {:error,

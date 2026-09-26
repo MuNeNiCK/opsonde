@@ -16,6 +16,7 @@ export function TargetConnectionsPage() {
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
   const [error, setError] = useState("");
   const success = (location.state as { created?: string } | null)?.created === "target";
+  const checkFailed = (location.state as { checkFailed?: boolean } | null)?.checkFailed === true;
   const canManage = account?.role === "admin";
   const refresh = useCallback(async () => setSnapshot(await loadTargetSnapshot()), []);
 
@@ -63,9 +64,11 @@ export function TargetConnectionsPage() {
         </Alert>
       )}
       {success && (
-        <Alert>
+        <Alert variant={checkFailed ? "destructive" : "default"}>
           <Plus />
-          <AlertDescription>{t("targets.connectionCreated")}</AlertDescription>
+          <AlertDescription>
+            {t(checkFailed ? "targets.connectionSavedCheckFailed" : "targets.connectionCreated")}
+          </AlertDescription>
         </Alert>
       )}
       {!canManage && (

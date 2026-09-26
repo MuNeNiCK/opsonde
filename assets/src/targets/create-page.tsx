@@ -24,6 +24,13 @@ const targetChoices = {
     icon: Server,
     description: "targets.targetChoiceLinux",
   },
+  "physical-host": {
+    title: "Physical host",
+    kind: "physical_host",
+    platform: "bare_metal",
+    icon: Server,
+    description: "targets.targetChoicePhysicalHost",
+  },
   "cisco-ios-xe": {
     title: "Cisco IOS XE",
     kind: "network_device",

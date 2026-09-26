@@ -1,6 +1,20 @@
 export const targetAdapterOptions = [
   { type: "linux-ssh", label: "Linux SSH", platform: "linux", method: "ssh", family: "ssh" },
   {
+    type: "bmc-redfish",
+    label: "Redfish",
+    platform: "bare_metal",
+    method: "redfish",
+    family: "bmc-redfish",
+  },
+  {
+    type: "bmc-ipmi",
+    label: "IPMI (RMCP+)",
+    platform: "bare_metal",
+    method: "ipmi",
+    family: "bmc-ipmi",
+  },
+  {
     type: "kubernetes-api",
     label: "Kubernetes API",
     platform: "kubernetes",
@@ -42,6 +56,7 @@ export function targetAdapter(type: string) {
 }
 
 export const targetProviderChoices = [
+  { id: "physical-host", adapterTypes: ["bmc-redfish", "bmc-ipmi"] },
   { id: "linux", adapterTypes: ["linux-ssh"] },
   {
     id: "cisco-ios-xe",

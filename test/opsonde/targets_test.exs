@@ -324,6 +324,68 @@ defmodule Opsonde.TargetsTest do
     assert Exception.message(error) =~ "must differ"
   end
 
+  test "BMC Access Methods bind their checked Provider to a physical host", context do
+    physical = create_target!(context.admin, "rack-host-01", "physical_host", "bare_metal")
+    virtual = create_target!(context.admin, "vm-01", "virtual_machine", "linux")
+
+    for {adapter_type, method, endpoint} <- [
+          {"bmc-redfish", "redfish", "https://bmc.example.test:8443"},
+          {"bmc-ipmi", "ipmi", "ipmi://bmc.example.test:623"}
+        ] do
+      provider =
+        Providers.create_provider!(
+          "#{adapter_type}-provider",
+          :target,
+          adapter_type,
+          %{"endpoint" => endpoint},
+          %{"username" => "admin", "password" => "test-only"},
+          actor: context.admin
+        )
+
+      # Fixture: only the registration boundary is under test here; no BMC is contacted.
+      checked =
+        Providers.record_provider_check!(provider, provider.revision, :passed, nil, nil,
+          authorize?: false
+        )
+
+      enabled = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+
+      create = fn target_id, candidate_method, candidate_endpoint, capabilities ->
+        Targets.create_access_method(
+          target_id,
+          enabled.id,
+          "#{method}-management",
+          "bare_metal",
+          candidate_method,
+          candidate_endpoint,
+          enabled.revision,
+          100,
+          capabilities,
+          actor: context.admin
+        )
+      end
+
+      assert {:ok, registered} =
+               create.(physical.id, method, endpoint, ["observe.power", "effect.power"])
+
+      assert registered.target_id == physical.id
+      assert registered.endpoint == endpoint
+
+      for {target_id, candidate_method, candidate_endpoint, capabilities} <- [
+            {virtual.id, method, endpoint, ["observe.power"]},
+            {physical.id, "ssh", endpoint, ["observe.power"]},
+            {physical.id, method, "#{endpoint}/other", ["observe.power"]},
+            {physical.id, method, endpoint, ["effect.power"]},
+            {physical.id, method, endpoint, ["observe.power", "native.ssh"]}
+          ] do
+        assert {:error, error} =
+                 create.(target_id, candidate_method, candidate_endpoint, capabilities)
+
+        assert Exception.message(error) =~ "BMC Access Method must match"
+      end
+    end
+  end
+
   defp target_ids(%Targets.SearchResult{targets: targets}), do: Enum.map(targets, & &1.id)
 
   defp create_target!(admin, name, kind, platform, boundary_id \\ nil) do

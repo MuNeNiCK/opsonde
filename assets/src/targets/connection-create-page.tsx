@@ -17,6 +17,11 @@ import { targetAdapter, targetProviderChoice, targetProviderChoices } from "@/ta
 
 const presentations = {
   linux: { icon: Server, title: "Linux", description: "targets.choiceLinux" },
+  "physical-host": {
+    icon: Server,
+    title: "Physical host BMC",
+    description: "targets.choicePhysicalHost",
+  },
   "cisco-ios-xe": { icon: Network, title: "Cisco IOS XE", description: "targets.choiceCisco" },
   kubernetes: { icon: Boxes, title: "Kubernetes", description: "targets.choiceKubernetes" },
   generic: { icon: Cable, title: "Generic SSH", description: "targets.choiceGeneric" },
@@ -68,10 +73,10 @@ export function TargetConnectionCreatePage() {
         <TargetConnectionForm
           choice={choice}
           onError={setError}
-          onCreated={() =>
+          onCreated={(checkPassed) =>
             void navigate("/targets/connections", {
               replace: true,
-              state: { created: "target" },
+              state: { created: "target", checkFailed: !checkPassed },
             })
           }
         />
@@ -101,7 +106,7 @@ function TargetConnectionForm({
   onError,
 }: {
   choice: NonNullable<ReturnType<typeof targetProviderChoice>>;
-  onCreated: () => void;
+  onCreated: (checkPassed: boolean) => void;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
@@ -117,9 +122,12 @@ function TargetConnectionForm({
     setPending(true);
     onError("");
     try {
-      if (isNetBox) await createNetBox(form);
-      else if (adapter) await createTarget(form, adapter.family);
-      onCreated();
+      const checkPassed = isNetBox
+        ? await createNetBox(form)
+        : adapter
+          ? await createTarget(form, adapter.family)
+          : false;
+      onCreated(checkPassed);
     } catch {
       onError(t("targets.requestFailed"));
     } finally {
@@ -144,18 +152,28 @@ function TargetConnectionForm({
         },
       }),
     );
-    await apiClient.POST("/api/v1/providers/{id}/check", {
-      params: { path: { id: response.data.id } },
-      body: {
-        provider: {
-          expected_revision: response.data.revision,
-          check_input: { resource: value(form, "resource"), filters: {}, page_size: 50 },
-        },
-      },
-    });
+    try {
+      const checked = apiData(
+        await apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: response.data.id } },
+          body: {
+            provider: {
+              expected_revision: response.data.revision,
+              check_input: { resource: value(form, "resource"), filters: {}, page_size: 50 },
+            },
+          },
+        }),
+      );
+      return checked.data.check.status === "passed";
+    } catch {
+      return false;
+    }
   }
 
-  async function createTarget(form: FormData, family: "ssh" | "restconf" | "kubernetes") {
+  async function createTarget(
+    form: FormData,
+    family: "ssh" | "restconf" | "kubernetes" | "bmc-redfish" | "bmc-ipmi",
+  ) {
     const endpoint = value(form, "endpoint");
     let configuration: Record<string, unknown>;
     let credentials: Record<string, unknown>;
@@ -176,6 +194,17 @@ function TargetConnectionForm({
     } else if (family === "restconf") {
       configuration = { ca_certificate: value(form, "ca_certificate") };
       credentials = { username: value(form, "username"), password: value(form, "password") };
+    } else if (family === "bmc-redfish") {
+      configuration = {
+        endpoint,
+        system_path: value(form, "system_path"),
+        expected_uuid: value(form, "expected_uuid"),
+        ca_certificate: value(form, "ca_certificate"),
+      };
+      credentials = { username: value(form, "username"), password: value(form, "password") };
+    } else if (family === "bmc-ipmi") {
+      configuration = { endpoint };
+      credentials = { username: value(form, "username"), password: value(form, "password") };
     } else {
       configuration = { namespace: value(form, "namespace") };
       credentials = { kubeconfig: value(form, "kubeconfig") };
@@ -194,15 +223,22 @@ function TargetConnectionForm({
         },
       }),
     );
-    await apiClient.POST("/api/v1/providers/{id}/check", {
-      params: { path: { id: response.data.id } },
-      body: {
-        provider: {
-          expected_revision: response.data.revision,
-          check_input: { endpoint },
-        },
-      },
-    });
+    try {
+      const checked = apiData(
+        await apiClient.POST("/api/v1/providers/{id}/check", {
+          params: { path: { id: response.data.id } },
+          body: {
+            provider: {
+              expected_revision: response.data.revision,
+              check_input: { endpoint },
+            },
+          },
+        }),
+      );
+      return checked.data.check.status === "passed";
+    } catch {
+      return false;
+    }
   }
 
   return (
@@ -235,7 +271,13 @@ function TargetConnectionForm({
               <Field
                 label={t("targets.endpoint")}
                 name="endpoint"
-                placeholder={adapter?.family === "restconf" ? "https://host:443" : "ssh://host:22"}
+                placeholder={
+                  adapter?.family === "restconf" || adapter?.family === "bmc-redfish"
+                    ? "https://bmc.example.com:443"
+                    : adapter?.family === "bmc-ipmi"
+                      ? "ipmi://bmc.example.com:623"
+                      : "ssh://host:22"
+                }
                 required
               />
               {adapter?.family === "ssh" && (
@@ -246,6 +288,8 @@ function TargetConnectionForm({
                 />
               )}
               {adapter?.family === "restconf" && <RESTCONFFields />}
+              {adapter?.family === "bmc-redfish" && <RedfishFields />}
+              {adapter?.family === "bmc-ipmi" && <IPMIFields />}
               {adapter?.family === "kubernetes" && <KubernetesFields />}
             </>
           )}
@@ -337,6 +381,53 @@ function RESTCONFFields() {
         required
       />
       <Area label={t("targets.caCertificate")} name="ca_certificate" required />
+    </>
+  );
+}
+
+function RedfishFields() {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Field label={t("targets.username")} name="username" autoComplete="username" required />
+      <Field
+        label={t("targets.password")}
+        name="password"
+        type="password"
+        autoComplete="off"
+        required
+      />
+      <Field
+        label={t("targets.redfishSystemPath")}
+        name="system_path"
+        placeholder="/redfish/v1/Systems/1"
+        required
+      />
+      <Field label={t("targets.redfishSystemUuid")} name="expected_uuid" required />
+      <Area label={t("targets.caCertificate")} name="ca_certificate" required />
+    </>
+  );
+}
+
+function IPMIFields() {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Field
+        label={t("targets.username")}
+        name="username"
+        autoComplete="username"
+        maxLength={16}
+        required
+      />
+      <Field
+        label={t("targets.password")}
+        name="password"
+        type="password"
+        autoComplete="off"
+        maxLength={16}
+        required
+      />
     </>
   );
 }

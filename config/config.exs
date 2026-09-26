@@ -27,6 +27,9 @@ config :req_llm,
   stream_pool_count: 1,
   warn_unverified_models: false
 
+# A timed-out chassis command may already have taken effect. Never resend it.
+config :eipmi, retransmits: 0
+
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new
 # behavior and ensures a seamless upgrade. See the backwards compatibility
@@ -97,6 +100,8 @@ config :opsonde,
     Opsonde.Signals.Generic.Webhook,
     Opsonde.Signals.Zabbix.Webhook,
     Opsonde.Targets.Generic.SSH,
+    Opsonde.Targets.BMC.IPMI,
+    Opsonde.Targets.BMC.Redfish,
     Opsonde.Targets.IOSXE.NETCONF,
     Opsonde.Targets.IOSXE.RESTCONF,
     Opsonde.Targets.IOSXE.SSH,

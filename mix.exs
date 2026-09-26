@@ -61,6 +61,7 @@ defmodule Opsonde.MixProject do
       {:ash_state_machine, "~> 0.2.13"},
       {:req_llm, "~> 1.24"},
       {:req, "~> 0.7"},
+      {:eipmi, "~> 4.1.3"},
       {:saxy, "~> 1.6"},
       {:tzdata, "~> 1.1"},
       {:crontab, "~> 1.2"},

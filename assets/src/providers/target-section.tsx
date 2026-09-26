@@ -52,6 +52,9 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
             endpoint:
               checkInputs[provider.id] ||
               firstFingerprintEndpoint(provider) ||
+              (typeof provider.configuration.endpoint === "string"
+                ? provider.configuration.endpoint
+                : "") ||
               (typeof provider.configuration.base_url === "string"
                 ? provider.configuration.base_url
                 : ""),
@@ -130,7 +133,13 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                       <Input
                         aria-label={t("targets.checkEndpoint")}
                         placeholder={t("targets.checkEndpoint")}
-                        value={checkInputs[provider.id] ?? firstFingerprintEndpoint(provider)}
+                        value={
+                          checkInputs[provider.id] ??
+                          (firstFingerprintEndpoint(provider) ||
+                            (typeof provider.configuration.endpoint === "string"
+                              ? provider.configuration.endpoint
+                              : ""))
+                        }
                         onChange={(event) =>
                           setCheckInputs((current) => ({
                             ...current,

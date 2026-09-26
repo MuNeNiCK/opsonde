@@ -903,6 +903,7 @@ const ja = {
       chooseProviderDescription:
         "Platformまたは汎用の接続方式を選択し、必要な設定だけを入力します。",
       choiceLinux: "許可したSSH接続を通じてLinuxホストを管理します。",
+      choicePhysicalHost: "物理ホストのBMCへRedfishまたはIPMIで接続します。",
       choiceCisco: "SSH/CLI、NETCONF、RESTCONFから選択してCisco IOS XEを管理します。",
       choiceKubernetes: "APIとkubeconfigを通じてKubernetesクラスタを管理します。",
       choiceGeneric: "専用Adapterがないインフラ向けにSSH接続を登録します。",
@@ -953,6 +954,12 @@ const ja = {
       chooseTargetTypeDescription: "インフラ種別を選択し、その識別情報と管理境界を登録します。",
       backToTargetTypes: "Target種別選択へ戻る",
       targetChoiceLinux: "Linuxホストを独立して管理するTargetとして登録します。",
+      targetChoicePhysicalHost: "帯域外の電源管理に使う物理ホストを登録します。",
+      redfishSystemPath: "Redfish Systemパス",
+      redfishSystemUuid: "照合するSystem UUID",
+      allowPowerControl: "この接続で電源操作を許可する",
+      connectionSavedCheckFailed:
+        "接続は保存されましたが、確認に失敗しました。下の診断情報を確認してください。",
       targetChoiceCisco: "Cisco IOS XEネットワーク機器をTargetとして登録します。",
       targetChoiceKubernetes: "KubernetesクラスタをPlatform Targetとして登録します。",
       targetChoiceGeneric: "専用のTarget種別がないインフラを登録します。",
