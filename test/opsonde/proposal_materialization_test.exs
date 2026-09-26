@@ -154,7 +154,7 @@ defmodule Opsonde.ProposalMaterializationTest do
           "required" => ["selectors", "parameters"],
           "additionalProperties" => false
         },
-        %{"type" => "object"},
+        %{"type" => "object", "additionalProperties" => false},
         nil,
         %{
           secret_bindings: %{"/Password" => %{"id" => secret.id, "revision" => secret.revision}},

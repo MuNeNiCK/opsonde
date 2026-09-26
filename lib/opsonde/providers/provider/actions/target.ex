@@ -285,6 +285,8 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
       nonempty_binary?(request.authorization_digest) and bounded_map?(request.selectors) and
       (is_nil(request.protocol_request) or bounded_map?(request.protocol_request)) and
+      (not Map.has_key?(request, :output_schema) or is_nil(request.output_schema) or
+         bounded_map?(request.output_schema)) and
       bounded_map?(request.secret_values) and
       (not Map.has_key?(request, :parameters) or bounded_map?(request.parameters))
   end

@@ -222,6 +222,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
         selectors: clearance.selectors,
         parameters: parameters,
         protocol_request: protocol_request(definition),
+        output_schema: output_schema(definition),
         secret_values: secret_values,
         max_attempts: clearance.max_attempts
       }
@@ -250,6 +251,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
         selectors: clearance.selectors,
         parameters: parameters,
         protocol_request: protocol_request(definition),
+        output_schema: output_schema(definition),
         secret_values: secret_values,
         operation_id: clearance.operation_id,
         idempotency_key: clearance.idempotency_key
@@ -293,6 +295,9 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
 
   defp protocol_request(nil), do: nil
   defp protocol_request(definition), do: definition.protocol_request
+
+  defp output_schema(nil), do: nil
+  defp output_schema(definition), do: definition.output_schema
 
   defp dispatch_parameters(nil, parameters, _method_id), do: {:ok, parameters, %{}}
 

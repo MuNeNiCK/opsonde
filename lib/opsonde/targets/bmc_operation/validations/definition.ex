@@ -19,6 +19,7 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
     secret_bindings = Ash.Changeset.get_attribute(changeset, :secret_bindings)
     parameter_classes = Ash.Changeset.get_attribute(changeset, :parameter_classes)
     input_schema = Ash.Changeset.get_attribute(changeset, :input_schema)
+    output_schema = Ash.Changeset.get_attribute(changeset, :output_schema)
 
     with {:ok, method} <- CurrentAccessMethod.get(method_id),
          :ok <- valid_request(method.method, kind, protocol_request),
@@ -29,6 +30,8 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
          true <- secret_pointers_hidden?(input_schema, secret_bindings),
          true <- classified_parameters?(input_schema, secret_bindings, parameter_classes),
          :ok <- valid_schema(changeset, :output_schema),
+         true <- closed_object?(output_schema),
+         true <- secret_output_safe?(output_schema, secret_bindings),
          :ok <- optional_schema(changeset, :verification_schema) do
       :ok
     else
@@ -122,15 +125,31 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
   defp valid_selectors?(schema, _method, _kind),
     do: Map.get(schema, "properties", %{}) == %{}
 
+  defp secret_output_safe?(_schema, bindings) when bindings == %{}, do: true
+
+  defp secret_output_safe?(schema, _bindings),
+    do: Map.get(schema, "properties", %{}) == %{}
+
   defp closed_object?(%{"type" => "object"} = schema) do
     properties = Map.get(schema, "properties", %{})
 
     schema["additionalProperties"] == false and is_map(properties) and
+      valid_required_keys?(schema, properties) and
       Enum.all?(@dynamic_object_keywords, &(not Map.has_key?(schema, &1))) and
       Enum.all?(properties, fn {_name, child} -> closed_child?(child) end)
   end
 
   defp closed_object?(_schema), do: false
+
+  defp valid_required_keys?(schema, properties) do
+    case Map.get(schema, "required", []) do
+      required when is_list(required) ->
+        Enum.all?(required, &(is_binary(&1) and Map.has_key?(properties, &1)))
+
+      _ ->
+        false
+    end
+  end
 
   defp closed_child?(%{"type" => "object"} = schema), do: closed_object?(schema)
   defp closed_child?(%{"type" => "array", "items" => items}), do: closed_child?(items)

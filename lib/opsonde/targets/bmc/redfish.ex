@@ -6,6 +6,7 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.BMC
+  alias Opsonde.Targets.BMC.OutputProjection
   alias Opsonde.Targets.BMC.Redfish.ResourceURI
 
   @reset_types %{
@@ -146,16 +147,13 @@ defmodule Opsonde.Targets.BMC.Redfish do
            }}
 
         {:ok, 202, headers, _body} ->
-          task_location =
-            List.first(Req.Response.get_header(%Req.Response{headers: headers}, "location"))
-
           {:ok,
            %Target.EffectResult{
              status: :unknown,
              reference: intent.operation,
              details:
                %{"reason" => "Redfish task was accepted but is not complete"}
-               |> maybe_task_location(safe_task_location(state, task_location))
+               |> maybe_task_location(response_task_location(state, headers))
            }}
 
         {:error, :transport, _message} ->
@@ -204,9 +202,8 @@ defmodule Opsonde.Targets.BMC.Redfish do
     with {:ok, method, path} <- api_request(state, request, @api_read_methods),
          :ok <- not_cancelled(invocation),
          {:ok, _system} <- system(state),
-         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
-      facts = sanitize_response(body)
-
+         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation),
+         {:ok, facts} <- public_response(body, request) do
       evidence =
         %{
           "source" => "redfish",
@@ -224,7 +221,11 @@ defmodule Opsonde.Targets.BMC.Redfish do
          evidence: [evidence]
        }}
     else
-      {:error, category, message} -> read_error(category, message)
+      {:error, :invalid_output} ->
+        {:error, :failed, "Redfish response does not match registered output schema"}
+
+      {:error, category, message} ->
+        read_error(category, message)
     end
   end
 
@@ -238,14 +239,10 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
       case request(state, method, path, body, conditional_headers) do
         {:ok, 202, headers, reply} ->
-          location =
-            headers
-            |> then(&Req.Response.get_header(%Req.Response{headers: &1}, "location"))
-            |> List.first()
-
           details =
-            %{"http_status" => 202, "response" => sanitize_response(reply)}
-            |> maybe_task_location(safe_task_location(state, location))
+            %{"http_status" => 202}
+            |> Map.merge(public_response_details(reply, request))
+            |> maybe_task_location(response_task_location(state, headers))
 
           {:ok,
            %Target.EffectResult{status: :unknown, reference: request.operation, details: details}}
@@ -255,7 +252,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
            %Target.EffectResult{
              status: :applied,
              reference: request.operation,
-             details: %{"http_status" => status, "response" => sanitize_response(reply)}
+             details:
+               %{"http_status" => status}
+               |> Map.merge(public_response_details(reply, request))
            }}
 
         {:ok, status, _headers, _reply} ->
@@ -389,14 +388,46 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
   defp valid_etag?(_etag), do: false
 
-  defp safe_task_location(_state, nil), do: nil
+  defp public_response(body, request) do
+    secret_bound? = map_size(request.secret_values) > 0
+    value = if secret_bound?, do: body, else: sanitize_response(body)
+    OutputProjection.project(value, request.output_schema, secret_bound?)
+  end
 
-  defp safe_task_location(state, location) do
-    case resource_path(state, location) do
-      {:ok, path} -> path
+  defp public_response_details(body, request) do
+    case public_response(body, request) do
+      {:ok, projected} when map_size(projected) > 0 -> %{"response" => projected}
+      {:ok, _empty} -> %{}
+      {:error, _reason} -> %{"response_unavailable" => true}
+    end
+  end
+
+  defp response_task_location(state, headers) do
+    case Req.Response.get_header(%Req.Response{headers: headers}, "location") do
+      [location] -> safe_task_location(state, location)
       _ -> nil
     end
   end
+
+  defp safe_task_location(state, location) do
+    case resource_path(state, location) do
+      {:ok, path} ->
+        if Regex.match?(
+             ~r{\A/redfish/v1/TaskService/(?:TaskMonitors|Tasks)/[A-Za-z0-9._~-]+\z},
+             path
+           ),
+           do: path,
+           else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  defp maybe_task_location(details, location) when is_binary(location),
+    do: Map.put(details, "task_location", location)
+
+  defp maybe_task_location(details, _location), do: details
 
   defp sanitize_response(value), do: sanitize_response(value, 0)
 
@@ -488,11 +519,6 @@ defmodule Opsonde.Targets.BMC.Redfish do
   end
 
   defp resource_path(_state, _target), do: {:error, :failed, "Redfish resource URI is invalid"}
-
-  defp maybe_task_location(details, location) when is_binary(location),
-    do: Map.put(details, "task_location", location)
-
-  defp maybe_task_location(details, _location), do: details
 
   defp power_state(%{"PowerState" => "On"}), do: {:ok, "on"}
   defp power_state(%{"PowerState" => "Off"}), do: {:ok, "off"}

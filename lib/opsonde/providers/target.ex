@@ -70,6 +70,7 @@ defmodule Opsonde.Providers.Target do
                   selectors: %{},
                   parameters: %{},
                   protocol_request: nil,
+                  output_schema: nil,
                   secret_values: %{},
                   max_attempts: 1,
                   authority_mode: nil
@@ -107,6 +108,7 @@ defmodule Opsonde.Providers.Target do
                   selectors: %{},
                   parameters: %{},
                   protocol_request: nil,
+                  output_schema: nil,
                   secret_values: %{},
                   authority_mode: nil
                 ]

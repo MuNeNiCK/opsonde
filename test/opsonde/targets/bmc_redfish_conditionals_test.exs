@@ -98,6 +98,41 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       json(conn, 200, %{"Value" => String.duplicate("x", 70_000)})
     end
 
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Visible"} = conn, _agent) do
+      json(conn, 200, %{
+        "Result" => "safe",
+        "hidden" => "private-value",
+        "Nested" => %{"Public" => "visible", "Private" => "private-value"}
+      })
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Wrong"} = conn, _agent) do
+      json(conn, 200, %{"Result" => %{"unexpected" => "object"}})
+    end
+
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Echo"} = conn, agent) do
+      {:ok, body, conn} = read_body(conn)
+      %{"Password" => secret} = Jason.decode!(body)
+      Agent.update(agent, &Map.update!(&1, :echo_calls, fn count -> count + 1 end))
+      json(conn, 200, %{"Result" => Base.encode64(secret), "Message" => "changed"})
+    end
+
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Plain"} = conn, _agent) do
+      json(conn, 200, %{"Result" => "done", "hidden" => "private-value"})
+    end
+
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Async"} = conn, _agent) do
+      conn
+      |> put_resp_header("location", "/redfish/v1/TaskService/TaskMonitors/1?token=private-value")
+      |> json(202, %{"Message" => "accepted"})
+    end
+
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/AsyncSafe"} = conn, _agent) do
+      conn
+      |> put_resp_header("location", "/redfish/v1/TaskService/TaskMonitors/2")
+      |> json(202, %{"Message" => "accepted"})
+    end
+
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Malformed"} = conn, _agent),
       do: send_resp(conn, 200, "[")
 
@@ -117,7 +152,10 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
   end
 
   setup do
-    agent = start_supervised!({Agent, fn -> %{revision: 1, name: "original", writes: 0} end})
+    agent =
+      start_supervised!(
+        {Agent, fn -> %{revision: 1, name: "original", writes: 0, echo_calls: 0} end}
+      )
 
     server =
       start_supervised!(
@@ -217,7 +255,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         :observation,
         %{"method" => "GET", "uri" => @system_path},
         read_schema,
-        %{"type" => "object"},
+        %{
+          "type" => "object",
+          "properties" => %{"Name" => %{"type" => "string"}},
+          "additionalProperties" => false
+        },
         nil,
         actor: admin
       )
@@ -230,7 +272,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         :effect,
         %{"method" => "PATCH", "uri" => @system_path},
         write_schema,
-        %{"type" => "object"},
+        %{"type" => "object", "additionalProperties" => false},
         nil,
         %{parameter_classes: %{"/Name" => "public"}},
         actor: admin
@@ -343,6 +385,195 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.writes) == 0
   end
 
+  test "closed output exposes approved fields and suppresses secret-bound replies", context do
+    empty_input =
+      input_schema(
+        %{"type" => "object", "additionalProperties" => false},
+        %{"type" => "object", "additionalProperties" => false}
+      )
+
+    visible_output = %{
+      "type" => "object",
+      "properties" => %{
+        "Result" => %{"type" => "string"},
+        "Nested" => %{
+          "type" => "object",
+          "properties" => %{"Public" => %{"type" => "string"}},
+          "additionalProperties" => false
+        }
+      },
+      "additionalProperties" => false
+    }
+
+    visible =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Visible OEM output",
+        "Select public fields",
+        :observation,
+        %{"method" => "GET", "uri" => "/redfish/v1/Oem/Visible"},
+        empty_input,
+        visible_output,
+        nil,
+        actor: context.admin
+      )
+
+    visible_clearance =
+      Targets.clear_target_request!(request(context, visible, :observation),
+        actor: context.operator
+      )
+
+    result =
+      Targets.dispatch_target_observation!(visible_clearance, %{},
+        actor: context.operator,
+        authorize?: false
+      )
+
+    assert result.facts == %{"Result" => "safe", "Nested" => %{"Public" => "visible"}}
+    refute inspect(result) =~ "private-value"
+
+    wrong =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Wrong OEM output",
+        "Reject wrong type",
+        :observation,
+        %{"method" => "GET", "uri" => "/redfish/v1/Oem/Wrong"},
+        empty_input,
+        visible_output,
+        nil,
+        actor: context.admin
+      )
+
+    wrong_clearance =
+      Targets.clear_target_request!(request(context, wrong, :observation),
+        actor: context.operator
+      )
+
+    assert {:error, _} =
+             Targets.dispatch_target_observation(wrong_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    secret_value = "bound-test-only-secret"
+
+    secret =
+      Targets.create_bmc_secret!(context.method.id, "echo-test", secret_value,
+        actor: context.admin
+      )
+
+    echo =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Echo effect",
+        "Bound secret echo proof",
+        :effect,
+        %{"method" => "POST", "uri" => "/redfish/v1/Oem/Echo"},
+        empty_input,
+        %{"type" => "object", "additionalProperties" => false},
+        nil,
+        %{
+          secret_bindings: %{"/Password" => %{"id" => secret.id, "revision" => secret.revision}},
+          parameter_classes: %{"/Password" => "secret"}
+        },
+        actor: context.admin
+      )
+
+    echo_clearance =
+      Targets.clear_target_request!(request(context, echo, :effect), actor: context.operator)
+
+    assert {:ok, %{status: :applied, details: details}} =
+             Targets.dispatch_target_effect(echo_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert details == %{"http_status" => 200}
+    assert Agent.get(context.agent, & &1.echo_calls) == 1
+    refute inspect(details) =~ Base.encode64(secret_value)
+
+    plain =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Plain effect",
+        "Approved effect output proof",
+        :effect,
+        %{"method" => "POST", "uri" => "/redfish/v1/Oem/Plain"},
+        empty_input,
+        %{
+          "type" => "object",
+          "properties" => %{"Result" => %{"type" => "string"}},
+          "additionalProperties" => false
+        },
+        nil,
+        actor: context.admin
+      )
+
+    plain_clearance =
+      Targets.clear_target_request!(request(context, plain, :effect), actor: context.operator)
+
+    assert {:ok, %{status: :applied, details: plain_details}} =
+             Targets.dispatch_target_effect(plain_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert plain_details == %{"http_status" => 200, "response" => %{"Result" => "done"}}
+    refute inspect(plain_details) =~ "private-value"
+
+    async =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Async effect",
+        "Task reference proof",
+        :effect,
+        %{"method" => "POST", "uri" => "/redfish/v1/Oem/Async"},
+        empty_input,
+        %{"type" => "object", "additionalProperties" => false},
+        nil,
+        actor: context.admin
+      )
+
+    async_clearance =
+      Targets.clear_target_request!(request(context, async, :effect), actor: context.operator)
+
+    assert {:ok, %{status: :unknown, details: async_details}} =
+             Targets.dispatch_target_effect(async_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert async_details == %{"http_status" => 202}
+    refute inspect(async_details) =~ "private-value"
+
+    async_safe =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Async safe effect",
+        "Safe task reference proof",
+        :effect,
+        %{"method" => "POST", "uri" => "/redfish/v1/Oem/AsyncSafe"},
+        empty_input,
+        %{"type" => "object", "additionalProperties" => false},
+        nil,
+        actor: context.admin
+      )
+
+    safe_clearance =
+      Targets.clear_target_request!(request(context, async_safe, :effect),
+        actor: context.operator
+      )
+
+    assert {:ok, %{status: :unknown, details: safe_details}} =
+             Targets.dispatch_target_effect(safe_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert safe_details["task_location"] == "/redfish/v1/TaskService/TaskMonitors/2"
+  end
+
   defp read_oem(context, path) do
     definition =
       Targets.create_bmc_operation!(
@@ -355,7 +586,20 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
           %{"type" => "object", "additionalProperties" => false},
           %{"type" => "object", "additionalProperties" => false}
         ),
-        %{"type" => "object"},
+        %{
+          "type" => "object",
+          "properties" => %{
+            "Members" => %{
+              "type" => "array",
+              "items" => %{
+                "type" => "object",
+                "properties" => %{"Id" => %{"type" => "string"}},
+                "additionalProperties" => false
+              }
+            }
+          },
+          "additionalProperties" => false
+        },
         nil,
         actor: context.admin
       )

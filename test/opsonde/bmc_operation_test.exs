@@ -16,7 +16,7 @@ defmodule Opsonde.BMCOperationTest do
     "required" => ["selectors", "parameters"],
     "additionalProperties" => false
   }
-  @output_schema %{"type" => "object", "additionalProperties" => true}
+  @output_schema %{"type" => "object", "additionalProperties" => false}
 
   setup do
     admin = Accounts.bootstrap!("bmc-admin@example.com", @password, @password, authorize?: true)
@@ -142,6 +142,19 @@ defmodule Opsonde.BMCOperationTest do
     assert {:error, _error} =
              Targets.create_bmc_operation(
                context.redfish.id,
+               "Open output",
+               "Reject unclassified response fields",
+               :observation,
+               %{"method" => "GET", "uri" => "/redfish/v1/Chassis"},
+               @input_schema,
+               %{"type" => "object", "additionalProperties" => true},
+               nil,
+               actor: context.admin
+             )
+
+    assert {:error, _error} =
+             Targets.create_bmc_operation(
+               context.redfish.id,
                "Open effect input",
                "Reject arbitrary effect fields",
                :effect,
@@ -261,6 +274,24 @@ defmodule Opsonde.BMCOperationTest do
     bindings = %{
       "/Password" => %{"id" => secret.id, "revision" => secret.revision}
     }
+
+    assert {:error, _error} =
+             Targets.create_bmc_operation(
+               context.redfish.id,
+               "Secret output",
+               "Reject a response body for a secret-bound operation",
+               :effect,
+               %{"method" => "PATCH", "uri" => "/redfish/v1/Managers/1/Accounts/1"},
+               @input_schema,
+               %{
+                 "type" => "object",
+                 "properties" => %{"Result" => %{"type" => "string"}},
+                 "additionalProperties" => false
+               },
+               nil,
+               %{secret_bindings: bindings, parameter_classes: %{"/Password" => "secret"}},
+               actor: context.admin
+             )
 
     other_method_secret =
       Targets.create_bmc_secret!(context.ipmi.id, "other-method-password", value,

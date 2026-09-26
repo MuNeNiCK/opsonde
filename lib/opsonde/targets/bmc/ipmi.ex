@@ -7,6 +7,7 @@ defmodule Opsonde.Targets.BMC.IPMI do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.BMC
   alias Opsonde.Targets.BMC.IPMINative
+  alias Opsonde.Targets.BMC.OutputProjection
 
   @max_data_bytes 2048
 
@@ -165,19 +166,32 @@ defmodule Opsonde.Targets.BMC.IPMI do
         %{"completion_code" => completion, "accepted" => completion == 0}
         |> maybe_response(response, map_size(request.secret_values) > 0)
 
-      {:ok,
-       %Target.Observation{
-         facts: facts,
-         observed_at: DateTime.utc_now(),
-         evidence: [
-           %{
-             "source" => "ipmi",
-             "netfn" => netfn,
-             "command" => opcode,
-             "completion_code" => completion
-           }
-         ]
-       }}
+      with {:ok, visible} <-
+             OutputProjection.project(
+               facts,
+               request.output_schema,
+               map_size(request.secret_values) > 0
+             ) do
+        {:ok,
+         %Target.Observation{
+           facts:
+             facts
+             |> Map.take(["completion_code", "accepted", "response_redacted"])
+             |> Map.merge(visible),
+           observed_at: DateTime.utc_now(),
+           evidence: [
+             %{
+               "source" => "ipmi",
+               "netfn" => netfn,
+               "command" => opcode,
+               "completion_code" => completion
+             }
+           ]
+         }}
+      else
+        {:error, :invalid_output} ->
+          {:error, :failed, "IPMI response does not match registered output schema"}
+      end
     else
       {:error, category, message} -> read_error(category, message)
     end
@@ -188,9 +202,29 @@ defmodule Opsonde.Targets.BMC.IPMI do
          :ok <- not_cancelled(invocation) do
       case command(state, netfn, opcode, data) do
         {:ok, completion, response} ->
-          details =
+          raw_details =
             %{"netfn" => netfn, "command" => opcode, "completion_code" => completion}
             |> maybe_response(response, map_size(request.secret_values) > 0)
+
+          details =
+            case OutputProjection.project(
+                   raw_details,
+                   request.output_schema,
+                   map_size(request.secret_values) > 0
+                 ) do
+              {:ok, visible} ->
+                raw_details
+                |> Map.take(["netfn", "command", "completion_code", "response_redacted"])
+                |> Map.merge(visible)
+
+              {:error, :invalid_output} ->
+                %{
+                  "netfn" => netfn,
+                  "command" => opcode,
+                  "completion_code" => completion,
+                  "response_unavailable" => true
+                }
+            end
 
           {:ok,
            %Target.EffectResult{
