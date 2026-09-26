@@ -25,6 +25,7 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
          :ok <- valid_secret_bindings(method, secret_bindings),
          :ok <- valid_schema(changeset, :input_schema),
          true <- closed_input_schema?(input_schema),
+         true <- valid_ipmi_input?(method.method, input_schema, secret_bindings),
          true <- secret_pointers_hidden?(input_schema, secret_bindings),
          true <- classified_parameters?(input_schema, secret_bindings, parameter_classes),
          :ok <- valid_schema(changeset, :output_schema),
@@ -56,6 +57,17 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
   end
 
   defp valid_request(_, _, _), do: :error
+
+  defp valid_ipmi_input?("ipmi", schema, bindings) do
+    properties = get_in(schema, ["properties", "parameters", "properties"]) || %{}
+
+    is_map(properties) and Enum.all?(Map.keys(properties), &(&1 == "data_hex")) and
+      (not Map.has_key?(properties, "data_hex") or
+         properties["data_hex"]["type"] == "string") and
+      Enum.all?(Map.keys(bindings), &(&1 == "/data_hex"))
+  end
+
+  defp valid_ipmi_input?(_method, _schema, _bindings), do: true
 
   defp valid_secret_bindings(_method, bindings) when bindings == %{}, do: :ok
 

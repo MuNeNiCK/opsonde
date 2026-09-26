@@ -29,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v3
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
       - name: Install dependencies
         run: |
           mix deps.get
@@ -39,3 +41,4 @@ jobs:
         run: |
           mix ash.codegen --check
           mix precommit
+          cargo fmt --manifest-path native/ipmi_nif/Cargo.toml --check

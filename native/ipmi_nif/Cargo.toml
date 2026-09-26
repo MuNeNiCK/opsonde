@@ -1,0 +1,12 @@
+[package]
+name = "ipmi_nif"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ipmi_nif"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "=0.38.0"
+ipmi = { version = "=0.1.2", default-features = false, features = ["blocking"] }

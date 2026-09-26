@@ -6,6 +6,8 @@ deps
 burrito_out
 assets/node_modules
 priv/static
+priv/native
+native/**/target
 test
 .env
 AGENTS.md
