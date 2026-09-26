@@ -61,8 +61,11 @@ defmodule Opsonde.Providers.AI.Validator do
            request
        )
        when is_list(source_evidence) and is_list(cited_evidence) do
-    if length(source_evidence) + length(cited_evidence) <= @max_review_items and
-         Enum.all?(source_evidence ++ cited_evidence, &valid_evidence?/1) do
+    if is_list(request.target_relations) and
+         length(source_evidence) + length(cited_evidence) + length(request.target_relations) <=
+           @max_review_items and
+         Enum.all?(source_evidence ++ cited_evidence, &valid_evidence?/1) and
+         valid_review_relations?(request) do
       source_ids = Enum.map(source_evidence, & &1.id)
       evidence_ids = Enum.map(cited_evidence, & &1.id)
 
@@ -79,6 +82,24 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_review_request?(_request), do: false
+
+  defp valid_review_relations?(%AI.ReviewRequest{
+         initial_target_id: initial_id,
+         target_relations: relations,
+         proposal: %AI.Proposal{target_id: proposal_id}
+       })
+       when is_list(relations) do
+    (is_nil(initial_id) or nonempty?(initial_id)) and
+      Enum.all?(relations, &valid_relation?/1) and
+      unique?(Enum.map(relations, & &1.id)) and
+      Enum.all?(relations, fn relation ->
+        not is_nil(initial_id) and
+          Enum.sort([relation.source_target.id, relation.destination_target.id]) ==
+            Enum.sort([initial_id, proposal_id])
+      end)
+  end
+
+  defp valid_review_relations?(_request), do: false
 
   defp valid_retry_context?(nil), do: true
 
@@ -277,7 +298,9 @@ defmodule Opsonde.Providers.AI.Validator do
       policy_summary: request.policy_summary,
       proposal: plain_value(request.proposal),
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
-      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1)
+      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
+      initial_target_id: request.initial_target_id,
+      target_relations: Enum.map(request.target_relations, &plain_value/1)
     }
 
     case Jason.encode(encoded) do

@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.ReviewProjection do
   @moduledoc false
 
-  alias Opsonde.Cases
+  alias Opsonde.{Cases, Targets}
   alias Opsonde.Providers.AI
 
   def build(proposal_id, %AI.Selection{role: :reviewer} = selection) do
@@ -10,7 +10,8 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
          {:ok, source_evidence} <- source_evidence(incident),
-         {:ok, evidence} <- cited_evidence(proposal) do
+         {:ok, evidence} <- cited_evidence(proposal),
+         {:ok, target_relations} <- target_relations(incident, proposal) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,
         session_id: "reviewer:#{proposal.id}",
@@ -22,6 +23,8 @@ defmodule Opsonde.Cases.ReviewProjection do
         proposal: review_proposal(proposal),
         source_evidence: source_evidence,
         cited_evidence: evidence,
+        initial_target_id: incident.initial_target_id,
+        target_relations: target_relations,
         budget: budget(run)
       }
 
@@ -85,6 +88,65 @@ defmodule Opsonde.Cases.ReviewProjection do
          }
        end)}
     end
+  end
+
+  defp target_relations(%{initial_target_id: nil}, _proposal), do: {:ok, []}
+
+  defp target_relations(%{initial_target_id: id}, %{target_id: id}), do: {:ok, []}
+
+  defp target_relations(incident, proposal) do
+    with {:ok, adjacent} <-
+           Targets.adjacent_relationships_for_traversal(incident.initial_target_id,
+             authorize?: false
+           ),
+         direct <-
+           Enum.filter(adjacent, fn relation ->
+             relation.source_target_id == proposal.target_id or
+               relation.destination_target_id == proposal.target_id
+           end),
+         {:ok, relations} <- project_relations(direct, incident, proposal) do
+      {:ok, relations}
+    end
+  end
+
+  defp project_relations([], _incident, _proposal), do: {:ok, []}
+
+  defp project_relations(relations, incident, proposal) do
+    with {:ok, %{active: true} = initial} <-
+           Targets.get_target(incident.initial_target_id, authorize?: false),
+         {:ok, %{active: true, revision: revision} = target} <-
+           Targets.get_target(proposal.target_id, authorize?: false),
+         true <- revision == proposal.target_revision do
+      candidates = %{
+        initial.id => target_candidate(initial),
+        target.id => target_candidate(target)
+      }
+
+      {:ok,
+       Enum.map(relations, fn relation ->
+         %AI.TargetRelation{
+           id: relation.id,
+           revision: relation.revision,
+           source_target: candidates[relation.source_target_id],
+           destination_target: candidates[relation.destination_target_id],
+           kind: relation.kind,
+           attributes: relation.facts
+         }
+       end)}
+    else
+      _changed -> {:error, "Reviewer Target relationship changed"}
+    end
+  end
+
+  defp target_candidate(target) do
+    %AI.TargetCandidate{
+      id: target.id,
+      revision: target.revision,
+      name: target.name,
+      kind: target.kind,
+      platform: target.platform,
+      facts: target.facts
+    }
   end
 
   defp objective(incident) do

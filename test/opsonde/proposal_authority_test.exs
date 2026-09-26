@@ -426,6 +426,69 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "Reviewer sees the current direct Target relationship and loses it after deactivation",
+       context do
+    configure_mode!(:auto, context.admin)
+
+    guest =
+      Targets.create_target!("linked-guest", "host", "linux", %{}, nil, actor: context.admin)
+
+    unrelated =
+      Targets.create_target!("unrelated", "host", "linux", %{}, nil, actor: context.admin)
+
+    relation =
+      Targets.create_relationship!(
+        guest.id,
+        context.target.id,
+        "hosted_by",
+        %{"source" => "inventory"},
+        nil,
+        actor: context.admin
+      )
+
+    Targets.create_relationship!(
+      guest.id,
+      unrelated.id,
+      "hosted_by",
+      %{},
+      nil,
+      actor: context.admin
+    )
+
+    {incident, _run, proposal} =
+      proposal!("linked-target", Map.put(context, :initial_target, guest), :observation)
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    selection = %AI.Selection{
+      role: :reviewer,
+      provider_id: context.reviewer_provider.id,
+      provider_revision: context.reviewer_provider.revision,
+      assignment_id: context.reviewer_assignment.id,
+      assignment_revision: context.reviewer_assignment.revision,
+      source: :assignment
+    }
+
+    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+    assert request.initial_target_id == guest.id
+    assert request.proposal.target_id == context.target.id
+    assert request.proposal.evidence_ids == Enum.map(request.cited_evidence, & &1.id)
+
+    assert [%AI.TargetRelation{id: id, kind: "hosted_by"} = projected] =
+             request.target_relations
+
+    assert id == relation.id
+    assert projected.source_target.id == guest.id
+    assert projected.destination_target.id == context.target.id
+    assert projected.revision == relation.revision
+
+    Targets.deactivate_relationship!(relation, relation.revision, actor: context.admin)
+
+    assert {:ok, changed} = ReviewProjection.build(reviewing.id, selection)
+    assert changed.initial_target_id == incident.initial_target_id
+    assert changed.target_relations == []
+  end
+
   test "Auto Reviewer accepts cited Case evidence preserved from a prior generation", context do
     configure_mode!(:auto, context.admin)
 
@@ -1274,6 +1337,8 @@ defmodule Opsonde.ProposalAuthorityTest do
   end
 
   defp proposal!(suffix, context, request_kind \\ :effect, reason \\ nil) do
+    initial_target = Map.get(context, :initial_target, context.target)
+
     incident =
       Cases.open_case!(
         :manual,
@@ -1283,10 +1348,25 @@ defmodule Opsonde.ProposalAuthorityTest do
         :warning,
         :not_applicable,
         %{},
-        context.target.id,
+        initial_target.id,
         :en,
         actor: context.operator
       )
+
+    incident =
+      if initial_target.id == context.target.id do
+        incident
+      else
+        Cases.update_case_record!(
+          incident,
+          incident.revision,
+          %{
+            selected_target_id: context.target.id,
+            selected_target_revision: context.target.revision
+          },
+          authorize?: false
+        )
+      end
 
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 

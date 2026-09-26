@@ -471,6 +471,59 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
   end
 
+  test "Reviewer receives the registered Case Target link as inventory context", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    request = review_request()
+
+    guest = %AI.TargetCandidate{
+      id: "guest-1",
+      revision: 1,
+      name: "linux-r8",
+      kind: "host",
+      platform: "linux",
+      facts: %{}
+    }
+
+    host = %AI.TargetCandidate{
+      id: request.proposal.target_id,
+      revision: request.proposal.target_revision,
+      name: "physical-host-r8",
+      kind: "physical_host",
+      platform: "bare_metal",
+      facts: %{}
+    }
+
+    relation = %AI.TargetRelation{
+      id: "hosted-by-1",
+      revision: 2,
+      source_target: guest,
+      destination_target: host,
+      kind: "hosted_by",
+      attributes: %{}
+    }
+
+    request = %{request | initial_target_id: guest.id, target_relations: [relation]}
+    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "linked"}})
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved}} = Adapter.review(state, request, %{})
+
+    [sent] = requests(context.agent)
+    payload = reviewer_payload(sent)
+    assert payload["case_initial_target_id"] == guest.id
+    assert get_in(payload, ["registered_target_relations", Access.at(0), "id"]) == relation.id
+
+    assert get_in(payload, ["registered_target_relations", Access.at(0), "source_target", "name"]) ==
+             guest.name
+
+    assert get_in(payload, [
+             "registered_target_relations",
+             Access.at(0),
+             "destination_target",
+             "id"
+           ]) ==
+             host.id
+  end
+
   test "eligible Target traversal removes avoidable handoff from the Resolver contract",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
