@@ -360,12 +360,12 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     incident =
       Cases.open_case!(
-        :signal,
-        "alertmanager",
+        :manual,
+        "test",
         "interrupted",
         "Service is unavailable",
         :critical,
-        :firing,
+        :not_applicable,
         %{},
         nil,
         :en,
@@ -392,8 +392,6 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert_receive {:resolve, _, _request}
     assert_receive :resolver_remote_started
 
-    current = Cases.get_case!(incident.id, authorize?: false)
-    Cases.record_case_source_recovery!(current.id, current.revision, authorize?: false)
     assert nil == Task.shutdown(task, :brutal_kill)
 
     [dispatching] = Cases.list_ai_invocations!(authorize?: false)
