@@ -15,6 +15,7 @@ defmodule Opsonde.OperationDeliveryTest do
   }
 
   alias Opsonde.Cases.CaseDispatchWorker
+  alias Opsonde.Cases.Operation.ResourceScope
 
   alias Opsonde.Providers.{AI, Signal, Target}
   alias Opsonde.Reports.GenerationWorker
@@ -100,6 +101,147 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert %{"operation_id" => operation.id} == operation_job(operation.id).args
     refute_receive {:effect, _, _}
+  end
+
+  test "competing Cases defer a Target effect and an interrupted send blocks blind retry",
+       context do
+    {_first_case, _first_run, first_proposal} = authorized_proposal!("conflict-first", context)
+    {second_case, _second_run, second_proposal} = authorized_proposal!("conflict-second", context)
+    first = Cases.accept_operation!(first_proposal.id, authorize?: false)
+    second = Cases.accept_operation!(second_proposal.id, authorize?: false)
+
+    assert Cases.claim_operation_dispatch!(first.id, authorize?: false).state == :claimed
+    assert Cases.claim_operation_dispatch!(second.id, authorize?: false).state == :deferred
+
+    assert {:snooze, 5} =
+             OperationDelivery.run(second.id,
+               target_invocation: invocation(fn -> flunk("competing effect was sent") end)
+             )
+
+    assert Cases.get_operation!(second.id, authorize?: false).status == :queued
+    refute_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation(fn -> flunk("interrupted effect was resent") end)
+             )
+
+    assert Cases.get_operation!(first.id, authorize?: false).status == :unknown
+
+    assert :ok =
+             OperationDelivery.run(second.id,
+               target_invocation:
+                 invocation(fn -> flunk("effect after unknown outcome was sent") end)
+             )
+
+    blocked = Cases.get_operation!(second.id, authorize?: false)
+    assert blocked.status == :failed
+    assert blocked.outcome_category == "prior_effect_unknown"
+    assert blocked.dispatch_started_at == nil
+    assert Cases.get_case!(second_case.id, authorize?: false).status == :needs_attention
+    refute_receive {:effect, _, _}
+  end
+
+  test "canonical service selectors separate unrelated resources on one Target", context do
+    {_api_case, _api_run, api_proposal} = authorized_proposal!("scope-api", context)
+
+    {_db_case, _db_run, db_proposal} =
+      authorized_proposal!("scope-db", context, service: "db")
+
+    api = Cases.accept_operation!(api_proposal.id, authorize?: false)
+    db = Cases.accept_operation!(db_proposal.id, authorize?: false)
+
+    assert api.resource_scope == "service:api.service"
+    assert db.resource_scope == "service:db.service"
+    assert ResourceScope.key("effect.service", %{"unit" => "api.service"}) == api.resource_scope
+    assert ResourceScope.key("effect.power", %{"outlet" => "1"}) == "target"
+
+    assert Cases.claim_operation_dispatch!(api.id, authorize?: false).state == :claimed
+    assert Cases.claim_operation_dispatch!(db.id, authorize?: false).state == :claimed
+  end
+
+  test "a later Case must cite a fresh Target observation after a conflicting effect", context do
+    {_first_case, _first_run, first_proposal} = authorized_proposal!("effect-first", context)
+    {stale_case, stale_run, stale_proposal} = authorized_proposal!("effect-stale", context)
+
+    {_observed_case, observed_run, observation_proposal} =
+      authorized_proposal!("effect-reobserve", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(first_proposal.id, authorize?: false)
+    stale = Cases.accept_operation!(stale_proposal.id, authorize?: false)
+    observation = Cases.accept_operation!(observation_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(stale.id,
+               target_invocation: invocation(fn -> flunk("stale effect was sent") end)
+             )
+
+    stopped = Cases.get_operation!(stale.id, authorize?: false)
+    assert stopped.status == :failed
+    assert stopped.outcome_category == "target_effect_changed"
+    assert stopped.dispatch_started_at == nil
+
+    assert Cases.get_case!(stale_case.id, authorize?: false).pending_intent["action"] ==
+             "resolve_turn"
+
+    assert [_reassessment] = Cases.started_turns_for_run!(stale_run.id, authorize?: false)
+    refute_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(observation.id,
+               target_invocation:
+                 invocation({
+                   :ok,
+                   %Target.Observation{
+                     facts: %{"service" => "api"},
+                     observed_at: DateTime.utc_now()
+                   }
+                 })
+             )
+
+    assert_receive {:observe, _, _}
+    evidence = operation_evidence_record(observation.id)
+    [turn] = Cases.started_turns_for_run!(observed_run.id, authorize?: false)
+
+    resolved_turn =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => proposal_intent(evidence.id, context, :effect),
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(resolved_turn.id, authorize?: false)
+    authorized = Cases.proposal_by_source_turn!(resolved_turn.id, authorize?: false)
+    fresh = Cases.accept_operation!(authorized.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(fresh.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    assert Cases.get_operation!(fresh.id, authorize?: false).status == :applied
   end
 
   test "Operation actions enforce only the declared state transitions", context do
@@ -231,7 +373,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
   test "each normalized Target outcome is sent and persisted once", context do
     for status <- [:applied, :failed, :partial, :unknown] do
-      {incident, _run, proposal} = authorized_proposal!("outcome-#{status}", context)
+      case_context = separate_target!(context, "outcome-#{status}")
+      {incident, _run, proposal} = authorized_proposal!("outcome-#{status}", case_context)
       operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
       result = %Target.EffectResult{
@@ -460,7 +603,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
   test "fresh verification outcomes are called and persisted once with parameters", context do
     for status <- [:verified, :not_verified, :unknown] do
-      {incident, _run, proposal} = authorized_proposal!("verification-#{status}", context)
+      case_context = separate_target!(context, "verification-#{status}")
+      {incident, _run, proposal} = authorized_proposal!("verification-#{status}", case_context)
       operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
       assert :ok =
@@ -1547,6 +1691,7 @@ defmodule Opsonde.OperationDeliveryTest do
   defp authorized_proposal!(suffix, context, opts \\ []) do
     trigger_kind = Keyword.get(opts, :trigger_kind, :manual)
     request_kind = Keyword.get(opts, :request_kind, :effect)
+    proposal_context = Map.put(context, :service, Keyword.get(opts, :service, "api"))
 
     {incident, signal_provider} =
       if trigger_kind == :signal do
@@ -1611,8 +1756,8 @@ defmodule Opsonde.OperationDeliveryTest do
         "outcome" => "decision",
         "intent" =>
           if(trigger_kind == :signal,
-            do: signal_proposal_intent(evidence.id, context, request_kind),
-            else: proposal_intent(evidence.id, context, request_kind)
+            do: signal_proposal_intent(evidence.id, proposal_context, request_kind),
+            else: proposal_intent(evidence.id, proposal_context, request_kind)
           ),
         "resolver" => %{
           "provider_id" => context.resolver_provider.id,
@@ -1675,6 +1820,8 @@ defmodule Opsonde.OperationDeliveryTest do
     do: proposal_intent(evidence_id, context, :effect)
 
   defp proposal_intent(evidence_id, context, :effect) do
+    service = Map.get(context, :service, "api")
+
     tool = %{
       "request_kind" => "effect",
       "id" => "effect-tool",
@@ -1698,16 +1845,16 @@ defmodule Opsonde.OperationDeliveryTest do
       "access_method_revision" => tool["access_method_revision"],
       "capability" => tool["capability"],
       "operation" => tool["operation"],
-      "selectors" => %{"service" => "api"},
-      "parameters" => %{"service" => "api"},
+      "selectors" => %{"service" => service},
+      "parameters" => %{"service" => service},
       "reason" => "Restart the unhealthy API service",
       "evidence_ids" => [evidence_id],
       "expected_result" => %{"service" => "running"},
       "tool" => tool,
       "verification_intent" => %{
         "tool_id" => "verification-tool",
-        "selectors" => %{"service" => "api"},
-        "parameters" => %{"service" => "api"},
+        "selectors" => %{"service" => service},
+        "parameters" => %{"service" => service},
         "expected_result" => %{"service" => "running"}
       },
       "verification_tool" => %{
@@ -1725,6 +1872,8 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   defp proposal_intent(evidence_id, context, :observation) do
+    service = Map.get(context, :service, "api")
+
     tool = %{
       "request_kind" => "observation",
       "id" => "observation-tool",
@@ -1748,8 +1897,8 @@ defmodule Opsonde.OperationDeliveryTest do
       "access_method_revision" => tool["access_method_revision"],
       "capability" => tool["capability"],
       "operation" => tool["operation"],
-      "selectors" => %{"service" => "api"},
-      "parameters" => %{"service" => "api"},
+      "selectors" => %{"service" => service},
+      "parameters" => %{"service" => service},
       "reason" => "Inspect the unhealthy API service",
       "evidence_ids" => [evidence_id],
       "expected_result" => %{},
@@ -1801,6 +1950,27 @@ defmodule Opsonde.OperationDeliveryTest do
     do: %{test_pid: self(), respond: response}
 
   defp invocation(response), do: %{test_pid: self(), respond: fn -> response end}
+
+  defp separate_target!(context, suffix) do
+    name = "operation-#{suffix}"
+    target = Targets.create_target!(name, "host", "linux", %{}, nil, actor: context.admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        context.provider.id,
+        "method-#{suffix}",
+        "linux",
+        "ssh",
+        "ssh://#{name}",
+        context.provider.revision,
+        10,
+        ["effect.service", "observe.service"],
+        actor: context.admin
+      )
+
+    %{context | target: target, method: method}
+  end
 
   defp verified_result(facts) do
     %Target.Verification{

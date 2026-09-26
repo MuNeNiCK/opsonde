@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.OperationClaim do
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
-          state: :claimed | :terminal,
+          state: :claimed | :deferred | :terminal,
           operation: struct()
         }
 end

@@ -13,6 +13,9 @@ defmodule Opsonde.Cases.OperationDelivery do
       {:ok, %OperationClaim{state: :claimed, operation: operation}} ->
         dispatch(operation, opts)
 
+      {:ok, %OperationClaim{state: :deferred}} ->
+        {:snooze, 5}
+
       {:ok, %OperationClaim{state: :terminal, operation: operation}} ->
         handoff(operation)
 
@@ -164,11 +167,12 @@ defmodule Opsonde.Cases.OperationDelivery do
   end
 
   defp continue_handoff(
-         %{outcome_category: "source_context_changed"} = operation,
+         %{outcome_category: category} = operation,
          _proposal,
          _evidence,
          incident
-       ) do
+       )
+       when category in ["source_context_changed", "target_effect_changed"] do
     if incident.pending_intent["source_operation_id"] == operation.id and
          incident.pending_intent["action"] == "resolve_turn",
        do: :ok,

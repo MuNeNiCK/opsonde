@@ -15,6 +15,7 @@ defmodule Opsonde.Cases.Operation do
       index [:case_id]
       index [:resolution_run_id]
       index [:target_id]
+      index [:target_id, :resource_scope]
     end
   end
 
@@ -81,6 +82,7 @@ defmodule Opsonde.Cases.Operation do
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameters}
       validate {Opsonde.Validations.BoundedMap, attribute: :policy_context}
+      change Opsonde.Cases.Operation.Changes.SetResourceScope
     end
 
     update :mark_dispatching do
@@ -204,6 +206,11 @@ defmodule Opsonde.Cases.Operation do
       constraints: [min_length: 1, max_length: 120]
 
     attribute :selectors, :map, allow_nil?: false, public?: true
+
+    attribute :resource_scope, :string,
+      allow_nil?: false,
+      constraints: [min_length: 1, max_length: 500]
+
     attribute :parameters, :map, allow_nil?: false, public?: true
 
     attribute :idempotency_key, :string,
