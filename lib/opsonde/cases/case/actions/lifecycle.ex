@@ -527,13 +527,15 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
              Cases.update_case_record(
                incident,
                arguments.expected_case_revision,
-               %{
+               arguments
+               |> Map.take([:authority_mode | @limit_fields])
+               |> Map.merge(%{
                  status: :running,
                  cancel_requested: false,
                  stop_reason: nil,
                  pending_intent: %{},
                  required_human_input: nil
-               }
+               })
                |> resume_case_attributes(actor, options),
                actor: actor,
                authorize?: false

@@ -145,6 +145,14 @@ defmodule Opsonde.Cases.Case do
     update :update_record do
       accept [
         :current_owner_id,
+        :authority_mode,
+        :max_elapsed_seconds,
+        :max_resolver_turns,
+        :max_target_requests,
+        :max_effects,
+        :max_related_targets,
+        :max_ai_usage_units,
+        :max_no_progress_turns,
         :status,
         :cancel_requested,
         :alert_state,

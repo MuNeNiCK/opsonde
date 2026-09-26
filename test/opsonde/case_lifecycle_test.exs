@@ -335,7 +335,9 @@ defmodule Opsonde.CaseLifecycleTest do
     assert reloaded.status == :running
     assert reloaded.revision == 3
     assert reloaded.authority_setting_revision == incident.authority_setting_revision
-    assert reloaded.authority_mode == incident.authority_mode
+    assert reloaded.authority_mode == resumed_a.authority_mode
+    assert reloaded.max_elapsed_seconds == resumed_a.max_elapsed_seconds
+    assert reloaded.max_resolver_turns == resumed_a.max_resolver_turns
     assert reloaded.report_language == :ja
 
     runs = Cases.list_resolution_runs!(actor: context.viewer) |> Enum.sort_by(& &1.generation)
