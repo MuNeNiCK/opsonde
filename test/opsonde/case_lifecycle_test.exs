@@ -169,14 +169,8 @@ defmodule Opsonde.CaseLifecycleTest do
     assert run.max_elapsed_seconds == incident.max_elapsed_seconds
   end
 
-  test "claim, handoff, cancellation and source recovery are revisioned and retryable", context do
-    configure_authority!(context.admin, %{
-      signal_automation_enabled: true,
-      reason: "enable Signal handling"
-    })
-
-    incident = open_case!(:signal, "alertmanager", "alert-1", :firing, nil)
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+  test "claim, handoff and cancellation are revisioned and retryable", context do
+    incident = open_case!(:manual, "web", "manual-claim", :not_applicable, context.operator)
 
     claimed = Cases.claim_case!(incident.id, incident.revision, actor: context.operator)
     assert claimed.current_owner_id == context.operator.id
@@ -202,34 +196,15 @@ defmodule Opsonde.CaseLifecycleTest do
                actor: context.operator
              )
 
-    recovered =
-      Cases.record_case_source_recovery!(handed_off.id, handed_off.revision,
-        actor: context.next_operator
-      )
-
-    assert recovered.alert_state == :recovered
-    assert %DateTime{} = recovered.source_recovered_at
-    assert recovered.revision == 5
-    assert recovered.pending_intent["action"] == "resolve_turn"
-    assert recovered.pending_intent["source_state"] == "recovered"
-    assert [_started] = Cases.started_turns_for_run!(run.id, authorize?: false)
-
-    retried_recovery =
-      Cases.record_case_source_recovery!(handed_off.id, handed_off.revision,
-        actor: context.next_operator
-      )
-
-    assert retried_recovery.revision == recovered.revision
-
     cancelled =
-      Cases.request_case_cancellation!(recovered.id, recovered.revision,
+      Cases.request_case_cancellation!(handed_off.id, handed_off.revision,
         actor: context.next_operator
       )
 
     assert cancelled.cancel_requested
     assert cancelled.status == :cancelled
     assert cancelled.stop_reason == "Resolution cancelled by an operator"
-    assert cancelled.revision == 6
+    assert cancelled.revision == 4
 
     cancelled_run = Cases.list_resolution_runs!(actor: context.viewer) |> hd()
     refute cancelled_run.active
@@ -237,25 +212,16 @@ defmodule Opsonde.CaseLifecycleTest do
     assert %DateTime{} = cancelled_run.ended_at
 
     retried_cancel =
-      Cases.request_case_cancellation!(recovered.id, recovered.revision,
+      Cases.request_case_cancellation!(handed_off.id, handed_off.revision,
         actor: context.next_operator
       )
 
     assert retried_cancel.revision == cancelled.revision
 
-    assert {:error, _error} =
-             Cases.record_case_source_recovery(
-               cancelled.id,
-               cancelled.revision,
-               actor: context.next_operator
-             )
-
     assert Enum.map(Cases.list_case_events!(actor: context.viewer), & &1.event_type) == [
              "case_opened",
              "case_claimed",
              "case_handed_off",
-             "source_recovered",
-             "turn_started",
              "case_cancelled"
            ]
   end
@@ -351,91 +317,6 @@ defmodule Opsonde.CaseLifecycleTest do
     assert resumed_event.data["prior_generation"] == 1
     assert resumed_event.data["new_generation"] == 2
     assert resumed_event.data["reason"] == "extend one turn"
-  end
-
-  test "source recovery autonomously resumes a Case after a limit paused resolution",
-       context do
-    configure_authority!(context.admin, %{
-      signal_automation_enabled: true,
-      reason: "enable Signal recovery handling"
-    })
-
-    incident = open_case!(:signal, "alertmanager", "paused-recovery", :firing, nil)
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
-
-    stopped =
-      Cases.require_case_attention!(
-        incident.id,
-        incident.revision,
-        run.id,
-        run.revision,
-        "paused-recovery-limit",
-        "AI usage limit exhausted",
-        %{"action" => "review_ai_limit"},
-        "Review the AI usage limit and resume the Case",
-        authorize?: false
-      )
-
-    recovered =
-      Cases.record_case_source_recovery!(stopped.id, stopped.revision, actor: context.operator)
-
-    assert recovered.status == :running
-    assert recovered.alert_state == :recovered
-    assert recovered.stop_reason == nil
-    assert recovered.required_human_input == nil
-    assert Cases.started_turns_for_run!(run.id, authorize?: false) == []
-
-    old_run = Cases.get_resolution_run!(run.id, authorize?: false)
-    refute old_run.active
-    assert old_run.status == :superseded
-
-    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    assert resumed_run.generation == 2
-    assert resumed_run.status == :running
-    assert [turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
-    assert recovered.pending_intent == %{"action" => "resolve_turn", "turn_id" => turn.id}
-  end
-
-  test "source recovery autonomously resumes a Case that only awaited more incident input",
-       context do
-    configure_authority!(context.admin, %{
-      signal_automation_enabled: true,
-      reason: "enable autonomous recovery reassessment"
-    })
-
-    incident = open_case!(:signal, "alertmanager", "input-recovery", :firing, nil)
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
-
-    waiting =
-      Cases.require_case_attention!(
-        incident.id,
-        incident.revision,
-        run.id,
-        run.revision,
-        "input-recovery-wait",
-        "More current incident evidence is required",
-        %{"action" => "provide_human_input", "source_turn_id" => Ash.UUID.generate()},
-        "Provide current workload health",
-        authorize?: false
-      )
-
-    recovered =
-      Cases.record_case_source_recovery!(waiting.id, waiting.revision, actor: context.operator)
-
-    assert recovered.status == :running
-    assert recovered.alert_state == :recovered
-    assert recovered.stop_reason == nil
-    assert recovered.required_human_input == nil
-
-    old_run = Cases.get_resolution_run!(run.id, authorize?: false)
-    refute old_run.active
-    assert old_run.status == :superseded
-
-    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    assert resumed_run.generation == 2
-    assert resumed_run.status == :running
-    assert [turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
-    assert recovered.pending_intent == %{"action" => "resolve_turn", "turn_id" => turn.id}
   end
 
   test "cancelling an attention Case retires its active run", context do

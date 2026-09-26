@@ -85,37 +85,25 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
   end
 
   test "recovery conclusion cannot use ordinary Evidence as fresh verification", context do
-    current = Cases.current_authority_setting!(actor: context.admin)
-
-    Cases.configure_authority_setting!(
-      current.setting_revision,
-      current.authority_mode,
-      true,
-      current.max_elapsed_seconds,
-      current.max_resolver_turns,
-      current.max_target_requests,
-      current.max_effects,
-      current.max_related_targets,
-      current.max_ai_usage_units,
-      current.max_no_progress_turns,
-      "enable Signal resolution for recovery routing",
-      actor: context.admin
-    )
-
-    {incident, run} = open_case!("recovery", context.operator, :firing, :signal)
-
-    recovered =
-      Cases.record_case_source_recovery!(incident.id, incident.revision, actor: context.operator)
-
-    evidence = evidence!(recovered, run, "recovery")
+    {incident, run} = open_case!("recovery", context.operator)
+    evidence = evidence!(incident, run, "recovery")
 
     intent = %{
       "type" => "recovery_conclusion",
-      "reason" => "The fresh observation and monitoring source both recovered",
+      "reason" => "An ordinary observation is not a verified recovery check",
       "evidence_ids" => [evidence.id]
     }
 
-    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    started =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "ordinary-evidence-recovery",
+        %{"objective" => "Check recovery evidence"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      ).value
 
     turn =
       Cases.complete_turn!(
@@ -127,7 +115,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
           "resolver" => resolver_identity(),
           "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
         },
-        :source_change,
+        :none,
         %{"action" => "route_resolver_decision", "turn_id" => started.id},
         "Review the Resolver decision",
         authorize?: false
@@ -136,11 +124,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     assert {:error, _error} = Cases.route_downstream_decision(turn.id, authorize?: false)
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
 
-    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{
-             "action" => "resolve_turn",
-             "source_state" => "recovered",
-             "turn_id" => turn.id
-           }
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
   end

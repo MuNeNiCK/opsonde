@@ -66,10 +66,6 @@ defmodule Opsonde.Cases do
         action: :request_cancellation,
         args: [:id, :expected_revision]
 
-      define :record_case_source_recovery,
-        action: :record_source_recovery,
-        args: [:id, :expected_revision]
-
       define :active_signal_case_by_trigger,
         action: :active_by_trigger,
         args: [:source, :source_ref]

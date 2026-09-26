@@ -38,44 +38,6 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
     end)
   end
 
-  # Called only from the Case source-recovery action, within its transaction.
-  def after_source_recovery(incident, run) do
-    case incident.pending_intent do
-      %{"action" => action, "verification_attempt_id" => attempt_id}
-      when action in ["await_source_recovery", "resolve_turn"] ->
-        with {:ok, attempt} <- Cases.get_verification_attempt(attempt_id, authorize?: false),
-             {:ok, operation} <- Cases.get_operation(attempt.operation_id, authorize?: false),
-             {:ok, evidence} <- verification_evidence(attempt) do
-          case valid_verification(incident, run, attempt, operation, evidence) do
-            :ok ->
-              settle_after_source_recovery(incident, run, attempt, operation, evidence)
-
-            {:error, "Verified Target effect is not current for this Signal Case"} ->
-              {:ok, :continue}
-          end
-        end
-
-      _other ->
-        {:ok, :continue}
-    end
-  end
-
-  defp settle_after_source_recovery(incident, run, attempt, operation, evidence) do
-    case all_sources_recovered(incident, operation) do
-      :ok ->
-        case resolve(incident, run, attempt, evidence) do
-          {:ok, resolved} -> {:ok, {:resolved, resolved}}
-          {:error, _error} = error -> error
-        end
-
-      {:error, reason} when reason in [:source_firing, :source_stale] ->
-        {:ok, :continue}
-
-      {:error, _error} = error ->
-        error
-    end
-  end
-
   defp reconcile(%{status: :resolved} = incident, _run, _attempt, _evidence),
     do: {:ok, incident}
 

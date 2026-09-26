@@ -3,8 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
 
   alias Opsonde.Accounts
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.{Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
-  alias Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
+  alias Opsonde.Cases.{Case, CaseEvent, ResolutionRun}
 
   @limit_fields [
     :max_elapsed_seconds,
@@ -22,7 +21,6 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       :claim -> claim(input.arguments, context.actor)
       :handoff -> handoff(input.arguments, context.actor)
       :request_cancellation -> request_cancellation(input.arguments, context.actor)
-      :record_source_recovery -> record_source_recovery(input.arguments, context.actor)
       :require_attention -> require_attention(input.arguments, context.actor)
       :resume -> resume(input.arguments, context.actor)
       :resume_after_target_registration -> resume_after_target_registration(input.arguments)
@@ -120,241 +118,6 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       end
     end)
   end
-
-  defp record_source_recovery(arguments, actor) do
-    key = idempotency_key("source_recovery", [arguments.id, arguments.expected_revision])
-
-    transition_once(arguments.id, key, fn incident ->
-      with :ok <- ensure_mutable(incident),
-           true <- incident.alert_state == :firing || {:error, "Case has no firing source"},
-           {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false) do
-        record_recovery(incident, run, arguments.expected_revision, actor, key)
-      end
-    end)
-  end
-
-  defp record_recovery(incident, run, expected_revision, actor, key) do
-    recovered_at = DateTime.utc_now()
-
-    Ash.transact([Case, ResolutionRun, Evidence, CaseEvent, Proposal, Turn], fn ->
-      with {:ok, updated} <-
-             Cases.update_case_record(
-               incident,
-               expected_revision,
-               %{alert_state: :recovered, source_recovered_at: recovered_at},
-               actor: actor,
-               authorize?: false
-             ),
-           {:ok, evidence} <-
-             Cases.create_evidence_record(
-               %{
-                 case_id: incident.id,
-                 resolution_run_id: run.id,
-                 idempotency_key: "source-recovery:#{key}",
-                 kind: "source_recovery",
-                 source: incident.source,
-                 source_ref: incident.source_ref,
-                 content: %{
-                   "alert_state" => "recovered",
-                   "source" => incident.source,
-                   "source_ref" => incident.source_ref
-                 },
-                 observed_at: recovered_at
-               },
-               authorize?: false
-             ),
-           {:ok, _event} <-
-             create_event(updated, run, actor, "source_recovered", key, %{
-               "recovered_at" => DateTime.to_iso8601(recovered_at),
-               "evidence_id" => evidence.id
-             }),
-           {:ok, continued} <- continue_after_source_recovery(updated, run, key) do
-        continued
-      end
-    end)
-  end
-
-  defp continue_after_source_recovery(
-         %{status: :running} = incident,
-         %{status: :running} = run,
-         key
-       ) do
-    with {:ok, settlement} <- VerifiedEffectRecovery.after_source_recovery(incident, run) do
-      case settlement do
-        {:resolved, resolved} -> {:ok, resolved}
-        :continue -> continue_after_source_recovery_turns(incident, run, key)
-      end
-    end
-  end
-
-  defp continue_after_source_recovery(
-         %{status: :needs_attention} = incident,
-         %{status: :needs_attention} = run,
-         key
-       ) do
-    arguments = automatic_recovery_resume_arguments(incident, run)
-
-    with {:ok, resumed_run} <-
-           resume_transaction(incident, run, arguments, nil, "source-recovery-resume:#{key}"),
-         {:ok, resumed_case} <- start_automatic_recovery_turn(incident.id, resumed_run) do
-      {:ok, resumed_case}
-    end
-  end
-
-  defp continue_after_source_recovery(incident, _run, _key), do: {:ok, incident}
-
-  defp continue_after_source_recovery_turns(incident, run, key) do
-    with {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false) do
-      cond do
-        started != [] ->
-          {:ok, incident}
-
-        stale_proposal_pending?(incident.pending_intent) ->
-          with {:ok, superseded_id} <- invalidate_pending_proposal(incident, run),
-               {:ok, result} <- start_recovery_turn(incident, run, key, superseded_id) do
-            recovery_turn_result(incident, result, superseded_id)
-          end
-
-        stale_resolver_pending?(incident.pending_intent) ->
-          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
-            recovery_turn_result(incident, result, nil)
-          end
-
-        map_size(incident.pending_intent) == 0 or
-            incident.pending_intent["action"] == "await_source_recovery" ->
-          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
-            recovery_turn_result(incident, result, nil)
-          end
-
-        true ->
-          {:ok, incident}
-      end
-    end
-  end
-
-  defp stale_proposal_pending?(%{"action" => action, "proposal_id" => proposal_id})
-       when action in [
-              "route_proposal",
-              "review_proposal",
-              "decide_proposal",
-              "dispatch_operation"
-            ] and
-              is_binary(proposal_id),
-       do: true
-
-  defp stale_proposal_pending?(_pending), do: false
-
-  defp stale_resolver_pending?(%{"action" => action, "turn_id" => turn_id})
-       when action in ["resolve_turn", "route_resolver_decision"] and is_binary(turn_id),
-       do: superseded_resolver_decision?(turn_id)
-
-  defp stale_resolver_pending?(_pending), do: false
-
-  defp superseded_resolver_decision?(turn_id) do
-    case Cases.get_turn(turn_id, authorize?: false) do
-      {:ok,
-       %Turn{
-         status: :completed,
-         result: %{"intent" => %{"type" => "recovery_conclusion"}}
-       }} ->
-        false
-
-      {:ok, %Turn{status: :completed}} ->
-        true
-
-      _unfinished_or_missing ->
-        false
-    end
-  end
-
-  defp invalidate_pending_proposal(incident, run) do
-    proposal_id = incident.pending_intent["proposal_id"]
-
-    with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false),
-         true <-
-           (proposal.case_id == incident.id and proposal.resolution_run_id == run.id) ||
-             {:error, "Pending Proposal does not belong to the active Case"},
-         {:ok, _invalidated} <-
-           Cases.transition_proposal(
-             proposal,
-             proposal.revision,
-             %{status: :invalidated},
-             authorize?: false
-           ) do
-      {:ok, proposal.id}
-    end
-  end
-
-  defp start_recovery_turn(incident, run, key, superseded_id) do
-    Cases.start_turn(
-      incident.id,
-      run.id,
-      "source-recovery:#{key}",
-      %{
-        "objective" => "Reassess the Case after the monitoring source recovered",
-        "superseded_proposal_id" => superseded_id
-      },
-      %{"action" => "continue_resolution", "source_state" => "recovered"},
-      "Review Resolver limits",
-      authorize?: false
-    )
-  end
-
-  defp start_automatic_recovery_turn(case_id, run) do
-    case Cases.start_turn(
-           case_id,
-           run.id,
-           "resume:#{run.id}:#{run.generation}",
-           %{"objective" => "Reassess the Case after the monitoring source recovered"},
-           %{"action" => "continue"},
-           "Review Case inputs and limits",
-           authorize?: false
-         ) do
-      {:ok, %{status: status, value: %Turn{} = turn}} when status in [:charged, :duplicate] ->
-        with {:ok, incident} <- Cases.get_case(case_id, authorize?: false) do
-          Cases.update_case_record(
-            incident,
-            incident.revision,
-            %{
-              pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id},
-              stop_reason: nil,
-              required_human_input: nil
-            },
-            authorize?: false
-          )
-        end
-
-      {:ok, %{status: :exhausted, case: stopped}} ->
-        {:ok, stopped}
-
-      {:error, _error} = error ->
-        error
-    end
-  end
-
-  defp recovery_turn_result(_incident, %{status: :exhausted, case: stopped}, _superseded_id),
-    do: {:ok, stopped}
-
-  defp recovery_turn_result(incident, %{status: status, value: %Turn{} = turn}, superseded_id)
-       when status in [:charged, :duplicate] do
-    pending =
-      %{
-        "action" => "resolve_turn",
-        "turn_id" => turn.id,
-        "source_state" => "recovered"
-      }
-      |> maybe_put("superseded_proposal_id", superseded_id)
-
-    Cases.update_case_record(
-      incident,
-      incident.revision,
-      %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
-      authorize?: false
-    )
-  end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp require_attention(arguments, actor) do
     transition_once(arguments.id, arguments.idempotency_key, fn incident ->
@@ -637,18 +400,6 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
       resolution_run_id: run.id,
       expected_run_revision: run.revision,
       reason: "The registered ExternalIdentity now resolves the firing signal to a Target"
-    })
-  end
-
-  defp automatic_recovery_resume_arguments(incident, run) do
-    run
-    |> Map.take([:authority_mode | @limit_fields])
-    |> Map.merge(%{
-      id: incident.id,
-      expected_case_revision: incident.revision,
-      resolution_run_id: run.id,
-      expected_run_revision: run.revision,
-      reason: "The monitoring source recovered while autonomous resolution was paused"
     })
   end
 

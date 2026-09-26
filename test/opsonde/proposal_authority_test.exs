@@ -1,7 +1,7 @@
 defmodule Opsonde.ProposalAuthorityTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
   alias Opsonde.Cases.{
     OperationAcceptanceWorker,
@@ -12,7 +12,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     ReviewWorker
   }
 
-  alias Opsonde.Providers.AI
+  alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Providers.Target, as: ProviderTarget
 
   @password "correct horse battery staple"
@@ -514,52 +514,60 @@ defmodule Opsonde.ProposalAuthorityTest do
   test "Auto Reviewer accepts cited Case evidence preserved from a prior generation", context do
     configure_mode!(:auto, context.admin)
 
-    setting = Cases.current_authority_setting!(actor: context.admin)
+    signal_provider =
+      Providers.create_provider!(
+        "review-resumed-monitor",
+        :signal,
+        "fixture-signal",
+        %{"source" => "review-monitor"},
+        %{"secret" => "review-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
-    Cases.configure_authority_setting!(
-      setting.setting_revision,
-      setting.authority_mode,
-      true,
-      setting.max_elapsed_seconds,
-      setting.max_resolver_turns,
-      setting.max_target_requests,
-      setting.max_effects,
-      setting.max_related_targets,
-      setting.max_ai_usage_units,
-      setting.max_no_progress_turns,
-      "enable resumed Signal review",
+    Targets.create_external_identity!(
+      context.target.id,
+      "review-monitor",
+      "hostname",
+      context.target.name,
       actor: context.admin
     )
 
-    incident =
-      Cases.open_case!(
-        :signal,
-        "test-monitor",
-        "review-resumed-evidence",
-        "Review resumed evidence",
-        :warning,
-        :firing,
-        %{},
-        context.target.id,
-        :en,
-        actor: context.operator
-      )
+    occurred_at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    Signals.ingest_signal!(
+      signal_provider.id,
+      signal_provider.revision,
+      %Signal.Envelope{body: "review-initial", headers: %{}, received_at: occurred_at},
+      %{
+        authenticate: fn state, _envelope ->
+          {:ok, %Signal.AuthenticatedReceipt{receipt_id: "review-initial", source: state.source}}
+        end,
+        normalize: fn _state, _envelope, _receipt ->
+          {:ok,
+           [
+             %Signal.Event{
+               receipt_id: "review-initial",
+               event_key: "review-resumed-evidence",
+               state: :firing,
+               occurred_at: occurred_at,
+               target_ref: %{kind: :hostname, value: context.target.name},
+               attributes: %{
+                 "labels" => %{"alertname" => "ServiceUnavailable", "service" => "api.service"}
+               }
+             }
+           ]}
+        end
+      },
+      authorize?: false
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
 
     first_run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
-    prior_evidence =
-      Cases.append_evidence!(
-        incident.id,
-        first_run.id,
-        nil,
-        "review-prior-generation-evidence",
-        "signal_event",
-        incident.source,
-        incident.source_ref,
-        %{"current" => true, "state" => "recovered", "service" => "healthy"},
-        DateTime.utc_now(),
-        authorize?: false
-      )
+    [prior_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
     waiting =
       Cases.require_case_attention!(
@@ -574,8 +582,24 @@ defmodule Opsonde.ProposalAuthorityTest do
         authorize?: false
       )
 
-    resumed =
-      Cases.record_case_source_recovery!(waiting.id, waiting.revision, actor: context.operator)
+    paused = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    Cases.resume_case!(
+      waiting.id,
+      waiting.revision,
+      paused.id,
+      paused.revision,
+      paused.authority_mode,
+      paused.max_elapsed_seconds,
+      paused.max_resolver_turns,
+      paused.max_target_requests,
+      paused.max_effects,
+      paused.max_related_targets,
+      paused.max_ai_usage_units,
+      paused.max_no_progress_turns,
+      "Continue reviewing prior evidence",
+      actor: context.operator
+    )
 
     second_run = Cases.active_resolution_run!(incident.id, authorize?: false)
     assert second_run.generation == 2
@@ -620,7 +644,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     }
 
     assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
-    assert resumed.status == :running
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert Enum.map(request.cited_evidence, & &1.id) == [prior_evidence.id]
   end
 
@@ -697,134 +721,6 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.list_review_decisions!(actor: context.admin) == []
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:review, _, _}
-    refute_receive {:effect, _, _}
-  end
-
-  test "Auto waits for an explicit needs_human verdict until source state changes", context do
-    configure_mode!(:auto, context.admin)
-    {incident, run, proposal} = proposal!("review-needs-human", context)
-    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-
-    assert :ok =
-             ReviewDelivery.run(reviewing.id,
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn _request ->
-                   {:ok,
-                    %AI.ReviewDecision{
-                      verdict: :needs_human,
-                      reason: "The available evidence cannot establish the blast radius",
-                      usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
-                    }}
-                 end
-               }
-             )
-
-    assert_receive {:review, _, _request}
-
-    waiting = Cases.get_proposal!(proposal.id, authorize?: false)
-    assert waiting.status == :awaiting_human
-
-    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
-             "decide_proposal"
-
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 4
-    assert Cases.list_approvals!(actor: context.admin) == []
-    refute_receive {:effect, _, _}
-
-    current = Cases.get_case!(incident.id, authorize?: false)
-
-    firing =
-      Cases.update_case_record!(
-        current,
-        current.revision,
-        %{alert_state: :firing, source_recovered_at: nil},
-        authorize?: false
-      )
-
-    recovered =
-      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
-
-    assert recovered.alert_state == :recovered
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
-
-    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    assert recovered.pending_intent["action"] == "resolve_turn"
-    assert recovered.pending_intent["turn_id"] == turn.id
-    assert recovered.pending_intent["superseded_proposal_id"] == proposal.id
-  end
-
-  test "source recovery supersedes an in-flight review and starts one fresh Resolver turn",
-       context do
-    configure_mode!(:auto, context.admin)
-    {incident, run, proposal} = proposal!("review-source-recovery", context)
-    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-    parent = self()
-
-    task =
-      Task.async(fn ->
-        ReviewDelivery.run(reviewing.id,
-          ai_invocation: %{
-            test_pid: parent,
-            respond: fn _request ->
-              send(parent, :reviewer_remote_started)
-
-              receive do
-                :release_reviewer ->
-                  {:ok,
-                   %AI.ReviewDecision{
-                     verdict: :approved,
-                     reason: "The old source state supported this Proposal",
-                     usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
-                   }}
-              end
-            end
-          }
-        )
-      end)
-
-    assert_receive :reviewer_remote_started
-
-    current = Cases.get_case!(incident.id, authorize?: false)
-
-    firing =
-      Cases.update_case_record!(
-        current,
-        current.revision,
-        %{alert_state: :firing, source_recovered_at: nil},
-        authorize?: false
-      )
-
-    recovered =
-      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
-
-    send(task.pid, :release_reviewer)
-    assert :ok = Task.await(task)
-
-    assert recovered.alert_state == :recovered
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
-    assert Cases.list_review_decisions!(actor: context.admin) == []
-    assert Cases.list_approvals!(actor: context.admin) == []
-
-    [invocation] = Cases.list_ai_invocations!(authorize?: false)
-    assert invocation.status == :failed
-    assert invocation.category == "context_changed"
-
-    started = Cases.started_turns_for_run!(run.id, authorize?: false)
-    assert length(started) == 1
-    [turn] = started
-
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    assert pending["action"] == "resolve_turn"
-    assert pending["turn_id"] == turn.id
-    assert pending["source_state"] == "recovered"
-    assert pending["superseded_proposal_id"] == proposal.id
-
-    replayed =
-      Cases.record_case_source_recovery!(firing.id, firing.revision, actor: context.operator)
-
-    assert replayed.revision == recovered.revision
-    assert length(Cases.started_turns_for_run!(run.id, authorize?: false)) == 1
     refute_receive {:effect, _, _}
   end
 

@@ -238,14 +238,6 @@ defmodule Opsonde.Cases.Case do
       run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :request_cancellation}
     end
 
-    action :record_source_recovery, :struct do
-      constraints instance_of: __MODULE__
-      transaction? false
-      argument :id, :uuid, allow_nil?: false
-      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :record_source_recovery}
-    end
-
     action :reconcile_verified_effect, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -418,7 +410,6 @@ defmodule Opsonde.Cases.Case do
              :claim,
              :handoff,
              :request_cancellation,
-             :record_source_recovery,
              :resume,
              :search_targets,
              :select_target
