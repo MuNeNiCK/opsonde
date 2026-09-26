@@ -29,6 +29,19 @@ defmodule Opsonde.Signals.Condition do
       prepare build(sort: [occurrence: :desc], limit: 1)
     end
 
+    read :previous_for_correlation do
+      get? true
+      argument :signal_correlation_id, :uuid, allow_nil?: false
+      argument :occurrence, :integer, allow_nil?: false, constraints: [min: 2]
+
+      filter expr(
+               signal_correlation_id == ^arg(:signal_correlation_id) and
+                 occurrence < ^arg(:occurrence)
+             )
+
+      prepare build(sort: [occurrence: :desc], limit: 1)
+    end
+
     create :create_record do
       accept [
         :signal_correlation_id,
@@ -78,7 +91,13 @@ defmodule Opsonde.Signals.Condition do
   end
 
   policies do
-    policy action([:latest_for_correlation, :create_record, :record_state, :record_source_event]) do
+    policy action([
+             :latest_for_correlation,
+             :previous_for_correlation,
+             :create_record,
+             :record_state,
+             :record_source_event
+           ]) do
       forbid_if always()
     end
 

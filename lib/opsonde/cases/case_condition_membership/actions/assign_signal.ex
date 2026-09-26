@@ -59,7 +59,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
                case_id: incident.id,
                condition_id: condition.id,
                attached_at: args.received_at,
-               reason: if(new?, do: "initial_signal", else: "bounded_graph_time_locality")
+               reason: attachment_reason(candidate, new?)
              },
              authorize?: false
            ) do
@@ -89,6 +89,10 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
     end
   end
 
+  defp attachment_reason(_candidate, true), do: "initial_signal"
+  defp attachment_reason({_incident, :recurrence}, false), do: "same_native_recurrence"
+  defp attachment_reason(_candidate, false), do: "bounded_graph_time_locality"
+
   defp create_dispatch(incident, condition, received_at) do
     due_at = DateTime.add(received_at, @collect_seconds, :second)
     state = if incident.status == :running, do: :collecting, else: :disabled
@@ -117,9 +121,58 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
     end
   end
 
-  defp candidate(%{target_id: nil}, _received_at), do: {:ok, nil}
-
   defp candidate(condition, received_at) do
+    with {:ok, preceding} <- recurrence_candidate(condition) do
+      case preceding do
+        nil -> graph_candidate(condition, received_at)
+        incident -> {:ok, {incident, :recurrence}}
+      end
+    end
+  end
+
+  defp recurrence_candidate(%{occurrence: 1}), do: {:ok, nil}
+
+  defp recurrence_candidate(condition) do
+    with {:ok, previous} <-
+           Signals.previous_condition_for_correlation(
+             condition.signal_correlation_id,
+             condition.occurrence,
+             authorize?: false,
+             not_found_error?: false
+           ),
+         true <- same_subject?(previous, condition),
+         {:ok, membership} <-
+           Cases.active_case_condition(previous.id,
+             authorize?: false,
+             not_found_error?: false
+           ),
+         %CaseConditionMembership{} <- membership,
+         {:ok, incident} <- Cases.get_case(membership.case_id, authorize?: false),
+         true <- incident.status == :running and incident.trigger_kind == :signal,
+         {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- length(members) < @max_conditions do
+      {:ok, incident}
+    else
+      false -> {:ok, nil}
+      nil -> {:ok, nil}
+      {:ok, nil} -> {:ok, nil}
+      {:error, _error} = error -> error
+      _other -> {:ok, nil}
+    end
+  end
+
+  defp same_subject?(nil, _condition), do: false
+
+  defp same_subject?(previous, condition) do
+    previous.subject_key == condition.subject_key and
+      previous.subject_ref == condition.subject_ref and
+      previous.predicate == condition.predicate and
+      previous.target_id == condition.target_id
+  end
+
+  defp graph_candidate(%{target_id: nil}, _received_at), do: {:ok, nil}
+
+  defp graph_candidate(condition, received_at) do
     with {:ok, target} <- Targets.get_target(condition.target_id, authorize?: false),
          {:ok, local_ids} <- within_two(condition.target_id),
          {:ok, dispatches} <- Cases.admitting_case_dispatches(authorize?: false) do

@@ -440,6 +440,33 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_turns!(actor: context.admin)) == 1
   end
 
+  test "a reused native event key with a different affected subject opens another Case",
+       context do
+    enable_signal_automation!(context.admin)
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+
+    for {receipt_id, state, offset, pod} <- [
+          {"pod-a-firing", :firing, 0, "pod-a"},
+          {"pod-a-recovered", :recovered, 10, "pod-a"},
+          {"pod-b-firing", :firing, 20, "pod-b"}
+        ] do
+      occurred_at = DateTime.add(base, offset, :second)
+
+      ingest!(
+        context.provider,
+        envelope(receipt_id, occurred_at),
+        invocation(receipt_id, [
+          event(receipt_id, "shared-event-key", state, occurred_at,
+            attributes: %{"labels" => %{"pod" => pod, "namespace" => "default"}}
+          )
+        ])
+      )
+    end
+
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+    assert length(Signals.list_conditions!(actor: context.admin)) == 2
+  end
+
   test "source recovery alone leaves an attention Case awaiting independent verification",
        context do
     enable_signal_automation!(context.admin)

@@ -54,6 +54,10 @@ defmodule Opsonde.Signals do
         action: :latest_for_correlation,
         args: [:signal_correlation_id]
 
+      define :previous_condition_for_correlation,
+        action: :previous_for_correlation,
+        args: [:signal_correlation_id, :occurrence]
+
       define :create_condition_record, action: :create_record
       define :record_condition_state, action: :record_state, args: [:expected_revision]
 
