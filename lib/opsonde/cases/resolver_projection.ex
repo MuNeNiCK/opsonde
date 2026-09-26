@@ -632,6 +632,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         id: item.id,
         kind: item.kind,
         target_id: evidence_target_id(item, allowed_target_ids),
+        observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
         content: recovery_evidence_content(item, incident, run)
       }
     end)

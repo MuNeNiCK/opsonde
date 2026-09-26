@@ -30,16 +30,18 @@ defmodule Opsonde.Targets.BMC do
           input_schema:
             request_schema(
               %{
-                "expected_power_state" => %{
+                "observed_power_state" => %{
                   "type" => "string",
-                  "enum" => ["on", "off"]
+                  "enum" => ["on", "off"],
+                  "description" =>
+                    "Current power state from the cited BMC observation, before this operation"
                 }
               },
-              ["expected_power_state"]
+              ["observed_power_state"]
             ),
           evidence_requirements: [
             %Target.EvidenceRequirement{
-              parameter: "expected_power_state",
+              parameter: "observed_power_state",
               fact: "power_state",
               observation: elem(@inspect, 1)
             }
@@ -82,7 +84,7 @@ defmodule Opsonde.Targets.BMC do
 
   def effect_request(%{capability: "effect.power", operation: operation} = request) do
     with {:ok, desired} <- Map.fetch(@effects, operation),
-         %{"expected_power_state" => expected} <- request.parameters,
+         %{"observed_power_state" => expected} <- request.parameters,
          true <- expected in ["on", "off"],
          true <- map_size(request.parameters) == 1 and request.selectors == %{} do
       {:ok, %{operation: operation, expected: expected, desired: desired}}

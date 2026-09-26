@@ -732,7 +732,7 @@ defmodule Opsonde.AI.ReqLLM do
       |> Enum.filter(&(&1.request_kind == :effect))
       |> then(fn tools ->
         if request.budget.remaining_effects > 0,
-          do: tool_input_variants(tools),
+          do: tool_input_variants(Enum.map(tools, &constrain_effect_input(&1, request))),
           else: []
       end)
 
@@ -829,6 +829,37 @@ defmodule Opsonde.AI.ReqLLM do
           []
       end
     end)
+  end
+
+  defp constrain_effect_input(tool, request) do
+    schema =
+      Enum.reduce(tool.evidence_requirements, tool.input_schema, fn requirement, schema ->
+        values = AI.proposal_requirement_values(tool, request, requirement)
+        path = ["properties", "parameters", "properties", requirement.parameter]
+
+        case {values, get_in(schema, path)} do
+          {[], _field} ->
+            schema
+
+          {values, %{} = field} ->
+            allowed =
+              case Map.get(field, "enum") do
+                choices when is_list(choices) -> choices
+                _other -> values
+              end
+
+            observed = Enum.filter(values, &(&1 in allowed))
+
+            if observed == [],
+              do: schema,
+              else: put_in(schema, path, Map.put(field, "enum", observed))
+
+          _other ->
+            schema
+        end
+      end)
+
+    %{tool | input_schema: schema}
   end
 
   defp available_evidence_ids(request),

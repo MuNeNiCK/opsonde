@@ -41,7 +41,7 @@ defmodule Opsonde.Providers.AI do
   defmodule Evidence do
     @moduledoc false
     @enforce_keys [:id, :kind, :content]
-    defstruct @enforce_keys ++ [target_id: nil]
+    defstruct @enforce_keys ++ [target_id: nil, observed_at_us: nil]
     @type t :: %__MODULE__{}
   end
 
@@ -90,6 +90,14 @@ defmodule Opsonde.Providers.AI do
 
   def proposal_requirements_match?(_tool, _request, _evidence_ids, _parameters), do: false
 
+  def proposal_requirement_values(tool, request, requirement) do
+    requirement
+    |> matching_evidence(tool, request, nil)
+    |> Enum.map(& &1.content["facts"][requirement.fact])
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
   defp proposal_requirements_available?(tool, request) do
     tool.request_kind == :observation or
       Enum.all?(tool.evidence_requirements, fn requirement ->
@@ -98,27 +106,51 @@ defmodule Opsonde.Providers.AI do
   end
 
   defp matching_evidence(requirement, tool, request, evidence_ids) do
-    observation_tool =
-      Enum.find(request.observation_tools, fn observation ->
-        observation.target_id == tool.target_id and
+    observation_tool_ids =
+      (request.observation_tools ++ request.proposal_tools)
+      |> Enum.filter(fn observation ->
+        Map.get(observation, :request_kind, :observation) == :observation and
+          observation.target_id == tool.target_id and
           observation.access_method_id == tool.access_method_id and
           observation.provider_id == tool.provider_id and
           observation.operation == requirement.observation
       end)
+      |> Enum.map(& &1.id)
 
-    if observation_tool do
+    if observation_tool_ids != [] do
       Enum.filter(request.evidence, fn evidence ->
         evidence.kind == "observation" and evidence.target_id == tool.target_id and
           is_map(evidence.content) and
           (is_nil(evidence_ids) or evidence.id in evidence_ids) and
-          evidence.content["tool_id"] == observation_tool.id and
+          evidence.content["tool_id"] in observation_tool_ids and
           is_map(evidence.content["facts"]) and
-          Map.has_key?(evidence.content["facts"], requirement.fact)
+          Map.has_key?(evidence.content["facts"], requirement.fact) and
+          not superseded_observation?(evidence, request, tool, requirement, observation_tool_ids)
       end)
     else
       []
     end
   end
+
+  defp superseded_observation?(observation, request, tool, requirement, observation_tool_ids) do
+    Enum.any?(request.evidence, fn newer ->
+      newer.target_id == tool.target_id and
+        newer.id != observation.id and
+        later_evidence?(newer, observation) and
+        is_map(newer.content) and
+        newer.content["access_method_id"] == tool.access_method_id and
+        is_map(newer.content["facts"]) and
+        Map.has_key?(newer.content["facts"], requirement.fact) and
+        ((newer.kind == "target_verification" and newer.content["status"] == "verified") or
+           (newer.kind == "observation" and newer.content["tool_id"] in observation_tool_ids))
+    end)
+  end
+
+  defp later_evidence?(%{observed_at_us: newer}, %{observed_at_us: older})
+       when is_integer(newer) and is_integer(older),
+       do: newer > older
+
+  defp later_evidence?(_newer, _older), do: false
 
   defp verified_target_evidence?(
          %Evidence{

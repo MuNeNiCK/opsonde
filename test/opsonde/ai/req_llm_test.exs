@@ -614,6 +614,82 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute "target_traversal" in unavailable_payload["allowed_intents"]
   end
 
+  test "effect schema exposes the observed precondition rather than the desired result",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    observation = %{observation_tool() | operation: "bmc.power.inspect"}
+
+    observation_request = %AI.ProposalTool{
+      proposal_tool()
+      | id: "request-observation",
+        request_kind: :observation,
+        capability: "observe.power",
+        operation: "bmc.power.inspect",
+        input_schema: tool_input_schema(),
+        evidence_requirements: []
+    }
+
+    effect = %AI.ProposalTool{
+      proposal_tool()
+      | operation: "bmc.power.on",
+        input_schema:
+          tool_input_schema(
+            %{"observed_power_state" => %{"type" => "string", "enum" => ["on", "off"]}},
+            ["observed_power_state"]
+          ),
+        evidence_requirements: [
+          %Opsonde.Providers.Target.EvidenceRequirement{
+            parameter: "observed_power_state",
+            fact: "power_state",
+            observation: "bmc.power.inspect"
+          }
+        ]
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 4,
+        evidence: [
+          %AI.Evidence{
+            id: "observed-off",
+            kind: "observation",
+            target_id: "target-1",
+            content: %{
+              "tool_id" => observation_request.id,
+              "facts" => %{"power_state" => "off"}
+            }
+          }
+        ],
+        observation_tools: [observation],
+        proposal_tools: [observation_request, effect]
+    }
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    [provider_request] = requests(context.agent)
+
+    effect_schema =
+      provider_request
+      |> output_schema()
+      |> get_in(["properties", "intent", "anyOf"])
+      |> Enum.flat_map(&Map.get(&1, "anyOf", []))
+      |> Enum.find(&Map.has_key?(Map.get(&1, "properties", %{}), "verification"))
+
+    effect_action =
+      effect_schema["properties"]["action"]["anyOf"]
+      |> Enum.find(&(get_in(&1, ["properties", "tool_id", "enum"]) == [effect.id]))
+
+    assert get_in(effect_action, [
+             "properties",
+             "parameters",
+             "properties",
+             "observed_power_state",
+             "enum"
+           ]) == ["off"]
+  end
+
   test "Resolver schema retries receive explicit bounded correction context", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})

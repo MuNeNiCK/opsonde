@@ -271,8 +271,10 @@ defmodule Opsonde.ResolverProjectionTest do
     assert [%AI.ObservationTool{id: observation_tool_id}] =
              before_observation.observation_tools
 
-    assert [%AI.ProposalTool{request_kind: :observation}] =
+    assert [%AI.ProposalTool{request_kind: :observation, id: observation_request_id}] =
              before_observation.proposal_tools
+
+    refute observation_tool_id == observation_request_id
 
     evidence =
       Cases.append_evidence!(
@@ -282,10 +284,10 @@ defmodule Opsonde.ResolverProjectionTest do
         "evidence-gate-observation",
         "observation",
         "target_provider",
-        observation_tool_id,
+        observation_request_id,
         %{
           "target_id" => context.target.id,
-          "tool_id" => observation_tool_id,
+          "tool_id" => observation_request_id,
           "facts" => %{"status" => "inactive"}
         },
         DateTime.utc_now(),
@@ -301,6 +303,29 @@ defmodule Opsonde.ResolverProjectionTest do
     assert proposal.operation == "service.restart"
     assert proposal.evidence_requirements == effect.evidence_requirements
     assert Enum.any?(after_observation.evidence, &(&1.id == evidence.id))
+
+    Cases.append_evidence!(
+      incident.id,
+      run.id,
+      started.value.id,
+      "evidence-gate-verification",
+      "target_verification",
+      "fixture",
+      "verified-current-state",
+      %{
+        "target_id" => context.target.id,
+        "access_method_id" => proposal.access_method_id,
+        "status" => "verified",
+        "facts" => %{"status" => "active"}
+      },
+      DateTime.add(evidence.observed_at, 1, :microsecond),
+      authorize?: false
+    )
+
+    assert {:ok, after_verification} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    refute Enum.any?(after_verification.proposal_tools, &(&1.operation == "service.restart"))
   end
 
   test "preselection projection exposes candidates without probing Target providers", context do
