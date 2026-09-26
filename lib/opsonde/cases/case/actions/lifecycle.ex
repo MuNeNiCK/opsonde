@@ -4,6 +4,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   alias Opsonde.Accounts
   alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.{Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
 
   @limit_fields [
     :max_elapsed_seconds,
@@ -178,29 +179,10 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
          %{status: :running} = run,
          key
        ) do
-    with {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false) do
-      cond do
-        started != [] ->
-          {:ok, incident}
-
-        stale_proposal_pending?(incident.pending_intent) ->
-          with {:ok, superseded_id} <- invalidate_pending_proposal(incident, run),
-               {:ok, result} <- start_recovery_turn(incident, run, key, superseded_id) do
-            recovery_turn_result(incident, result, superseded_id)
-          end
-
-        stale_resolver_pending?(incident.pending_intent) ->
-          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
-            recovery_turn_result(incident, result, nil)
-          end
-
-        map_size(incident.pending_intent) == 0 ->
-          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
-            recovery_turn_result(incident, result, nil)
-          end
-
-        true ->
-          {:ok, incident}
+    with {:ok, settlement} <- VerifiedEffectRecovery.after_source_recovery(incident, run) do
+      case settlement do
+        {:resolved, resolved} -> {:ok, resolved}
+        :continue -> continue_after_source_recovery_turns(incident, run, key)
       end
     end
   end
@@ -220,6 +202,35 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   end
 
   defp continue_after_source_recovery(incident, _run, _key), do: {:ok, incident}
+
+  defp continue_after_source_recovery_turns(incident, run, key) do
+    with {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false) do
+      cond do
+        started != [] ->
+          {:ok, incident}
+
+        stale_proposal_pending?(incident.pending_intent) ->
+          with {:ok, superseded_id} <- invalidate_pending_proposal(incident, run),
+               {:ok, result} <- start_recovery_turn(incident, run, key, superseded_id) do
+            recovery_turn_result(incident, result, superseded_id)
+          end
+
+        stale_resolver_pending?(incident.pending_intent) ->
+          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
+            recovery_turn_result(incident, result, nil)
+          end
+
+        map_size(incident.pending_intent) == 0 or
+            incident.pending_intent["action"] == "await_source_recovery" ->
+          with {:ok, result} <- start_recovery_turn(incident, run, key, nil) do
+            recovery_turn_result(incident, result, nil)
+          end
+
+        true ->
+          {:ok, incident}
+      end
+    end
+  end
 
   defp stale_proposal_pending?(%{"action" => action, "proposal_id" => proposal_id})
        when action in [

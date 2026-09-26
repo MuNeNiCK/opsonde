@@ -5,6 +5,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.{Approval, Budget, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.Actions.RecoveryCompletion
 
   @impl true
   def run(input, _opts, _context) do
@@ -31,39 +32,14 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   end
 
   defp route(turn, %{"type" => "recovery_conclusion"} = intent, incident, run) do
-    now = DateTime.utc_now()
-
     with :ok <- ensure_running(incident, run),
          :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
          {:ok, resolved} <-
-           Cases.update_case_record(
+           RecoveryCompletion.complete(
              incident,
-             incident.revision,
-             %{
-               status: :resolved,
-               pending_intent: %{},
-               stop_reason: nil,
-               required_human_input: nil
-             },
-             authorize?: false
-           ),
-         {:ok, _ended_run} <-
-           Cases.retire_resolution_run(
              run,
-             run.revision,
-             %{status: :completed, ended_at: now},
-             authorize?: false
-           ),
-         {:ok, _event} <-
-           Cases.create_case_event_record(
-             %{
-               case_id: incident.id,
-               resolution_run_id: run.id,
-               event_type: "case_resolved",
-               idempotency_key: route_key(turn),
-               data: resolved_event_data(turn, intent)
-             },
-             authorize?: false
+             route_key(turn),
+             resolved_event_data(turn, intent)
            ) do
       resolved
     end

@@ -527,6 +527,55 @@ defmodule Opsonde.SignalIngressTest do
              :recovered
   end
 
+  test "a new firing of the same alert opens a fresh Case after prior resolution", context do
+    enable_signal_automation!(context.admin)
+    base = DateTime.utc_now()
+    ingest_one!(context.provider, "first-firing", :firing, base)
+
+    [first] = Cases.list_cases!(actor: context.admin)
+    first_run = Cases.active_resolution_run!(first.id, authorize?: false)
+
+    Cases.update_case_record!(first, first.revision, %{status: :resolved}, authorize?: false)
+
+    Cases.retire_resolution_run!(
+      first_run,
+      first_run.revision,
+      %{status: :completed, ended_at: DateTime.utc_now()},
+      authorize?: false
+    )
+
+    ingest_one!(context.provider, "first-recovered", :recovered, DateTime.add(base, 10, :second))
+    ingest_one!(context.provider, "second-firing", :firing, DateTime.add(base, 20, :second))
+
+    [second, historical] =
+      Cases.list_cases!(actor: context.admin)
+      |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+
+    assert historical.id == first.id
+    assert historical.status == :resolved
+    assert second.id != first.id
+    assert second.status == :running
+    assert second.alert_state == :firing
+
+    [correlation] = Signals.list_signal_correlations!(actor: context.admin)
+    assert correlation.case_id == second.id
+
+    ingest_one!(context.provider, "repeat-firing", :firing, DateTime.add(base, 21, :second))
+    ingest_one!(context.provider, "stale-firing", :firing, DateTime.add(base, 19, :second))
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+
+    ingest_one!(context.provider, "second-recovered", :recovered, DateTime.add(base, 30, :second))
+    ingest_one!(context.provider, "second-recovered", :recovered, DateTime.add(base, 30, :second))
+
+    assert Cases.get_case!(second.id, actor: context.admin).alert_state == :recovered
+    assert Cases.get_case!(first.id, actor: context.admin).status == :resolved
+    events = Signals.list_signal_events!(actor: context.admin)
+    assert length(events) == 6
+    assert Enum.count(events, &(&1.case_id == first.id)) == 1
+    assert Enum.count(events, &(&1.case_id == second.id)) == 4
+    assert Enum.count(events, &is_nil(&1.case_id)) == 1
+  end
+
   test "a later Target catalog change re-evaluates a running unresolved Signal Case", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()

@@ -158,7 +158,15 @@ defmodule Opsonde.Cases.VerificationDelivery do
   end
 
   defp evaluate(attempt) do
-    case Cases.evaluate_verification(attempt.id, authorize?: false) do
+    result =
+      with :verified <- attempt.status,
+           {:ok, %{trigger_kind: :signal}} <- Cases.get_case(attempt.case_id, authorize?: false) do
+        Cases.reconcile_verified_effect(attempt.case_id, attempt.id, authorize?: false)
+      else
+        _other -> Cases.evaluate_verification(attempt.id, authorize?: false)
+      end
+
+    case result do
       {:ok, _turn} ->
         :ok
 

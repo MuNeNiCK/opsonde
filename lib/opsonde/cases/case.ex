@@ -10,6 +10,10 @@ defmodule Opsonde.Cases.Case do
     table "cases"
     repo Opsonde.Repo
 
+    identity_wheres_to_sql unique_trigger: "trigger_kind <> 'signal'",
+                           one_active_signal_trigger:
+                             "trigger_kind = 'signal' AND status IN ('running', 'needs_attention')"
+
     custom_indexes do
       index [:authority_setting_id]
       index [:initial_target_id]
@@ -84,6 +88,17 @@ defmodule Opsonde.Cases.Case do
       filter expr(
                trigger_kind == ^arg(:trigger_kind) and source == ^arg(:source) and
                  source_ref == ^arg(:source_ref)
+             )
+    end
+
+    read :active_by_trigger do
+      get? true
+      argument :source, :string, allow_nil?: false
+      argument :source_ref, :string, allow_nil?: false
+
+      filter expr(
+               trigger_kind == :signal and source == ^arg(:source) and
+                 source_ref == ^arg(:source_ref) and status in [:running, :needs_attention]
              )
     end
 
@@ -247,6 +262,14 @@ defmodule Opsonde.Cases.Case do
       argument :id, :uuid, allow_nil?: false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       run {Opsonde.Cases.Case.Actions.Lifecycle, operation: :record_source_recovery}
+    end
+
+    action :reconcile_verified_effect, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :verification_attempt_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
     end
 
     action :require_attention, :struct do
@@ -424,11 +447,13 @@ defmodule Opsonde.Cases.Case do
 
     policy action([
              :by_trigger,
+             :active_by_trigger,
              :active_by_incident_key,
              :unresolved_signals_without_target,
              :create_record,
              :update_record,
              :require_attention,
+             :reconcile_verified_effect,
              :resume_after_target_registration,
              :route_target_discovery,
              :route_related_target,
@@ -639,6 +664,12 @@ defmodule Opsonde.Cases.Case do
   end
 
   identities do
-    identity :unique_trigger, [:trigger_kind, :source, :source_ref]
+    identity :unique_trigger, [:trigger_kind, :source, :source_ref] do
+      where expr(trigger_kind != :signal)
+    end
+
+    identity :one_active_signal_trigger, [:trigger_kind, :source, :source_ref] do
+      where expr(trigger_kind == :signal and status in [:running, :needs_attention])
+    end
   end
 end

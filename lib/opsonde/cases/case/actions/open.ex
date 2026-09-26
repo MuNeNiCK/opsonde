@@ -48,14 +48,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   end
 
   defp existing_case(arguments) do
-    with {:ok, existing} <-
-           Cases.case_by_trigger(
-             arguments.trigger_kind,
-             arguments.source,
-             arguments.source_ref,
-             authorize?: false,
-             not_found_error?: false
-           ) do
+    with {:ok, existing} <- case_by_trigger(arguments) do
       case {existing, Map.get(arguments, :incident_key)} do
         {%Case{}, _incident_key} ->
           {:ok, existing}
@@ -70,6 +63,20 @@ defmodule Opsonde.Cases.Case.Actions.Open do
           {:ok, nil}
       end
     end
+  end
+
+  defp case_by_trigger(%{trigger_kind: :signal} = arguments) do
+    Cases.active_signal_case_by_trigger(arguments.source, arguments.source_ref,
+      authorize?: false,
+      not_found_error?: false
+    )
+  end
+
+  defp case_by_trigger(arguments) do
+    Cases.case_by_trigger(arguments.trigger_kind, arguments.source, arguments.source_ref,
+      authorize?: false,
+      not_found_error?: false
+    )
   end
 
   defp locked_current_setting(attempts \\ 2) do

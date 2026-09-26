@@ -337,7 +337,12 @@ function compactFacts(
 
 function stageForEvent(type: string): StageKey {
   if (type.includes("report")) return "report";
-  if (type.includes("verification") || type === "source_recovered") return "verify";
+  if (
+    type.includes("verification") ||
+    type === "source_recovered" ||
+    type === "case_awaiting_source_recovery"
+  )
+    return "verify";
   if (type.includes("effect") || type.includes("operation")) return "remediate";
   if (type.includes("review") || type.includes("proposal")) return "review";
   if (type === "case_resolved") return "verify";

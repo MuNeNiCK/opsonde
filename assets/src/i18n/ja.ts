@@ -627,6 +627,7 @@ const ja = {
         signal_event_received: "監視イベント受信",
         source_firing: "監視元が発報を報告",
         source_recovered: "監視元が復旧を報告",
+        case_awaiting_source_recovery: "監視結果の復旧を確認中",
         case_target_selected: "影響Targetを選択",
         target_search_completed: "Target検索完了",
         resolver_assigned: "Resolverを割当",

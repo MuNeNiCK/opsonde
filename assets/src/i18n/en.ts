@@ -644,6 +644,7 @@ const en = {
         signal_event_received: "Monitoring event received",
         source_firing: "Source reported firing",
         source_recovered: "Source reported recovery",
+        case_awaiting_source_recovery: "Waiting for monitoring recovery",
         case_target_selected: "Affected Target selected",
         target_search_completed: "Target search completed",
         resolver_assigned: "Resolver assigned",

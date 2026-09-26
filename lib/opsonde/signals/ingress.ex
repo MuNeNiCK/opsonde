@@ -226,11 +226,22 @@ defmodule Opsonde.Signals.Ingress do
     end
   end
 
-  defp existing_case(%{case_id: id}, _source, _event_key) when is_binary(id),
-    do: Cases.get_case(id, authorize?: false)
+  defp existing_case(%{case_id: id}, source, event_key) when is_binary(id) do
+    with {:ok, incident} <- Cases.get_case(id, authorize?: false) do
+      if incident.status in [:running, :needs_attention] do
+        {:ok, incident}
+      else
+        active_case_for_source(source, event_key)
+      end
+    end
+  end
 
   defp existing_case(_correlation, source, event_key) do
-    Cases.case_by_trigger(:signal, source, event_key,
+    active_case_for_source(source, event_key)
+  end
+
+  defp active_case_for_source(source, event_key) do
+    Cases.active_signal_case_by_trigger(source, event_key,
       authorize?: false,
       not_found_error?: false
     )

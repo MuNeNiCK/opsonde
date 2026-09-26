@@ -89,6 +89,14 @@ defmodule Opsonde.Cases do
         action: :record_source_recovery,
         args: [:id, :expected_revision]
 
+      define :active_signal_case_by_trigger,
+        action: :active_by_trigger,
+        args: [:source, :source_ref]
+
+      define :reconcile_verified_effect,
+        action: :reconcile_verified_effect,
+        args: [:id, :verification_attempt_id]
+
       define :require_case_attention,
         action: :require_attention,
         args: [
