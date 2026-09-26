@@ -324,6 +324,51 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
   end
 
+  test "Resolver object output carries optional bounded Condition hypotheses beside one intent",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    conditions =
+      Enum.map(~w(condition-a condition-b), fn id ->
+        %AI.Condition{
+          id: id,
+          revision: 1,
+          occurrence: 1,
+          predicate: "unavailable",
+          subject_key: id,
+          subject_ref: %{"name" => id},
+          state: :firing,
+          target_id: nil,
+          current_occurred_at_us: 1
+        }
+      end)
+
+    request = %{resolver_request() | conditions: conditions}
+
+    group = %{
+      "condition_ids" => ~w(condition-a condition-b),
+      "assessment" => "unknown",
+      "reason" => "The two alerts have no shared cause observation",
+      "evidence_ids" => []
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Observe the affected devices",
+        "intent" => %{"type" => "handoff", "required_input" => "Provide a safe observation"},
+        "condition_groups" => [group]
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{condition_groups: [^group]}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire] = requests(context.agent)
+    assert output_schema(wire)["properties"]["condition_groups"]["maxItems"] == 32
+    assert length(user_payload(wire)["conditions"]) == 2
+  end
+
   test "ReqLLM object responses retain usage when the returned schema is invalid", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

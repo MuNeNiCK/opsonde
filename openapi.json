@@ -1254,6 +1254,71 @@
             "nullable": true,
             "type": "string"
           },
+          "condition_groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assessment": {
+                  "enum": [
+                    "related",
+                    "independent",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                "condition_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "reason": {
+                  "maxLength": 500,
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "condition_ids",
+                "assessment",
+                "reason",
+                "evidence_ids"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "condition_revisions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "revision"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "decision": {
             "additionalProperties": true,
             "nullable": true,
@@ -1332,6 +1397,8 @@
           "intent",
           "outcome",
           "decision",
+          "condition_revisions",
+          "condition_groups",
           "failure_category",
           "failure_message",
           "progress_kind",

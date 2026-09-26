@@ -159,6 +159,14 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       %{
         "outcome" => "decision",
         "condition_revisions" => revisions,
+        "condition_groups" => [
+          %{
+            "condition_ids" => Enum.map(revisions, & &1["id"]),
+            "assessment" => "unknown",
+            "reason" => "No common cause observation yet",
+            "evidence_ids" => []
+          }
+        ],
         "intent" => %{"type" => "handoff", "reason" => "Investigate separately"}
       },
       :none,
@@ -166,6 +174,15 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       "Review Resolver decision",
       authorize?: false
     )
+
+    turns = get_data!("/api/v1/cases/#{incident.id}/turns", context.viewer_token)
+
+    assert [
+             %{
+               "condition_revisions" => ^revisions,
+               "condition_groups" => [%{"assessment" => "unknown"}]
+             }
+           ] = turns
 
     parent = Cases.get_case!(incident.id, authorize?: false)
 

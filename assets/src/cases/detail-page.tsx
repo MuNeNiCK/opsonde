@@ -222,6 +222,23 @@ export function CaseDetailPage() {
   }
 
   const incident = detail.snapshot.case;
+  const currentConditionRevisions = JSON.stringify(
+    detail.snapshot.conditions
+      .map((condition) => ({ id: condition.id, revision: condition.revision }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  const latestGroupTurn = [...detail.turns]
+    .filter(
+      (turn) =>
+        turn.condition_groups !== null &&
+        turn.condition_revisions !== null &&
+        JSON.stringify([...turn.condition_revisions].sort((a, b) => a.id.localeCompare(b.id))) ===
+          currentConditionRevisions,
+    )
+    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
+  const conditionHypotheses = latestGroupTurn?.condition_groups?.filter(
+    (group) => group.assessment !== "unknown",
+  ) ?? [];
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
@@ -413,6 +430,38 @@ export function CaseDetailPage() {
                   </Link>
                 ))}
             </div>
+            {latestGroupTurn && detail.snapshot.conditions.length > 1 && (
+              <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                <h3 className="text-sm font-semibold">{t("cases.conditionHypotheses")}</h3>
+                <p className="text-xs text-muted-foreground">
+                  {t("cases.conditionHypothesesDescription")}
+                </p>
+                {conditionHypotheses.length === 0 ? (
+                  <p className="text-sm">{t("cases.conditionHypothesesUnknown")}</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {conditionHypotheses.map((group, index) => (
+                      <li key={`${group.condition_ids.join(":")}-${index}`} className="text-sm">
+                        <Badge variant="outline">
+                          {t(`cases.conditionGroupAssessment.${group.assessment}`)}
+                        </Badge>{" "}
+                        {group.condition_ids
+                          .map((id) => {
+                            const condition = detail.snapshot.conditions.find((item) => item.id === id);
+                            return typeof condition?.subject_ref.name === "string"
+                              ? condition.subject_ref.name
+                              : id;
+                          })
+                          .join(", ")}
+                        {group.reason && (
+                          <p className="mt-1 text-xs text-muted-foreground">{group.reason}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <ul className="divide-y rounded-lg border">
               {detail.snapshot.conditions.map((item) => {
                 const name =

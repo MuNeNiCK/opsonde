@@ -862,12 +862,28 @@ defmodule Opsonde.SignalIngressTest do
                  respond: fn request ->
                    assert length(request.conditions) == 2
                    assert Enum.map(request.conditions, & &1.state) == [:recovered, :firing]
-                   {:ok, decision}
+                   assert [source | _] = request.evidence
+
+                   {:ok,
+                    %{
+                      decision
+                      | condition_groups: [
+                          %{
+                            "condition_ids" => Enum.map(request.conditions, & &1.id),
+                            "assessment" => "related",
+                            "reason" => "The native subject recurred",
+                            "evidence_ids" => [source.id]
+                          }
+                        ]
+                    }}
                  end
                }
              )
 
-    assert Cases.get_turn!(successor.id, authorize?: false).result["outcome"] == "decision"
+    result = Cases.get_turn!(successor.id, authorize?: false).result
+    assert result["outcome"] == "decision"
+    assert [%{"assessment" => "related", "condition_ids" => ids}] = result["condition_groups"]
+    assert length(ids) == 2
     assert length(Cases.list_cases!(actor: context.admin)) == 1
   end
 

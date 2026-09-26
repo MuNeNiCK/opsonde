@@ -363,9 +363,77 @@ defmodule Opsonde.Providers.AI do
   defmodule ResolverDecision do
     @moduledoc false
     @enforce_keys [:intent, :usage]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [condition_groups: []]
     @type t :: %__MODULE__{}
   end
+
+  def normalize_condition_groups(groups, conditions, evidence) do
+    available = MapSet.new(Enum.map(conditions, & &1.id))
+    cited = MapSet.new(Enum.map(evidence, & &1.id))
+
+    {accepted, assigned} =
+      if(is_list(groups), do: Enum.take(groups, 32), else: [])
+      |> Enum.reduce({[], MapSet.new()}, fn group, {accepted, assigned} ->
+        case valid_group(group, available, cited, assigned) do
+          {:ok, normalized} ->
+            {[normalized | accepted],
+             MapSet.union(assigned, MapSet.new(normalized["condition_ids"]))}
+
+          :invalid ->
+            {accepted, assigned}
+        end
+      end)
+
+    missing =
+      conditions
+      |> Enum.reject(&MapSet.member?(assigned, &1.id))
+      |> Enum.map(fn condition ->
+        %{
+          "condition_ids" => [condition.id],
+          "assessment" => "unknown",
+          "reason" => nil,
+          "evidence_ids" => []
+        }
+      end)
+
+    Enum.reverse(accepted) ++ missing
+  end
+
+  defp valid_group(
+         %{
+           "condition_ids" => ids,
+           "assessment" => assessment,
+           "reason" => reason,
+           "evidence_ids" => evidence_ids
+         },
+         available,
+         cited,
+         assigned
+       )
+       when is_list(ids) and is_list(evidence_ids) and
+              assessment in ["related", "independent", "unknown"] and
+              is_binary(reason) do
+    id_set = MapSet.new(ids)
+    evidence_set = MapSet.new(evidence_ids)
+
+    if ids != [] and length(ids) <= 32 and length(ids) == MapSet.size(id_set) and
+         MapSet.subset?(id_set, available) and MapSet.disjoint?(id_set, assigned) and
+         length(evidence_ids) <= 16 and length(evidence_ids) == MapSet.size(evidence_set) and
+         MapSet.subset?(evidence_set, cited) and valid_resolver_reason?(reason) and
+         (assessment == "unknown" or evidence_ids != []) do
+      {:ok,
+       %{
+         "condition_ids" => ids,
+         "assessment" => assessment,
+         "reason" => reason,
+         "evidence_ids" => evidence_ids
+       }}
+    else
+      :invalid
+    end
+  end
+
+  defp valid_group(_group, _available, _cited, _assigned), do: :invalid
 
   defmodule ResolverRequest do
     @moduledoc false

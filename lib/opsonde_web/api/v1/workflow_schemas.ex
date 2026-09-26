@@ -313,6 +313,23 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         intent: map(),
         outcome: nullable_string(),
         decision: nullable_map(),
+        condition_revisions:
+          nullable_array(
+            object(%{id: Schemas.uuid(), revision: positive_integer()}, [:id, :revision], false)
+          ),
+        condition_groups:
+          nullable_array(
+            object(
+              %{
+                condition_ids: array(Schemas.uuid()),
+                assessment: enum(~w(related independent unknown)),
+                reason: nullable_string(500),
+                evidence_ids: array(Schemas.uuid())
+              },
+              [:condition_ids, :assessment, :reason, :evidence_ids],
+              false
+            )
+          ),
         failure_category: nullable_string(),
         failure_message: nullable_string(),
         progress_kind:
@@ -323,7 +340,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id ordinal status intent outcome decision failure_category failure_message progress_kind started_at completed_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id ordinal status intent outcome decision condition_revisions condition_groups failure_category failure_message progress_kind started_at completed_at revision inserted_at updated_at)a,
       false
     )
   end
@@ -579,6 +596,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
   defp nullable_uuid, do: %Schema{type: :string, format: :uuid, nullable: true}
   defp nullable_timestamp, do: %Schema{type: :string, format: :"date-time", nullable: true}
   defp array(items), do: %Schema{type: :array, items: items}
+  defp nullable_array(items), do: %Schema{type: :array, items: items, nullable: true}
 
   defp array(items, min_items, max_items),
     do: %Schema{type: :array, items: items, minItems: min_items, maxItems: max_items}

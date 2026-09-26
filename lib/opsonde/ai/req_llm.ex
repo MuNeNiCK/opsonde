@@ -131,11 +131,14 @@ defmodule Opsonde.AI.ReqLLM do
            ),
          result <-
            decode_decision(response, schema, fn value ->
-             resolver_intent(value, request)
+             resolver_output(value, request)
            end) do
       case result do
-        {:ok, intent, usage} -> {:ok, %AI.ResolverDecision{intent: intent, usage: usage}}
-        error -> error
+        {:ok, {intent, groups}, usage} ->
+          {:ok, %AI.ResolverDecision{intent: intent, condition_groups: groups, usage: usage}}
+
+        error ->
+          error
       end
     end
   end
@@ -307,6 +310,10 @@ defmodule Opsonde.AI.ReqLLM do
         "request whose output directly examines the unresolved condition. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
         "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
+        "When condition_groups is offered, describe tentative related, independent, or unknown " <>
+        "Condition groups using only supplied Condition IDs and Evidence IDs. Groups must not " <>
+        "overlap. Graph proximity and timing alone mean unknown; cite observations when asserting " <>
+        "a relationship. These hints do not authorize a Target operation or Case split. " <>
         "Registered Target relations are inventory context; only IDs listed in " <>
         "traversable_relation_ids are available for Target traversal. " <>
         "When a current-Target observation can identify the failing dependency, observe it before " <>
@@ -385,14 +392,14 @@ defmodule Opsonde.AI.ReqLLM do
     ])
   end
 
-  defp resolver_intent(%{"reason" => reason, "intent" => intent}, request)
+  defp resolver_output(%{"reason" => reason, "intent" => intent} = value, request)
        when is_binary(reason) and is_map(intent) do
-    intent
-    |> Map.put("reason", reason)
-    |> intent(request)
+    with {:ok, parsed} <- intent(Map.put(intent, "reason", reason), request) do
+      {:ok, {parsed, Map.get(value, "condition_groups", [])}}
+    end
   end
 
-  defp resolver_intent(_value, _request), do: invalid_output()
+  defp resolver_output(_value, _request), do: invalid_output()
 
   defp intent(%{"type" => "target_search"} = value, _request) do
     with {:ok, query} <- string(value, "query"),
@@ -651,13 +658,39 @@ defmodule Opsonde.AI.ReqLLM do
       end
       |> Enum.reject(&is_nil/1)
 
-    object_schema(
-      %{
-        "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
-        "intent" => %{"anyOf" => variants}
-      },
-      ~w(reason intent)
-    )
+    properties = %{
+      "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
+      "intent" => %{"anyOf" => variants}
+    }
+
+    properties =
+      if length(request.conditions) > 1,
+        do: Map.put(properties, "condition_groups", condition_group_schema()),
+        else: properties
+
+    object_schema(properties, ~w(reason intent))
+  end
+
+  defp condition_group_schema do
+    %{
+      "type" => "array",
+      "maxItems" => 32,
+      "items" =>
+        object_schema(
+          %{
+            "condition_ids" => %{
+              "type" => "array",
+              "items" => string_schema(),
+              "minItems" => 1,
+              "maxItems" => 32
+            },
+            "assessment" => enum_schema(["related", "independent", "unknown"]),
+            "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
+            "evidence_ids" => %{"type" => "array", "items" => string_schema(), "maxItems" => 16}
+          },
+          ~w(condition_ids assessment reason evidence_ids)
+        )
+    }
   end
 
   defp allowed_intents(request), do: request |> resolver_schema() |> schema_intent_types()

@@ -438,6 +438,12 @@ defmodule Opsonde.Cases.ResolverDelivery do
            "output_tokens" => decision.usage.output_tokens
          },
          "condition_revisions" => ResolverProjection.condition_revisions(request.conditions),
+         "condition_groups" =>
+           AI.normalize_condition_groups(
+             decision.condition_groups,
+             request.conditions,
+             request.evidence ++ request.observation_results
+           ),
          "resolver" => %{
            "provider_id" => selection.provider_id,
            "provider_revision" => selection.provider_revision,

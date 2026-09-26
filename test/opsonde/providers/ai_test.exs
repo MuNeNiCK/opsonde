@@ -19,6 +19,54 @@ defmodule Opsonde.Providers.AITest do
     %{admin: admin, operator: operator, provider: provider}
   end
 
+  test "Condition group hints never invent, overlap, or silently omit a Condition" do
+    conditions = Enum.map(~w(a b c d), &%{id: &1})
+    evidence = [%{id: "observed-switch"}]
+
+    groups = [
+      %{
+        "condition_ids" => ~w(a b),
+        "assessment" => "related",
+        "reason" => "Both ports lost PoE after the same switch observation",
+        "evidence_ids" => ["observed-switch"]
+      },
+      %{
+        "condition_ids" => ~w(b c),
+        "assessment" => "independent",
+        "reason" => "Overlaps a prior group",
+        "evidence_ids" => ["observed-switch"]
+      },
+      %{
+        "condition_ids" => ~w(d unknown-id),
+        "assessment" => "related",
+        "reason" => "Invented Condition",
+        "evidence_ids" => ["observed-switch"]
+      },
+      %{
+        "condition_ids" => ["c"],
+        "assessment" => "independent",
+        "reason" => "No current Evidence",
+        "evidence_ids" => []
+      }
+    ]
+
+    assert [accepted, unknown_c, unknown_d] =
+             AI.normalize_condition_groups(groups, conditions, evidence)
+
+    assert accepted["assessment"] == "related"
+    assert accepted["condition_ids"] == ~w(a b)
+
+    assert unknown_c == %{
+             "condition_ids" => ["c"],
+             "assessment" => "unknown",
+             "reason" => nil,
+             "evidence_ids" => []
+           }
+
+    assert unknown_d["condition_ids"] == ["d"]
+    assert unknown_d["assessment"] == "unknown"
+  end
+
   test "one AI provider carries resolver and reviewer roles without connection duplication",
        context do
     resolver = assign!(context.admin, context.provider, :resolver, 20)
