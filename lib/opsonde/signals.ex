@@ -58,6 +58,10 @@ defmodule Opsonde.Signals do
         action: :previous_for_correlation,
         args: [:signal_correlation_id, :occurrence]
 
+      define :same_subject_conditions,
+        action: :same_subject,
+        args: [:subject_key, :predicate]
+
       define :create_condition_record, action: :create_record
       define :record_condition_state, action: :record_state, args: [:expected_revision]
 

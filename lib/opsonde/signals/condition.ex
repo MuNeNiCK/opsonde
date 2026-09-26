@@ -16,6 +16,7 @@ defmodule Opsonde.Signals.Condition do
         where: "state = 'firing'"
 
       index [:target_id]
+      index [:subject_key, :predicate]
     end
   end
 
@@ -40,6 +41,13 @@ defmodule Opsonde.Signals.Condition do
              )
 
       prepare build(sort: [occurrence: :desc], limit: 1)
+    end
+
+    read :same_subject do
+      argument :subject_key, :string, allow_nil?: false
+      argument :predicate, :string, allow_nil?: false
+      filter expr(subject_key == ^arg(:subject_key) and predicate == ^arg(:predicate))
+      prepare build(sort: [updated_at: :desc, id: :desc], limit: 64)
     end
 
     create :create_record do
@@ -94,6 +102,7 @@ defmodule Opsonde.Signals.Condition do
     policy action([
              :latest_for_correlation,
              :previous_for_correlation,
+             :same_subject,
              :create_record,
              :record_state,
              :record_source_event

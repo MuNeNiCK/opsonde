@@ -441,6 +441,65 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_turns!(actor: context.admin)) == 1
   end
 
+  test "a rotated native alert key for the same affected subject stays in the dispatched Case",
+       context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("rotating-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "rotating-host",
+      actor: context.admin
+    )
+
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+    labels = %{"pod" => "pod-a", "namespace" => "default", "alertname" => "PodUnavailable"}
+
+    for {receipt, key, state, offset} <- [
+          {"original-firing", "fingerprint-a", :firing, 0},
+          {"original-recovery", "fingerprint-a", :recovered, 10}
+        ] do
+      at = DateTime.add(base, offset, :second)
+
+      ingest!(
+        context.provider,
+        envelope(receipt, at),
+        invocation(receipt, [
+          event(receipt, key, state, at,
+            target_ref: %{kind: :hostname, value: "rotating-host"},
+            attributes: %{"labels" => labels}
+          )
+        ])
+      )
+    end
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+
+    at = DateTime.add(base, 20, :second)
+
+    ingest!(
+      context.provider,
+      envelope("rotated-firing", at),
+      invocation("rotated-firing", [
+        event("rotated-firing", "fingerprint-b", :firing, at,
+          target_ref: %{kind: :hostname, value: "rotating-host"},
+          attributes: %{"labels" => labels}
+        )
+      ])
+    )
+
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+    assert length(Signals.list_conditions!(actor: context.admin)) == 2
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+  end
+
   test "a reused native event key with a different affected subject opens another Case",
        context do
     enable_signal_automation!(context.admin)

@@ -91,6 +91,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
 
   defp attachment_reason(_candidate, true), do: "initial_signal"
   defp attachment_reason({_incident, :recurrence}, false), do: "same_native_recurrence"
+  defp attachment_reason({_incident, :same_subject}, false), do: "same_affected_subject"
   defp attachment_reason(_candidate, false), do: "bounded_graph_time_locality"
 
   defp create_dispatch(incident, condition, received_at) do
@@ -122,11 +123,74 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
   end
 
   defp candidate(condition, received_at) do
-    with {:ok, preceding} <- recurrence_candidate(condition) do
-      case preceding do
-        nil -> graph_candidate(condition, received_at)
-        incident -> {:ok, {incident, :recurrence}}
+    with {:ok, recurrence} <- recurrence_candidate(condition) do
+      if recurrence do
+        {:ok, {recurrence, :recurrence}}
+      else
+        with {:ok, subject} <- subject_candidate(condition) do
+          if subject,
+            do: {:ok, {subject, :same_subject}},
+            else: graph_candidate(condition, received_at)
+        end
       end
+    end
+  end
+
+  defp subject_candidate(%{target_id: nil}), do: {:ok, nil}
+  defp subject_candidate(%{subject_ref: subject}) when map_size(subject) == 0, do: {:ok, nil}
+
+  defp subject_candidate(condition) do
+    with {:ok, matches} <-
+           Signals.same_subject_conditions(condition.subject_key, condition.predicate,
+             authorize?: false
+           ),
+         true <- length(matches) < 64 || {:ok, nil} do
+      matches
+      |> Enum.reject(&(&1.id == condition.id))
+      |> Enum.filter(
+        &(&1.target_id == condition.target_id and &1.subject_ref == condition.subject_ref)
+      )
+      |> Enum.reduce_while({:ok, MapSet.new()}, fn match, {:ok, case_ids} ->
+        case Cases.active_case_condition(match.id,
+               authorize?: false,
+               not_found_error?: false
+             ) do
+          {:ok, %CaseConditionMembership{case_id: id}} ->
+            {:cont, {:ok, MapSet.put(case_ids, id)}}
+
+          {:ok, nil} ->
+            {:cont, {:ok, case_ids}}
+
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, case_ids} ->
+          case MapSet.to_list(case_ids) do
+            [case_id] -> active_subject_case(case_id)
+            _other -> {:ok, nil}
+          end
+
+        {:error, _error} = error ->
+          error
+      end
+    else
+      {:ok, nil} -> {:ok, nil}
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp active_subject_case(case_id) do
+    with {:ok, incident} <- Cases.get_case(case_id, authorize?: false),
+         true <- incident.status in [:running, :needs_attention],
+         true <- incident.trigger_kind == :signal,
+         {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- length(members) < @max_conditions do
+      {:ok, incident}
+    else
+      false -> {:ok, nil}
+      {:error, _error} = error -> error
     end
   end
 
