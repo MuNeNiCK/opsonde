@@ -52,9 +52,18 @@ defmodule Opsonde.Signals do
         action: :latest_for_correlation,
         args: [:signal_correlation_id]
 
-      define :previous_condition_for_correlation,
-        action: :previous_for_correlation,
-        args: [:signal_correlation_id, :occurrence]
+      define :latest_condition_for_identity,
+        action: :latest_for_identity,
+        args: [:signal_correlation_id, :subject_key, :predicate]
+
+      define :previous_condition_for_identity,
+        action: :previous_for_identity,
+        args: [
+          :signal_correlation_id,
+          :occurrence,
+          :subject_key,
+          :predicate
+        ]
 
       define :same_subject_conditions,
         action: :same_subject,

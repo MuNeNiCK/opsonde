@@ -10,9 +10,9 @@ defmodule Opsonde.Signals.Condition do
     repo Opsonde.Repo
 
     custom_indexes do
-      index [:signal_correlation_id],
+      index [:signal_correlation_id, :subject_key, :predicate],
         unique: true,
-        name: "conditions_one_firing_occurrence",
+        name: "conditions_one_firing_subject",
         where: "state = 'firing'"
 
       index [:target_id]
@@ -30,14 +30,31 @@ defmodule Opsonde.Signals.Condition do
       prepare build(sort: [occurrence: :desc], limit: 1)
     end
 
-    read :previous_for_correlation do
+    read :latest_for_identity do
       get? true
       argument :signal_correlation_id, :uuid, allow_nil?: false
-      argument :occurrence, :integer, allow_nil?: false, constraints: [min: 2]
+      argument :subject_key, :string, allow_nil?: false
+      argument :predicate, :string, allow_nil?: false
 
       filter expr(
                signal_correlation_id == ^arg(:signal_correlation_id) and
-                 occurrence < ^arg(:occurrence)
+                 subject_key == ^arg(:subject_key) and predicate == ^arg(:predicate)
+             )
+
+      prepare build(sort: [occurrence: :desc], limit: 1)
+    end
+
+    read :previous_for_identity do
+      get? true
+      argument :signal_correlation_id, :uuid, allow_nil?: false
+      argument :occurrence, :integer, allow_nil?: false, constraints: [min: 2]
+      argument :subject_key, :string, allow_nil?: false
+      argument :predicate, :string, allow_nil?: false
+
+      filter expr(
+               signal_correlation_id == ^arg(:signal_correlation_id) and
+                 occurrence < ^arg(:occurrence) and subject_key == ^arg(:subject_key) and
+                 predicate == ^arg(:predicate)
              )
 
       prepare build(sort: [occurrence: :desc], limit: 1)
@@ -101,7 +118,8 @@ defmodule Opsonde.Signals.Condition do
   policies do
     policy action([
              :latest_for_correlation,
-             :previous_for_correlation,
+             :latest_for_identity,
+             :previous_for_identity,
              :same_subject,
              :create_record,
              :record_state,

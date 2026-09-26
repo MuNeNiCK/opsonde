@@ -507,7 +507,7 @@ defmodule Opsonde.Signals.Ingress do
 
   defp condition_subject_key(receipt, event, _target) do
     # An unknown mapping must not conflate two unrelated native event streams.
-    native = {receipt.provider_id, receipt.source, event.event_key}
+    native = {receipt.provider_id, receipt.source, event.event_key, condition_subject_ref(event)}
     digest = :crypto.hash(:sha256, :erlang.term_to_binary(native, [:deterministic]))
     "native:#{Base.encode16(digest, case: :lower)}"
   end

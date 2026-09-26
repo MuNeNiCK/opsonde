@@ -527,6 +527,41 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Signals.list_conditions!(actor: context.admin)) == 2
   end
 
+  test "one native event key can carry two firing subjects without cross-recovery", context do
+    enable_signal_automation!(context.admin)
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+
+    for {receipt, state, offset, pod} <- [
+          {"pod-a-start", :firing, 0, "pod-a"},
+          {"pod-b-start", :firing, 1, "pod-b"},
+          {"pod-a-end", :recovered, 2, "pod-a"}
+        ] do
+      at = DateTime.add(base, offset, :second)
+
+      ingest!(
+        context.provider,
+        envelope(receipt, at),
+        invocation(receipt, [
+          event(receipt, "shared-native-key", state, at,
+            attributes: %{
+              "labels" => %{
+                "pod" => pod,
+                "namespace" => "default",
+                "alertname" => "PodUnavailable"
+              }
+            }
+          )
+        ])
+      )
+    end
+
+    conditions = Signals.list_conditions!(actor: context.admin)
+    assert length(conditions) == 2
+    assert Enum.find(conditions, &(&1.subject_ref["name"] == "pod-a")).state == :recovered
+    assert Enum.find(conditions, &(&1.subject_ref["name"] == "pod-b")).state == :firing
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+  end
+
   test "a recurrence during Resolver delivery is charged and retried from current Conditions",
        context do
     enable_signal_automation!(context.admin)

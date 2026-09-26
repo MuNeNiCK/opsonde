@@ -198,9 +198,11 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
 
   defp recurrence_candidate(condition) do
     with {:ok, previous} <-
-           Signals.previous_condition_for_correlation(
+           Signals.previous_condition_for_identity(
              condition.signal_correlation_id,
              condition.occurrence,
+             condition.subject_key,
+             condition.predicate,
              authorize?: false,
              not_found_error?: false
            ),
