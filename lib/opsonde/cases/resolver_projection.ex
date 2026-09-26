@@ -491,6 +491,14 @@ defmodule Opsonde.Cases.ResolverProjection do
        ) do
     limits = AI.resolver_disclosure_limits()
 
+    recovery_baseline =
+      if incident.trigger_kind in [:manual, :audit] do
+        case ConditionRecovery.baseline_for_case(incident) do
+          {:ok, baseline} -> baseline
+          {:error, _reason} -> nil
+        end
+      end
+
     base = %AI.ResolverRequest{
       provider_revision: selection.provider_revision,
       session_id: "resolver:#{run.id}",
@@ -525,7 +533,13 @@ defmodule Opsonde.Cases.ResolverProjection do
     base
     |> add_items(
       :evidence,
-      generic_evidence(source_evidence, base.disclosure.allowed_target_ids, incident, run)
+      generic_evidence(
+        source_evidence,
+        base.disclosure.allowed_target_ids,
+        incident,
+        run,
+        recovery_baseline
+      )
     )
     |> add_candidate_group(other_evidence)
     |> add_items(:target_relations, relations)
@@ -535,7 +549,13 @@ defmodule Opsonde.Cases.ResolverProjection do
       add_items(
         current,
         :evidence,
-        generic_evidence(other_evidence, current.disclosure.allowed_target_ids, incident, run)
+        generic_evidence(
+          other_evidence,
+          current.disclosure.allowed_target_ids,
+          incident,
+          run,
+          recovery_baseline
+        )
       )
     end)
     |> then(fn current ->
@@ -729,7 +749,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp candidates(_evidence), do: []
 
-  defp generic_evidence(evidence, allowed_target_ids, incident, run) do
+  defp generic_evidence(evidence, allowed_target_ids, incident, run, recovery_baseline) do
     evidence
     |> Enum.reject(&candidate_evidence?/1)
     |> compact_repeated_operations()
@@ -739,7 +759,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         kind: item.kind,
         target_id: evidence_target_id(item, allowed_target_ids),
         observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
-        content: recovery_evidence_content(item, incident, run)
+        content: recovery_evidence_content(item, incident, run, recovery_baseline)
       }
     end)
   end
@@ -748,6 +768,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          %{
            kind: "observation",
            observed_at: observed_at,
+           source_ref: operation_id,
            content: %{
              "status" => "applied",
              "category" => "target_observed",
@@ -756,22 +777,36 @@ defmodule Opsonde.Cases.ResolverProjection do
            }
          } = evidence,
          %{
+           id: case_id,
+           trigger_kind: kind,
            selected_target_id: target_id,
-           source_recovered_at: %DateTime{} = recovered_at
+           selected_target_revision: target_revision
          },
-         %{id: run_id}
+         %{id: run_id},
+         %DateTime{} = baseline
        )
-       when is_map(facts) and map_size(facts) > 0 do
+       when kind in [:manual, :audit] and is_map(facts) and map_size(facts) > 0 do
     eligible? =
       evidence.resolution_run_id == run_id and
-        DateTime.compare(observed_at, recovered_at) in [:eq, :gt]
+        DateTime.compare(observed_at, baseline) in [:eq, :gt] and
+        case Cases.get_operation(operation_id, authorize?: false) do
+          {:ok, operation} ->
+            operation.case_id == case_id and operation.resolution_run_id == run_id and
+              operation.target_id == target_id and operation.target_revision == target_revision and
+              operation.request_kind == :observation and operation.status == :applied and
+              match?(%DateTime{}, operation.dispatch_started_at) and
+              DateTime.compare(operation.dispatch_started_at, baseline) in [:eq, :gt]
+
+          {:error, _reason} ->
+            false
+        end
 
     evidence
     |> projected_evidence_content()
     |> Map.put("recovery_eligible", eligible?)
   end
 
-  defp recovery_evidence_content(evidence, _incident, _run),
+  defp recovery_evidence_content(evidence, _incident, _run, _baseline),
     do: projected_evidence_content(evidence)
 
   defp projected_evidence_content(%{kind: kind, content: content})

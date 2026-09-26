@@ -342,13 +342,13 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          %{
            id: case_id,
            selected_target_id: target_id,
-           selected_target_revision: target_revision,
-           source_recovered_at: %DateTime{} = recovered_at
-         },
+           selected_target_revision: target_revision
+         } = incident,
          %{id: run_id}
        )
        when is_map(facts) and map_size(facts) > 0 do
-    with true <- DateTime.compare(observed_at, recovered_at) in [:eq, :gt],
+    with {:ok, baseline} <- ConditionRecovery.baseline_for_case(incident),
+         true <- DateTime.compare(observed_at, baseline) in [:eq, :gt],
          {:ok,
           %{
             case_id: ^case_id,
@@ -359,9 +359,9 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
             status: :applied,
             dispatch_started_at: %DateTime{} = dispatch_started_at
           }} <- Cases.get_operation(operation_id, authorize?: false) do
-      if DateTime.compare(dispatch_started_at, recovered_at) in [:eq, :gt],
+      if DateTime.compare(dispatch_started_at, baseline) in [:eq, :gt],
         do: :ok,
-        else: {:error, "Recovery conclusion cites a pre-recovery Target observation"}
+        else: {:error, "Recovery conclusion cites an earlier Target observation"}
     else
       _stale -> {:error, "Recovery conclusion cites stale Target observation"}
     end

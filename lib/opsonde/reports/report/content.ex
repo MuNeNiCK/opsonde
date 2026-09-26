@@ -23,7 +23,7 @@ defmodule Opsonde.Reports.Report.Content do
     :cancel_requested,
     :stop_reason,
     :required_human_input,
-    :source_recovered_at,
+    :resolved_at,
     :inserted_at,
     :updated_at
   ]

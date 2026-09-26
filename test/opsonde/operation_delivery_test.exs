@@ -1260,6 +1260,58 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Cases.list_operations!(actor: context.admin)) == 1
   end
 
+  test "a manual Case can conclude from a real current-run Target observation", context do
+    {incident, run, proposal} =
+      authorized_proposal!("manual-observation-recovery", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      evidence: [%{"check" => "current"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :not_applicable
+                   assert AI.recovery_ready?(request)
+                   assert AI.recovery_evidence_ids(request) == [evidence.id]
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The requested service is active after direct inspection",
+                        evidence_ids: [evidence.id]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    resolved = Cases.route_downstream_decision!(turn.id, authorize?: false)
+    assert resolved.status == :resolved
+    assert %DateTime{} = resolved.resolved_at
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
+  end
+
   test "a resumed firing Case receives verified continuity without stale observations",
        context do
     enable_signal_automation!(context.admin)

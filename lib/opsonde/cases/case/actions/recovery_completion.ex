@@ -17,6 +17,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
              incident.revision,
              %{
                status: :resolved,
+               resolved_at: now,
                pending_intent: %{},
                stop_reason: nil,
                required_human_input: nil

@@ -2350,6 +2350,8 @@ export interface components {
             /** @enum {string} */
             report_language: "en" | "ja";
             required_human_input: string | null;
+            /** Format: date-time */
+            resolved_at: string | null;
             revision: number;
             /** Format: uuid */
             selected_target_id: string | null;
@@ -2357,8 +2359,6 @@ export interface components {
             /** @enum {string} */
             severity: "info" | "warning" | "error" | "critical";
             source: string;
-            /** Format: date-time */
-            source_recovered_at: string | null;
             source_ref: string;
             /** Format: uuid */
             split_parent_id: string | null;

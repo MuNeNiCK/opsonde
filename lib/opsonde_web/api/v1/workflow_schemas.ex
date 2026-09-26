@@ -115,7 +115,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         cancel_requested: %Schema{type: :boolean},
         stop_reason: nullable_string(500),
         required_human_input: nullable_string(1_000),
-        source_recovered_at: nullable_timestamp(),
+        resolved_at: nullable_timestamp(),
         initial_target_id: nullable_uuid(),
         selected_target_id: nullable_uuid(),
         selected_target_revision: nullable_positive_integer(),
@@ -124,7 +124,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref split_parent_id title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input source_recovered_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref split_parent_id title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end

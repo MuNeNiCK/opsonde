@@ -161,8 +161,8 @@ defmodule Opsonde.Reports.Report.Actions.PeriodSummary do
     }
   end
 
-  defp recovery_seconds(%{status: :resolved, source_recovered_at: %DateTime{} = recovered} = item) do
-    seconds = DateTime.diff(recovered, item.inserted_at, :second)
+  defp recovery_seconds(%{status: :resolved, resolved_at: %DateTime{} = resolved} = item) do
+    seconds = DateTime.diff(resolved, item.inserted_at, :second)
     if seconds >= 0, do: seconds
   end
 

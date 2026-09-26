@@ -158,7 +158,7 @@ defmodule Opsonde.Cases.Case do
         :status,
         :cancel_requested,
         :alert_state,
-        :source_recovered_at,
+        :resolved_at,
         :stop_reason,
         :pending_intent,
         :required_human_input,
@@ -600,7 +600,7 @@ defmodule Opsonde.Cases.Case do
       constraints max_length: 1_000
     end
 
-    attribute :source_recovered_at, :utc_datetime_usec do
+    attribute :resolved_at, :utc_datetime_usec do
       public? true
     end
 

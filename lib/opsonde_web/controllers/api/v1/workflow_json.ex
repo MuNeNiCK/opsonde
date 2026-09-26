@@ -45,7 +45,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       cancel_requested: incident.cancel_requested,
       stop_reason: incident.stop_reason,
       required_human_input: incident.required_human_input,
-      source_recovered_at: incident.source_recovered_at,
+      resolved_at: incident.resolved_at,
       initial_target_id: incident.initial_target_id,
       selected_target_id: incident.selected_target_id,
       selected_target_revision: incident.selected_target_revision,

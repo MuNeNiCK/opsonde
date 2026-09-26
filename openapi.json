@@ -3364,6 +3364,11 @@
             "nullable": true,
             "type": "string"
           },
+          "resolved_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "revision": {
             "minimum": 1,
             "type": "integer"
@@ -3390,11 +3395,6 @@
           "source": {
             "maxLength": 120,
             "minLength": 1,
-            "type": "string"
-          },
-          "source_recovered_at": {
-            "format": "date-time",
-            "nullable": true,
             "type": "string"
           },
           "source_ref": {
@@ -3459,7 +3459,7 @@
           "cancel_requested",
           "stop_reason",
           "required_human_input",
-          "source_recovered_at",
+          "resolved_at",
           "initial_target_id",
           "selected_target_id",
           "selected_target_revision",
