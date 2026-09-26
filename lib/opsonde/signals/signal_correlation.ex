@@ -11,7 +11,6 @@ defmodule Opsonde.Signals.SignalCorrelation do
 
     custom_indexes do
       index [:provider_id]
-      index [:case_id]
       index [:latest_signal_event_id]
     end
   end
@@ -37,12 +36,6 @@ defmodule Opsonde.Signals.SignalCorrelation do
              )
     end
 
-    read :for_case do
-      argument :case_id, :uuid, allow_nil?: false
-      filter expr(case_id == ^arg(:case_id))
-      prepare build(sort: [inserted_at: :asc, id: :asc])
-    end
-
     create :create_record do
       accept [:provider_id, :source, :event_key, :current_state, :revision]
     end
@@ -52,8 +45,7 @@ defmodule Opsonde.Signals.SignalCorrelation do
         :current_state,
         :current_occurred_at,
         :current_source_sequence,
-        :latest_signal_event_id,
-        :case_id
+        :latest_signal_event_id
       ]
 
       require_atomic? false
@@ -64,7 +56,7 @@ defmodule Opsonde.Signals.SignalCorrelation do
   end
 
   policies do
-    policy action([:by_source_identity, :for_case, :create_record, :update_record]) do
+    policy action([:by_source_identity, :create_record, :update_record]) do
       forbid_if always()
     end
 
@@ -123,10 +115,6 @@ defmodule Opsonde.Signals.SignalCorrelation do
     end
 
     belongs_to :latest_signal_event, Opsonde.Signals.SignalEvent do
-      public? true
-    end
-
-    belongs_to :case, Opsonde.Cases.Case do
       public? true
     end
 

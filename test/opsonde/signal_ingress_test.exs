@@ -811,7 +811,12 @@ defmodule Opsonde.SignalIngressTest do
              :firing
 
     [correlation] = Signals.list_signal_correlations!(actor: context.admin)
-    assert correlation.case_id == second.id
+    assert correlation.current_state == :firing
+
+    assert correlation.latest_signal_event_id in Enum.map(
+             Signals.list_signal_events!(actor: context.admin),
+             & &1.id
+           )
 
     ingest_one!(context.provider, "repeat-firing", :firing, DateTime.add(base, 21, :second))
     ingest_one!(context.provider, "stale-firing", :firing, DateTime.add(base, 19, :second))

@@ -210,7 +210,7 @@ defmodule Opsonde.Signals.Ingress do
          {:ok, persisted_event} <-
            create_event(receipt, event, correlation, condition, incident, target),
          {:ok, _correlation} <-
-           update_correlation(correlation, persisted_event, incident, event, current?),
+           update_correlation(correlation, persisted_event, event, current?),
          {:ok, _incident} <-
            record_case_input(incident, persisted_event, receipt, event, current?) do
       {:ok, persisted_event}
@@ -332,7 +332,7 @@ defmodule Opsonde.Signals.Ingress do
     end
   end
 
-  defp update_correlation(correlation, persisted_event, incident, event, true) do
+  defp update_correlation(correlation, persisted_event, event, true) do
     Signals.update_signal_correlation_record(
       correlation,
       correlation.revision,
@@ -340,25 +340,14 @@ defmodule Opsonde.Signals.Ingress do
         current_state: event.state,
         current_occurred_at: event.occurred_at,
         current_source_sequence: sequence(event.source_sequence),
-        latest_signal_event_id: persisted_event.id,
-        case_id: incident && incident.id
+        latest_signal_event_id: persisted_event.id
       },
       authorize?: false
     )
   end
 
-  defp update_correlation(correlation, _persisted_event, incident, _event, false) do
-    if is_nil(correlation.case_id) and incident do
-      Signals.update_signal_correlation_record(
-        correlation,
-        correlation.revision,
-        %{case_id: incident.id},
-        authorize?: false
-      )
-    else
-      {:ok, correlation}
-    end
-  end
+  defp update_correlation(correlation, _persisted_event, _event, false),
+    do: {:ok, correlation}
 
   defp resolve_target(_source, nil), do: {:ok, nil}
 
