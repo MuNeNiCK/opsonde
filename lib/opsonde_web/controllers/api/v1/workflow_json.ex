@@ -30,6 +30,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       trigger_kind: incident.trigger_kind,
       source: incident.source,
       source_ref: incident.source_ref,
+      split_parent_id: incident.split_parent_id,
       title: incident.title,
       severity: incident.severity,
       alert_state: incident.alert_state,
@@ -67,11 +68,42 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   def snapshot(snapshot) do
     %{
       case: case_record(snapshot.case),
+      conditions: Enum.map(snapshot.conditions, &condition/1),
+      condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
       proposals: Enum.map(snapshot.proposals, &proposal/1),
       operations: Enum.map(snapshot.operations, &operation/1),
       verification_attempts: Enum.map(snapshot.verification_attempts, &verification_attempt/1),
       reports: Enum.map(snapshot.reports, &OutcomeJSON.report/1)
+    }
+  end
+
+  def condition(%{condition: condition, membership: membership, assessment: assessment}) do
+    %{
+      id: condition.id,
+      signal_correlation_id: condition.signal_correlation_id,
+      target_id: condition.target_id,
+      predicate: condition.predicate,
+      subject_ref: condition.subject_ref,
+      state: condition.state,
+      recovery_status: if(assessment, do: assessment.status, else: :unknown),
+      recovery_evidence_id: assessment && assessment.evidence_id,
+      first_fired_at: condition.first_fired_at,
+      current_occurred_at: condition.current_occurred_at,
+      revision: condition.revision,
+      membership_id: membership.id,
+      attached_at: membership.attached_at
+    }
+  end
+
+  def condition_membership(membership) do
+    %{
+      id: membership.id,
+      condition_id: membership.condition_id,
+      case_id: membership.case_id,
+      attached_at: membership.attached_at,
+      detached_at: membership.detached_at,
+      reason: membership.reason
     }
   end
 
@@ -110,9 +142,18 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       resolution_run_id: event.resolution_run_id,
       actor_id: event.actor_id,
       type: event.event_type,
+      related_case_id: related_case_id(event),
       inserted_at: event.inserted_at
     }
   end
+
+  defp related_case_id(%{event_type: "case_conditions_split_out", data: data}),
+    do: data["child_case_id"]
+
+  defp related_case_id(%{event_type: "case_conditions_split_in", data: data}),
+    do: data["parent_case_id"]
+
+  defp related_case_id(_event), do: nil
 
   def turn(turn) do
     %{

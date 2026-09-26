@@ -15,10 +15,13 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "CasePage" => Schemas.page(ref("Case")),
       "CreateCaseRequest" => create_case_request(),
       "CaseRevisionRequest" => case_revision_request(),
+      "SplitCaseRequest" => split_case_request(),
       "HandoffCaseRequest" => handoff_request(),
       "ResumeCaseRequest" => resume_request(),
       "CaseSnapshot" => snapshot(),
       "CaseSnapshotResponse" => Schemas.data(ref("CaseSnapshot")),
+      "CaseCondition" => case_condition(),
+      "CaseConditionMembership" => case_condition_membership(),
       "ResolutionRun" => resolution_run(),
       "ResolutionRunResponse" => Schemas.data(ref("ResolutionRun")),
       "CaseEvent" => event(),
@@ -97,6 +100,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         trigger_kind: enum(~w(manual signal audit)),
         source: string(1, 120),
         source_ref: string(1, 500),
+        split_parent_id: nullable_uuid(),
         title: string(1, 200),
         severity: enum(~w(info warning error critical)),
         alert_state: enum(~w(firing recovered not_applicable)),
@@ -120,7 +124,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input source_recovered_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref split_parent_id title severity alert_state report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input source_recovered_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end
@@ -144,6 +148,22 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
 
   defp case_revision_request do
     wrapped(:case, %{expected_revision: positive_integer()}, [:expected_revision])
+  end
+
+  defp split_case_request do
+    wrapped(
+      :case,
+      %{
+        expected_revision: positive_integer(),
+        condition_ids: array(Schemas.uuid()),
+        expected_conditions:
+          array(
+            object(%{id: Schemas.uuid(), revision: positive_integer()}, [:id, :revision], false)
+          ),
+        reason: string(1, 500)
+      },
+      [:expected_revision, :condition_ids, :expected_conditions, :reason]
+    )
   end
 
   defp handoff_request do
@@ -179,13 +199,64 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     object(
       %{
         case: ref("Case"),
+        conditions: array(ref("CaseCondition")),
+        condition_history: array(ref("CaseConditionMembership")),
         resolution_runs: array(ref("ResolutionRun")),
         proposals: array(ref("Proposal")),
         operations: array(ref("Operation")),
         verification_attempts: array(ref("VerificationAttempt")),
         reports: array(ref("Report"))
       },
-      [:case, :resolution_runs, :proposals, :operations, :verification_attempts, :reports],
+      [
+        :case,
+        :conditions,
+        :condition_history,
+        :resolution_runs,
+        :proposals,
+        :operations,
+        :verification_attempts,
+        :reports
+      ],
+      false
+    )
+  end
+
+  defp case_condition do
+    object(
+      %{
+        id: Schemas.uuid(),
+        signal_correlation_id: Schemas.uuid(),
+        target_id: nullable_uuid(),
+        predicate: string(1, 500),
+        subject_ref: map(),
+        state: enum(~w(firing recovered)),
+        recovery_status:
+          enum(
+            ~w(healthy firing stale_source unmapped_target missing_subject_proof target_changed unknown)
+          ),
+        recovery_evidence_id: nullable_uuid(),
+        first_fired_at: Schemas.timestamp(),
+        current_occurred_at: Schemas.timestamp(),
+        revision: positive_integer(),
+        membership_id: Schemas.uuid(),
+        attached_at: Schemas.timestamp()
+      },
+      ~w(id signal_correlation_id target_id predicate subject_ref state recovery_status recovery_evidence_id first_fired_at current_occurred_at revision membership_id attached_at)a,
+      false
+    )
+  end
+
+  defp case_condition_membership do
+    object(
+      %{
+        id: Schemas.uuid(),
+        condition_id: Schemas.uuid(),
+        case_id: Schemas.uuid(),
+        attached_at: Schemas.timestamp(),
+        detached_at: nullable_timestamp(),
+        reason: string(1, 500)
+      },
+      ~w(id condition_id case_id attached_at detached_at reason)a,
       false
     )
   end
@@ -223,9 +294,10 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         resolution_run_id: nullable_uuid(),
         actor_id: nullable_uuid(),
         type: string(1, 80),
+        related_case_id: nullable_uuid(),
         inserted_at: Schemas.timestamp()
       },
-      [:id, :case_id, :resolution_run_id, :actor_id, :type, :inserted_at],
+      [:id, :case_id, :resolution_run_id, :actor_id, :type, :related_case_id, :inserted_at],
       false
     )
   end

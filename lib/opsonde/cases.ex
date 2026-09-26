@@ -398,6 +398,7 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.CaseConditionMembership do
       define :active_case_condition, action: :active_for_condition, args: [:condition_id]
       define :active_conditions_for_case, action: :active_for_case, args: [:case_id]
+      define :condition_membership_history_for_case, action: :history_for_case, args: [:case_id]
       define :condition_membership_history, action: :history_for_condition, args: [:condition_id]
       define :attach_case_condition_record, action: :attach_record
       define :detach_case_condition_record, action: :detach_record, args: [:expected_revision]

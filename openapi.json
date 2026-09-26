@@ -22,6 +22,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "related_case_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "resolution_run_id": {
             "format": "uuid",
             "nullable": true,
@@ -39,6 +44,7 @@
           "resolution_run_id",
           "actor_id",
           "type",
+          "related_case_id",
           "inserted_at"
         ],
         "type": "object"
@@ -2159,6 +2165,18 @@
           "case": {
             "$ref": "#/components/schemas/Case"
           },
+          "condition_history": {
+            "items": {
+              "$ref": "#/components/schemas/CaseConditionMembership"
+            },
+            "type": "array"
+          },
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/CaseCondition"
+            },
+            "type": "array"
+          },
           "operations": {
             "items": {
               "$ref": "#/components/schemas/Operation"
@@ -2192,6 +2210,8 @@
         },
         "required": [
           "case",
+          "conditions",
+          "condition_history",
           "resolution_runs",
           "proposals",
           "operations",
@@ -3063,6 +3083,93 @@
         ],
         "type": "object"
       },
+      "CaseCondition": {
+        "additionalProperties": false,
+        "properties": {
+          "attached_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "first_fired_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "membership_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "predicate": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "recovery_evidence_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "recovery_status": {
+            "enum": [
+              "healthy",
+              "firing",
+              "stale_source",
+              "unmapped_target",
+              "missing_subject_proof",
+              "target_changed",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "signal_correlation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "firing",
+              "recovered"
+            ],
+            "type": "string"
+          },
+          "subject_ref": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "signal_correlation_id",
+          "target_id",
+          "predicate",
+          "subject_ref",
+          "state",
+          "recovery_status",
+          "recovery_evidence_id",
+          "first_fired_at",
+          "current_occurred_at",
+          "revision",
+          "membership_id",
+          "attached_at"
+        ],
+        "type": "object"
+      },
       "SignalReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -3295,6 +3402,11 @@
             "minLength": 1,
             "type": "string"
           },
+          "split_parent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "status": {
             "enum": [
               "running",
@@ -3332,6 +3444,7 @@
           "trigger_kind",
           "source",
           "source_ref",
+          "split_parent_id",
           "title",
           "severity",
           "alert_state",
@@ -3907,7 +4020,7 @@
         "properties": {
           "max_ai_usage_units": {
             "maximum": 1000000000,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "max_effects": {
@@ -3932,12 +4045,12 @@
           },
           "max_resolver_turns": {
             "maximum": 1000,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "max_target_requests": {
             "maximum": 10000,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -5882,6 +5995,62 @@
         ],
         "type": "object"
       },
+      "SplitCaseRequest": {
+        "properties": {
+          "case": {
+            "properties": {
+              "condition_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "expected_conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "revision": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revision"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "reason": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected_revision",
+              "condition_ids",
+              "expected_conditions",
+              "reason"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "case"
+        ],
+        "type": "object"
+      },
       "Approval": {
         "additionalProperties": false,
         "properties": {
@@ -6064,6 +6233,46 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "CaseConditionMembership": {
+        "additionalProperties": false,
+        "properties": {
+          "attached_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "condition_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "detached_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "condition_id",
+          "case_id",
+          "attached_at",
+          "detached_at",
+          "reason"
         ],
         "type": "object"
       },
@@ -14296,6 +14505,121 @@
           }
         },
         "summary": "Open a Case",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/split": {
+      "post": {
+        "callbacks": {},
+        "operationId": "splitCaseConditions",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitCaseRequest"
+              }
+            }
+          },
+          "description": "Case split",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            },
+            "description": "Separate Case"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Move selected Conditions into a separate Case",
         "tags": [
           "Cases"
         ]

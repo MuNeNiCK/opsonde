@@ -34,6 +34,12 @@ defmodule Opsonde.Cases.CaseConditionMembership do
       prepare build(sort: [attached_at: :asc, id: :asc])
     end
 
+    read :history_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(sort: [attached_at: :asc, id: :asc])
+    end
+
     read :history_for_condition do
       argument :condition_id, :uuid, allow_nil?: false
       filter expr(condition_id == ^arg(:condition_id))
@@ -69,6 +75,7 @@ defmodule Opsonde.Cases.CaseConditionMembership do
     policy action([
              :active_for_condition,
              :active_for_case,
+             :history_for_case,
              :history_for_condition,
              :attach_record,
              :detach_record,

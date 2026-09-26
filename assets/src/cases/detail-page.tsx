@@ -21,6 +21,7 @@ import { formatDate, formValue, parseAuthorityMode, translatedToken } from "@/ca
 import { CaseWorkflowView } from "@/cases/workflow-view";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormSelect } from "@/components/form-select";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -148,6 +149,8 @@ export function CaseDetailPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [confirmCancellation, setConfirmCancellation] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
+  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  const [splitReason, setSplitReason] = useState("");
   const canOperate = account?.role === "admin" || account?.role === "operator";
   const refresh = useCallback(async () => {
     if (!caseId) return;
@@ -219,6 +222,9 @@ export function CaseDetailPage() {
   }
 
   const incident = detail.snapshot.case;
+  const selectedInCase = selectedConditions.filter((id) =>
+    detail.snapshot.conditions.some((item) => item.id === id),
+  );
   const latestRun = [...detail.snapshot.resolution_runs].sort(
     (a, b) => b.generation - a.generation,
   )[0];
@@ -290,6 +296,35 @@ export function CaseDetailPage() {
     );
   }
 
+  async function splitConditions(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail) return;
+    const current = detail.snapshot.conditions;
+    const selected = selectedConditions.filter((id) => current.some((item) => item.id === id));
+    if (selected.length === 0 || selected.length >= current.length || !splitReason.trim()) return;
+
+    await mutate("split", async () => {
+      apiData(
+        await apiClient.POST("/api/v1/cases/{id}/split", {
+          params: { path: { id: incident.id } },
+          body: {
+            case: {
+              expected_revision: incident.revision,
+              condition_ids: selected,
+              expected_conditions: current.map((item) => ({
+                id: item.id,
+                revision: item.revision,
+              })),
+              reason: splitReason.trim(),
+            },
+          },
+        }),
+      );
+      setSelectedConditions([]);
+      setSplitReason("");
+    });
+  }
+
   const workflow = (
     <CaseWorkflowView
       snapshot={detail.snapshot}
@@ -344,6 +379,119 @@ export function CaseDetailPage() {
         <Alert>
           <AlertDescription>{t("cases.readOnly")}</AlertDescription>
         </Alert>
+      )}
+
+      {incident.trigger_kind === "signal" && (
+        <Card>
+          <CardContent className="space-y-4 p-5">
+            <div>
+              <h2 className="text-lg font-semibold">{t("cases.conditionsTitle")}</h2>
+              <p className="text-sm text-muted-foreground">
+                {t("cases.conditionsDescription", { count: detail.snapshot.conditions.length })}
+              </p>
+            </div>
+            {incident.split_parent_id && (
+              <Link
+                className="text-sm text-primary underline"
+                to={`/cases/${incident.split_parent_id}`}
+              >
+                {t("cases.parentCase")}
+              </Link>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {detail.timeline
+                .filter(
+                  (event) => event.type === "case_conditions_split_out" && event.related_case_id,
+                )
+                .map((event) => (
+                  <Link
+                    key={event.id}
+                    className="text-sm text-primary underline"
+                    to={`/cases/${event.related_case_id}`}
+                  >
+                    {t("cases.childCase")}
+                  </Link>
+                ))}
+            </div>
+            <ul className="divide-y rounded-lg border">
+              {detail.snapshot.conditions.map((item) => {
+                const name =
+                  typeof item.subject_ref.name === "string" ? item.subject_ref.name : item.id;
+                const namespace =
+                  typeof item.subject_ref.namespace === "string"
+                    ? item.subject_ref.namespace
+                    : null;
+                return (
+                  <li key={item.id} className="flex flex-wrap items-start gap-3 p-3">
+                    {canOperate &&
+                      incident.status === "running" &&
+                      detail.snapshot.conditions.length > 1 && (
+                        <input
+                          type="checkbox"
+                          aria-label={t("cases.selectCondition", { name })}
+                          checked={selectedConditions.includes(item.id)}
+                          onChange={(event) =>
+                            setSelectedConditions((current) =>
+                              event.target.checked
+                                ? [...current, item.id]
+                                : current.filter((id) => id !== item.id),
+                            )
+                          }
+                        />
+                      )}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">
+                          {namespace ? `${namespace}/${name}` : name}
+                        </span>
+                        <Badge variant={item.state === "firing" ? "destructive" : "outline"}>
+                          {t(`cases.alert.${item.state}`)}
+                        </Badge>
+                        <Badge
+                          variant={item.recovery_status === "healthy" ? "secondary" : "outline"}
+                        >
+                          {t(`cases.conditionRecovery.${item.recovery_status}`)}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{item.predicate}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{item.id}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {canOperate &&
+              incident.status === "running" &&
+              detail.snapshot.conditions.length > 1 && (
+                <form
+                  className="flex flex-wrap items-end gap-3"
+                  onSubmit={(event) => void splitConditions(event)}
+                >
+                  <div className="min-w-56 flex-1 space-y-1">
+                    <Label htmlFor="case-split-reason">{t("cases.splitReason")}</Label>
+                    <Input
+                      id="case-split-reason"
+                      value={splitReason}
+                      maxLength={500}
+                      onChange={(event) => setSplitReason(event.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    disabled={
+                      pending !== null ||
+                      selectedInCase.length === 0 ||
+                      selectedInCase.length >= detail.snapshot.conditions.length ||
+                      !splitReason.trim()
+                    }
+                  >
+                    {t("cases.splitConditions")}
+                  </Button>
+                </form>
+              )}
+          </CardContent>
+        </Card>
       )}
 
       {complete ? (

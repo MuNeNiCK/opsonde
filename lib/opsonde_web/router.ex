@@ -106,6 +106,7 @@ defmodule OpsondeWeb.Router do
     get "/cases/:id/approvals", CaseController, :approvals
     get "/cases/:id/review-decisions", CaseController, :review_decisions
     post "/cases/:id/claim", CaseController, :claim
+    post "/cases/:id/split", CaseController, :split
     post "/cases/:id/handoff", CaseController, :handoff
     post "/cases/:id/cancel", CaseController, :cancel
     post "/cases/:id/resume", CaseController, :resume

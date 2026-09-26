@@ -138,6 +138,16 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Case claimed", "application/json", WorkflowSchemas.ref("CaseResponse")}] ++
         @write_errors
 
+  operation :split,
+    operation_id: "splitCaseConditions",
+    summary: "Move selected Conditions into a separate Case",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Case split", "application/json", WorkflowSchemas.ref("SplitCaseRequest"), required: true},
+    responses:
+      [ok: {"Separate Case", "application/json", WorkflowSchemas.ref("CaseResponse")}] ++
+        @write_errors
+
   operation :handoff,
     operation_id: "handoffCase",
     summary: "Handoff a Case",
@@ -253,6 +263,28 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def claim(_conn, _params), do: {:error, :bad_request}
+
+  def split(
+        conn,
+        %{
+          "id" => id,
+          "case" => %{
+            "expected_revision" => revision,
+            "condition_ids" => ids,
+            "expected_conditions" => expected,
+            "reason" => reason
+          }
+        }
+      ) do
+    with {:ok, child} <-
+           Cases.split_case_conditions(id, revision, ids, expected, reason,
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, WorkflowJSON.case_record(child))
+    end
+  end
+
+  def split(_conn, _params), do: {:error, :bad_request}
 
   def handoff(
         conn,

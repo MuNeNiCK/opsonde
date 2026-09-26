@@ -3,6 +3,8 @@ defmodule Opsonde.Cases.ReconnectSnapshot do
 
   @enforce_keys [
     :case,
+    :conditions,
+    :condition_history,
     :resolution_runs,
     :proposals,
     :operations,

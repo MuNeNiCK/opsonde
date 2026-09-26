@@ -77,6 +77,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
     {:get, "/api/v1/cases/:id/approvals"},
     {:get, "/api/v1/cases/:id/review-decisions"},
     {:post, "/api/v1/cases/:id/claim"},
+    {:post, "/api/v1/cases/:id/split"},
     {:post, "/api/v1/cases/:id/handoff"},
     {:post, "/api/v1/cases/:id/cancel"},
     {:post, "/api/v1/cases/:id/resume"},

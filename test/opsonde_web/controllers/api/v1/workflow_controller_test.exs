@@ -4,9 +4,9 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   import OpenApiSpex.TestAssertions
   import Ecto.Query
 
-  alias Opsonde.{Accounts, Cases, Providers, Reports, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
   alias Opsonde.Cases.ReviewDelivery
-  alias Opsonde.Providers.AI
+  alias Opsonde.Providers.{AI, Signal}
 
   @password "correct horse battery staple"
 
@@ -61,6 +61,141 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     invalid = get_json("/api/v1/cases?status=unknown", context.viewer_token)
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+  end
+
+  test "authenticated Case snapshot and split expose native Condition ownership", context do
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      true,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Enable Signal intake for Case API",
+      actor: context.admin
+    )
+
+    provider =
+      Providers.create_provider!(
+        "case-api-signal",
+        :signal,
+        "fixture-signal",
+        %{"source" => "case-api-monitor"},
+        %{"secret" => "case-api-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    target =
+      Targets.create_target!("case-api-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "case-api-monitor",
+      "hostname",
+      "case-api-host",
+      actor: context.admin
+    )
+
+    now = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for name <- ["api.service", "db.service"] do
+        %Signal.Event{
+          receipt_id: "case-api-receipt",
+          event_key: name,
+          state: :firing,
+          occurred_at: now,
+          target_ref: %{kind: :hostname, value: "case-api-host"},
+          attributes: %{"labels" => %{"service" => name, "alertname" => "ServiceUnavailable"}}
+        }
+      end
+
+    Signals.ingest_signal!(
+      provider.id,
+      provider.revision,
+      %Signal.Envelope{body: "case-api-receipt", headers: %{}, received_at: now},
+      %{
+        authenticate: fn adapter, _envelope ->
+          {:ok,
+           %Signal.AuthenticatedReceipt{receipt_id: "case-api-receipt", source: adapter.source}}
+        end,
+        normalize: fn _adapter, _envelope, _receipt -> {:ok, events} end
+      }
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert length(snapshot["conditions"]) == 2
+    assert length(snapshot["condition_history"]) == 2
+
+    assert Enum.sort(Enum.map(snapshot["conditions"], & &1["subject_ref"]["name"])) ==
+             ["api.service", "db.service"]
+
+    revisions =
+      snapshot["conditions"]
+      |> Enum.map(&Map.take(&1, ["id", "revision"]))
+      |> Enum.sort_by(& &1["id"])
+
+    [moved] = Enum.filter(snapshot["conditions"], &(&1["subject_ref"]["name"] == "db.service"))
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      %{
+        "outcome" => "decision",
+        "condition_revisions" => revisions,
+        "intent" => %{"type" => "handoff", "reason" => "Investigate separately"}
+      },
+      :none,
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+      "Review Resolver decision",
+      authorize?: false
+    )
+
+    parent = Cases.get_case!(incident.id, authorize?: false)
+
+    body = %{
+      "case" => %{
+        "expected_revision" => parent.revision,
+        "condition_ids" => [moved["id"]],
+        "expected_conditions" => revisions,
+        "reason" => "Independent database failure"
+      }
+    }
+
+    denied = post_json("/api/v1/cases/#{parent.id}/split", body, context.viewer_token)
+    assert json_response(denied, 403)["error"]["code"] == "forbidden"
+
+    response = post_json("/api/v1/cases/#{parent.id}/split", body, context.operator_token)
+
+    assert %{"data" => %{"id" => child_id, "split_parent_id" => parent_id}} =
+             json_response(response, 200)
+
+    assert_operation_response(response)
+    assert parent_id == parent.id
+
+    parent_snapshot = get_data!("/api/v1/cases/#{parent.id}", context.viewer_token)
+    child_snapshot = get_data!("/api/v1/cases/#{child_id}", context.viewer_token)
+    assert Enum.map(parent_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["api.service"]
+    assert Enum.map(child_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["db.service"]
+    assert length(parent_snapshot["condition_history"]) == 2
+    assert length(child_snapshot["condition_history"]) == 1
+    assert Enum.any?(parent_snapshot["condition_history"], &(&1["detached_at"] != nil))
+
+    timeline = get_data!("/api/v1/cases/#{parent.id}/timeline", context.viewer_token)
+    assert Enum.any?(timeline, &(&1["related_case_id"] == child_id))
   end
 
   test "authority and Case lifecycle remain revisioned and reconnectable", context do

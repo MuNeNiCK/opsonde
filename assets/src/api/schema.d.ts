@@ -1192,6 +1192,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move selected Conditions into a separate Case */
+        post: operations["splitCaseConditions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/signals/generic/{provider_id}": {
         parameters: {
             query?: never;
@@ -1429,6 +1446,8 @@ export interface components {
             id: string;
             /** Format: date-time */
             inserted_at: string;
+            /** Format: uuid */
+            related_case_id: string | null;
             /** Format: uuid */
             resolution_run_id: string | null;
             type: string;
@@ -2003,6 +2022,8 @@ export interface components {
         };
         CaseSnapshot: {
             case: components["schemas"]["Case"];
+            condition_history: components["schemas"]["CaseConditionMembership"][];
+            conditions: components["schemas"]["CaseCondition"][];
             operations: components["schemas"]["Operation"][];
             proposals: components["schemas"]["Proposal"][];
             reports: components["schemas"]["Report"][];
@@ -2242,6 +2263,33 @@ export interface components {
         AccessMethodResponse: {
             data: components["schemas"]["AccessMethod"];
         };
+        CaseCondition: {
+            /** Format: date-time */
+            attached_at: string;
+            /** Format: date-time */
+            current_occurred_at: string;
+            /** Format: date-time */
+            first_fired_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            membership_id: string;
+            predicate: string;
+            /** Format: uuid */
+            recovery_evidence_id: string | null;
+            /** @enum {string} */
+            recovery_status: "healthy" | "firing" | "stale_source" | "unmapped_target" | "missing_subject_proof" | "target_changed" | "unknown";
+            revision: number;
+            /** Format: uuid */
+            signal_correlation_id: string;
+            /** @enum {string} */
+            state: "firing" | "recovered";
+            subject_ref: {
+                [key: string]: unknown;
+            };
+            /** Format: uuid */
+            target_id: string | null;
+        };
         SignalReceipt: {
             event_count: number;
             /** Format: uuid */
@@ -2312,6 +2360,8 @@ export interface components {
             /** Format: date-time */
             source_recovered_at: string | null;
             source_ref: string;
+            /** Format: uuid */
+            split_parent_id: string | null;
             /** @enum {string} */
             status: "running" | "needs_attention" | "resolved" | "cancelled";
             stop_reason: string | null;
@@ -2971,6 +3021,18 @@ export interface components {
             data: components["schemas"]["Provider"][];
             page: components["schemas"]["Page"];
         };
+        SplitCaseRequest: {
+            case: {
+                condition_ids: string[];
+                expected_conditions: {
+                    /** Format: uuid */
+                    id: string;
+                    revision: number;
+                }[];
+                expected_revision: number;
+                reason: string;
+            };
+        };
         Approval: {
             /** Format: uuid */
             actor_id: string;
@@ -3018,6 +3080,19 @@ export interface components {
                 /** Format: uri */
                 redirect_uri: string;
             };
+        };
+        CaseConditionMembership: {
+            /** Format: date-time */
+            attached_at: string;
+            /** Format: uuid */
+            case_id: string;
+            /** Format: uuid */
+            condition_id: string;
+            /** Format: date-time */
+            detached_at: string | null;
+            /** Format: uuid */
+            id: string;
+            reason: string;
         };
         SignalWebhookError: {
             errors: {
@@ -9169,6 +9244,96 @@ export interface operations {
         responses: {
             /** @description Case opened */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    splitCaseConditions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Case split */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SplitCaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Separate Case */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

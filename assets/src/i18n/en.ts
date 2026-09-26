@@ -293,6 +293,22 @@ const en = {
     },
     cases: {
       title: "Cases",
+      conditionsTitle: "Current conditions",
+      conditionsDescription: "{{count}} monitoring conditions are assigned to this Case.",
+      parentCase: "View parent Case",
+      childCase: "View separate Case",
+      selectCondition: "Select {{name}} for a separate Case",
+      splitReason: "Reason for investigating separately",
+      splitConditions: "Separate selected conditions",
+      conditionRecovery: {
+        healthy: "Recovery verified",
+        firing: "Still firing",
+        stale_source: "Source update is old",
+        unmapped_target: "No Target assigned",
+        missing_subject_proof: "Waiting for Target observation",
+        target_changed: "Target changed",
+        unknown: "Recovery unconfirmed",
+      },
       description:
         "Follow incoming Signals through autonomous investigation, effects, and recovery.",
       requestFailed: "The request failed. Review the values and connection, then try again.",
