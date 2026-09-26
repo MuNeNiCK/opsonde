@@ -357,7 +357,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
 
-    set_mode(context.agent, {:raw_text, "```json\n{\"value\":\"ready\"}\n```"})
+    set_mode(context.agent, {:raw_text, "```json\n{\"status\":\"ready\"}\n```"})
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
@@ -401,18 +401,21 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
   end
 
-  test "object requests reject text-only replies and retain metered usage",
+  test "object requests accept complete JSON text through the same schema and retain usage",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {:raw_text, ~s({"status":"ready"})})
-    assert {:error, :capability, _message} = Adapter.check(state, %{})
+    assert :ok = Adapter.check(state, %{})
 
     valid = %{"reason" => "確認", "intent" => %{"type" => "handoff", "required_input" => "確認"}}
     set_mode(context.agent, {:raw_text, Jason.encode!(valid)})
 
-    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{reason: "確認", required_input: "確認"},
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} =
              Adapter.resolve(state, resolver_request(), %{})
 
     [request] = requests(context.agent)
@@ -422,9 +425,23 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {:raw_text, ~s({"verdict":"rejected","reason":"証拠不足"})})
 
+    assert {:ok,
+            %AI.ReviewDecision{
+              verdict: :rejected,
+              reason: "証拠不足",
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} =
+             Adapter.review(state, review_request(), %{})
+
+    set_mode(
+      context.agent,
+      {:raw_text,
+       ~s({"reason":"確認","intent":{"type":"handoff","required_input":"確認"},"extra":true})}
+    )
+
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
             "schema_validation"} =
-             Adapter.review(state, review_request(), %{})
+             Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(
       context.agent,
@@ -436,6 +453,12 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, ~s({"reason":)})
+
+    assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} =
+             Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {:raw_text, ~s(["not an object"])})
 
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
             "schema_validation"} =

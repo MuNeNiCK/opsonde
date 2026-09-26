@@ -192,6 +192,7 @@ defmodule Opsonde.AI.ReqLLM do
         total_timeout: state.timeout,
         receive_timeout: state.timeout,
         output_validation: :warn,
+        output_repair: &strict_text_object/1,
         telemetry: [payloads: :none]
       ]
       |> maybe_put(:reasoning_effort, state.reasoning_effort)
@@ -577,10 +578,23 @@ defmodule Opsonde.AI.ReqLLM do
       else: :ok
   end
 
-  defp reject_repaired_output(%{repairs: []}), do: :ok
+  defp reject_repaired_output(%{source: source, repairs: repairs}) when is_list(repairs) do
+    case Enum.reject(repairs, &match?(%{type: :callback, status: :failed}, &1)) do
+      [] -> :ok
+      [%{type: :callback, status: :applied}] when source == :text -> :ok
+      _applied_repairs -> invalid_output("AI provider output required repair")
+    end
+  end
 
-  defp reject_repaired_output(_result),
-    do: invalid_output("AI provider output required repair")
+  defp strict_text_object(%{source: :text, raw: raw})
+       when is_binary(raw) and byte_size(raw) <= @max_output_bytes do
+    case Jason.decode(raw) do
+      {:ok, %{} = object} -> {:ok, object}
+      _other -> {:error, :invalid_json_object}
+    end
+  end
+
+  defp strict_text_object(_result), do: {:error, :no_plain_json_object}
 
   defp accept_object_projection(%{valid?: true, value: value}) when is_map(value), do: :ok
 
