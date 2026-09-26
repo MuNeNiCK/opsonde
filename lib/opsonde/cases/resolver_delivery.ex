@@ -339,7 +339,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp accept(turn, invocation, decision, result, request) do
     usage_units = decision.usage.input_tokens + decision.usage.output_tokens
-    progress_kind = progress_kind(decision.intent)
+    progress_kind = progress_kind(decision.intent, request)
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
@@ -565,10 +565,15 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp json_value(value) when is_atom(value), do: to_string(value)
   defp json_value(value), do: value
 
-  defp progress_kind(%AI.Proposal{}), do: :proposal
-  defp progress_kind(%AI.RecoveryConclusion{}), do: :source_change
-  defp progress_kind(%AI.Handoff{}), do: :human_input
-  defp progress_kind(_intent), do: :hypothesis
+  defp progress_kind(%AI.Proposal{}, _request), do: :proposal
+  defp progress_kind(%AI.RecoveryConclusion{}, _request), do: :source_change
+  defp progress_kind(%AI.Handoff{}, _request), do: :human_input
+
+  defp progress_kind(%AI.TargetSelection{target_id: id, target_revision: revision}, request)
+       when id == request.selected_target_id and revision == request.selected_target_revision,
+       do: :none
+
+  defp progress_kind(_intent, _request), do: :hypothesis
 
   defp valid_result_size(result) do
     case Jason.encode(result) do

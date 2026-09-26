@@ -117,6 +117,59 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
+  test "Resolver repeating an already selected Target is charged as no progress", context do
+    target =
+      Targets.create_target!(
+        "selected-repeat-target",
+        "host",
+        "linux",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    turn = selected_turn!("selected-repeat", context.operator, target)
+    run = Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false)
+
+    candidates =
+      Cases.search_case_targets!(
+        turn.case_id,
+        run.id,
+        "selected-repeat-candidates",
+        "selected-repeat-target",
+        20,
+        %{"action" => "find_target"},
+        "Inspect registered Target",
+        actor: context.operator
+      )
+
+    decision = %AI.ResolverDecision{
+      intent: %AI.TargetSelection{
+        target_id: target.id,
+        target_revision: target.revision,
+        evidence_ids: [candidates.value.id],
+        reason: "Select the same Target again"
+      },
+      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+    }
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.selected_target_id == target.id
+                   assert Enum.any?(request.target_candidates, &(&1.id == target.id))
+                   {:ok, decision}
+                 end
+               }
+             )
+
+    assert Cases.get_turn!(turn.id, authorize?: false).progress_kind == :none
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+  end
+
   test "unknown timeout reserves finite usage and requires attention", context do
     {incident, run, turn} = turn!("timeout", context.operator)
 

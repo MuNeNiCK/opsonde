@@ -32,19 +32,45 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
          :ok <- valid_evidence(evidence, incident, run),
          :ok <- offered_candidate(evidence, arguments.target_id, arguments.target_revision),
          {:ok, target} <- Targets.get_target(arguments.target_id, authorize?: false),
-         :ok <- current_target(target, arguments.target_revision),
-         {:ok, updated} <-
-           Cases.update_case_record(
-             incident,
-             arguments.expected_revision,
-             %{
-               selected_target_id: target.id,
-               selected_target_revision: target.revision
-             },
-             authorize?: false
-           ),
-         {:ok, _event} <- create_event(updated, incident, run, actor, key, arguments) do
-      updated
+         :ok <- current_target(target, arguments.target_revision) do
+      if incident.selected_target_id == target.id and
+           incident.selected_target_revision == target.revision do
+        with {:ok, _event} <-
+               create_event(
+                 incident,
+                 incident,
+                 run,
+                 actor,
+                 key,
+                 arguments,
+                 "case_target_selection_unchanged"
+               ) do
+          incident
+        end
+      else
+        with {:ok, updated} <-
+               Cases.update_case_record(
+                 incident,
+                 arguments.expected_revision,
+                 %{
+                   selected_target_id: target.id,
+                   selected_target_revision: target.revision
+                 },
+                 authorize?: false
+               ),
+             {:ok, _event} <-
+               create_event(
+                 updated,
+                 incident,
+                 run,
+                 actor,
+                 key,
+                 arguments,
+                 "case_target_selected"
+               ) do
+          updated
+        end
+      end
     end
   end
 
@@ -142,13 +168,13 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
   defp current_target(%{active: false}, _revision), do: {:error, "Selected Target is inactive"}
   defp current_target(_target, _revision), do: {:error, "Selected Target revision changed"}
 
-  defp create_event(incident, prior, run, actor, key, arguments) do
+  defp create_event(incident, prior, run, actor, key, arguments, event_type) do
     Cases.create_case_event_record(
       %{
         case_id: incident.id,
         resolution_run_id: run.id,
         actor_id: actor && actor.id,
-        event_type: "case_target_selected",
+        event_type: event_type,
         idempotency_key: key,
         data:
           event_data(arguments)

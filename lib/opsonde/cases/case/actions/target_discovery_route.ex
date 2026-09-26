@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun, Turn}
 
   @impl true
   def run(input, _opts, _context) do
@@ -65,12 +65,31 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
              reason,
              route_key(turn, "target-selection"),
              authorize?: false
+           ),
+         {:ok, selection_event} <-
+           Cases.case_event_by_idempotency(
+             incident.id,
+             Budget.key("case:target_selection", route_key(turn, "target-selection")),
+             authorize?: false
            ) do
-      start_next_turn(turn, selected, run, %{
-        "source" => "target_selection",
-        "selected_target_id" => target_id,
-        "reason" => reason
-      })
+      context =
+        if selection_event.event_type == "case_target_selection_unchanged" do
+          %{
+            "source" => "target_selection_unchanged",
+            "selected_target_id" => target_id,
+            "reason" => reason,
+            "objective" =>
+              "The Target is already selected; choose another available action or hand off"
+          }
+        else
+          %{
+            "source" => "target_selection",
+            "selected_target_id" => target_id,
+            "reason" => reason
+          }
+        end
+
+      start_next_turn(turn, selected, run, context)
       |> action_value()
     end
   end
@@ -94,7 +113,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
              incident.id,
              run.id,
              route_key(turn, "next-turn"),
-             Map.put(
+             Map.put_new(
                context,
                "objective",
                "Continue resolution with the accepted Target discovery"

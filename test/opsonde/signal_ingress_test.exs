@@ -269,6 +269,51 @@ defmodule Opsonde.SignalIngressTest do
     end
   end
 
+  test "concurrent receipts admitted out of timestamp order share only the bounded window",
+       context do
+    enable_signal_automation!(context.admin)
+    names = ["ordered-first", "earlier-in-flight", "too-early"]
+
+    targets =
+      for name <- names, into: %{} do
+        target = Targets.create_target!(name, "host", "linux", %{}, nil, actor: context.admin)
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+
+        {name, target.id}
+      end
+
+    for name <- tl(names) do
+      Targets.create_relationship!(targets[hd(names)], targets[name], "connected_to", %{}, nil,
+        actor: context.admin
+      )
+    end
+
+    first_at = DateTime.add(DateTime.utc_now(), -40, :second)
+
+    for {name, at} <- [
+          {"ordered-first", first_at},
+          {"earlier-in-flight", DateTime.add(first_at, -1, :millisecond)},
+          {"too-early", DateTime.add(first_at, -6, :second)}
+        ] do
+      ingest!(
+        context.provider,
+        envelope(name, at),
+        invocation(name, [
+          event(name, name, :firing, at, target_ref: %{kind: :hostname, value: name})
+        ])
+      )
+    end
+
+    cases = Cases.list_cases!(actor: context.admin)
+    assert length(cases) == 2
+
+    first = Enum.find(cases, &(&1.initial_target_id == targets["ordered-first"]))
+    assert length(Cases.active_conditions_for_case!(first.id, authorize?: false)) == 2
+  end
+
   test "PoE and twenty AP stay together when a coincident core Condition is split",
        context do
     enable_signal_automation!(context.admin)

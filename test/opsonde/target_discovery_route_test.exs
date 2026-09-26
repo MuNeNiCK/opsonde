@@ -169,6 +169,68 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.target.id
   end
 
+  test "selecting the current Target again records no selection change and preserves replay",
+       context do
+    incident = open!("selection-repeat", context.operator)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    searched =
+      Cases.search_case_targets!(
+        incident.id,
+        run.id,
+        "selection-repeat-candidates",
+        "linux-route-01",
+        20,
+        %{"action" => "find_target"},
+        "Select a registered Target",
+        actor: context.operator
+      )
+
+    intent = %{
+      "type" => "target_selection",
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "evidence_ids" => [searched.value.id],
+      "reason" => "The Target matches"
+    }
+
+    source = completed_turn!(incident, searched.run, "selection-repeat", intent)
+    first = Cases.route_target_discovery!(source.id, authorize?: false)
+    selected = Cases.get_case!(incident.id, authorize?: false)
+
+    repeat =
+      Cases.complete_turn!(
+        first.value.id,
+        first.value.revision,
+        %{
+          "outcome" => "decision",
+          "intent" => intent,
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :none,
+        %{"action" => "route_resolver_decision", "turn_id" => first.value.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert {:ok, routed} = Cases.route_target_discovery(repeat.id, authorize?: false)
+    assert routed.status == :charged
+    assert routed.value.intent["source"] == "target_selection_unchanged"
+    assert routed.value.intent["objective"] =~ "already selected"
+
+    assert Cases.get_case!(incident.id, authorize?: false).selected_target_id ==
+             selected.selected_target_id
+
+    assert {:ok, replayed} = Cases.route_target_discovery(repeat.id, authorize?: false)
+    assert replayed.status == :duplicate
+    assert replayed.value.id == routed.value.id
+
+    events = Cases.list_case_events!(actor: context.admin)
+    assert Enum.count(events, &(&1.event_type == "case_target_selected")) == 1
+    assert Enum.count(events, &(&1.event_type == "case_target_selection_unchanged")) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+  end
+
   test "stale selection and non-discovery results fail without a next Turn", context do
     incident = open!("rejected", context.operator)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)

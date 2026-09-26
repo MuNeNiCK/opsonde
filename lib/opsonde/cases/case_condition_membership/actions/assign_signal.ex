@@ -245,7 +245,16 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
          {:ok, dispatches} <- Cases.admitting_case_dispatches(authorize?: false) do
       dispatches
       |> Enum.find_value(fn dispatch ->
-        with true <- DateTime.compare(received_at, dispatch.first_received_at) != :lt,
+        # Concurrent requests can acquire the admission lock out of receipt order.
+        # Keep an earlier receipt only when it is still local to the fixed window.
+        earliest =
+          DateTime.add(
+            dispatch.first_received_at,
+            -Application.fetch_env!(:opsonde, :case_collect_seconds),
+            :second
+          )
+
+        with true <- DateTime.compare(received_at, earliest) != :lt,
              true <- DateTime.compare(received_at, dispatch.due_at) == :lt,
              true <- dispatch.anchor_target_id in local_ids,
              {:ok, anchor} <- Targets.get_target(dispatch.anchor_target_id, authorize?: false),
