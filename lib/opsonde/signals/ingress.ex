@@ -7,13 +7,14 @@ defmodule Opsonde.Signals.Ingress do
 
   alias Opsonde.Cases.{
     Case,
+    CaseConditionMembership,
+    CaseDispatch,
     CaseEvent,
     Evidence,
-    ResolutionRun,
-    Turn
+    ResolutionRun
   }
 
-  alias Opsonde.Signals.{SignalCorrelation, SignalEvent, SignalReceipt}
+  alias Opsonde.Signals.{Condition, SignalCorrelation, SignalEvent, SignalReceipt}
 
   alias Opsonde.Providers.Signal
 
@@ -90,11 +91,13 @@ defmodule Opsonde.Signals.Ingress do
       SignalCorrelation,
       SignalReceipt,
       SignalEvent,
+      Condition,
       Case,
+      CaseConditionMembership,
+      CaseDispatch,
       ResolutionRun,
       Evidence,
-      CaseEvent,
-      Turn
+      CaseEvent
     ]
 
     transaction = fn ->
@@ -187,73 +190,68 @@ defmodule Opsonde.Signals.Ingress do
     current? = current_event?(event, correlation)
 
     with {:ok, target} <- resolve_target(receipt.source, event.target_ref),
-         incident_key <- incident_key(event, target),
+         {:ok, %{condition: condition}} <-
+           Signals.record_condition_source_event(
+             correlation.id,
+             event.state,
+             event.occurred_at,
+             sequence(event.source_sequence),
+             target && target.id,
+             condition_subject_ref(event),
+             condition_subject_key(receipt, event, target),
+             condition_predicate(event),
+             current?,
+             authorize?: false
+           ),
          {:ok, incident} <-
-           case_for_event(receipt, event, correlation, target, incident_key, current?),
-         {:ok, persisted_event} <- create_event(receipt, event, correlation, incident, target),
+           case_for_condition(receipt, event, condition, current?),
+         {:ok, persisted_event} <-
+           create_event(receipt, event, correlation, condition, incident, target),
          {:ok, _correlation} <-
            update_correlation(correlation, persisted_event, incident, event, current?),
-         {:ok, incident} <- record_case_input(incident, persisted_event, receipt, event, current?),
-         :ok <- start_resolution(incident, receipt, event, current?) do
+         {:ok, _incident} <-
+           record_case_input(incident, persisted_event, receipt, event, current?) do
       {:ok, persisted_event}
     end
   end
 
-  defp case_for_event(receipt, event, correlation, target, incident_key, current?) do
-    with {:ok, existing} <- existing_case(correlation, receipt.source, event.event_key) do
-      cond do
-        existing ->
-          {:ok, existing}
+  defp case_for_condition(_receipt, _event, nil, _current?), do: {:ok, nil}
 
-        current? and event.state == :firing ->
-          Cases.open_correlated_signal_case(
-            :signal,
-            receipt.source,
-            event.event_key,
-            title(event, receipt.source),
-            severity(event),
-            :firing,
-            initial_context(event),
-            target && target.id,
-            nil,
-            incident_key,
-            authorize?: false
-          )
+  defp case_for_condition(receipt, event, condition, true) when event.state == :firing do
+    with {:ok, %{case: incident}} <-
+           Cases.assign_signal_condition(
+             condition.id,
+             receipt.source,
+             title(event, receipt.source),
+             severity(event),
+             receipt.received_at,
+             initial_context(event),
+             authorize?: false
+           ) do
+      {:ok, incident}
+    end
+  end
 
-        true ->
-          {:ok, nil}
+  defp case_for_condition(_receipt, _event, condition, _current?) do
+    with {:ok, membership} <-
+           Cases.active_case_condition(condition.id,
+             authorize?: false,
+             not_found_error?: false
+           ) do
+      case membership do
+        nil -> {:ok, nil}
+        membership -> Cases.get_case(membership.case_id, authorize?: false)
       end
     end
   end
 
-  defp existing_case(%{case_id: id}, source, event_key) when is_binary(id) do
-    with {:ok, incident} <- Cases.get_case(id, authorize?: false) do
-      if incident.status in [:running, :needs_attention] do
-        {:ok, incident}
-      else
-        active_case_for_source(source, event_key)
-      end
-    end
-  end
-
-  defp existing_case(_correlation, source, event_key) do
-    active_case_for_source(source, event_key)
-  end
-
-  defp active_case_for_source(source, event_key) do
-    Cases.active_signal_case_by_trigger(source, event_key,
-      authorize?: false,
-      not_found_error?: false
-    )
-  end
-
-  defp create_event(receipt, event, correlation, incident, target) do
+  defp create_event(receipt, event, correlation, condition, incident, target) do
     Signals.create_signal_event_record(
       %{
         signal_receipt_id: receipt.id,
         signal_correlation_id: correlation.id,
+        condition_id: condition && condition.id,
         event_key: event.event_key,
-        incident_key: event.incident_key,
         state: event.state,
         source_sequence: sequence(event.source_sequence),
         occurred_at: event.occurred_at,
@@ -282,8 +280,7 @@ defmodule Opsonde.Signals.Ingress do
   defp record_case_input(incident, persisted_event, receipt, event, current?) do
     with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
          {:ok, _evidence} <-
-           create_evidence(incident, run, persisted_event, receipt, event, current?),
-         {:ok, incident} <- apply_current_source_state(incident, event, current?) do
+           create_evidence(incident, run, persisted_event, receipt, event, current?) do
       {:ok, incident}
     end
   end
@@ -302,10 +299,10 @@ defmodule Opsonde.Signals.Ingress do
                source_ref: event.event_key,
                content: %{
                  "signal_event_id" => persisted_event.id,
+                 "condition_id" => persisted_event.condition_id,
                  "state" => to_string(event.state),
                  "current" => current?,
                  "source_sequence" => sequence(event.source_sequence),
-                 "incident_key" => event.incident_key,
                  "target_ref" => json_target_ref(event.target_ref),
                  "attributes" => event.attributes
                },
@@ -330,53 +327,6 @@ defmodule Opsonde.Signals.Ingress do
              authorize?: false
            ) do
       {:ok, evidence}
-    end
-  end
-
-  defp apply_current_source_state(incident, _event, false), do: {:ok, incident}
-
-  defp apply_current_source_state(%{status: status} = incident, event, true)
-       when status in [:running, :needs_attention] do
-    with {:ok, correlations} <-
-           Signals.signal_correlations_for_case(incident.id, authorize?: false) do
-      cond do
-        event.state == :recovered and incident.alert_state == :firing and
-          correlations != [] and Enum.all?(correlations, &(&1.current_state == :recovered)) ->
-          Cases.record_case_source_recovery(incident.id, incident.revision, authorize?: false)
-
-        event.state == :firing and incident.alert_state == :recovered ->
-          mark_source_firing(incident, event)
-
-        true ->
-          {:ok, incident}
-      end
-    end
-  end
-
-  defp apply_current_source_state(incident, _event, true), do: {:ok, incident}
-
-  defp mark_source_firing(incident, event) do
-    with {:ok, updated} <-
-           Cases.update_case_record(
-             incident,
-             incident.revision,
-             %{alert_state: :firing, source_recovered_at: nil},
-             authorize?: false
-           ),
-         {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
-         {:ok, _case_event} <-
-           Cases.create_case_event_record(
-             %{
-               case_id: incident.id,
-               resolution_run_id: run.id,
-               event_type: "source_firing",
-               idempotency_key:
-                 "source-firing:#{event.event_key}:#{DateTime.to_iso8601(event.occurred_at)}",
-               data: %{"occurred_at" => DateTime.to_iso8601(event.occurred_at)}
-             },
-             authorize?: false
-           ) do
-      {:ok, updated}
     end
   end
 
@@ -408,26 +358,6 @@ defmodule Opsonde.Signals.Ingress do
     end
   end
 
-  defp start_resolution(%{status: :running} = incident, _receipt, event, true)
-       when event.state == :firing do
-    with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
-         {:ok, result} <-
-           Cases.start_turn(
-             incident.id,
-             run.id,
-             initial_turn_key(incident, run),
-             %{"objective" => "Resolve the incident"},
-             %{"action" => "continue"},
-             "Review Resolver limits",
-             authorize?: false
-           ),
-         true <- result.status in [:charged, :duplicate, :exhausted] do
-      :ok
-    end
-  end
-
-  defp start_resolution(_incident, _receipt, _event, _current?), do: :ok
-
   defp resolve_target(_source, nil), do: {:ok, nil}
 
   defp resolve_target(source, target_ref) when is_map(target_ref) do
@@ -446,22 +376,6 @@ defmodule Opsonde.Signals.Ingress do
   end
 
   defp resolve_target(_source, _target_ref), do: {:ok, nil}
-
-  defp incident_key(%{incident_key: key}, %{id: target_id} = target)
-       when is_binary(key) do
-    scope =
-      case target.management_boundary_id do
-        id when is_binary(id) -> {:management_boundary, id}
-        _none -> {:target, target_id}
-      end
-
-    {scope, key}
-    |> :erlang.term_to_binary([:deterministic])
-    |> then(&:crypto.hash(:sha256, &1))
-    |> Base.encode16(case: :lower)
-  end
-
-  defp incident_key(_event, _target), do: nil
 
   defp ref_value(ref, key) do
     value = Map.get(ref, key) || Map.get(ref, Atom.to_string(key))
@@ -557,13 +471,67 @@ defmodule Opsonde.Signals.Ingress do
 
   defp fact(facts, key), do: Map.get(facts, key) || Map.get(facts, String.to_existing_atom(key))
 
+  defp condition_subject_ref(event) do
+    labels = fact(event.attributes, "labels") || %{}
+
+    cond do
+      is_binary(labels["deployment"]) ->
+        %{
+          "kind" => "deployment",
+          "namespace" => labels["namespace"],
+          "name" => labels["deployment"]
+        }
+
+      is_binary(labels["pod"]) ->
+        %{"kind" => "pod", "namespace" => labels["namespace"], "name" => labels["pod"]}
+
+      is_binary(labels["service"]) ->
+        %{"kind" => "service", "namespace" => labels["namespace"], "name" => labels["service"]}
+
+      is_binary(labels["interface"]) ->
+        %{"kind" => "interface", "name" => labels["interface"]}
+
+      is_binary(labels["mountpoint"]) ->
+        %{"kind" => "mountpoint", "name" => labels["mountpoint"]}
+
+      true ->
+        %{}
+    end
+  end
+
+  defp condition_subject_key(receipt, event, %{id: id}) do
+    resource = condition_subject_ref(event)
+
+    if map_size(resource) > 0 do
+      digest = :crypto.hash(:sha256, :erlang.term_to_binary(resource, [:deterministic]))
+      "target:#{id}:#{Base.encode16(digest, case: :lower)}"
+    else
+      # A Target hint alone may be a cluster or host containing many subjects.
+      # Keep the native identity until a more specific resource is observed.
+      native = {receipt.provider_id, receipt.source, event.event_key}
+      digest = :crypto.hash(:sha256, :erlang.term_to_binary(native, [:deterministic]))
+      "target:#{id}:native:#{Base.encode16(digest, case: :lower)}"
+    end
+  end
+
+  defp condition_subject_key(receipt, event, _target) do
+    # An unknown mapping must not conflate two unrelated native event streams.
+    native = {receipt.provider_id, receipt.source, event.event_key}
+    digest = :crypto.hash(:sha256, :erlang.term_to_binary(native, [:deterministic]))
+    "native:#{Base.encode16(digest, case: :lower)}"
+  end
+
+  defp condition_predicate(event) do
+    labels = fact(event.attributes, "labels") || %{}
+
+    case Map.get(labels, "alertname") do
+      value when is_binary(value) and byte_size(value) > 0 -> String.slice(value, 0, 500)
+      _other -> title(event, "signal") |> String.slice(0, 500)
+    end
+  end
+
   defp sequence(nil), do: nil
   defp sequence(value), do: to_string(value)
-
-  defp initial_turn_key(incident, run) do
-    raw = [incident.id, run.generation] |> Enum.join(":")
-    "signal-initial:" <> (:crypto.hash(:sha256, raw) |> Base.encode16(case: :lower))
-  end
 
   defp digest(result) do
     binary = :erlang.term_to_binary(result, [:deterministic])

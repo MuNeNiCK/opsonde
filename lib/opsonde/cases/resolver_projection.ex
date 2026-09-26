@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
-  alias Opsonde.{Cases, Providers, Targets}
+  alias Opsonde.{Cases, Providers, Signals, Targets}
   alias Opsonde.Providers.AI
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.BMC.OperationKey
@@ -19,6 +19,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          :ok <- eligible(incident, run, turn),
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
+         {:ok, conditions} <- current_conditions(incident),
          {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
@@ -30,6 +31,7 @@ defmodule Opsonde.Cases.ResolverProjection do
              incident,
              run,
              turn,
+             conditions,
              continuity,
              target,
              relations,
@@ -74,6 +76,41 @@ defmodule Opsonde.Cases.ResolverProjection do
         :ok
     end
   end
+
+  defp current_conditions(%{trigger_kind: :signal} = incident) do
+    with {:ok, memberships} <-
+           Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- memberships != [] || {:error, "Signal Case has no active Conditions"} do
+      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
+        case Signals.get_condition(membership.condition_id, authorize?: false) do
+          {:ok, condition} ->
+            item = %AI.Condition{
+              id: condition.id,
+              revision: condition.revision,
+              occurrence: condition.occurrence,
+              predicate: condition.predicate,
+              subject_key: condition.subject_key,
+              subject_ref: condition.subject_ref,
+              state: condition.state,
+              target_id: condition.target_id,
+              current_occurred_at_us:
+                DateTime.to_unix(condition.current_occurred_at, :microsecond)
+            }
+
+            {:cont, {:ok, [item | collected]}}
+
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, collected} -> {:ok, Enum.reverse(collected)}
+        error -> error
+      end
+    end
+  end
+
+  defp current_conditions(_incident), do: {:ok, []}
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 
@@ -412,6 +449,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          incident,
          run,
          turn,
+         conditions,
          evidence,
          target,
          relations,
@@ -435,6 +473,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         max_bytes: limits.max_bytes
       },
       budget: budget(run, turn),
+      conditions: conditions,
       evidence: [],
       target_candidates: [],
       selected_target_id: target && target.id,

@@ -98,6 +98,10 @@ defmodule Opsonde.Targets do
       define :adjacent_relationships_for_traversal,
         action: :adjacent_for_traversal,
         args: [:target_id]
+
+      define :adjacent_relationships_for_case_admission,
+        action: :adjacent_for_case_admission,
+        args: [:target_id]
     end
 
     resource Opsonde.Targets.TargetPolicy do

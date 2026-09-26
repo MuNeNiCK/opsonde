@@ -1837,7 +1837,6 @@ export interface components {
             event_key: string;
             /** Format: uuid */
             id: string;
-            incident_key: string | null;
             /** Format: date-time */
             inserted_at: string;
             /** Format: date-time */
@@ -3001,7 +3000,6 @@ export interface components {
             facts?: {
                 [key: string]: string | number | boolean;
             };
-            incident_key?: string;
             /** Format: date-time */
             occurred_at: string;
             /** @enum {string} */

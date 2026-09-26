@@ -12,6 +12,7 @@ defmodule Opsonde.Signals.SignalEvent do
     custom_indexes do
       index [:signal_receipt_id]
       index [:signal_correlation_id]
+      index [:condition_id]
       index [:case_id]
       index [:target_id]
     end
@@ -45,8 +46,8 @@ defmodule Opsonde.Signals.SignalEvent do
       accept [
         :signal_receipt_id,
         :signal_correlation_id,
+        :condition_id,
         :event_key,
-        :incident_key,
         :state,
         :source_sequence,
         :occurred_at,
@@ -79,11 +80,6 @@ defmodule Opsonde.Signals.SignalEvent do
 
     attribute :event_key, :string do
       allow_nil? false
-      public? true
-      constraints min_length: 1, max_length: 500
-    end
-
-    attribute :incident_key, :string do
       public? true
       constraints min_length: 1, max_length: 500
     end
@@ -131,6 +127,10 @@ defmodule Opsonde.Signals.SignalEvent do
 
     belongs_to :signal_correlation, Opsonde.Signals.SignalCorrelation do
       allow_nil? false
+      public? true
+    end
+
+    belongs_to :condition, Opsonde.Signals.Condition do
       public? true
     end
 

@@ -23,7 +23,6 @@ defmodule Opsonde.Providers.Signal do
                 [
                   source_sequence: nil,
                   target_ref: nil,
-                  incident_key: nil,
                   attributes: %{},
                   metadata: %{}
                 ]

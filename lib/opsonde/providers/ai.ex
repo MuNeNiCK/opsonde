@@ -45,6 +45,25 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
+  defmodule Condition do
+    @moduledoc false
+
+    @enforce_keys [
+      :id,
+      :revision,
+      :occurrence,
+      :predicate,
+      :subject_key,
+      :subject_ref,
+      :state,
+      :target_id,
+      :current_occurred_at_us
+    ]
+
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
   def recovery_evidence_ids(request) do
     request.evidence
     |> Enum.filter(&verified_target_evidence?(&1, request.selected_target_id))
@@ -370,7 +389,8 @@ defmodule Opsonde.Providers.AI do
                   selected_target_id: nil,
                   selected_target_revision: nil,
                   retry_context: nil,
-                  traversable_relation_ids: []
+                  traversable_relation_ids: [],
+                  conditions: []
                 ]
 
     @type t :: %__MODULE__{}
@@ -422,7 +442,8 @@ defmodule Opsonde.Providers.AI do
   end
 
   def resolver_disclosure_items(%ResolverRequest{} = request) do
-    request.evidence ++
+    request.conditions ++
+      request.evidence ++
       request.target_candidates ++
       request.observation_results ++
       request.target_relations ++ request.observation_tools ++ request.proposal_tools

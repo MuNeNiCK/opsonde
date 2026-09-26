@@ -1,9 +1,9 @@
 defmodule Opsonde.ResolverProjectionTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
   alias Opsonde.Cases.ResolverProjection
-  alias Opsonde.Providers.{AI, Target}
+  alias Opsonde.Providers.{AI, Signal, Target}
 
   @password "correct horse battery staple"
   @provider_secret "target-provider-secret"
@@ -545,78 +545,60 @@ defmodule Opsonde.ResolverProjectionTest do
   end
 
   test "projection reserves the latest context from every correlated Signal source", context do
-    incident =
-      Cases.open_case!(
-        :signal,
-        "alertmanager",
-        "alert-fingerprint",
-        "Kubernetes workload is unavailable",
-        :critical,
-        :firing,
-        %{"target_ref" => %{"kind" => "instance", "value" => "cluster-01"}},
-        context.target.id,
-        :en,
-        actor: context.operator
-      )
-
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
     now = DateTime.utc_now()
+    target_ref = %{kind: :hostname, value: "linux-01"}
 
-    stale =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "multi-source-alert-stale",
-        "signal_event",
-        "alertmanager",
-        "alert-fingerprint",
-        %{
-          "current" => true,
-          "state" => "firing",
-          "attributes" => %{"title" => "Stale alert title"}
-        },
-        DateTime.add(now, -2, :second),
-        authorize?: false
+    for source <- ["alertmanager", "zabbix"] do
+      Targets.create_external_identity!(
+        context.target.id,
+        source,
+        "hostname",
+        "linux-01",
+        actor: context.admin
       )
+    end
 
-    alertmanager =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "multi-source-alert-current",
-        "signal_event",
-        "alertmanager",
-        "alert-fingerprint",
-        %{
-          "current" => true,
-          "state" => "firing",
-          "attributes" => %{"title" => "Kubernetes workload is unavailable"}
-        },
-        now,
-        authorize?: false
-      )
+    alertmanager_provider = signal_provider!(context.admin, "alertmanager")
+    zabbix_provider = signal_provider!(context.admin, "zabbix")
+
+    ingest_signal!(
+      alertmanager_provider,
+      "alert-stale",
+      "alert-fingerprint",
+      "Stale alert title",
+      target_ref,
+      DateTime.add(now, -2, :second)
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [stale] = Cases.signal_context_evidence!(incident.id, authorize?: false)
+
+    ingest_signal!(
+      alertmanager_provider,
+      "alert-current",
+      "alert-fingerprint",
+      "Kubernetes workload is unavailable",
+      target_ref,
+      DateTime.add(now, -1, :second)
+    )
+
+    [alertmanager] = Cases.signal_context_evidence!(incident.id, authorize?: false)
+
+    ingest_signal!(
+      zabbix_provider,
+      "zabbix-current",
+      "zabbix-event-42",
+      "opsonde-validation.service is inactive on linux-01",
+      target_ref,
+      now
+    )
 
     zabbix =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "multi-source-zabbix-current",
-        "signal_event",
-        "zabbix",
-        "zabbix-event-42",
-        %{
-          "current" => true,
-          "state" => "firing",
-          "attributes" => %{
-            "title" => "opsonde-validation.service is inactive on linux-01"
-          }
-        },
-        DateTime.add(now, 1, :second),
-        authorize?: false
-      )
+      Cases.signal_context_evidence!(incident.id, authorize?: false)
+      |> Enum.find(&(&1.source == "zabbix"))
+
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
 
     other =
       Targets.create_target!("candidate-01", "host", "linux", %{}, nil, actor: context.admin)
@@ -911,6 +893,45 @@ defmodule Opsonde.ResolverProjectionTest do
         "additionalProperties" => false
       }
     }
+  end
+
+  defp signal_provider!(admin, source) do
+    Providers.create_provider!(
+      "projection-#{source}",
+      :signal,
+      "fixture-signal",
+      %{"source" => source},
+      %{"secret" => "signal-secret"},
+      actor: admin
+    )
+    |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+    |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+  end
+
+  defp ingest_signal!(provider, receipt_id, event_key, title, target_ref, occurred_at) do
+    envelope = %Signal.Envelope{body: receipt_id, headers: %{}, received_at: occurred_at}
+
+    event = %Signal.Event{
+      receipt_id: receipt_id,
+      event_key: event_key,
+      state: :firing,
+      occurred_at: occurred_at,
+      target_ref: target_ref,
+      attributes: %{"title" => title, "severity" => "critical"}
+    }
+
+    invocation = %{
+      authenticate: fn adapter_state, _envelope ->
+        {:ok,
+         %Signal.AuthenticatedReceipt{
+           receipt_id: receipt_id,
+           source: adapter_state.source
+         }}
+      end,
+      normalize: fn _adapter_state, _envelope, _receipt -> {:ok, [event]} end
+    }
+
+    Signals.ingest_signal!(provider.id, provider.revision, envelope, invocation)
   end
 
   defp target_observation(context, facts) do

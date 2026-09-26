@@ -52,7 +52,6 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         title: string(1, 200),
         severity: enum(~w(info warning error critical)),
         source_sequence: string(1, 500),
-        incident_key: string(1, 500),
         target_ref: object(%{kind: string(1, 80), value: string(1, 500)}, [:kind, :value], false),
         facts: %Schema{
           type: :object,
@@ -113,7 +112,6 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         id: Schemas.uuid(),
         signal_receipt_id: Schemas.uuid(),
         event_key: string(1, 500),
-        incident_key: nullable_string(500),
         state: enum(~w(firing recovered)),
         source_sequence: nullable_string(500),
         occurred_at: Schemas.timestamp(),
@@ -123,7 +121,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id signal_receipt_id event_key incident_key state source_sequence occurred_at target_ref case_id target_id inserted_at updated_at)a,
+      ~w(id signal_receipt_id event_key state source_sequence occurred_at target_ref case_id target_id inserted_at updated_at)a,
       false
     )
   end

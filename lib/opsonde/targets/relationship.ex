@@ -65,6 +65,22 @@ defmodule Opsonde.Targets.Relationship do
       prepare build(sort: [inserted_at: :asc, id: :asc], limit: 100)
     end
 
+    read :adjacent_for_case_admission do
+      argument :target_id, :uuid, allow_nil?: false
+
+      filter expr(
+               active == true and source_target.active == true and
+                 destination_target.active == true and
+                 (is_nil(valid_until) or valid_until > now()) and
+                 (source_target_id == ^arg(:target_id) or
+                    destination_target_id == ^arg(:target_id))
+             )
+
+      # The 129th edge means the admission graph cannot be proven complete
+      # within its 128-node budget. The caller then starts a separate Case.
+      prepare build(sort: [inserted_at: :asc, id: :asc], limit: 129)
+    end
+
     create :create do
       primary? true
       accept [:source_target_id, :destination_target_id, :kind, :facts, :valid_until]
@@ -107,7 +123,12 @@ defmodule Opsonde.Targets.Relationship do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:search_index, :for_traversal, :adjacent_for_traversal]) do
+    policy action([
+             :search_index,
+             :for_traversal,
+             :adjacent_for_traversal,
+             :adjacent_for_case_admission
+           ]) do
       forbid_if always()
     end
 

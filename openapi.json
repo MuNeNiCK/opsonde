@@ -1549,11 +1549,6 @@
             "format": "uuid",
             "type": "string"
           },
-          "incident_key": {
-            "maxLength": 500,
-            "nullable": true,
-            "type": "string"
-          },
           "inserted_at": {
             "format": "date-time",
             "type": "string"
@@ -1597,7 +1592,6 @@
           "id",
           "signal_receipt_id",
           "event_key",
-          "incident_key",
           "state",
           "source_sequence",
           "occurred_at",
@@ -5991,11 +5985,6 @@
             "description": "At most 32 flat string, number or boolean facts; encoded facts must be at most 8000 bytes. Keys are 1-120 characters and string values at most 1000 characters.",
             "maxProperties": 32,
             "type": "object"
-          },
-          "incident_key": {
-            "maxLength": 500,
-            "minLength": 1,
-            "type": "string"
           },
           "occurred_at": {
             "format": "date-time",

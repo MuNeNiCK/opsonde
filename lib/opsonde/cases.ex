@@ -39,10 +39,6 @@ defmodule Opsonde.Cases do
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
 
-      define :active_case_by_incident_key,
-        action: :active_by_incident_key,
-        args: [:incident_key]
-
       define :unresolved_signal_cases_without_target,
         action: :unresolved_signals_without_target
 
@@ -61,21 +57,6 @@ defmodule Opsonde.Cases do
           :initial_context,
           :initial_target_id,
           :report_language
-        ]
-
-      define :open_correlated_signal_case,
-        action: :open,
-        args: [
-          :trigger_kind,
-          :source,
-          :source_ref,
-          :title,
-          :severity,
-          :alert_state,
-          :initial_context,
-          :initial_target_id,
-          :report_language,
-          :incident_key
         ]
 
       define :claim_case, action: :claim, args: [:id, :expected_revision]
@@ -404,6 +385,26 @@ defmodule Opsonde.Cases do
           :request_digest,
           :delivery_attempt
         ]
+    end
+
+    resource Opsonde.Cases.CaseConditionMembership do
+      define :active_case_condition, action: :active_for_condition, args: [:condition_id]
+      define :active_conditions_for_case, action: :active_for_case, args: [:case_id]
+      define :condition_membership_history, action: :history_for_condition, args: [:condition_id]
+      define :attach_case_condition_record, action: :attach_record
+      define :detach_case_condition_record, action: :detach_record, args: [:expected_revision]
+
+      define :assign_signal_condition,
+        action: :assign_signal,
+        args: [:condition_id, :source, :title, :severity, :received_at, :initial_context]
+    end
+
+    resource Opsonde.Cases.CaseDispatch do
+      define :case_dispatch, action: :for_case, args: [:case_id]
+      define :admitting_case_dispatches, action: :admitting
+      define :create_case_dispatch_record, action: :create_record
+      define :record_case_dispatch_state, action: :record_state, args: [:expected_revision]
+      define :send_initial_case_turn, action: :send_initial, args: [:case_id]
     end
   end
 end

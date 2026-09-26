@@ -48,7 +48,6 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
     assert length(Signals.list_signal_receipts!(actor: context.admin)) == 2
     assert [incident] = Cases.list_cases!(actor: context.admin)
-    assert incident.alert_state == :recovered
     assert incident.initial_target_id == target.id
 
     events = Signals.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
@@ -59,7 +58,10 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
            ]
 
     assert hd(events).attributes["facts"] == %{"service" => "nginx"}
-    assert hd(events).incident_key == "site-a-outage"
+    [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :recovered
+    assert condition.target_id == target.id
+    assert Enum.all?(events, &(&1.condition_id == condition.id))
   end
 
   test "Generic webhook rejects malformed canonical fields and wrong credentials", context do
@@ -121,16 +123,17 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
            ]
 
     firing = Enum.find(events, &(&1.event_key == "fingerprint-a"))
+    [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :firing
+    assert condition.predicate == "DiskErrors"
+    assert firing.condition_id == condition.id
     assert firing.target_ref == %{"kind" => "instance", "value" => "server-a:9100"}
 
     assert firing.attributes["labels"] == %{
              "alertname" => "DiskErrors",
              "instance" => "server-a:9100",
-             "opsonde_incident_key" => "storage-outage-42",
              "severity" => "critical"
            }
-
-    assert firing.incident_key == "storage-outage-42"
 
     assert firing.attributes["annotations"] == %{"summary" => "Disk errors increased"}
     assert firing.metadata["alertmanager"]["truncated_alerts"] == 0
@@ -148,6 +151,37 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert json_response(first, 202)["receipt_id"] == json_response(second, 202)["receipt_id"]
     assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
     assert length(Signals.list_signal_events!(actor: context.admin)) == 2
+  end
+
+  test "Alertmanager fingerprint rotation cannot recover a newer firing condition", context do
+    path = "/api/v1/signals/alertmanager/#{context.alertmanager.id}"
+    [old_alert | _] = alertmanager_payload()["alerts"]
+    new_alert = %{old_alert | "fingerprint" => "fingerprint-new"}
+
+    for alert <- [old_alert, new_alert] do
+      payload = %{alertmanager_payload() | "alerts" => [alert]}
+      assert response(build_conn() |> authorized() |> post_json(path, payload), 202)
+    end
+
+    recovered_old = %{
+      old_alert
+      | "status" => "resolved",
+        "endsAt" => "2026-09-18T01:02:00Z"
+    }
+
+    payload = %{alertmanager_payload() | "alerts" => [recovered_old], "status" => "resolved"}
+    assert response(build_conn() |> authorized() |> post_json(path, payload), 202)
+
+    correlations = Signals.list_signal_correlations!(actor: context.admin)
+    conditions = Signals.list_conditions!(actor: context.admin)
+    old_correlation = Enum.find(correlations, &(&1.event_key == "fingerprint-a"))
+    new_correlation = Enum.find(correlations, &(&1.event_key == "fingerprint-new"))
+
+    assert Enum.find(conditions, &(&1.signal_correlation_id == old_correlation.id)).state ==
+             :recovered
+
+    assert Enum.find(conditions, &(&1.signal_correlation_id == new_correlation.id)).state ==
+             :firing
   end
 
   test "authentication runs before Alertmanager body normalization", context do
@@ -219,11 +253,13 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
              {"9001", :recovered, "1726650060"}
            ]
 
+    [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :recovered
+    assert Enum.all?(events, &(&1.condition_id == condition.id))
+
     assert Enum.all?(events, fn event ->
              event.target_ref == %{"kind" => "host_id", "value" => "10601"}
            end)
-
-    assert Enum.all?(events, &(&1.incident_key == "storage-outage-42"))
 
     assert hd(events).attributes == %{
              "severity" => "error",
@@ -310,7 +346,6 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       "occurred_at" => DateTime.to_iso8601(occurred_at),
       "title" => "Nginx is unavailable",
       "severity" => "error",
-      "incident_key" => "site-a-outage",
       "target_ref" => %{"kind" => "hostname", "value" => "generic-linux"},
       "facts" => %{"service" => "nginx"}
     }
@@ -339,7 +374,6 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
           "labels" => %{
             "alertname" => "DiskErrors",
             "instance" => "server-a:9100",
-            "opsonde_incident_key" => "storage-outage-42",
             "severity" => "critical"
           },
           "annotations" => %{"summary" => "Disk errors increased"},
@@ -379,10 +413,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       "event_name" => "Linux disk I/O errors",
       "severity" => "High",
       "severity_number" => "4",
-      "tags" => [
-        %{"tag" => "service", "value" => "storage"},
-        %{"tag" => "opsonde_incident_key", "value" => "storage-outage-42"}
-      ]
+      "tags" => [%{"tag" => "service", "value" => "storage"}]
     }
   end
 end

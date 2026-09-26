@@ -7,7 +7,7 @@ defmodule Opsonde.Signals.Generic.Webhook do
   alias Opsonde.Providers.Signal
   alias Opsonde.Signals.Webhook
 
-  @allowed_keys ~w(event_key state occurred_at title severity source_sequence incident_key target_ref facts)
+  @allowed_keys ~w(event_key state occurred_at title severity source_sequence target_ref facts)
 
   @impl Opsonde.Providers.Adapter
   def type, do: "generic-webhook"
@@ -34,7 +34,6 @@ defmodule Opsonde.Signals.Generic.Webhook do
          {:ok, title} <- string(payload["title"], 200, "title"),
          {:ok, severity} <- severity(Map.get(payload, "severity", "warning")),
          {:ok, sequence} <- optional_string(payload, "source_sequence", 500),
-         {:ok, incident_key} <- optional_string(payload, "incident_key", 500),
          {:ok, target_ref} <- optional_target_ref(payload),
          {:ok, facts} <- facts(Map.get(payload, "facts", %{})) do
       {:ok,
@@ -45,7 +44,6 @@ defmodule Opsonde.Signals.Generic.Webhook do
            state: state,
            occurred_at: occurred_at,
            source_sequence: sequence,
-           incident_key: incident_key,
            target_ref: target_ref,
            attributes: %{"title" => title, "severity" => severity, "facts" => facts}
          }

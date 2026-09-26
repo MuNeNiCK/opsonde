@@ -45,5 +45,31 @@ defmodule Opsonde.Signals do
       define :create_signal_correlation_record, action: :create_record
       define :update_signal_correlation_record, action: :update_record, args: [:expected_revision]
     end
+
+    resource Opsonde.Signals.Condition do
+      define :list_conditions, action: :read
+      define :get_condition, action: :read, get_by: [:id]
+
+      define :latest_condition_for_correlation,
+        action: :latest_for_correlation,
+        args: [:signal_correlation_id]
+
+      define :create_condition_record, action: :create_record
+      define :record_condition_state, action: :record_state, args: [:expected_revision]
+
+      define :record_condition_source_event,
+        action: :record_source_event,
+        args: [
+          :signal_correlation_id,
+          :state,
+          :occurred_at,
+          :source_sequence,
+          :target_id,
+          :subject_ref,
+          :subject_key,
+          :predicate,
+          :current
+        ]
+    end
   end
 end

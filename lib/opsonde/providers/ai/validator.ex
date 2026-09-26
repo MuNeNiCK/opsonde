@@ -158,6 +158,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_resolver_items?(request) do
     if Enum.all?(
          [
+           request.conditions,
            request.evidence,
            request.target_candidates,
            request.observation_results,
@@ -169,7 +170,8 @@ defmodule Opsonde.Providers.AI.Validator do
          &is_list/1
        ) do
       valid? =
-        Enum.all?(request.evidence, &valid_evidence?/1) and
+        Enum.all?(request.conditions, &valid_condition?/1) and
+          Enum.all?(request.evidence, &valid_evidence?/1) and
           Enum.all?(request.target_candidates, &valid_candidate?/1) and
           Enum.all?(request.observation_results, &valid_observation_result?/1) and
           Enum.all?(request.target_relations, &valid_relation?/1) and
@@ -178,13 +180,15 @@ defmodule Opsonde.Providers.AI.Validator do
           Enum.all?(request.proposal_tools, &valid_proposal_tool?/1)
 
       if valid? do
+        condition_ids = Enum.map(request.conditions, & &1.id)
         evidence_ids = Enum.map(request.evidence, & &1.id)
         candidate_ids = Enum.map(request.target_candidates, & &1.id)
         result_ids = Enum.map(request.observation_results, & &1.id)
         relation_ids = Enum.map(request.target_relations, & &1.id)
         tool_ids = Enum.map(request.observation_tools ++ request.proposal_tools, & &1.id)
 
-        unique?(evidence_ids ++ result_ids ++ relation_ids) and unique?(candidate_ids) and
+        unique?(condition_ids) and unique?(evidence_ids ++ result_ids ++ relation_ids) and
+          unique?(candidate_ids) and
           unique?(tool_ids) and unique?(request.traversable_relation_ids) and
           Enum.all?(request.traversable_relation_ids, &(&1 in relation_ids)) and
           valid_preselection_tools?(request)
@@ -195,6 +199,17 @@ defmodule Opsonde.Providers.AI.Validator do
       false
     end
   end
+
+  defp valid_condition?(%AI.Condition{} = condition) do
+    nonempty?(condition.id) and positive?(condition.revision) and
+      positive?(condition.occurrence) and bounded_string?(condition.predicate, 500) and
+      bounded_string?(condition.subject_key, 600) and is_map(condition.subject_ref) and
+      condition.state in [:firing, :recovered] and
+      (is_nil(condition.target_id) or nonempty?(condition.target_id)) and
+      is_integer(condition.current_occurred_at_us)
+  end
+
+  defp valid_condition?(_condition), do: false
 
   defp valid_evidence?(%AI.Evidence{id: id, kind: kind, target_id: target_id}),
     do: nonempty?(id) and bounded_kind?(kind) and (is_nil(target_id) or nonempty?(target_id))

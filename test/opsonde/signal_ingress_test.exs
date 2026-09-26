@@ -78,7 +78,13 @@ defmodule Opsonde.SignalIngressTest do
 
     assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
     assert length(Signals.list_signal_events!(actor: context.admin)) == 1
-    assert length(Cases.list_turns!(actor: context.admin)) == 1
+    [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :firing
+    assert condition.target_id == target.id
+    assert condition.occurrence == 1
+    assert signal_event.condition_id == condition.id
+    assert Cases.list_turns!(actor: context.admin) == []
+    assert {:ok, %{state: :collecting}} = Cases.case_dispatch(incident.id, authorize?: false)
     assert length(Cases.list_evidence!(actor: context.admin)) == 1
   end
 
@@ -104,117 +110,15 @@ defmodule Opsonde.SignalIngressTest do
              {"alert-b", :recovered}
            ]
 
-    assert [%{source_ref: "alert-a"}] = cases
+    assert [%{id: case_id}] = cases
+    assert [membership] = Cases.active_conditions_for_case!(case_id, authorize?: false)
+    assert membership.condition_id == Enum.find(events, &(&1.event_key == "alert-a")).condition_id
     assert Enum.find(events, &(&1.event_key == "alert-a")).case_id == hd(cases).id
     assert is_nil(Enum.find(events, &(&1.event_key == "alert-b")).case_id)
   end
 
-  test "authoritative incident identity joins monitoring sources and waits for every recovery",
+  test "same Target alerts share a provisional Case while retaining separate Conditions",
        context do
-    enable_signal_automation!(context.admin)
-
-    boundary =
-      Targets.create_management_boundary!("shared-stack", "environment", %{},
-        actor: context.admin
-      )
-
-    linux =
-      Targets.create_target!("linux-shared", "host", "linux", %{}, boundary.id,
-        actor: context.admin
-      )
-
-    kubernetes =
-      Targets.create_target!("kubernetes-shared", "cluster", "kubernetes", %{}, boundary.id,
-        actor: context.admin
-      )
-
-    Targets.create_external_identity!(
-      linux.id,
-      "test-monitor",
-      "hostname",
-      "linux-shared",
-      actor: context.admin
-    )
-
-    second_provider = signal_provider!(context.admin, "second-monitor")
-
-    Targets.create_external_identity!(
-      kubernetes.id,
-      "second-monitor",
-      "hostname",
-      "kubernetes-shared",
-      actor: context.admin
-    )
-
-    base = DateTime.utc_now()
-
-    ingest!(
-      context.provider,
-      envelope("linux-firing", base),
-      invocation("linux-firing", [
-        event("linux-firing", "linux-event", :firing, base,
-          incident_key: "shared-outage-42",
-          target_ref: %{kind: :hostname, value: "linux-shared"}
-        )
-      ])
-    )
-
-    ingest!(
-      second_provider,
-      envelope("kubernetes-firing", DateTime.add(base, 1, :second)),
-      invocation("kubernetes-firing", [
-        event("kubernetes-firing", "kubernetes-event", :firing, base,
-          incident_key: "shared-outage-42",
-          target_ref: %{kind: :hostname, value: "kubernetes-shared"}
-        )
-      ])
-    )
-
-    [incident] = Cases.list_cases!(actor: context.admin)
-    events = Signals.list_signal_events!(actor: context.admin)
-    correlations = Signals.list_signal_correlations!(actor: context.admin)
-
-    assert is_binary(incident.incident_key)
-    assert byte_size(incident.incident_key) == 64
-    assert Enum.map(events, & &1.incident_key) == ["shared-outage-42", "shared-outage-42"]
-    assert Enum.all?(events, &(&1.case_id == incident.id))
-    assert Enum.all?(correlations, &(&1.case_id == incident.id))
-    assert length(Cases.list_turns!(actor: context.admin)) == 1
-
-    ingest!(
-      context.provider,
-      envelope("linux-recovered", DateTime.add(base, 2, :second)),
-      invocation("linux-recovered", [
-        event("linux-recovered", "linux-event", :recovered, DateTime.add(base, 2, :second),
-          incident_key: "shared-outage-42",
-          target_ref: %{kind: :hostname, value: "linux-shared"}
-        )
-      ])
-    )
-
-    assert Cases.get_case!(incident.id, actor: context.admin).alert_state == :firing
-
-    ingest!(
-      second_provider,
-      envelope("kubernetes-recovered", DateTime.add(base, 3, :second)),
-      invocation("kubernetes-recovered", [
-        event(
-          "kubernetes-recovered",
-          "kubernetes-event",
-          :recovered,
-          DateTime.add(base, 3, :second),
-          incident_key: "shared-outage-42",
-          target_ref: %{kind: :hostname, value: "kubernetes-shared"}
-        )
-      ])
-    )
-
-    assert Cases.get_case!(incident.id, actor: context.admin).alert_state == :recovered
-    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 4
-    assert length(Signals.list_signal_events!(actor: context.admin)) == 4
-  end
-
-  test "correlation never guesses from matching Target, title, or time", context do
     enable_signal_automation!(context.admin)
 
     target =
@@ -263,6 +167,140 @@ defmodule Opsonde.SignalIngressTest do
       ])
     )
 
+    assert [incident] = Cases.list_cases!(actor: context.admin)
+    assert length(Signals.list_conditions!(actor: context.admin)) == 2
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
+    assert Cases.list_turns!(actor: context.admin) == []
+  end
+
+  test "a due provisional Case starts one initial Resolver Turn for its Conditions", context do
+    enable_signal_automation!(context.admin)
+    received_at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    ingest!(
+      context.provider,
+      envelope("due-case", received_at),
+      invocation("due-case", [event("due-case", "disk-errors", :firing, received_at)])
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert Cases.list_turns!(actor: context.admin) == []
+    job = %Oban.Job{args: %{"case_id" => incident.id}}
+
+    assert :ok = Opsonde.Cases.CaseDispatchWorker.perform(job)
+    assert :ok = Opsonde.Cases.CaseDispatchWorker.perform(job)
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+    assert {:ok, %{state: :sent}} = Cases.case_dispatch(incident.id, authorize?: false)
+  end
+
+  test "PoE, twenty AP and coincident core alerts enter one provisional investigation",
+       context do
+    enable_signal_automation!(context.admin)
+
+    names = ["poe-01" | Enum.map(1..20, &"ap-#{&1}")] ++ ["core-01"]
+
+    targets =
+      Enum.map(names, fn name ->
+        target =
+          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+            actor: context.admin
+          )
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+
+        {name, target.id}
+      end)
+      |> Map.new()
+
+    for name <- tl(names) do
+      Targets.create_relationship!(targets["poe-01"], targets[name], "connected_to", %{}, nil,
+        actor: context.admin
+      )
+    end
+
+    received_at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      Enum.map(names, fn name ->
+        event("poe-star", name, :firing, received_at,
+          target_ref: %{kind: :hostname, value: name},
+          attributes: %{"title" => "#{name} unavailable"}
+        )
+      end)
+
+    ingest!(context.provider, envelope("poe-star", received_at), invocation("poe-star", events))
+
+    assert [incident] = Cases.list_cases!(actor: context.admin)
+    assert length(Signals.list_conditions!(actor: context.admin)) == 22
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 22
+    assert Cases.list_turns!(actor: context.admin) == []
+
+    assert :ok =
+             Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+               args: %{"case_id" => incident.id}
+             })
+
+    [turn] = Cases.list_turns!(actor: context.admin)
+
+    selection = %Opsonde.Providers.AI.Selection{
+      role: :resolver,
+      provider_id: Ecto.UUID.generate(),
+      provider_revision: 1,
+      source: :assignment
+    }
+
+    assert {:ok, request} = Opsonde.Cases.ResolverProjection.build(turn.id, selection)
+    assert length(request.conditions) == 22
+    assert request.conditions |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 22
+    assert Enum.count(request.evidence, &(&1.kind == "signal_event")) == 22
+    assert Enum.all?(request.evidence, &is_binary(&1.content["condition_id"]))
+  end
+
+  test "an oversized Target graph preserves native alerts in separate Cases", context do
+    enable_signal_automation!(context.admin)
+
+    anchor =
+      Targets.create_target!("dense-anchor", "network_device", "generic", %{}, nil,
+        actor: context.admin
+      )
+
+    Targets.create_external_identity!(
+      anchor.id,
+      "test-monitor",
+      "hostname",
+      "dense-anchor",
+      actor: context.admin
+    )
+
+    for index <- 1..128 do
+      neighbour =
+        Targets.create_target!("dense-neighbour-#{index}", "network_device", "generic", %{}, nil,
+          actor: context.admin
+        )
+
+      Targets.create_relationship!(anchor.id, neighbour.id, "connected_to", %{}, nil,
+        actor: context.admin
+      )
+    end
+
+    occurred_at = DateTime.utc_now()
+
+    for key <- ["dense-a", "dense-b"] do
+      ingest!(
+        context.provider,
+        envelope(key, occurred_at),
+        invocation(key, [
+          event(key, key, :firing, occurred_at,
+            target_ref: %{kind: :hostname, value: "dense-anchor"}
+          )
+        ])
+      )
+    end
+
+    assert length(Signals.list_conditions!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
     assert length(Cases.list_cases!(actor: context.admin)) == 2
   end
 
@@ -307,7 +345,6 @@ defmodule Opsonde.SignalIngressTest do
             envelope(receipt_id, occurred_at),
             invocation(receipt_id, [
               event(receipt_id, event_key, :firing, occurred_at,
-                incident_key: "concurrent-incident",
                 target_ref: %{kind: :hostname, value: "concurrent-target"}
               )
             ])
@@ -318,7 +355,9 @@ defmodule Opsonde.SignalIngressTest do
 
     assert [{:ok, _first}, {:ok, _second}] = results
     assert length(Cases.list_cases!(actor: context.admin)) == 1
-    assert length(Cases.list_turns!(actor: context.admin)) == 1
+    assert Cases.list_turns!(actor: context.admin) == []
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
     assert length(Signals.list_signal_events!(actor: context.admin)) == 2
     assert length(Signals.list_signal_correlations!(actor: context.admin)) == 2
   end
@@ -370,9 +409,10 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_cases!(actor: context.admin)) == 1
   end
 
-  test "recovery and delayed delivery remain traceable without rewinding Case state", context do
+  test "late recurrence stays in its open investigation without rewinding earlier recovery",
+       context do
     enable_signal_automation!(context.admin)
-    base = DateTime.utc_now()
+    base = DateTime.add(DateTime.utc_now(), -40, :second)
 
     ingest_one!(context.provider, "firing", :firing, DateTime.add(base, 10, :second))
     ingest_one!(context.provider, "recovery", :recovered, DateTime.add(base, 30, :second))
@@ -380,29 +420,35 @@ defmodule Opsonde.SignalIngressTest do
 
     incident = Cases.list_cases!(actor: context.admin) |> List.first()
     correlation = Signals.list_signal_correlations!(actor: context.admin) |> List.first()
+    [first_condition] = Signals.list_conditions!(actor: context.admin)
 
-    assert incident.alert_state == :recovered
+    assert first_condition.state == :recovered
     assert incident.status == :running
     assert correlation.current_state == :recovered
     assert correlation.current_occurred_at == DateTime.add(base, 30, :second)
     assert length(Signals.list_signal_events!(actor: context.admin)) == 3
+    assert :ok = dispatch_initial!(incident)
     assert length(Cases.list_turns!(actor: context.admin)) == 1
 
     ingest_one!(context.provider, "refiring", :firing, DateTime.add(base, 40, :second))
 
-    incident = Cases.get_case!(incident.id, actor: context.admin)
-    assert incident.alert_state == :firing
-    assert incident.status == :running
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+    same_case = Cases.get_case!(incident.id, actor: context.admin)
+    assert same_case.id == incident.id
+    assert same_case.status == :running
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
     assert length(Cases.list_turns!(actor: context.admin)) == 1
   end
 
-  test "source recovery resumes an attention Case without operator input", context do
+  test "source recovery alone leaves an attention Case awaiting independent verification",
+       context do
     enable_signal_automation!(context.admin)
-    base = DateTime.utc_now()
+    base = DateTime.add(DateTime.utc_now(), -10, :second)
 
     ingest_one!(context.provider, "attention-firing", :firing, base)
 
     [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
 
@@ -435,18 +481,18 @@ defmodule Opsonde.SignalIngressTest do
       context.provider,
       "attention-recovered",
       :recovered,
-      DateTime.add(base, 30, :second)
+      DateTime.add(base, 10, :second)
     )
 
     recovered = Cases.get_case!(incident.id, actor: context.admin)
-    assert recovered.status == :running
-    assert recovered.alert_state == :recovered
-    assert recovered.required_human_input == nil
-    assert recovered.stop_reason == nil
-
-    resumed_run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    assert resumed_run.generation == 2
-    assert [_turn] = Cases.started_turns_for_run!(resumed_run.id, authorize?: false)
+    assert recovered.status == :needs_attention
+    assert recovered.required_human_input == "Review the Resolver delivery failure"
+    assert [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :recovered
+    assert [active_run] = Cases.list_resolution_runs!(actor: context.admin)
+    assert active_run.id == run.id
+    assert active_run.status == :needs_attention
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
   end
 
   test "source sequence orders events that have the same source timestamp", context do
@@ -555,7 +601,11 @@ defmodule Opsonde.SignalIngressTest do
     assert historical.status == :resolved
     assert second.id != first.id
     assert second.status == :running
-    assert second.alert_state == :firing
+
+    [second_membership] = Cases.active_conditions_for_case!(second.id, authorize?: false)
+
+    assert Signals.get_condition!(second_membership.condition_id, authorize?: false).state ==
+             :firing
 
     [correlation] = Signals.list_signal_correlations!(actor: context.admin)
     assert correlation.case_id == second.id
@@ -567,19 +617,35 @@ defmodule Opsonde.SignalIngressTest do
     ingest_one!(context.provider, "second-recovered", :recovered, DateTime.add(base, 30, :second))
     ingest_one!(context.provider, "second-recovered", :recovered, DateTime.add(base, 30, :second))
 
-    assert Cases.get_case!(second.id, actor: context.admin).alert_state == :recovered
     assert Cases.get_case!(first.id, actor: context.admin).status == :resolved
     events = Signals.list_signal_events!(actor: context.admin)
+
+    [older, newer] =
+      Signals.list_conditions!(actor: context.admin)
+      |> Enum.sort_by(& &1.occurrence)
+
+    assert older.state == :recovered
+    assert newer.state == :recovered
+    assert {older.occurrence, newer.occurrence} == {1, 2}
+    assert Enum.any?(events, &(&1.condition_id == older.id))
+    assert Enum.any?(events, &(&1.condition_id == newer.id))
+
+    assert Enum.find(events, &(DateTime.compare(&1.occurred_at, DateTime.add(base, 19)) == :eq)).condition_id ==
+             nil
+
     assert length(events) == 6
-    assert Enum.count(events, &(&1.case_id == first.id)) == 1
-    assert Enum.count(events, &(&1.case_id == second.id)) == 4
+    assert Enum.count(events, &(&1.case_id == first.id)) == 2
+    assert Enum.count(events, &(&1.case_id == second.id)) == 3
     assert Enum.count(events, &is_nil(&1.case_id)) == 1
   end
 
   test "a later Target catalog change re-evaluates a running unresolved Signal Case", context do
     enable_signal_automation!(context.admin)
-    occurred_at = DateTime.utc_now()
+    occurred_at = DateTime.add(DateTime.utc_now(), -10, :second)
     ingest_one!(context.provider, "unresolved", :firing, occurred_at)
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
 
     [first_turn] = Cases.list_turns!(actor: context.admin)
 
@@ -627,7 +693,7 @@ defmodule Opsonde.SignalIngressTest do
   test "matching identity registration resumes the same waiting Signal Case exactly once",
        context do
     enable_signal_automation!(context.admin)
-    occurred_at = DateTime.utc_now()
+    occurred_at = DateTime.add(DateTime.utc_now(), -10, :second)
 
     ingest!(
       context.provider,
@@ -638,6 +704,9 @@ defmodule Opsonde.SignalIngressTest do
         )
       ])
     )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
 
     [first_turn] = Cases.list_turns!(actor: context.admin)
 
@@ -736,8 +805,11 @@ defmodule Opsonde.SignalIngressTest do
 
   test "Target reconciliation remains retryable while a Resolver Turn is active", context do
     enable_signal_automation!(context.admin)
-    occurred_at = DateTime.utc_now()
+    occurred_at = DateTime.add(DateTime.utc_now(), -10, :second)
     ingest_one!(context.provider, "busy-reconciliation", :firing, occurred_at)
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
 
     [first_turn] = Cases.list_turns!(actor: context.admin)
     job = %Oban.Job{args: %{"change_key" => "target:later"}}
@@ -757,6 +829,10 @@ defmodule Opsonde.SignalIngressTest do
 
     assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
     assert length(Cases.list_turns!(actor: context.admin)) == 2
+  end
+
+  defp dispatch_initial!(incident) do
+    Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
   end
 
   defp enable_signal_automation!(admin) do
@@ -835,7 +911,6 @@ defmodule Opsonde.SignalIngressTest do
       occurred_at: occurred_at,
       source_sequence: Keyword.get(opts, :source_sequence),
       target_ref: Keyword.get(opts, :target_ref),
-      incident_key: Keyword.get(opts, :incident_key),
       attributes: Keyword.get(opts, :attributes, %{})
     }
   end

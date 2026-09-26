@@ -48,21 +48,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   end
 
   defp existing_case(arguments) do
-    with {:ok, existing} <- case_by_trigger(arguments) do
-      case {existing, Map.get(arguments, :incident_key)} do
-        {%Case{}, _incident_key} ->
-          {:ok, existing}
-
-        {nil, incident_key} when is_binary(incident_key) ->
-          Cases.active_case_by_incident_key(incident_key,
-            authorize?: false,
-            not_found_error?: false
-          )
-
-        {nil, _incident_key} ->
-          {:ok, nil}
-      end
-    end
+    case_by_trigger(arguments)
   end
 
   defp case_by_trigger(%{trigger_kind: :signal} = arguments) do
@@ -102,7 +88,6 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       trigger_kind: arguments.trigger_kind,
       source: arguments.source,
       source_ref: arguments.source_ref,
-      incident_key: Map.get(arguments, :incident_key),
       title: arguments.title,
       severity: arguments.severity,
       alert_state: arguments.alert_state,
