@@ -34,7 +34,8 @@ defmodule Opsonde.Repo.Migrations.AddBmcOperations do
             name: "bmc_operations_access_method_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:bmc_operations, [:access_method_id, :name],
