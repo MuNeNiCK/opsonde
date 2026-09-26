@@ -54,6 +54,59 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       end
     end
 
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Pages"} = conn, _agent) do
+      case conn.query_string do
+        "page=2" ->
+          json(conn, 200, %{"Members" => [%{"Id" => "second"}]})
+
+        "" ->
+          json(conn, 200, %{
+            "Members" => [%{"Id" => "first"}],
+            "Members@odata.nextLink" => "?page=2"
+          })
+      end
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Loop"} = conn, _agent) do
+      json(conn, 200, %{
+        "Members" => [%{"Id" => "repeated"}],
+        "Members@odata.nextLink" => "/redfish/v1/Oem/Loop"
+      })
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Endless"} = conn, _agent) do
+      page =
+        case URI.decode_query(conn.query_string) do
+          %{"page" => value} -> String.to_integer(value)
+          _ -> 1
+        end
+
+      json(conn, 200, %{
+        "Members" => [%{"Id" => Integer.to_string(page)}],
+        "Members@odata.nextLink" => "?page=#{page + 1}"
+      })
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Cross"} = conn, _agent) do
+      json(conn, 200, %{
+        "Members" => [],
+        "Members@odata.nextLink" => "https://other.example/redfish/v1/Oem/Pages"
+      })
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Large"} = conn, _agent) do
+      json(conn, 200, %{"Value" => String.duplicate("x", 70_000)})
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Malformed"} = conn, _agent),
+      do: send_resp(conn, 200, "[")
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Redirect"} = conn, _agent) do
+      conn
+      |> put_resp_header("location", "/redfish/v1/Oem/Pages")
+      |> send_resp(302, "")
+    end
+
     defp route(conn, _agent), do: send_resp(conn, 404, "")
 
     defp json(conn, status, value) do
@@ -106,7 +159,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
           "expected_uuid" => @uuid,
           "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
         },
-        %{"username" => "tester", "password" => "secret"}, actor: admin)
+        %{"username" => "tester", "password" => "secret"},
+        actor: admin
+      )
 
     checked =
       Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
@@ -126,7 +181,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         endpoint,
         provider.revision,
         100,
-        ["observe.power", "observe.bmc_api", "effect.bmc_api"], actor: admin)
+        ["observe.power", "observe.bmc_api", "effect.bmc_api"],
+        actor: admin
+      )
 
     read_schema =
       input_schema(
@@ -161,7 +218,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         %{"method" => "GET", "uri" => @system_path},
         read_schema,
         %{"type" => "object"},
-        nil, actor: admin)
+        nil,
+        actor: admin
+      )
 
     write =
       Targets.create_bmc_operation!(
@@ -173,7 +232,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         write_schema,
         %{"type" => "object"},
         nil,
-        %{parameter_classes: %{"/Name" => "public"}}, actor: admin)
+        %{parameter_classes: %{"/Name" => "public"}},
+        actor: admin
+      )
 
     %{
       admin: admin,
@@ -257,13 +318,57 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert {:error, _} =
              Targets.dispatch_target_effect(
                Targets.clear_target_request!(
-                 %{fresh_request | selectors: %{"if_match" => "\r\n"}}, actor: context.operator),
+                 %{fresh_request | selectors: %{"if_match" => "\r\n"}},
+                 actor: context.operator
+               ),
                %{},
                actor: context.operator,
                authorize?: false
              )
 
     assert Agent.get(context.agent, & &1.writes) == 1
+  end
+
+  test "registered OEM reads bound pagination and reject malformed or unsupported replies",
+       context do
+    assert {:ok, pages} = read_oem(context, "Pages")
+    assert Enum.map(pages.facts["Members"], & &1["Id"]) == ["first", "second"]
+    assert [%{"pages" => 2, "http_status" => 200}] = pages.evidence
+
+    for path <- ~w(Loop Endless Cross Large Malformed Redirect Absent) do
+      assert {:error, error} = read_oem(context, path)
+      assert byte_size(Exception.message(error)) < 1_024
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == 0
+  end
+
+  defp read_oem(context, path) do
+    definition =
+      Targets.create_bmc_operation!(
+        context.method.id,
+        "Read OEM #{path}",
+        "Read registered OEM resource",
+        :observation,
+        %{"method" => "GET", "uri" => "/redfish/v1/Oem/#{path}"},
+        input_schema(
+          %{"type" => "object", "additionalProperties" => false},
+          %{"type" => "object", "additionalProperties" => false}
+        ),
+        %{"type" => "object"},
+        nil,
+        actor: context.admin
+      )
+
+    clearance =
+      context
+      |> request(definition, :observation)
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    Targets.dispatch_target_observation(clearance, %{},
+      actor: context.operator,
+      authorize?: false
+    )
   end
 
   defp input_schema(selectors, parameters) do
