@@ -39,25 +39,12 @@ defmodule Opsonde.Cases.Evidence do
               )
     end
 
-    read :source_context do
-      argument :case_id, :uuid, allow_nil?: false
-      argument :source_ref, :string, allow_nil?: false
-
-      filter expr(
-               case_id == ^arg(:case_id) and kind == "signal_event" and
-                 source_ref == ^arg(:source_ref)
-             )
-
-      prepare build(
-                sort: [observed_at: :desc, inserted_at: :desc, id: :desc],
-                limit: 1
-              )
-    end
-
     read :signal_contexts do
       argument :case_id, :uuid, allow_nil?: false
 
       filter expr(case_id == ^arg(:case_id) and kind == "signal_event")
+
+      prepare Opsonde.Cases.Evidence.Preparations.ActiveCondition
 
       prepare build(
                 distinct: [:source, :source_ref],
@@ -154,7 +141,6 @@ defmodule Opsonde.Cases.Evidence do
   policies do
     policy action([
              :projection_window,
-             :source_context,
              :signal_contexts,
              :target_continuity,
              :condition_assessment_candidates,
