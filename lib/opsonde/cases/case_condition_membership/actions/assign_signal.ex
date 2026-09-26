@@ -148,7 +148,8 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
            ),
          %CaseConditionMembership{} <- membership,
          {:ok, incident} <- Cases.get_case(membership.case_id, authorize?: false),
-         true <- incident.status == :running and incident.trigger_kind == :signal,
+         true <-
+           incident.status in [:running, :needs_attention] and incident.trigger_kind == :signal,
          {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- length(members) < @max_conditions do
       {:ok, incident}

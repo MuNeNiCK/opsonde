@@ -669,6 +669,18 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_evidence!(actor: context.admin)) == 1
   end
 
+  test "a matching recurrence stays in the Case awaiting operator attention", context do
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+    ingest_one!(context.provider, "attention-first", :firing, base)
+    ingest_one!(context.provider, "attention-recovered", :recovered, DateTime.add(base, 10))
+    ingest_one!(context.provider, "attention-refiring", :firing, DateTime.add(base, 20))
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert incident.status == :needs_attention
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
+    assert Cases.list_turns!(actor: context.admin) == []
+  end
+
   test "a later source event is retained after the Case is terminal", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()
