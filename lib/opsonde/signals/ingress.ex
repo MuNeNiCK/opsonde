@@ -7,6 +7,7 @@ defmodule Opsonde.Signals.Ingress do
 
   alias Opsonde.Cases.{
     Case,
+    CaseAdmissionLock,
     CaseConditionMembership,
     CaseDispatch,
     CaseEvent,
@@ -101,7 +102,8 @@ defmodule Opsonde.Signals.Ingress do
     ]
 
     transaction = fn ->
-      with {:ok, correlations} <- lock_correlations(correlation_ids),
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, correlations} <- lock_correlations(correlation_ids),
            {:ok, existing} <- existing_receipt(arguments.provider_id, result.receipt.receipt_id) do
         if existing do
           validate_receipt_replay(existing, result, digest)

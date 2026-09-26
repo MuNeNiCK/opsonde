@@ -77,7 +77,7 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp current_conditions(%{trigger_kind: :signal} = incident) do
+  def current_conditions(%{trigger_kind: :signal} = incident) do
     with {:ok, memberships} <-
            Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- memberships != [] || {:error, "Signal Case has no active Conditions"} do
@@ -110,7 +110,19 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp current_conditions(_incident), do: {:ok, []}
+  def current_conditions(_incident), do: {:ok, []}
+
+  def condition_revisions(conditions) do
+    conditions
+    |> Enum.map(&%{"id" => &1.id, "revision" => &1.revision})
+    |> Enum.sort_by(& &1["id"])
+  end
+
+  def current_condition_revisions(incident) do
+    with {:ok, conditions} <- current_conditions(incident) do
+      {:ok, condition_revisions(conditions)}
+    end
+  end
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 

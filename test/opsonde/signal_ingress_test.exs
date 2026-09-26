@@ -4,7 +4,8 @@ defmodule Opsonde.SignalIngressTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
-  alias Opsonde.Providers.Signal
+  alias Opsonde.Cases.{DecisionRouteWorker, ResolverDelivery}
+  alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Repo
 
   @password "correct horse battery staple"
@@ -467,6 +468,110 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Signals.list_conditions!(actor: context.admin)) == 2
   end
 
+  test "a recurrence during Resolver delivery is charged and retried from current Conditions",
+       context do
+    enable_signal_automation!(context.admin)
+    configure_resolver_ai!(context.admin)
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+    ingest_one!(context.provider, "initial-ai-firing", :firing, base)
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
+    [first_turn] = Cases.list_turns!(actor: context.admin)
+
+    decision = %AI.ResolverDecision{
+      intent: %AI.TargetSearch{query: "current fault", reason: "Find affected target"},
+      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+    }
+
+    assert :ok =
+             ResolverDelivery.run(first_turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert length(request.conditions) == 1
+
+                   ingest_one!(
+                     context.provider,
+                     "ai-recovery",
+                     :recovered,
+                     DateTime.add(base, 10)
+                   )
+
+                   ingest_one!(context.provider, "ai-refiring", :firing, DateTime.add(base, 20))
+                   {:ok, decision}
+                 end
+               }
+             )
+
+    assert Cases.get_turn!(first_turn.id, authorize?: false).result["outcome"] ==
+             "context_changed"
+
+    assert Cases.get_resolution_run!(first_turn.resolution_run_id, authorize?: false).ai_usage_units ==
+             5
+
+    [successor] =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.filter(&(&1.status == :started))
+
+    assert :ok =
+             ResolverDelivery.run(successor.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert length(request.conditions) == 2
+                   assert Enum.map(request.conditions, & &1.state) == [:recovered, :firing]
+                   {:ok, decision}
+                 end
+               }
+             )
+
+    assert Cases.get_turn!(successor.id, authorize?: false).result["outcome"] == "decision"
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+  end
+
+  test "a recurrence after Resolver acceptance supersedes its unrouted decision", context do
+    enable_signal_automation!(context.admin)
+    configure_resolver_ai!(context.admin)
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+    ingest_one!(context.provider, "route-initial", :firing, base)
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(incident)
+    [first_turn] = Cases.list_turns!(actor: context.admin)
+
+    assert :ok =
+             ResolverDelivery.run(first_turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{query: "old fault", reason: "Find target"},
+                      usage: %AI.Usage{input_tokens: 2, output_tokens: 1}
+                    }}
+                 end
+               }
+             )
+
+    ingest_one!(context.provider, "route-recovery", :recovered, DateTime.add(base, 10))
+    ingest_one!(context.provider, "route-refiring", :firing, DateTime.add(base, 20))
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => first_turn.id}})
+
+    [successor] =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.filter(&(&1.status == :started))
+
+    assert successor.id != first_turn.id
+
+    assert Cases.get_case!(incident.id, actor: context.admin).pending_intent["turn_id"] ==
+             successor.id
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => first_turn.id}})
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
+  end
+
   test "source recovery alone leaves an attention Case awaiting independent verification",
        context do
     enable_signal_automation!(context.admin)
@@ -879,6 +984,22 @@ defmodule Opsonde.SignalIngressTest do
       "enable Signal ingress",
       actor: admin
     )
+  end
+
+  defp configure_resolver_ai!(admin) do
+    provider =
+      Providers.create_provider!(
+        "signal-ingress-resolver-ai",
+        :ai,
+        "fixture-ai",
+        %{"model" => "resolver-model"},
+        %{"api_key" => "resolver-test-key"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    Opsonde.TestAIUsage.configure!(provider.id, :resolver, 10, admin)
   end
 
   defp signal_provider!(admin, source) do

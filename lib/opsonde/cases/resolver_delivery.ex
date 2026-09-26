@@ -10,6 +10,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     AIInvocationClaim,
     Budget,
     Case,
+    CaseAdmissionLock,
     CaseEvent,
     ResolutionRun,
     ResolverProjection,
@@ -84,9 +85,20 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp accept_decision(turn, selection, request, invocation, decision) do
     if resolver_context_current?(request) do
       with {:ok, result} <- result(decision, selection, request),
-           :ok <- valid_result_size(result),
-           {:ok, _result} <- accept(turn, invocation, decision, result, request) do
-        :ok
+           :ok <- valid_result_size(result) do
+        case accept(turn, invocation, decision, result, request) do
+          {:ok, _accepted} ->
+            :ok
+
+          {:error, :context_changed} ->
+            with {:ok, _charged} <-
+                   settle_unused_result(turn, invocation, decision, "context_changed") do
+              retry_changed_context(turn)
+            end
+
+          {:error, error} ->
+            handle_failure(turn, error, invocation)
+        end
       else
         {:error, error} -> handle_failure(turn, error, invocation)
       end
@@ -255,14 +267,58 @@ defmodule Opsonde.Cases.ResolverDelivery do
     incident.status == :running and not incident.cancel_requested and
       incident.alert_state == request.alert_state and
       incident.selected_target_id == request.selected_target_id and
-      incident.selected_target_revision == request.selected_target_revision
+      incident.selected_target_revision == request.selected_target_revision and
+      case ResolverProjection.current_conditions(incident) do
+        {:ok, conditions} -> conditions == request.conditions
+        {:error, _error} -> false
+      end
   end
 
   defp retry_changed_context(turn) do
     cond do
       case_cancelled?(turn.case_id) -> {:cancel, "Case resolution was cancelled"}
       turn_completed?(turn.id) -> :ok
-      true -> {:snooze, 1}
+      true -> supersede_changed_context(turn)
+    end
+  end
+
+  defp supersede_changed_context(turn) do
+    intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
+
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, current} <- Cases.get_turn(turn.id, authorize?: false),
+           true <- current.status == :started || {:error, "Resolver Turn is already finalized"},
+           {:ok, _completed} <-
+             Cases.complete_turn(
+               current.id,
+               current.revision,
+               %{"outcome" => "context_changed"},
+               :none,
+               intent,
+               "Continue resolution with current Conditions",
+               authorize?: false
+             ),
+           {:ok, successor} <-
+             Cases.start_turn(
+               turn.case_id,
+               turn.resolution_run_id,
+               "resolver:context-changed:#{turn.id}",
+               %{
+                 "objective" => "Reassess the Case with current Conditions",
+                 "source_turn_id" => turn.id
+               },
+               intent,
+               "Review Resolver limits",
+               authorize?: false
+             ),
+           {:ok, _pending} <- set_retry_pending(successor, turn.id) do
+        :ok
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, error} -> if(turn_completed?(turn.id), do: :ok, else: {:error, error})
     end
   end
 
@@ -283,7 +339,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
     progress_kind = progress_kind(decision.intent)
 
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
-      with {:ok, incident} <- lock_case(turn.case_id),
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, incident} <- lock_case(turn.case_id),
            true <- resolver_context_matches?(incident, request) || :context_changed,
            {:ok, usage_result} <-
              charge_usage(turn, usage_units, "resolver-result:#{invocation.id}"),
@@ -377,6 +434,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
            "input_tokens" => decision.usage.input_tokens,
            "output_tokens" => decision.usage.output_tokens
          },
+         "condition_revisions" => ResolverProjection.condition_revisions(request.conditions),
          "resolver" => %{
            "provider_id" => selection.provider_id,
            "provider_revision" => selection.provider_revision,
