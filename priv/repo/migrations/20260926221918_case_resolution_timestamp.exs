@@ -10,13 +10,11 @@ defmodule Opsonde.Repo.Migrations.CaseResolutionTimestamp do
   def up do
     alter table(:cases) do
       add :resolved_at, :utc_datetime_usec
-      remove :source_recovered_at
     end
   end
 
   def down do
     alter table(:cases) do
-      add :source_recovered_at, :utc_datetime_usec
       remove :resolved_at
     end
   end

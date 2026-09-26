@@ -88,33 +88,9 @@ defmodule Opsonde.Repo.Migrations.CaseConditionDispatch do
            )
 
     create index(:case_condition_memberships, [:case_id], where: "detached_at IS NULL")
-
-    drop_if_exists index(:cases, [:incident_key], name: "cases_active_incident_key_index")
-
-    alter table(:signal_events) do
-      remove :incident_key
-    end
-
-    alter table(:cases) do
-      remove :incident_key
-    end
   end
 
   def down do
-    alter table(:cases) do
-      add :incident_key, :text
-    end
-
-    alter table(:signal_events) do
-      add :incident_key, :text
-    end
-
-    create index(:cases, [:incident_key],
-             name: "cases_active_incident_key_index",
-             unique: true,
-             where: "incident_key IS NOT NULL AND status IN ('running', 'needs_attention')"
-           )
-
     drop_if_exists index(:case_condition_memberships, [:case_id])
 
     drop_if_exists index(:case_condition_memberships, [:condition_id],

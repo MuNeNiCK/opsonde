@@ -41,19 +41,9 @@ defmodule Opsonde.Repo.Migrations.SignalIngress do
 
     alter table(:signal_correlations) do
       add :latest_signal_event_id, :uuid
-
-      add :case_id,
-          references(:cases,
-            column: :id,
-            name: "signal_correlations_case_id_fkey",
-            type: :uuid,
-            prefix: "public"
-          )
     end
 
     create index(:signal_correlations, [:provider_id])
-
-    create index(:signal_correlations, [:case_id])
 
     create index(:signal_correlations, [:latest_signal_event_id])
 
@@ -258,8 +248,6 @@ defmodule Opsonde.Repo.Migrations.SignalIngress do
       remove :event_key
     end
 
-    drop constraint(:signal_correlations, "signal_correlations_case_id_fkey")
-
     drop constraint(:signal_correlations, "signal_correlations_latest_signal_event_id_fkey")
 
     drop constraint(:signal_correlations, "signal_correlations_provider_id_fkey")
@@ -272,12 +260,9 @@ defmodule Opsonde.Repo.Migrations.SignalIngress do
 
     drop_if_exists index(:signal_correlations, [:latest_signal_event_id])
 
-    drop_if_exists index(:signal_correlations, [:case_id])
-
     drop_if_exists index(:signal_correlations, [:provider_id])
 
     alter table(:signal_correlations) do
-      remove :case_id
       remove :latest_signal_event_id
     end
 

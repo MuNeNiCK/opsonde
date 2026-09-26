@@ -16,7 +16,6 @@ defmodule Opsonde.Repo.Migrations.CaseLifecycle do
       add :source_ref, :text, null: false
       add :title, :text, null: false
       add :severity, :text, null: false
-      add :alert_state, :text, null: false
       add :status, :text, null: false
       add :initial_context, :map, null: false, default: %{}
       add :authority_setting_revision, :bigint, null: false
@@ -32,7 +31,6 @@ defmodule Opsonde.Repo.Migrations.CaseLifecycle do
       add :stop_reason, :text
       add :pending_intent, :map, null: false, default: %{}
       add :required_human_input, :text
-      add :source_recovered_at, :utc_datetime_usec
       add :revision, :bigint, null: false, default: 1
 
       add :inserted_at, :utc_datetime_usec,
