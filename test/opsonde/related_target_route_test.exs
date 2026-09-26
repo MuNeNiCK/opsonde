@@ -1,9 +1,9 @@
 defmodule Opsonde.RelatedTargetRouteTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Cases, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
   alias Opsonde.Cases.ResolverProjection
-  alias Opsonde.Providers.{AI, Target}
+  alias Opsonde.Providers.{AI, Signal, Target}
 
   @password "correct horse battery staple"
 
@@ -182,37 +182,64 @@ defmodule Opsonde.RelatedTargetRouteTest do
   end
 
   test "a resumed run can traverse with the Case's current Signal evidence", context do
-    source_ref = "resumed-relation"
-
-    incident =
-      Cases.open_case!(
+    signal_provider =
+      Providers.create_provider!(
+        "resumed-relation-monitor",
         :signal,
-        "alertmanager",
-        source_ref,
-        "Kubernetes workload is unavailable",
-        :critical,
-        :firing,
-        %{},
-        context.linux.id,
-        :en,
-        actor: context.operator
+        "fixture-signal",
+        %{"source" => "relation-monitor"},
+        %{"secret" => "relation-monitor-secret"},
+        actor: context.admin
       )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    Targets.create_external_identity!(
+      context.linux.id,
+      "relation-monitor",
+      "hostname",
+      context.linux.name,
+      actor: context.admin
+    )
+
+    received_at = DateTime.utc_now()
+
+    Signals.ingest_signal!(
+      signal_provider.id,
+      signal_provider.revision,
+      %Signal.Envelope{body: "resumed-relation", headers: %{}, received_at: received_at},
+      %{
+        authenticate: fn state, _envelope ->
+          {:ok,
+           %Signal.AuthenticatedReceipt{receipt_id: "resumed-relation", source: state.source}}
+        end,
+        normalize: fn _state, _envelope, _receipt ->
+          {:ok,
+           [
+             %Signal.Event{
+               receipt_id: "resumed-relation",
+               event_key: "linux-service-unavailable",
+               state: :firing,
+               occurred_at: received_at,
+               target_ref: %{kind: :hostname, value: context.linux.name},
+               attributes: %{
+                 "labels" => %{
+                   "alertname" => "ServiceUnavailable",
+                   "service" => "api.service"
+                 }
+               }
+             }
+           ]}
+        end
+      },
+      authorize?: false
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
 
     prior_run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
-    signal =
-      Cases.append_evidence!(
-        incident.id,
-        prior_run.id,
-        nil,
-        "resumed-relation-signal",
-        "signal_event",
-        "zabbix",
-        "secondary-resumed-relation",
-        %{"current" => true, "state" => "firing"},
-        DateTime.utc_now(),
-        authorize?: false
-      )
+    [signal] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
     attention =
       Cases.require_case_attention!(

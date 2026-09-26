@@ -13,7 +13,14 @@ defmodule Opsonde.Cases.Evidence.Preparations.ActiveCondition do
            authorize?: false
          ) do
       {:ok, memberships} ->
-        ids = Enum.map(memberships, & &1.condition_id)
+        # An empty IN list is folded to SQL FALSE after the surrounding read
+        # has already reserved parameters for its Case and kind filters.
+        ids =
+          case Enum.map(memberships, & &1.condition_id) do
+            [] -> ["00000000-0000-0000-0000-000000000000"]
+            values -> values
+          end
+
         Ash.Query.filter(query, content["condition_id"] in ^ids)
 
       {:error, error} ->

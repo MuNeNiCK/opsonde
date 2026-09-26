@@ -93,6 +93,22 @@ defmodule Opsonde.Cases.ResolutionRun do
       change optimistic_lock(:revision)
     end
 
+    update :reallocate_limits do
+      accept [
+        :max_resolver_turns,
+        :max_target_requests,
+        :max_effects,
+        :max_related_targets,
+        :max_ai_usage_units
+      ]
+
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:active, true)
+      change optimistic_lock(:revision)
+    end
+
     action :charge, :struct do
       constraints instance_of: Opsonde.Cases.BudgetResult
       transaction? false
@@ -121,7 +137,15 @@ defmodule Opsonde.Cases.ResolutionRun do
   end
 
   policies do
-    policy action([:active_for_case, :create_record, :retire, :pause, :update_counters, :charge]) do
+    policy action([
+             :active_for_case,
+             :create_record,
+             :retire,
+             :pause,
+             :update_counters,
+             :reallocate_limits,
+             :charge
+           ]) do
       forbid_if always()
     end
 
@@ -167,13 +191,13 @@ defmodule Opsonde.Cases.ResolutionRun do
     attribute :max_resolver_turns, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 1_000
+      constraints min: 0, max: 1_000
     end
 
     attribute :max_target_requests, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 10_000
+      constraints min: 0, max: 10_000
     end
 
     attribute :max_effects, :integer do
@@ -191,7 +215,7 @@ defmodule Opsonde.Cases.ResolutionRun do
     attribute :max_ai_usage_units, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 1_000_000_000
+      constraints min: 0, max: 1_000_000_000
     end
 
     attribute :max_no_progress_turns, :integer do

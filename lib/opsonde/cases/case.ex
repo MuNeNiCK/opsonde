@@ -16,6 +16,7 @@ defmodule Opsonde.Cases.Case do
 
     custom_indexes do
       index [:authority_setting_id]
+      index [:split_parent_id]
       index [:initial_target_id]
       index [:selected_target_id]
       index [:current_owner_id]
@@ -132,6 +133,7 @@ defmodule Opsonde.Cases.Case do
         :stop_reason,
         :required_human_input,
         :initial_target_id,
+        :split_parent_id,
         :selected_target_id,
         :selected_target_revision,
         :current_owner_id
@@ -211,6 +213,27 @@ defmodule Opsonde.Cases.Case do
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.Reconnect
+    end
+
+    action :split_conditions, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :condition_ids, {:array, :uuid},
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 31]
+
+      argument :expected_conditions, {:array, :map},
+        allow_nil?: false,
+        constraints: [min_length: 2, max_length: 32]
+
+      argument :reason, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 500]
+
+      run Opsonde.Cases.Case.Actions.SplitConditions
     end
 
     action :claim, :struct do
@@ -407,6 +430,7 @@ defmodule Opsonde.Cases.Case do
   policies do
     policy action([
              :open,
+             :split_conditions,
              :claim,
              :handoff,
              :request_cancellation,
@@ -520,13 +544,13 @@ defmodule Opsonde.Cases.Case do
     attribute :max_resolver_turns, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 1_000
+      constraints min: 0, max: 1_000
     end
 
     attribute :max_target_requests, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 10_000
+      constraints min: 0, max: 10_000
     end
 
     attribute :max_effects, :integer do
@@ -544,7 +568,7 @@ defmodule Opsonde.Cases.Case do
     attribute :max_ai_usage_units, :integer do
       allow_nil? false
       public? true
-      constraints min: 1, max: 1_000_000_000
+      constraints min: 0, max: 1_000_000_000
     end
 
     attribute :max_no_progress_turns, :integer do
@@ -595,6 +619,10 @@ defmodule Opsonde.Cases.Case do
   end
 
   relationships do
+    belongs_to :split_parent, Opsonde.Cases.Case do
+      public? true
+    end
+
     belongs_to :authority_setting, Opsonde.Cases.AuthoritySetting do
       allow_nil? false
       public? true

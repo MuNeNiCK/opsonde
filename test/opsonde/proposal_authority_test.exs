@@ -325,6 +325,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
   test "Auto accepts one isolated assigned Reviewer decision and usage", context do
     configure_mode!(:auto, context.admin)
+    enable_signal_automation!(context.admin)
 
     initial_target =
       Targets.create_target!("authority-linked-guest", "host", "linux", %{}, nil,
@@ -341,35 +342,68 @@ defmodule Opsonde.ProposalAuthorityTest do
         actor: context.admin
       )
 
-    operator =
-      Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
+    Accounts.change_preferred_language!(context.admin, :ja, actor: context.admin)
 
-    {incident, run, proposal} =
-      proposal!(
-        "review-approved",
-        context |> Map.put(:operator, operator) |> Map.put(:initial_target, initial_target)
+    signal_provider =
+      Providers.create_provider!(
+        "review-approved-monitor",
+        :signal,
+        "fixture-signal",
+        %{"source" => "review-approved-monitor"},
+        %{"secret" => "review-approved-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    Targets.create_external_identity!(
+      initial_target.id,
+      "review-approved-monitor",
+      "hostname",
+      initial_target.name,
+      actor: context.admin
+    )
+
+    ingest_authority_signal!(
+      signal_provider,
+      initial_target.name,
+      "review-approved-firing",
+      :firing,
+      DateTime.add(DateTime.utc_now(), -10, :second),
+      %{
+        "annotations" => %{
+          "description" =>
+            "Restore the exact value opsonde-dedicated-validation even when explanatory text is truncated"
+        }
+      }
+    )
+
+    [opened] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(opened.id, authorize?: false)
+    run = Cases.active_resolution_run!(opened.id, authorize?: false)
+    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    [source_evidence] = Cases.signal_context_evidence!(opened.id, authorize?: false)
+
+    incident =
+      Cases.update_case_record!(
+        opened,
+        opened.revision,
+        %{
+          selected_target_id: context.target.id,
+          selected_target_revision: context.target.revision
+        },
+        authorize?: false
       )
 
-    source_evidence =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
+    {incident, run, proposal} =
+      proposal_for_case!(
+        incident,
+        "review-approved",
+        Map.put(context, :initial_target, initial_target),
+        :effect,
         nil,
-        "review-source-#{proposal.id}",
-        "signal_event",
-        "alertmanager",
-        incident.source_ref,
-        %{
-          "state" => "firing",
-          "attributes" => %{
-            "annotations" => %{
-              "description" =>
-                "Restore the exact value opsonde-dedicated-validation even when explanatory text is truncated"
-            }
-          }
-        },
-        DateTime.utc_now(),
-        authorize?: false
+        started: started,
+        evidence: source_evidence
       )
 
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
@@ -1383,7 +1417,14 @@ defmodule Opsonde.ProposalAuthorityTest do
     proposal_for_case!(incident, suffix, context, request_kind, reason)
   end
 
-  defp ingest_authority_signal!(provider, target_name, receipt_id, state, occurred_at) do
+  defp ingest_authority_signal!(
+         provider,
+         target_name,
+         receipt_id,
+         state,
+         occurred_at,
+         extras \\ %{}
+       ) do
     Signals.ingest_signal!(
       provider.id,
       provider.revision,
@@ -1402,9 +1443,16 @@ defmodule Opsonde.ProposalAuthorityTest do
                state: state,
                occurred_at: occurred_at,
                target_ref: %{kind: :hostname, value: target_name},
-               attributes: %{
-                 "labels" => %{"alertname" => "ServiceUnavailable", "service" => "api.service"}
-               }
+               attributes:
+                 Map.merge(
+                   %{
+                     "labels" => %{
+                       "alertname" => "ServiceUnavailable",
+                       "service" => "api.service"
+                     }
+                   },
+                   extras
+                 )
              }
            ]}
         end

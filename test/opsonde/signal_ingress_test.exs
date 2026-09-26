@@ -194,7 +194,7 @@ defmodule Opsonde.SignalIngressTest do
     assert {:ok, %{state: :sent}} = Cases.case_dispatch(incident.id, authorize?: false)
   end
 
-  test "PoE, twenty AP and coincident core alerts enter one provisional investigation",
+  test "PoE and twenty AP stay together when a coincident core Condition is split",
        context do
     enable_signal_automation!(context.admin)
 
@@ -257,6 +257,253 @@ defmodule Opsonde.SignalIngressTest do
     assert request.conditions |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 22
     assert Enum.count(request.evidence, &(&1.kind == "signal_event")) == 22
     assert Enum.all?(request.evidence, &is_binary(&1.content["condition_id"]))
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" =>
+            Opsonde.Cases.ResolverProjection.condition_revisions(request.conditions),
+          "intent" => %{"type" => "handoff", "reason" => "Check the independent core fault"}
+        },
+        :none,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    parent = Cases.get_case!(incident.id, authorize?: false)
+    initial_run = Cases.active_resolution_run!(parent.id, authorize?: false)
+
+    core =
+      Signals.list_conditions!(actor: context.admin)
+      |> Enum.find(&(&1.target_id == targets["core-01"]))
+
+    child =
+      Cases.split_case_conditions!(
+        parent.id,
+        parent.revision,
+        [core.id],
+        Opsonde.Cases.ResolverProjection.condition_revisions(request.conditions),
+        "The core has independent SSH symptoms",
+        actor: context.admin
+      )
+
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 21
+
+    assert [%{condition_id: core_id}] =
+             Cases.active_conditions_for_case!(child.id, authorize?: false)
+
+    assert core_id == core.id
+    assert length(Cases.signal_context_evidence!(parent.id, authorize?: false)) == 21
+    assert length(Cases.signal_context_evidence!(child.id, authorize?: false)) == 1
+
+    parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    child_run = Cases.active_resolution_run!(child.id, authorize?: false)
+
+    assert parent_run.max_ai_usage_units + child_run.max_ai_usage_units ==
+             initial_run.max_ai_usage_units
+
+    assert parent_run.deadline_at == child_run.deadline_at
+    assert length(Cases.started_turns_for_run!(parent_run.id, authorize?: false)) == 1
+    assert length(Cases.started_turns_for_run!(child_run.id, authorize?: false)) == 1
+
+    assert Cases.get_case!(parent.id, authorize?: false).status == :running
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+    assert length(Cases.list_turns!(actor: context.admin)) == 3
+  end
+
+  test "an explicit split moves one native Condition without minting budgets or replaying a stale route",
+       context do
+    enable_signal_automation!(context.admin)
+
+    target = Targets.create_target!("split-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "split-host",
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for key <- ["service-a", "service-b", "service-c"] do
+        event("split-three", key, :firing, at,
+          target_ref: %{kind: :hostname, value: "split-host"},
+          attributes: %{
+            "labels" => %{"alertname" => "ServiceUnavailable", "service" => "#{key}.service"}
+          }
+        )
+      end
+
+    ingest!(context.provider, envelope("split-three", at), invocation("split-three", events))
+    [parent] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
+    run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    [initial_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    {:ok, snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+
+    [moved] =
+      Enum.filter(
+        Signals.list_conditions!(actor: context.admin),
+        &(&1.subject_ref["name"] == "service-c.service")
+      )
+
+    assert {:error, _running} =
+             Cases.split_case_conditions(
+               parent.id,
+               parent.revision,
+               [moved.id],
+               snapshot,
+               "Do not split while Resolver is running",
+               actor: context.admin
+             )
+
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 3
+
+    completed =
+      Cases.complete_turn!(
+        initial_turn.id,
+        initial_turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => snapshot,
+          "intent" => %{"type" => "handoff", "reason" => "Investigate the distinct faults"}
+        },
+        :none,
+        %{"action" => "route_resolver_decision", "turn_id" => initial_turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    parent = Cases.get_case!(parent.id, authorize?: false)
+    original_max = Cases.get_resolution_run!(run.id, authorize?: false).max_resolver_turns
+
+    child =
+      Cases.split_case_conditions!(
+        parent.id,
+        parent.revision,
+        [moved.id],
+        snapshot,
+        "Core service has a separate failure",
+        actor: context.admin
+      )
+
+    moved_id = moved.id
+    assert child.split_parent_id == parent.id
+    assert child.authority_mode == parent.authority_mode
+    assert child.authority_setting_id == parent.authority_setting_id
+    assert child.selected_target_id == target.id
+
+    assert Cases.split_case_conditions!(
+             parent.id,
+             parent.revision,
+             [moved.id],
+             snapshot,
+             "Core service has a separate failure",
+             actor: context.admin
+           ).id == child.id
+
+    assert [%{condition_id: ^moved_id}] =
+             Cases.active_conditions_for_case!(child.id, authorize?: false)
+
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 2
+    assert length(Cases.condition_membership_history!(moved.id, authorize?: false)) == 2
+    assert length(Cases.signal_context_evidence!(child.id, authorize?: false)) == 1
+    assert length(Cases.signal_context_evidence!(parent.id, authorize?: false)) == 2
+
+    parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    child_run = Cases.active_resolution_run!(child.id, authorize?: false)
+
+    for field <- [
+          :max_resolver_turns,
+          :max_target_requests,
+          :max_effects,
+          :max_related_targets,
+          :max_ai_usage_units
+        ] do
+      assert Map.fetch!(parent_run, field) + Map.fetch!(child_run, field) ==
+               Map.fetch!(run, field)
+    end
+
+    assert parent_run.max_resolver_turns + child_run.max_resolver_turns == original_max
+    assert parent_run.deadline_at == child_run.deadline_at
+    assert parent_run.turn_count + child_run.turn_count == 3
+    assert length(Cases.started_turns_for_run!(parent_run.id, authorize?: false)) == 1
+    assert length(Cases.started_turns_for_run!(child_run.id, authorize?: false)) == 1
+
+    assert Cases.get_case!(parent.id, authorize?: false).status == :running
+
+    assert Enum.any?(Cases.list_case_events!(actor: context.admin), fn event ->
+             event.case_id == parent.id and
+               event.event_type == "case_conditions_split_out" and
+               event.data["turn_ordinal_boundary"] == 1
+           end)
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+    assert length(Cases.list_turns!(actor: context.admin)) == 3
+
+    [parent_turn] = Cases.started_turns_for_run!(parent_run.id, authorize?: false)
+    parent = Cases.get_case!(parent.id, authorize?: false)
+    assert parent.status == :running
+    assert Cases.active_resolution_run!(parent.id, authorize?: false).status == :running
+    {:ok, next_snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+
+    Cases.complete_turn!(
+      parent_turn.id,
+      parent_turn.revision,
+      %{
+        "outcome" => "decision",
+        "condition_revisions" => next_snapshot,
+        "intent" => %{"type" => "handoff", "reason" => "Separate remaining conditions"}
+      },
+      :none,
+      %{"action" => "route_resolver_decision", "turn_id" => parent_turn.id},
+      "Review the Resolver decision",
+      authorize?: false
+    )
+
+    parent = Cases.get_case!(parent.id, authorize?: false)
+    another_id = hd(next_snapshot)["id"]
+
+    grandchild =
+      Cases.split_case_conditions!(
+        parent.id,
+        parent.revision,
+        [another_id],
+        next_snapshot,
+        "One remaining service is unrelated",
+        actor: context.admin
+      )
+
+    assert grandchild.split_parent_id == parent.id
+    final_parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    grandchild_run = Cases.active_resolution_run!(grandchild.id, authorize?: false)
+
+    for field <- [
+          :max_resolver_turns,
+          :max_target_requests,
+          :max_effects,
+          :max_related_targets,
+          :max_ai_usage_units
+        ] do
+      assert Map.fetch!(final_parent_run, field) + Map.fetch!(child_run, field) +
+               Map.fetch!(grandchild_run, field) == Map.fetch!(run, field)
+    end
+
+    assert final_parent_run.max_resolver_turns + child_run.max_resolver_turns +
+             grandchild_run.max_resolver_turns == original_max
+
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1
+    assert length(Cases.active_conditions_for_case!(child.id, authorize?: false)) == 1
+    assert length(Cases.active_conditions_for_case!(grandchild.id, authorize?: false)) == 1
   end
 
   test "an oversized Target graph preserves native alerts in separate Cases", context do

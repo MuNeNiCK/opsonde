@@ -455,11 +455,11 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     object(
       %{
         max_elapsed_seconds: integer(60, 2_592_000),
-        max_resolver_turns: integer(1, 1_000),
-        max_target_requests: integer(1, 10_000),
+        max_resolver_turns: integer(0, 1_000),
+        max_target_requests: integer(0, 10_000),
         max_effects: integer(0, 1_000),
         max_related_targets: integer(0, 1_000),
-        max_ai_usage_units: integer(1, 1_000_000_000),
+        max_ai_usage_units: integer(0, 1_000_000_000),
         max_no_progress_turns: integer(1, 100)
       },
       ~w(max_elapsed_seconds max_resolver_turns max_target_requests max_effects max_related_targets max_ai_usage_units max_no_progress_turns)a,

@@ -1,5 +1,6 @@
 defmodule Opsonde.Cases.DecisionRouteWorker do
   @moduledoc false
+  require Ash.Query
 
   use Oban.Worker,
     queue: :resolver,
@@ -32,12 +33,19 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
-           {:ok, type} <- decision_type(turn),
            {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
-        case current_conditions?(incident, turn) do
-          {:ok, true} -> dispatch(type, turn.id)
-          {:ok, false} -> supersede_stale_route(turn)
-          {:error, _error} = error -> error
+        with {:ok, superseded?} <- superseded_by_split?(turn) do
+          if superseded? do
+            {:ok, :superseded}
+          else
+            with {:ok, type} <- decision_type(turn) do
+              case current_conditions?(incident, turn) do
+                {:ok, true} -> dispatch(type, turn.id)
+                {:ok, false} -> supersede_stale_route(turn)
+                {:error, _error} = error -> error
+              end
+            end
+          end
         end
       end
     end)
@@ -45,6 +53,28 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
       {:ok, {:ok, _result} = result} -> result
       {:ok, {:error, _error} = error} -> error
       other -> other
+    end
+  end
+
+  defp superseded_by_split?(turn) do
+    CaseEvent
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(case_id == ^turn.case_id and event_type == "case_conditions_split_out")
+    |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+    |> Ash.Query.limit(1)
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} ->
+        {:ok, false}
+
+      {:ok, event} ->
+        {:ok,
+         event.resolution_run_id == turn.resolution_run_id and
+           is_integer(event.data["turn_ordinal_boundary"]) and
+           turn.ordinal <= event.data["turn_ordinal_boundary"]}
+
+      {:error, _error} = error ->
+        error
     end
   end
 

@@ -59,6 +59,10 @@ defmodule Opsonde.Cases do
           :report_language
         ]
 
+      define :split_case_conditions,
+        action: :split_conditions,
+        args: [:id, :expected_revision, :condition_ids, :expected_conditions, :reason]
+
       define :claim_case, action: :claim, args: [:id, :expected_revision]
       define :handoff_case, action: :handoff, args: [:id, :expected_revision, :owner_id]
 
@@ -158,6 +162,10 @@ defmodule Opsonde.Cases do
 
       define :update_resolution_run_counters,
         action: :update_counters,
+        args: [:expected_revision]
+
+      define :reallocate_resolution_run_limits,
+        action: :reallocate_limits,
         args: [:expected_revision]
 
       define :charge_resolution_run,
