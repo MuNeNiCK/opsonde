@@ -50,10 +50,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   end
 
   defp condition_completion_ready(%{trigger_kind: :signal} = incident) do
-    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
-         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
-         {:ok, baseline} <- latest_effect_baseline(operations, incident.inserted_at),
-         {:ok, assessments} <- ConditionRecovery.assess(incident, baseline),
+    with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
          true <-
            ConditionRecovery.all_healthy?(assessments) ||
              {:error, "Some Signal Conditions lack current subject recovery proof"} do
@@ -62,20 +59,4 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   end
 
   defp condition_completion_ready(_incident), do: :ok
-
-  defp latest_effect_baseline(operations, opened_at) do
-    operations
-    |> Enum.filter(&(&1.request_kind == :effect))
-    |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
-    |> case do
-      [] ->
-        {:ok, opened_at}
-
-      [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
-        {:ok, accepted_at}
-
-      _other ->
-        {:error, "Latest Target effect is not applied"}
-    end
-  end
 end

@@ -271,6 +271,7 @@ defmodule Opsonde.AI.ReqLLM do
       "report_language" => to_string(request.report_language),
       "budget" => plain(request.budget),
       "conditions" => plain(request.conditions),
+      "recovery_evidence_ids" => request.recovery_evidence_ids,
       "evidence" => plain(request.evidence),
       "target_candidates" => plain(request.target_candidates),
       "selected_target_id" => request.selected_target_id,

@@ -831,6 +831,35 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.all?(Signals.list_conditions!(actor: context.admin), &(&1.state == :recovered))
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert report_jobs(incident.id) == []
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    reassess =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "two-service-condition-reassessment",
+        %{"objective" => "Check both service Conditions"},
+        %{"action" => "continue_resolution"},
+        "Review Resolver limits",
+        authorize?: false
+      ).value
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               reassess.id,
+               %AI.Selection{
+                 role: :resolver,
+                 provider_id: context.resolver_provider.id,
+                 provider_revision: context.resolver_provider.revision,
+                 source: :assignment
+               },
+               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
+             )
+
+    assert request.alert_state == :recovered
+    assert request.recovery_evidence_ids == []
+    refute AI.recovery_ready?(request)
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
@@ -1042,21 +1071,18 @@ defmodule Opsonde.OperationDeliveryTest do
              1
   end
 
-  test "a fresh successful observation can conclude recovery without a needless effect",
+  test "a native recovered Condition with a fresh exact observation can conclude without an effect",
        context do
-    {incident, run, proposal} =
-      authorized_proposal!("observation-recovery", context, request_kind: :observation)
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("observation-recovery", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
 
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
-    current = Cases.get_case!(incident.id, authorize?: false)
-
-    Cases.update_case_record!(
-      current,
-      current.revision,
-      %{source_recovered_at: DateTime.add(DateTime.utc_now(), -1, :second)},
-      authorize?: false
-    )
-
     observed_at = DateTime.utc_now()
 
     assert :ok =
@@ -1066,7 +1092,7 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok,
                     %Target.Observation{
                       observed_at: observed_at,
-                      facts: %{"service" => "running"},
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
                       evidence: [%{"check" => "fresh"}]
                     }}
                  )
@@ -1077,25 +1103,30 @@ defmodule Opsonde.OperationDeliveryTest do
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
-    completed =
-      Cases.complete_turn!(
-        turn.id,
-        turn.revision,
-        %{
-          "outcome" => "decision",
-          "intent" => %{
-            "type" => "recovery_conclusion",
-            "reason" => "The fresh Target observation confirms recovery",
-            "evidence_ids" => [evidence.id]
-          },
-          "resolver" => %{},
-          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-        },
-        :source_change,
-        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
-        "Review the Resolver decision",
-        authorize?: false
-      ).value
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :recovered
+                   assert AI.recovery_ready?(request)
+                   assert AI.recovery_evidence_ids(request) == [evidence.id]
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "Native source and exact service observation are healthy",
+                        evidence_ids: [evidence.id]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
 
     resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
     assert resolved.status == :resolved
@@ -1409,12 +1440,21 @@ defmodule Opsonde.OperationDeliveryTest do
         )
       end
 
+    if trigger_kind == :signal and Keyword.get(opts, :recover_before_proposal, false) do
+      recover_signal!(
+        signal_provider,
+        context,
+        incident.initial_context["signal_event_key"],
+        "recovered-before-#{suffix}"
+      )
+    end
+
     result =
       %{
         "outcome" => "decision",
         "intent" =>
           if(trigger_kind == :signal,
-            do: signal_proposal_intent(evidence.id, context),
+            do: signal_proposal_intent(evidence.id, context, request_kind),
             else: proposal_intent(evidence.id, context, request_kind)
           ),
         "resolver" => %{
@@ -1453,7 +1493,9 @@ defmodule Opsonde.OperationDeliveryTest do
       else: {incident, run, authorized}
   end
 
-  defp signal_proposal_intent(evidence_id, context) do
+  defp signal_proposal_intent(evidence_id, context, kind \\ :effect)
+
+  defp signal_proposal_intent(evidence_id, context, :effect) do
     proposal_intent(evidence_id, context)
     |> put_in(["tool", "operation"], "linux.service.restart")
     |> put_in(["verification_tool", "operation"], "linux.service.inspect")
@@ -1462,6 +1504,14 @@ defmodule Opsonde.OperationDeliveryTest do
     |> Map.put("expected_result", %{"active_state" => "active"})
     |> put_in(["verification_intent", "selectors"], %{"unit" => "api.service"})
     |> put_in(["verification_intent", "expected_result"], %{"active_state" => "active"})
+  end
+
+  defp signal_proposal_intent(evidence_id, context, :observation) do
+    proposal_intent(evidence_id, context, :observation)
+    |> put_in(["tool", "operation"], "linux.service.inspect")
+    |> Map.put("operation", "linux.service.inspect")
+    |> Map.put("selectors", %{"unit" => "api.service"})
+    |> Map.put("parameters", %{"unit" => "api.service"})
   end
 
   defp proposal_intent(evidence_id, context),

@@ -5,6 +5,30 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
   @max_evidence 256
 
+  def assess_current(incident) do
+    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
+         {:ok, baseline} <- latest_effect_baseline(operations, incident.inserted_at) do
+      assess(incident, baseline)
+    end
+  end
+
+  defp latest_effect_baseline(operations, opened_at) do
+    operations
+    |> Enum.filter(&(&1.request_kind == :effect))
+    |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
+    |> case do
+      [] ->
+        {:ok, opened_at}
+
+      [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
+        {:ok, accepted_at}
+
+      _other ->
+        {:error, "Latest Target effect is not applied"}
+    end
+  end
+
   # The caller holds the Case admission lock and a Case row lock before using
   # this result for a terminal transition. Remote observations happen earlier;
   # this module only evaluates persisted facts against current Conditions.

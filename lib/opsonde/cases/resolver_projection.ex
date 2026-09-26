@@ -2,6 +2,7 @@ defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Providers, Signals, Targets}
+  alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Providers.AI
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.BMC.OperationKey
@@ -20,6 +21,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, conditions} <- current_conditions(incident),
+         {:ok, recovery_ids} <- recovery_proof_ids(incident),
          {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
@@ -32,6 +34,7 @@ defmodule Opsonde.Cases.ResolverProjection do
              run,
              turn,
              conditions,
+             recovery_ids,
              continuity,
              target,
              relations,
@@ -123,6 +126,23 @@ defmodule Opsonde.Cases.ResolverProjection do
       {:ok, condition_revisions(conditions)}
     end
   end
+
+  defp recovery_proof_ids(%{trigger_kind: :signal} = incident) do
+    case ConditionRecovery.assess_current(incident) do
+      {:ok, assessments} ->
+        if ConditionRecovery.all_healthy?(assessments),
+          do: {:ok, assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq()},
+          else: {:ok, []}
+
+      {:error, "Latest Target effect is not applied"} ->
+        {:ok, []}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp recovery_proof_ids(_incident), do: {:ok, []}
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 
@@ -462,6 +482,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          run,
          turn,
          conditions,
+         recovery_ids,
          evidence,
          target,
          relations,
@@ -521,6 +542,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
+    |> mark_recovery_proofs(recovery_ids)
     |> then(fn current ->
       visible_ids = MapSet.new(Enum.map(current.target_relations, & &1.id))
 
@@ -530,6 +552,31 @@ defmodule Opsonde.Cases.ResolverProjection do
             Enum.filter(traversable_relation_ids, &MapSet.member?(visible_ids, &1))
       }
     end)
+  end
+
+  defp mark_recovery_proofs(request, []), do: request
+
+  defp mark_recovery_proofs(request, ids) do
+    visible = MapSet.new(Enum.map(request.evidence, & &1.id))
+
+    if Enum.all?(ids, &MapSet.member?(visible, &1)) do
+      eligible = MapSet.new(ids)
+
+      %{
+        request
+        | recovery_evidence_ids: ids,
+          evidence:
+            Enum.map(request.evidence, fn evidence ->
+              if evidence.kind == "observation" and MapSet.member?(eligible, evidence.id) do
+                %{evidence | content: Map.put(evidence.content, "recovery_eligible", true)}
+              else
+                evidence
+              end
+            end)
+      }
+    else
+      request
+    end
   end
 
   def projected_alert_state(%{trigger_kind: :signal}, conditions) do

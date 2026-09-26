@@ -160,6 +160,7 @@ defmodule Opsonde.Providers.AI.Validator do
          [
            request.conditions,
            request.evidence,
+           request.recovery_evidence_ids,
            request.target_candidates,
            request.observation_results,
            request.target_relations,
@@ -188,6 +189,8 @@ defmodule Opsonde.Providers.AI.Validator do
         tool_ids = Enum.map(request.observation_tools ++ request.proposal_tools, & &1.id)
 
         unique?(condition_ids) and unique?(evidence_ids ++ result_ids ++ relation_ids) and
+          unique?(request.recovery_evidence_ids) and
+          Enum.all?(request.recovery_evidence_ids, &(&1 in evidence_ids)) and
           unique?(candidate_ids) and
           unique?(tool_ids) and unique?(request.traversable_relation_ids) and
           Enum.all?(request.traversable_relation_ids, &(&1 in relation_ids)) and
@@ -447,7 +450,9 @@ defmodule Opsonde.Providers.AI.Validator do
     if request.alert_state in [:recovered, :not_applicable] and
          AI.valid_resolver_reason?(conclusion.reason) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
-         Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) do
+         Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) and
+         (request.conditions == [] or
+            Enum.all?(recovery_evidence_ids, &(&1 in conclusion.evidence_ids))) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI recovery conclusion is invalid")}

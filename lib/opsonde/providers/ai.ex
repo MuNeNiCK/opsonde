@@ -65,9 +65,13 @@ defmodule Opsonde.Providers.AI do
   end
 
   def recovery_evidence_ids(request) do
-    request.evidence
-    |> Enum.filter(&verified_target_evidence?(&1, request.selected_target_id))
-    |> Enum.map(& &1.id)
+    if request.conditions != [] do
+      request.recovery_evidence_ids
+    else
+      request.evidence
+      |> Enum.filter(&verified_target_evidence?(&1, request.selected_target_id))
+      |> Enum.map(& &1.id)
+    end
   end
 
   def recovery_ready?(%{alert_state: state} = request)
@@ -390,7 +394,8 @@ defmodule Opsonde.Providers.AI do
                   selected_target_revision: nil,
                   retry_context: nil,
                   traversable_relation_ids: [],
-                  conditions: []
+                  conditions: [],
+                  recovery_evidence_ids: []
                 ]
 
     @type t :: %__MODULE__{}
@@ -456,7 +461,8 @@ defmodule Opsonde.Providers.AI do
         alert_state: request.alert_state,
         report_language: request.report_language,
         retry_context: request.retry_context,
-        traversable_relation_ids: request.traversable_relation_ids
+        traversable_relation_ids: request.traversable_relation_ids,
+        recovery_evidence_ids: request.recovery_evidence_ids
       },
       items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
     }

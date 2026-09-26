@@ -11,6 +11,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     Case,
     CaseAdmissionLock,
     CaseEvent,
+    ConditionContext,
+    ConditionRecovery,
     Evidence,
     Proposal,
     ResolutionRun,
@@ -32,6 +34,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
                  {:ok, incident} <- lock_case(source_turn.case_id),
                  {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
                  {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
+                 {:ok, current?} <- ConditionContext.current?(incident, turn.id),
+                 true <- current? || {:error, "Resolver Condition snapshot changed"},
                  {:ok, intent} <- downstream_intent(turn),
                  :ok <- validate_intent(intent, turn, incident, run) do
               route(turn, intent, incident, run)
@@ -230,6 +234,19 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp valid_recovery_state(_incident),
     do: {:error, "Monitoring source has not confirmed recovery"}
+
+  defp valid_fresh_verification(evidence_ids, _turn, %{trigger_kind: :signal} = incident, _run) do
+    with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
+         true <-
+           ConditionRecovery.all_healthy?(assessments) ||
+             {:error, "Some Signal Conditions lack current subject recovery proof"},
+         proof_ids <- assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq(),
+         true <-
+           Enum.all?(proof_ids, &(&1 in evidence_ids)) ||
+             {:error, "Recovery conclusion omits a Condition proof"} do
+      :ok
+    end
+  end
 
   defp valid_fresh_verification(evidence_ids, turn, incident, run) do
     evidence_id = turn.intent["verification_evidence_id"]
