@@ -280,7 +280,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         |> Enum.filter(&MapSet.member?(advertised, OperationKey.capability(&1.request_kind)))
 
       available_observations =
-        vocabulary.observations ++
+        Enum.reject(vocabulary.observations, &(&1.operation == "bmc.api.available")) ++
           Enum.flat_map(bmc_operations, fn definition ->
             if definition.request_kind == :observation,
               do: [bmc_operation_tool(definition)],
@@ -288,7 +288,7 @@ defmodule Opsonde.Cases.ResolverProjection do
           end)
 
       effects =
-        vocabulary.effects ++
+        Enum.reject(vocabulary.effects, &(&1.operation == "bmc.api.available")) ++
           Enum.flat_map(bmc_operations, fn definition ->
             if definition.request_kind == :effect,
               do: [bmc_operation_tool(definition)],

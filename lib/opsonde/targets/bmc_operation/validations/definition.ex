@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
   alias Opsonde.Targets
   alias Opsonde.Targets.BMC.CurrentAccessMethod
   alias Opsonde.Targets.BMC.JSONPointer
+  alias Opsonde.Targets.BMC.Redfish.ResourceURI
 
   @dynamic_object_keywords ~w(patternProperties unevaluatedProperties propertyNames allOf anyOf oneOf not if then else $ref)
 
@@ -43,7 +44,7 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
       if kind == :observation, do: ["GET", "HEAD"], else: ["POST", "PATCH", "PUT", "DELETE"]
 
     if method in allowed and Enum.sort(Map.keys(request)) == ["method", "uri"] and
-         byte_size(uri) in 11..2_048 and valid_relative_uri?(uri),
+         match?({:ok, _path}, ResourceURI.relative(uri)),
        do: :ok,
        else: :error
   end
@@ -76,20 +77,6 @@ defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
   end
 
   defp valid_secret_bindings(_, _), do: :error
-
-  defp valid_relative_uri?(uri) do
-    parsed = URI.parse(uri)
-    decoded = if is_binary(parsed.path), do: URI.decode(parsed.path), else: ""
-    segments = String.split(decoded, "/", trim: true)
-
-    is_nil(parsed.scheme) and is_nil(parsed.host) and is_nil(parsed.userinfo) and
-      is_nil(parsed.fragment) and is_binary(parsed.path) and
-      (decoded == "/redfish/v1" or String.starts_with?(decoded, "/redfish/v1/")) and
-      not String.contains?(decoded, ["\\", "//"]) and
-      Enum.all?(segments, &(&1 not in [".", ".."]))
-  rescue
-    _ -> false
-  end
 
   defp closed_input_schema?(schema) do
     properties = schema["properties"]

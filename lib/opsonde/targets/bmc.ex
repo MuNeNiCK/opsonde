@@ -50,6 +50,31 @@ defmodule Opsonde.Targets.BMC do
     %Target.Capabilities{observations: [observation], effects: effects}
   end
 
+  def api_capabilities do
+    input_schema = request_schema(%{}, [])
+    output_schema = %{"type" => "object"}
+
+    %Target.Capabilities{
+      observations: [
+        %Target.Operation{
+          capability: "observe.bmc_api",
+          operation: "bmc.api.available",
+          description: "Registered BMC read operations are available",
+          input_schema: input_schema,
+          output_schema: output_schema
+        }
+      ],
+      effects: [
+        %Target.Operation{
+          capability: "effect.bmc_api",
+          operation: "bmc.api.available",
+          description: "Registered BMC write operations are available",
+          input_schema: input_schema
+        }
+      ]
+    }
+  end
+
   def inspect_request?(%{capability: capability, operation: operation} = request) do
     {capability, operation} == @inspect and request.selectors == %{} and
       request.parameters == %{}

@@ -6,6 +6,7 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.BMC
+  alias Opsonde.Targets.BMC.Redfish.ResourceURI
 
   @reset_types %{
     "bmc.power.on" => "On",
@@ -13,6 +14,10 @@ defmodule Opsonde.Targets.BMC.Redfish do
     "bmc.power.cycle" => "PowerCycle",
     "bmc.power.reset" => "ForceRestart"
   }
+  @api_read_methods %{"GET" => :get, "HEAD" => :head}
+  @api_write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
+  @sensitive_names ~w(password passphrase secret token credential authorization apikey privatekey community)
+  @max_collection_pages 8
 
   defmodule State do
     @moduledoc false
@@ -87,13 +92,22 @@ defmodule Opsonde.Targets.BMC.Redfish do
             []
         end
 
-      {:ok, %{capabilities | effects: effects}}
+      api = BMC.api_capabilities()
+
+      {:ok,
+       %Target.Capabilities{
+         observations: capabilities.observations ++ api.observations,
+         effects: effects ++ api.effects
+       }}
     else
       {:error, category, message} -> read_error(category, message)
     end
   end
 
   @impl Opsonde.Providers.Target
+  def observe(%State{} = state, %{capability: "observe.bmc_api"} = request, invocation),
+    do: api_observe(state, request, invocation)
+
   def observe(%State{} = state, request, invocation) do
     with true <- BMC.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
@@ -108,6 +122,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
+    do: api_effect(state, request, invocation)
+
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
          {:ok, intent} <- BMC.effect_request(request),
@@ -138,7 +155,7 @@ defmodule Opsonde.Targets.BMC.Redfish do
              reference: intent.operation,
              details:
                %{"reason" => "Redfish task was accepted but is not complete"}
-               |> maybe_task_location(task_location)
+               |> maybe_task_location(safe_task_location(state, task_location))
            }}
 
         {:error, :transport, _message} ->
@@ -183,8 +200,197 @@ defmodule Opsonde.Targets.BMC.Redfish do
     end
   end
 
+  defp api_observe(state, request, invocation) do
+    with {:ok, method, path} <- api_request(state, request, @api_read_methods),
+         :ok <- not_cancelled(invocation),
+         {:ok, _system} <- system(state),
+         {:ok, status, body, pages} <- read_api_resource(state, method, path, invocation) do
+      facts = sanitize_response(body)
+
+      {:ok,
+       %Target.Observation{
+         facts: facts,
+         observed_at: DateTime.utc_now(),
+         evidence: [
+           %{
+             "source" => "redfish",
+             "method" => request.protocol_request["method"],
+             "uri" => path,
+             "http_status" => status,
+             "pages" => pages
+           }
+         ]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  defp api_effect(state, request, invocation) do
+    with {:ok, method, path} <- api_request(state, request, @api_write_methods),
+         :ok <- not_cancelled(invocation),
+         {:ok, _system} <- system(state),
+         :ok <- not_cancelled(invocation) do
+      body = if method == :delete and request.parameters == %{}, do: nil, else: request.parameters
+
+      case request(state, method, path, body) do
+        {:ok, 202, headers, reply} ->
+          location =
+            headers
+            |> then(&Req.Response.get_header(%Req.Response{headers: &1}, "location"))
+            |> List.first()
+
+          details =
+            %{"http_status" => 202, "response" => sanitize_response(reply)}
+            |> maybe_task_location(safe_task_location(state, location))
+
+          {:ok,
+           %Target.EffectResult{status: :unknown, reference: request.operation, details: details}}
+
+        {:ok, status, _headers, reply} when status in [200, 201, 204] ->
+          {:ok,
+           %Target.EffectResult{
+             status: :applied,
+             reference: request.operation,
+             details: %{"http_status" => status, "response" => sanitize_response(reply)}
+           }}
+
+        {:ok, status, _headers, _reply} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             reference: request.operation,
+             details: %{"http_status" => status, "reason" => "Redfish write outcome is unclear"}
+           }}
+
+        {:error, :transport, _message} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             reference: request.operation,
+             details: %{"reason" => "Redfish response was lost after dispatch"}
+           }}
+
+        {:error, _category, message} ->
+          {:error, :failed, message}
+      end
+    else
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  defp api_request(state, request, methods) do
+    protocol = request.protocol_request
+
+    with true <- request.connection.endpoint == state.endpoint,
+         %{"method" => method, "uri" => uri} <- protocol,
+         {:ok, verb} <- Map.fetch(methods, method),
+         {:ok, path} <- ResourceURI.relative(uri) do
+      {:ok, verb, path}
+    else
+      _ -> {:error, :failed, "Redfish API request is invalid for this Access Method"}
+    end
+  end
+
+  defp read_api_resource(state, method, path, invocation) do
+    case request(state, method, path, nil) do
+      {:ok, status, _headers, body} when status in [200, 204] ->
+        with {:ok, combined, pages} <-
+               collect_pages(state, method, path, body, 1, MapSet.new([path]), invocation) do
+          {:ok, status, combined, pages}
+        end
+
+      {:ok, _status, _headers, _body} ->
+        {:error, :failed, "Redfish read is incomplete"}
+
+      {:error, _category, _message} = error ->
+        error
+    end
+  end
+
+  defp collect_pages(_state, :head, _path, body, pages, _seen, _invocation),
+    do: {:ok, body, pages}
+
+  defp collect_pages(state, :get, path, body, pages, seen, invocation) do
+    next = body["Members@odata.nextLink"] || body["@odata.nextLink"]
+
+    case next do
+      nil ->
+        {:ok, body, pages}
+
+      link when is_binary(link) and pages < @max_collection_pages ->
+        with :ok <- not_cancelled(invocation),
+             {:ok, next_path} <- ResourceURI.from_link(state.endpoint, link, path),
+             false <- MapSet.member?(seen, next_path),
+             {:ok, 200, _headers, next_body} <- request(state, :get, next_path, nil),
+             first when is_list(first) <- body["Members"],
+             following when is_list(following) <- next_body["Members"],
+             merged <-
+               body
+               |> Map.put("Members", first ++ following)
+               |> Map.put("Members@odata.nextLink", next_body["Members@odata.nextLink"])
+               |> Map.put("@odata.nextLink", next_body["@odata.nextLink"]),
+             true <- bounded_response?(merged) do
+          collect_pages(
+            state,
+            :get,
+            next_path,
+            merged,
+            pages + 1,
+            MapSet.put(seen, next_path),
+            invocation
+          )
+        else
+          {:error, _category, _message} = error -> error
+          _ -> {:error, :failed, "Redfish collection pagination is invalid"}
+        end
+
+      _ ->
+        {:error, :failed, "Redfish collection pagination limit was reached"}
+    end
+  end
+
+  defp bounded_response?(body) do
+    case Jason.encode(body) do
+      {:ok, encoded} -> byte_size(encoded) <= 65_536
+      _ -> false
+    end
+  end
+
+  defp safe_task_location(_state, nil), do: nil
+
+  defp safe_task_location(state, location) do
+    case resource_path(state, location) do
+      {:ok, path} -> path
+      _ -> nil
+    end
+  end
+
+  defp sanitize_response(value), do: sanitize_response(value, 0)
+
+  defp sanitize_response(value, depth) when is_map(value) and depth < 16 do
+    Map.new(value, fn {key, item} ->
+      safe = if sensitive_name?(key), do: "[REDACTED]", else: sanitize_response(item, depth + 1)
+      {key, safe}
+    end)
+  end
+
+  defp sanitize_response(value, depth) when is_list(value) and depth < 16,
+    do: Enum.map(value, &sanitize_response(&1, depth + 1))
+
+  defp sanitize_response(_value, depth) when depth >= 16, do: "[TRUNCATED]"
+  defp sanitize_response(value, _depth), do: value
+
+  defp sensitive_name?(key) when is_binary(key) do
+    normalized = key |> String.downcase() |> String.replace(~r/[^a-z0-9]/, "")
+    Enum.any?(@sensitive_names, &String.contains?(normalized, &1))
+  end
+
+  defp sensitive_name?(_key), do: false
+
   defp system(state) do
-    with {:ok, 200, _headers, collection} <- request(state, :get, "/redfish/v1/Systems", nil),
+    with {:ok, 200, collection, _pages} <-
+           read_api_resource(state, :get, "/redfish/v1/Systems", %{}),
          members when is_list(members) <- collection["Members"],
          true <- Enum.any?(members, &(&1["@odata.id"] == state.system_path)),
          {:ok, 200, _headers, system} <- request(state, :get, state.system_path, nil),
@@ -243,21 +449,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
   defp action_path(_state, _target), do: {:error, :failed, "Redfish reset action is invalid"}
 
   defp resource_path(state, target) when is_binary(target) do
-    uri = URI.parse(target)
-    endpoint = URI.parse(state.endpoint)
-
-    same_origin =
-      is_nil(uri.scheme) or
-        (uri.scheme == endpoint.scheme and uri.host == endpoint.host and
-           (uri.port || 443) == (endpoint.port || 443))
-
-    if same_origin and is_nil(uri.userinfo) and is_nil(uri.query) and
-         is_nil(uri.fragment) and is_binary(uri.path) and
-         String.starts_with?(uri.path, "/redfish/v1/") and
-         byte_size(uri.path) <= 2_048 do
-      {:ok, uri.path}
-    else
-      {:error, :failed, "Redfish resource URI is outside the BMC origin"}
+    case ResourceURI.from_link(state.endpoint, target) do
+      {:ok, path} -> {:ok, path}
+      {:error, _reason} -> {:error, :failed, "Redfish resource URI is outside the BMC origin"}
     end
   end
 
@@ -291,7 +485,16 @@ defmodule Opsonde.Targets.BMC.Redfish do
       receive_timeout: state.timeout,
       retry: false,
       redirect: false,
-      decode_body: false
+      decode_body: false,
+      into: fn {:data, data}, {req, response} ->
+        accumulated = if is_binary(response.body), do: response.body, else: ""
+
+        if byte_size(accumulated) + byte_size(data) <= 65_536 do
+          {:cont, {req, %{response | body: accumulated <> data}}}
+        else
+          {:halt, {req, %{response | body: :too_large}}}
+        end
+      end
     ]
 
     options = if is_nil(body), do: options, else: Keyword.put(options, :json, body)
