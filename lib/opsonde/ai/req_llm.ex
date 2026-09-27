@@ -404,10 +404,12 @@ defmodule Opsonde.AI.ReqLLM do
         "Condition groups using only supplied Condition IDs and Evidence IDs. Groups must not " <>
         "overlap. Graph proximity and timing alone mean unknown; cite observations when asserting " <>
         "a relationship. Groups are advisory and cannot split a Case. If separate " <>
-        "investigations are useful and current observations support both sides, choose the " <>
+        "investigations are useful and direct current Target observations support both sides, choose the " <>
         "case_split intent with Condition IDs and observed Evidence IDs for the moved and " <>
         "remaining Conditions. A split organizes investigation; it does not prove separate " <>
-        "root causes or authorize a Target operation. " <>
+        "root causes or authorize a Target operation. If turn_intent.source is " <>
+        "resolver_split_rejected, keep the Conditions in one Case until new direct " <>
+        "Target observations support both sides. " <>
         "Registered Target relations are inventory context; only IDs listed in " <>
         "traversable_relation_ids are available for Target traversal. " <>
         "When a current-Target observation can identify the failing dependency, observe it before " <>
@@ -1318,9 +1320,11 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp case_split_schema(request) do
     condition_ids = Enum.map(request.conditions, & &1.id)
-    evidence_ids = available_evidence_ids(request)
+    observations = AI.case_split_observations(request)
+    evidence_ids = Enum.map(observations, & &1.id)
+    target_count = observations |> Enum.map(& &1.target_id) |> Enum.uniq() |> length()
 
-    if length(condition_ids) > 1 and evidence_ids != [] do
+    if length(condition_ids) > 1 and target_count > 1 do
       intent_schema("case_split", %{
         "condition_ids" =>
           identifier_array_schema(condition_ids) |> Map.put("maxItems", length(condition_ids) - 1),

@@ -575,10 +575,22 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(%AI.CaseSplit{} = split, request) do
     available = request.conditions |> Enum.map(& &1.id) |> MapSet.new()
+    observations = AI.case_split_observations(request)
+    cited = observations |> Enum.map(& &1.id) |> MapSet.new()
 
-    cited =
-      (request.evidence ++ request.observation_results)
-      |> Enum.map(& &1.id)
+    moved =
+      if is_list(split.condition_ids), do: MapSet.new(split.condition_ids), else: MapSet.new()
+
+    moved_targets =
+      request.conditions
+      |> Enum.filter(&MapSet.member?(moved, &1.id))
+      |> Enum.map(& &1.target_id)
+      |> MapSet.new()
+
+    remaining_targets =
+      request.conditions
+      |> Enum.reject(&MapSet.member?(moved, &1.id))
+      |> Enum.map(& &1.target_id)
       |> MapSet.new()
 
     if is_list(split.condition_ids) and is_list(split.evidence_ids) and
@@ -594,6 +606,13 @@ defmodule Opsonde.Providers.AI.Validator do
          nonempty_list?(split.remaining_evidence_ids) and unique?(split.evidence_ids) and
          unique?(split.remaining_evidence_ids) and
          MapSet.subset?(MapSet.new(split.evidence_ids ++ split.remaining_evidence_ids), cited) and
+         Enum.any?(observations, fn evidence ->
+           evidence.id in split.evidence_ids and MapSet.member?(moved_targets, evidence.target_id)
+         end) and
+         Enum.any?(observations, fn evidence ->
+           evidence.id in split.remaining_evidence_ids and
+             MapSet.member?(remaining_targets, evidence.target_id)
+         end) and
          AI.valid_resolver_reason?(split.reason) do
       :ok
     else

@@ -271,6 +271,20 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     denied = post_json("/api/v1/cases/#{parent.id}/split", body, context.viewer_token)
     assert json_response(denied, 403)["error"]["code"] == "forbidden"
 
+    stale_membership =
+      body
+      |> put_in(
+        ["case", "expected_conditions"],
+        List.update_at(
+          revisions,
+          0,
+          &Map.update!(&1, "revision", fn revision -> revision + 1 end)
+        )
+      )
+      |> then(&post_json("/api/v1/cases/#{parent.id}/split", &1, context.operator_token))
+
+    assert json_response(stale_membership, 409)["error"]["code"] == "conflict"
+
     response = post_json("/api/v1/cases/#{parent.id}/split", body, context.operator_token)
 
     assert %{"data" => %{"id" => child_id, "split_parent_id" => parent_id}} =
@@ -278,6 +292,13 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert_operation_response(response)
     assert parent_id == parent.id
+
+    stale_revision =
+      body
+      |> put_in(["case", "reason"], "Stale Case revision")
+      |> then(&post_json("/api/v1/cases/#{parent.id}/split", &1, context.operator_token))
+
+    assert json_response(stale_revision, 409)["error"]["code"] == "conflict"
 
     parent_snapshot = get_data!("/api/v1/cases/#{parent.id}", context.viewer_token)
     child_snapshot = get_data!("/api/v1/cases/#{child_id}", context.viewer_token)

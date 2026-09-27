@@ -83,6 +83,23 @@ defmodule Opsonde.Providers.AI do
     |> Enum.map(& &1.id)
   end
 
+  def case_split_observations(request) do
+    Enum.filter(request.evidence, fn
+      %Evidence{kind: kind, target_id: target_id, observed_at_us: observed_at, content: content}
+      when kind in ["observation", "target_verification"] and is_binary(target_id) and
+             is_integer(observed_at) and is_map(content) ->
+        content["status"] in ["applied", "verified"] and
+          Enum.any?(request.conditions, fn condition ->
+            condition.target_id == target_id and
+              is_integer(condition.current_occurred_at_us) and
+              observed_at >= condition.current_occurred_at_us
+          end)
+
+      _other ->
+        false
+    end)
+  end
+
   def available_proposal_tools(request) do
     Enum.filter(request.proposal_tools, &proposal_requirements_available?(&1, request))
   end

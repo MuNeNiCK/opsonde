@@ -30,6 +30,13 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   def perform(_job), do: {:cancel, "Resolver decision route arguments are invalid"}
 
   defp route(turn_id) do
+    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
+         {:ok, type} <- decision_type(turn) do
+      if type == "case_split", do: route_split_turn(turn), else: route_locked(turn_id)
+    end
+  end
+
+  defp route_locked(turn_id) do
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
@@ -40,9 +47,6 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
           else
             with {:ok, type} <- decision_type(turn) do
               case current_conditions?(incident, turn) do
-                {:ok, true} when type == "case_split" ->
-                  route_case_split(incident, turn)
-
                 {:ok, true} ->
                   dispatch(type, turn.id)
 
@@ -57,7 +61,36 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
         end
       end
     end)
-    |> case do
+    |> transaction_result()
+  end
+
+  defp route_split_turn(turn) do
+    with {:ok, superseded?} <- superseded_by_split?(turn) do
+      if superseded? do
+        {:ok, :superseded}
+      else
+        with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
+          case current_conditions?(incident, turn) do
+            {:ok, true} -> route_case_split(incident, turn)
+            {:ok, false} -> split_continuation(turn, &supersede_stale_route/1)
+            {:error, _error} = error -> error
+          end
+        end
+      end
+    end
+  end
+
+  defp split_continuation(turn, continuation) do
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with :ok <- CaseAdmissionLock.acquire() do
+        continuation.(turn)
+      end
+    end)
+    |> transaction_result()
+  end
+
+  defp transaction_result(result) do
+    case result do
       {:ok, {:ok, _result} = result} -> result
       {:ok, {:error, _error} = error} -> error
       other -> other
@@ -97,21 +130,55 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   defp route_case_split(%{trigger_kind: :signal} = incident, turn) do
     intent = turn.result["intent"]
 
-    with {:ok, _child} <-
-           Cases.split_case_from_resolver(
-             incident.id,
-             incident.revision,
-             intent["condition_ids"],
-             turn.result["condition_revisions"],
-             intent["reason"],
-             turn.id,
-             authorize?: false
-           ) do
-      {:ok, :split}
+    case Cases.split_case_from_resolver(
+           incident.id,
+           incident.revision,
+           intent["condition_ids"],
+           turn.result["condition_revisions"],
+           intent["reason"],
+           turn.id,
+           authorize?: false
+         ) do
+      {:ok, _child} ->
+        {:ok, :split}
+
+      {:error, error} ->
+        if rejected_split?(error),
+          do: split_continuation(turn, &continue_after_rejected_split/1),
+          else: {:error, error}
     end
   end
 
   defp route_case_split(_incident, _turn), do: {:error, "Only Signal Cases can be split"}
+
+  defp rejected_split?(%Ash.Error.Invalid{errors: errors}),
+    do: Enum.any?(errors, &rejected_split?/1)
+
+  defp rejected_split?(%Ash.Error.Changes.InvalidAttribute{field: :source_turn_id}), do: true
+  defp rejected_split?(_error), do: false
+
+  defp continue_after_rejected_split(turn) do
+    intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
+
+    with {:ok, started} <-
+           Cases.start_turn(
+             turn.case_id,
+             turn.resolution_run_id,
+             "resolver:split-rejected:#{turn.id}",
+             %{
+               "objective" =>
+                 "Continue one Case after unsupported split; observe both scopes before separating",
+               "source" => "resolver_split_rejected",
+               "source_turn_id" => turn.id
+             },
+             intent,
+             "Continue investigation with current Target observations",
+             authorize?: false
+           ),
+         {:ok, _pending} <- set_retry_pending(started, turn.id) do
+      {:ok, started}
+    end
+  end
 
   defp supersede_stale_route(turn) do
     intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}

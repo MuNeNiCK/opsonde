@@ -134,34 +134,32 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
          true <- cited_group?(intent["remaining_evidence_ids"], remaining, parent.id) do
       :ok
     else
+      {:error, _error} = error ->
+        error
+
       _invalid ->
-        {:error, "Resolver split lacks current observations for both investigation scopes"}
+        {:error,
+         Ash.Error.Changes.InvalidAttribute.exception(
+           field: :source_turn_id,
+           message:
+             "AI Case split needs current Target observations for both investigation scopes"
+         )}
     end
   end
 
   defp validate_resolver_split(_parent, _run, _args, _moved, _remaining), do: :ok
 
   defp cited_group?(ids, conditions, case_id) when is_list(ids) and ids != [] do
-    target_ids = MapSet.new(Enum.map(conditions, & &1.target_id))
-    after_at = Enum.max_by(conditions, & &1.current_occurred_at, DateTime).current_occurred_at
-
     Enum.any?(ids, fn id ->
       case Cases.get_evidence(id, authorize?: false) do
-        {:ok, %{kind: "signal_event", content: content} = evidence} ->
-          evidence.case_id == case_id and content["current"] == true and
-            Enum.any?(conditions, fn condition ->
-              content["condition_id"] == condition.id and
-                content["condition_revision"] == condition.revision and
-                content["state"] == to_string(condition.state) and
-                DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt
-            end)
-
         {:ok, evidence} ->
           evidence.case_id == case_id and
             evidence.kind in ["observation", "target_verification"] and
             evidence.content["status"] in ["applied", "verified"] and
-            MapSet.member?(target_ids, evidence.content["target_id"]) and
-            DateTime.compare(evidence.observed_at, after_at) != :lt
+            Enum.any?(conditions, fn condition ->
+              condition.target_id == evidence.content["target_id"] and
+                DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt
+            end)
 
         _missing ->
           false
@@ -174,7 +172,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   defp eligible_case(parent, args) do
     cond do
       parent.revision != args.expected_revision ->
-        {:error, "Case revision changed before Condition split"}
+        {:error, Ash.Error.Changes.StaleRecord.exception(resource: Case, field: :revision)}
 
       parent.trigger_kind != :signal or parent.status != :running or parent.cancel_requested ->
         {:error, "Only a running Signal Case can be split"}
@@ -268,7 +266,13 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     with true <- length(members) >= 2 || {:error, "Case needs at least two Conditions"},
          {:ok, expected} <- normalize_expected(args.expected_conditions),
          {:ok, current} <- ResolverProjection.current_condition_revisions(parent),
-         true <- expected == current || {:error, "Condition membership changed before split"} do
+         true <-
+           expected == current ||
+             {:error,
+              Ash.Error.Changes.StaleRecord.exception(
+                resource: CaseConditionMembership,
+                field: :condition_revisions
+              )} do
       :ok
     end
   end

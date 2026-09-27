@@ -296,6 +296,7 @@ const en = {
       conditionsTitle: "Current conditions",
       pastConditionsTitle: "Previously assigned conditions",
       pastConditionDetachedAt: "Moved out",
+      stateChanged: "This Case changed. Refresh and try again.",
       recoveryReviews: "Recovery reviews",
       recoveryReviewStatus: {
         approved: "Approved",

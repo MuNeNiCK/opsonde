@@ -126,6 +126,82 @@ defmodule Opsonde.Providers.AITest do
     assert unknown_d["assessment"] == "unknown"
   end
 
+  test "autonomous Case split requires current direct observations for both scopes", context do
+    conditions =
+      for {id, target_id} <- [{"poe", "target-1"}, {"core", "target-2"}] do
+        %AI.Condition{
+          id: id,
+          revision: 1,
+          occurrence: 1,
+          predicate: "unavailable",
+          subject_key: id,
+          subject_ref: %{},
+          state: :firing,
+          target_id: target_id,
+          current_occurred_at_us: 10
+        }
+      end
+
+    sources =
+      Enum.map(conditions, fn condition ->
+        %AI.Evidence{
+          id: "source-#{condition.id}",
+          kind: "signal_event",
+          target_id: condition.target_id,
+          observed_at_us: 11,
+          content: %{"status" => "firing"}
+        }
+      end)
+
+    request = %{
+      resolver_request(context.provider.revision)
+      | conditions: conditions,
+        evidence: sources,
+        disclosure: %{
+          resolver_request(context.provider.revision).disclosure
+          | allowed_evidence_kinds: ["signal_event", "observation"]
+        }
+    }
+
+    source_only = %AI.CaseSplit{
+      condition_ids: ["core"],
+      evidence_ids: ["source-core"],
+      remaining_evidence_ids: ["source-poe"],
+      reason: "Investigate separately"
+    }
+
+    assert {:error, rejected} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: source_only, usage: usage()}}
+             end)
+
+    assert ai_error(rejected).category == :invalid_output
+
+    observations =
+      Enum.map(conditions, fn condition ->
+        %AI.Evidence{
+          id: "observed-#{condition.id}",
+          kind: "observation",
+          target_id: condition.target_id,
+          observed_at_us: 12,
+          content: %{"status" => "applied", "facts" => %{"reachability" => "down"}}
+        }
+      end)
+
+    observed_request = %{request | evidence: sources ++ observations}
+
+    observed_split = %{
+      source_only
+      | evidence_ids: ["observed-core"],
+        remaining_evidence_ids: ["observed-poe"]
+    }
+
+    assert %AI.ResolverDecision{intent: ^observed_split} =
+             resolve!(context, observed_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: observed_split, usage: usage()}}
+             end)
+  end
+
   test "one AI provider carries resolver and reviewer roles without connection duplication",
        context do
     resolver = assign!(context.admin, context.provider, :resolver, 20)

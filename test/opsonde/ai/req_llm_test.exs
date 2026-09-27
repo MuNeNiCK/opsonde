@@ -517,6 +517,34 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     request = %{resolver_request() | conditions: conditions, evidence: evidence}
 
+    source_only = %{
+      request
+      | evidence:
+          Enum.map(conditions, fn condition ->
+            %AI.Evidence{
+              id: "source-#{condition.id}",
+              kind: "signal_event",
+              target_id: condition.target_id,
+              observed_at_us: 2,
+              content: %{"status" => "firing"}
+            }
+          end)
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Investigate both",
+        "intent" => %{"type" => "target_search", "query" => "nodes"}
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.TargetSearch{}}} =
+             Adapter.resolve(state, source_only, %{})
+
+    [source_wire] = requests(context.agent)
+    refute "case_split" in user_payload(source_wire)["allowed_intents"]
+
     set_mode(context.agent, {
       :decision,
       %{

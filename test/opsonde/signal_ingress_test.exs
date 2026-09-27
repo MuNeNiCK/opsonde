@@ -753,7 +753,7 @@ defmodule Opsonde.SignalIngressTest do
           "intent" => %{
             "type" => "case_split",
             "condition_ids" => hd(groups)["condition_ids"],
-            "evidence_ids" => [current_source.id],
+            "evidence_ids" => hd(groups)["evidence_ids"],
             "remaining_evidence_ids" => List.last(groups)["evidence_ids"],
             "reason" => "Investigate the core fault separately"
           }
@@ -777,6 +777,96 @@ defmodule Opsonde.SignalIngressTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
     assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
     assert length(Cases.list_cases!(actor: context.admin)) == 2
+  end
+
+  test "two source alerts alone cannot authorize another AI Case branch", context do
+    enable_signal_automation!(context.admin)
+
+    targets =
+      for name <- ["poe", "ap"], into: %{} do
+        target =
+          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+            actor: context.admin
+          )
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+
+        {name, target}
+      end
+
+    Targets.create_relationship!(targets["poe"].id, targets["ap"].id, "connected_to", %{}, nil,
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    ingest!(
+      context.provider,
+      envelope("source-only-split", at),
+      invocation("source-only-split", [
+        event("source-only-split", "poe", :firing, at,
+          target_ref: %{kind: :hostname, value: "poe"}
+        ),
+        event("source-only-split", "ap", :firing, at, target_ref: %{kind: :hostname, value: "ap"})
+      ])
+    )
+
+    [parent] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
+    run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(parent)
+    [moved | _rest] = revisions
+
+    sources = Cases.signal_context_evidence!(parent.id, authorize?: false)
+    moved_source = Enum.find(sources, &(&1.content["condition_id"] == moved["id"]))
+    remaining_source = Enum.find(sources, &(&1.id != moved_source.id))
+    reason = "Separate these coincident alerts"
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => revisions,
+          "intent" => %{
+            "type" => "case_split",
+            "condition_ids" => [moved["id"]],
+            "evidence_ids" => [moved_source.id],
+            "remaining_evidence_ids" => [remaining_source.id],
+            "reason" => reason
+          }
+        },
+        :none,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert {:error, _rejected} =
+             Cases.split_case_from_resolver(
+               parent.id,
+               Cases.get_case!(parent.id, authorize?: false).revision,
+               [moved["id"]],
+               revisions,
+               reason,
+               completed.id,
+               authorize?: false
+             )
+
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 2
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+    assert Cases.get_case!(parent.id, authorize?: false).status == :running
+    assert [retry_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert retry_turn.intent["source"] == "resolver_split_rejected"
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+    assert length(Cases.started_turns_for_run!(run.id, authorize?: false)) == 1
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
   end
 
   test "an explicit split moves one native Condition without minting budgets or replaying a stale route",

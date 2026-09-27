@@ -291,6 +291,7 @@ const ja = {
       conditionsTitle: "現在の障害条件",
       pastConditionsTitle: "以前このケースにあった障害条件",
       pastConditionDetachedAt: "分離日時",
+      stateChanged: "ケースの状態が変わりました。更新してから再試行してください。",
       recoveryReviews: "復旧判断の審査",
       recoveryReviewStatus: {
         approved: "承認",

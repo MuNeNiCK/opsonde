@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { ApiError, apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
@@ -205,8 +205,12 @@ export function CaseDetailPage() {
     try {
       await action();
       await refresh();
-    } catch {
-      setError(t("cases.requestFailed"));
+    } catch (failure) {
+      setError(
+        failure instanceof ApiError && failure.status === 409
+          ? t("cases.stateChanged")
+          : t("cases.requestFailed"),
+      );
     } finally {
       setPending(null);
     }
