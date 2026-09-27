@@ -2292,8 +2292,7 @@ export interface components {
             /** Format: uuid */
             membership_id: string;
             predicate: string;
-            /** Format: uuid */
-            recovery_evidence_id: string | null;
+            recovery_evidence_ids: string[];
             /** @enum {string} */
             recovery_status: "ready_for_review" | "firing" | "stale_source" | "unmapped_target" | "needs_observation" | "target_changed" | "unknown";
             revision: number;

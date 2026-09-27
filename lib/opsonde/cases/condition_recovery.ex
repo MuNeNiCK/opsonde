@@ -5,6 +5,7 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
   @max_evidence 256
   @max_lineage_depth 32
+  @max_citations_per_condition 3
 
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident) do
@@ -82,14 +83,21 @@ defmodule Opsonde.Cases.ConditionRecovery do
       true ->
         case Targets.get_target(condition.target_id, authorize?: false) do
           {:ok, %{active: true, revision: revision}} ->
-            case Enum.find(evidence, &current_evidence?(&1, condition, after_at, revision)) do
-              nil ->
+            citations =
+              evidence
+              |> Enum.filter(&current_evidence?(&1, condition, after_at, revision))
+              |> Enum.uniq_by(&citation_scope/1)
+              |> Enum.take(@max_citations_per_condition)
+              |> Enum.map(& &1.id)
+
+            case citations do
+              [] ->
                 if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
                   do: result(condition, :stale_source),
                   else: result(condition, :needs_observation)
 
-              item ->
-                result(condition, :ready_for_review, item.id)
+              ids ->
+                result(condition, :ready_for_review, ids)
             end
 
           _other ->
@@ -170,12 +178,18 @@ defmodule Opsonde.Cases.ConditionRecovery do
     end)
   end
 
-  defp result(condition, status, evidence_id \\ nil) do
+  defp citation_scope(evidence) do
+    content = evidence.content
+
+    {evidence.kind, content["capability"], content["operation"], content["selectors"]}
+  end
+
+  defp result(condition, status, evidence_ids \\ []) do
     %{
       condition_id: condition.id,
       revision: condition.revision,
       status: status,
-      evidence_id: evidence_id
+      evidence_ids: evidence_ids
     }
   end
 

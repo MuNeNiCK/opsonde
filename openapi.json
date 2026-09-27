@@ -3202,10 +3202,12 @@
             "minLength": 1,
             "type": "string"
           },
-          "recovery_evidence_id": {
-            "format": "uuid",
-            "nullable": true,
-            "type": "string"
+          "recovery_evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
           },
           "recovery_status": {
             "enum": [
@@ -3252,7 +3254,7 @@
           "subject_ref",
           "state",
           "recovery_status",
-          "recovery_evidence_id",
+          "recovery_evidence_ids",
           "first_fired_at",
           "current_occurred_at",
           "revision",

@@ -349,8 +349,11 @@ defmodule Opsonde.AI.ReqLLM do
         "Recovery is a terminal intent. Choose it only when the supplied Evidence supports " <>
         "that the Case objective and every attached Condition have recovered. A recovered " <>
         "monitoring event or a verified Target operation alone does not prove this. For each " <>
-        "Condition, cite the current observation and explain what its facts establish. " <>
-        "The recovery_status field only reports whether a current observation is available; " <>
+        "Condition, choose a relevant citation from its recovery_evidence_ids that is also " <>
+        "listed in top-level recovery_evidence_ids, and explain " <>
+        "what that Evidence's facts establish. A newer unrelated observation does not " <>
+        "replace an earlier current observation of the actual symptom. " <>
+        "The recovery_status field only reports whether current observations are available; " <>
         "it does not judge its meaning. If facts still show a fault, continue investigation. " <>
         "If turn_intent.source is recovery_review_rejected, read its review_reason. Also read " <>
         "last_rejected_recovery_review when present, including after an operator resume. Do not " <>

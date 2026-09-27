@@ -234,14 +234,14 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
           enum(
             ~w(ready_for_review firing stale_source unmapped_target needs_observation target_changed unknown)
           ),
-        recovery_evidence_id: nullable_uuid(),
+        recovery_evidence_ids: array(Schemas.uuid()),
         first_fired_at: Schemas.timestamp(),
         current_occurred_at: Schemas.timestamp(),
         revision: positive_integer(),
         membership_id: Schemas.uuid(),
         attached_at: Schemas.timestamp()
       },
-      ~w(id signal_correlation_id target_id predicate subject_ref state recovery_status recovery_evidence_id first_fired_at current_occurred_at revision membership_id attached_at)a,
+      ~w(id signal_correlation_id target_id predicate subject_ref state recovery_status recovery_evidence_ids first_fired_at current_occurred_at revision membership_id attached_at)a,
       false
     )
   end

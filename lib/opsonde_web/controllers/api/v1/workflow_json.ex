@@ -91,7 +91,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       subject_ref: condition.subject_ref,
       state: condition.state,
       recovery_status: if(assessment, do: assessment.status, else: :unknown),
-      recovery_evidence_id: assessment && assessment.evidence_id,
+      recovery_evidence_ids: if(assessment, do: assessment.evidence_ids, else: []),
       first_fired_at: condition.first_fired_at,
       current_occurred_at: condition.current_occurred_at,
       revision: condition.revision,

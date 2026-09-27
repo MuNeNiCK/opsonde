@@ -148,7 +148,7 @@ defmodule Opsonde.Providers.AI.Validator do
         condition = is_map(claim) && Map.get(by_id, claim["condition_id"])
 
         (condition && claim["revision"] == condition.revision) and
-          claim["evidence_id"] == condition.recovery_evidence_id and
+          claim["evidence_id"] in condition.recovery_evidence_ids and
           claim["evidence_id"] in cited_ids and
           AI.valid_resolver_reason?(claim["reason"])
       end)
@@ -310,7 +310,10 @@ defmodule Opsonde.Providers.AI.Validator do
         :target_changed,
         :ready_for_review
       ] and
-      (is_nil(condition.recovery_evidence_id) or nonempty?(condition.recovery_evidence_id)) and
+      is_list(condition.recovery_evidence_ids) and
+      length(condition.recovery_evidence_ids) <= 3 and
+      unique?(condition.recovery_evidence_ids) and
+      Enum.all?(condition.recovery_evidence_ids, &nonempty?/1) and
       (is_nil(condition.target_id) or nonempty?(condition.target_id)) and
       is_integer(condition.current_occurred_at_us)
   end
@@ -642,7 +645,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
         (condition && claim["revision"] == condition.revision) and
           condition.state == :recovered and condition.recovery_status == :ready_for_review and
-          claim["evidence_id"] == condition.recovery_evidence_id and
+          claim["evidence_id"] in condition.recovery_evidence_ids and
           claim["evidence_id"] in evidence_ids and
           AI.valid_resolver_reason?(claim["reason"]) and
           claim["evidence_id"] in request.recovery_evidence_ids

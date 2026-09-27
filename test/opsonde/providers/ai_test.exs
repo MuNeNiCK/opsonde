@@ -78,6 +78,80 @@ defmodule Opsonde.Providers.AITest do
            )
   end
 
+  test "Resolver may cite an earlier current observation when the newest one is unrelated",
+       context do
+    direct = %AI.Evidence{
+      id: "direct-endpoint",
+      kind: "observation",
+      target_id: "target-1",
+      observed_at_us: 20,
+      content: %{"status" => "applied", "facts" => %{"endpoint_up" => true}}
+    }
+
+    unrelated = %AI.Evidence{
+      id: "newer-identity",
+      kind: "observation",
+      target_id: "target-1",
+      observed_at_us: 21,
+      content: %{"status" => "applied", "facts" => %{"machine_id" => "guest"}}
+    }
+
+    condition = %AI.Condition{
+      id: "endpoint-condition",
+      revision: 2,
+      occurrence: 1,
+      predicate: "Endpoint unavailable",
+      subject_key: "endpoint",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 19,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: [unrelated.id, direct.id]
+    }
+
+    request = %{
+      resolver_request(context.provider.revision)
+      | alert_state: :recovered,
+        conditions: [condition],
+        evidence: [unrelated, direct],
+        recovery_evidence_ids: [unrelated.id, direct.id]
+    }
+
+    conclusion = %AI.RecoveryConclusion{
+      reason: "The direct endpoint observation supports the recovered source event",
+      evidence_ids: [direct.id],
+      condition_claims: [
+        %{
+          "condition_id" => condition.id,
+          "revision" => condition.revision,
+          "evidence_id" => direct.id,
+          "reason" => "The endpoint itself responded"
+        }
+      ]
+    }
+
+    assert %AI.ResolverDecision{intent: ^conclusion} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: conclusion, usage: usage()}}
+             end)
+
+    stale =
+      put_in(conclusion.condition_claims, [
+        %{
+          "condition_id" => condition.id,
+          "revision" => 1,
+          "evidence_id" => direct.id,
+          "reason" => "The endpoint itself responded"
+        }
+      ])
+
+    assert {:error, _error} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: stale, usage: usage()}}
+             end)
+  end
+
   test "Condition group hints never invent, overlap, or silently omit a Condition" do
     conditions = Enum.map(~w(a b c d), &%{id: &1})
     evidence = [%{id: "observed-switch"}]

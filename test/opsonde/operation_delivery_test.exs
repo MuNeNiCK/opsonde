@@ -1604,7 +1604,7 @@ defmodule Opsonde.OperationDeliveryTest do
                  )
              )
 
-    assert {:ok, [%{status: :ready_for_review, evidence_id: evidence_id}]} =
+    assert {:ok, [%{status: :ready_for_review, evidence_ids: [evidence_id]}]} =
              ConditionRecovery.assess_current(incident)
 
     assert is_binary(evidence_id)
@@ -1888,7 +1888,7 @@ defmodule Opsonde.OperationDeliveryTest do
                    assert AI.recovery_evidence_ids(request) == [evidence.id]
                    assert [%AI.Condition{} = condition] = request.conditions
                    assert condition.recovery_status == :ready_for_review
-                   assert condition.recovery_evidence_id == evidence.id
+                   assert condition.recovery_evidence_ids == [evidence.id]
 
                    {:ok,
                     %AI.ResolverDecision{

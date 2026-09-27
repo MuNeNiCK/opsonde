@@ -201,13 +201,13 @@ defmodule Opsonde.Cases.ResolverProjection do
             %{
               condition
               | recovery_status: assessment.status,
-                recovery_evidence_id: assessment.evidence_id
+                recovery_evidence_ids: assessment.evidence_ids
             }
           end)
 
         proof_ids =
           if ConditionRecovery.ready_for_review?(assessments),
-            do: assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq(),
+            do: assessments |> Enum.flat_map(& &1.evidence_ids) |> Enum.uniq(),
             else: []
 
         {:ok, {conditions, proof_ids}}
@@ -699,11 +699,16 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp mark_recovery_proofs(request, ids) do
     visible = MapSet.new(Enum.map(request.evidence, & &1.id))
+    available = Enum.filter(ids, &MapSet.member?(visible, &1))
 
-    if Enum.all?(ids, &MapSet.member?(visible, &1)) do
+    if request.conditions == [] or
+         Enum.all?(request.conditions, fn condition ->
+           condition.recovery_status == :ready_for_review and
+             Enum.any?(condition.recovery_evidence_ids, &MapSet.member?(visible, &1))
+         end) do
       %{
         request
-        | recovery_evidence_ids: ids
+        | recovery_evidence_ids: available
       }
     else
       request

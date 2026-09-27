@@ -403,7 +403,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
                  assessment ->
                    assessment.revision == claim["revision"] and
-                     assessment.evidence_id == claim["evidence_id"] and
+                     claim["evidence_id"] in assessment.evidence_ids and
                      claim["evidence_id"] in evidence_ids and
                      Opsonde.Providers.AI.valid_resolver_reason?(claim["reason"])
                end

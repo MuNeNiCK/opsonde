@@ -27,7 +27,7 @@ defmodule Opsonde.Cases.EvidenceCitation do
     case ConditionRecovery.assess_current(incident) do
       {:ok, assessments} ->
         Enum.any?(assessments, fn assessment ->
-          assessment.status == :ready_for_review and assessment.evidence_id == evidence_id
+          assessment.status == :ready_for_review and evidence_id in assessment.evidence_ids
         end)
 
       {:error, _error} ->
