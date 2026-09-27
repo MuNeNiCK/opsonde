@@ -190,6 +190,7 @@ defmodule Opsonde.AI.ReqLLM do
     payload = %{
       "case_id" => request.case_id,
       "objective" => request.objective,
+      "case_symptom" => plain(request.case_symptom),
       "report_language" => to_string(request.report_language),
       "conditions" => Enum.map(request.conditions, &review_condition/1),
       "native_source_evidence" => plain(request.source_evidence),
@@ -202,6 +203,11 @@ defmodule Opsonde.AI.ReqLLM do
     context(
       "You are an independent Opsonde recovery Reviewer. Decide whether the exact cited Target " <>
         "facts substantiate each Condition's claimed recovery and the overall conclusion. " <>
+        "For a manual or scheduled audit Case, there are no monitoring Conditions: compare " <>
+        "case_symptom.text with each case_symptom_claim, look up its exact cited fact_keys " <>
+        "and actual values in cited_target_evidence, and reject claims supported only by " <>
+        "unrelated identity or healthy components. The claim's symptom_id identifies the " <>
+        "original Case objective; it does not itself prove recovery. " <>
         "Compare the native symptom, the claimed effect, and the observation's actual facts. " <>
         "Review recent Case evidence, including prior ResolutionRuns and effect chronology, " <>
         "even when the Resolver did not cite it. A post-effect failure may be caused by the " <>
@@ -327,6 +333,7 @@ defmodule Opsonde.AI.ReqLLM do
       "case_id" => request.case_id,
       "turn" => request.turn,
       "objective" => request.objective,
+      "case_symptom" => plain(request.case_symptom),
       "retry_context" => request.retry_context,
       "allowed_intents" => allowed_intents(request),
       "alert_state" => to_string(request.alert_state),
@@ -355,6 +362,11 @@ defmodule Opsonde.AI.ReqLLM do
         "Recovery is a terminal intent. Choose it only when the supplied Evidence supports " <>
         "that the Case objective and every attached Condition have recovered. A recovered " <>
         "monitoring event or a verified Target operation alone does not prove this. For each " <>
+        "manual or scheduled audit Case, case_symptom is the original operator symptom. " <>
+        "A recovery intent must include case_symptom_claims citing current eligible Target " <>
+        "Evidence and the exact fact_keys whose values show that symptom cleared; the " <>
+        "symptom_id must match case_symptom.id. An unrelated fact, successful data collection, " <>
+        "or completed effect does not show recovery. " <>
         "Condition, choose a relevant citation from its recovery_evidence_ids that is also " <>
         "listed in top-level recovery_evidence_ids, and explain " <>
         "what that Evidence's facts establish. A newer unrelated observation does not " <>
@@ -652,12 +664,15 @@ defmodule Opsonde.AI.ReqLLM do
   defp intent(%{"type" => "recovery"} = value, _request) do
     with {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
-         claims when is_list(claims) <- Map.get(value, "condition_claims", []) do
+         claims when is_list(claims) <- Map.get(value, "condition_claims", []),
+         symptom_claims when is_list(symptom_claims) <-
+           Map.get(value, "case_symptom_claims", []) do
       {:ok,
        %AI.RecoveryConclusion{
          reason: reason,
          evidence_ids: evidence_ids,
-         condition_claims: claims
+         condition_claims: claims,
+         case_symptom_claims: symptom_claims
        }}
     else
       _invalid -> invalid_output()
@@ -1651,14 +1666,68 @@ defmodule Opsonde.AI.ReqLLM do
             }
           end
 
-        intent_schema("recovery", %{
-          "evidence_ids" => identifier_array_schema(evidence_ids),
-          "condition_claims" => claims
-        })
+        symptom_claims = case_symptom_claims_schema(request, evidence_ids)
+
+        if request.case_symptom && is_nil(symptom_claims) do
+          nil
+        else
+          properties = %{
+            "evidence_ids" => identifier_array_schema(evidence_ids),
+            "condition_claims" => claims
+          }
+
+          properties =
+            if symptom_claims,
+              do: Map.put(properties, "case_symptom_claims", symptom_claims),
+              else: properties
+
+          intent_schema("recovery", properties)
+        end
     end
   end
 
   defp recovery_schema(_request), do: nil
+
+  defp case_symptom_claims_schema(%{case_symptom: nil}, _evidence_ids), do: nil
+
+  defp case_symptom_claims_schema(request, evidence_ids) do
+    variants =
+      request.evidence
+      |> Enum.filter(fn evidence ->
+        evidence.id in evidence_ids and is_map(evidence.content) and
+          is_map(evidence.content["facts"]) and
+          map_size(evidence.content["facts"]) > 0
+      end)
+      |> Enum.map(fn evidence ->
+        keys = Map.keys(evidence.content["facts"])
+
+        object_schema(
+          %{
+            "symptom_id" => enum_schema([request.case_symptom.id]),
+            "evidence_id" => enum_schema([evidence.id]),
+            "fact_keys" => %{
+              "type" => "array",
+              "minItems" => 1,
+              "maxItems" => 5,
+              "items" => enum_schema(keys)
+            },
+            "reason" => bounded_string_schema(AI.resolver_reason_codepoints())
+          },
+          ~w(symptom_id evidence_id fact_keys reason)
+        )
+      end)
+
+    case variants do
+      [] ->
+        nil
+
+      [single] ->
+        %{"type" => "array", "minItems" => 1, "maxItems" => 3, "items" => single}
+
+      _ ->
+        %{"type" => "array", "minItems" => 1, "maxItems" => 3, "items" => %{"anyOf" => variants}}
+    end
+  end
 
   defp handoff_schema(nil),
     do:

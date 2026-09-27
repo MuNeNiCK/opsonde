@@ -373,7 +373,7 @@ defmodule Opsonde.Providers.AI do
   defmodule RecoveryConclusion do
     @moduledoc false
     @enforce_keys [:reason, :evidence_ids]
-    defstruct @enforce_keys ++ [condition_claims: []]
+    defstruct @enforce_keys ++ [condition_claims: [], case_symptom_claims: []]
     @type t :: %__MODULE__{}
   end
 
@@ -502,7 +502,8 @@ defmodule Opsonde.Providers.AI do
                   traversable_relation_ids: [],
                   conditions: [],
                   historical_evidence: [],
-                  recovery_evidence_ids: []
+                  recovery_evidence_ids: [],
+                  case_symptom: nil
                 ]
 
     @type t :: %__MODULE__{}
@@ -561,7 +562,7 @@ defmodule Opsonde.Providers.AI do
       :budget
     ]
 
-    defstruct @enforce_keys ++ [context_evidence: [], retry_context: nil]
+    defstruct @enforce_keys ++ [context_evidence: [], retry_context: nil, case_symptom: nil]
     @type t :: %__MODULE__{}
   end
 
@@ -595,6 +596,7 @@ defmodule Opsonde.Providers.AI do
     encoded = %{
       context: %{
         objective: request.objective,
+        case_symptom: request.case_symptom,
         alert_state: request.alert_state,
         report_language: request.report_language,
         retry_context: request.retry_context,

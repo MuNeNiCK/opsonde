@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
   @moduledoc false
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{ConditionContext, ConditionRecovery}
+  alias Opsonde.Cases.{CaseSymptom, ConditionContext, ConditionRecovery}
   alias Opsonde.Cases.ReviewerEvidence
   alias Opsonde.Providers.AI
 
@@ -29,13 +29,15 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
         objective: objective(incident),
         report_language: incident.report_language,
         conditions: conditions,
+        case_symptom: CaseSymptom.current(incident),
         source_evidence: source_evidence,
         cited_evidence: cited_evidence,
         context_evidence: context_evidence,
         conclusion: %AI.RecoveryConclusion{
           reason: intent["reason"],
           evidence_ids: intent["evidence_ids"],
-          condition_claims: Map.get(intent, "condition_claims", [])
+          condition_claims: Map.get(intent, "condition_claims", []),
+          case_symptom_claims: Map.get(intent, "case_symptom_claims", [])
         },
         retry_context: retry_context,
         budget: budget(run)

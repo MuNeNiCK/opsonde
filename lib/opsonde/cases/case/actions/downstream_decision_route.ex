@@ -11,6 +11,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     Case,
     CaseAdmissionLock,
     CaseEvent,
+    CaseSymptom,
     ConditionContext,
     ConditionRecovery,
     Evidence,
@@ -163,7 +164,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       "source_turn_id" => turn.id,
       "result_digest" => turn.result_digest,
       "evidence_ids" => intent["evidence_ids"],
-      "condition_claims" => intent["condition_claims"]
+      "condition_claims" => intent["condition_claims"],
+      "case_symptom_claims" => intent["case_symptom_claims"]
     }
 
     with :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
@@ -332,7 +334,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            "type" => "recovery_conclusion",
            "reason" => reason,
            "evidence_ids" => evidence_ids,
-           "condition_claims" => claims
+           "condition_claims" => claims,
+           "case_symptom_claims" => symptom_claims
          },
          turn,
          incident,
@@ -342,7 +345,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     with :ok <- valid_reason(reason),
          :ok <- valid_recovery_state(incident),
          :ok <- valid_case_evidence(evidence_ids, incident.id),
-         :ok <- valid_fresh_verification(evidence_ids, claims, turn, incident, run) do
+         :ok <- valid_fresh_verification(evidence_ids, claims, turn, incident, run),
+         :ok <- valid_case_symptom_claims(symptom_claims, evidence_ids, incident, run) do
       :ok
     end
   end
@@ -363,6 +367,66 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp validate_intent(_intent, _turn, _incident, _run),
     do: {:error, "Downstream Resolver decision is malformed"}
+
+  defp valid_case_symptom_claims([], _evidence_ids, %{trigger_kind: :signal}, _run), do: :ok
+
+  defp valid_case_symptom_claims(claims, evidence_ids, incident, run)
+       when incident.trigger_kind in [:manual, :audit] and is_list(claims) do
+    cited =
+      claims
+      |> Enum.filter(&is_map/1)
+      |> Enum.map(& &1["evidence_id"])
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    with {:ok, evidence} <- fetch_claim_evidence(cited, incident.id),
+         true <-
+           CaseSymptom.valid_claims?(
+             claims,
+             CaseSymptom.current(incident),
+             evidence_ids,
+             evidence
+           ) || {:error, "Recovery conclusion lacks a current Case symptom claim"},
+         :ok <- verify_claim_evidence(evidence, incident, run) do
+      :ok
+    end
+  end
+
+  defp valid_case_symptom_claims(_claims, _evidence_ids, _incident, _run),
+    do: {:error, "Recovery conclusion has unexpected Case symptom claims"}
+
+  defp fetch_claim_evidence(ids, case_id) do
+    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, items} ->
+      case Cases.get_evidence(id, authorize?: false) do
+        {:ok, %{case_id: ^case_id} = item} -> {:cont, {:ok, [item | items]}}
+        _unavailable -> {:halt, {:error, "Recovery conclusion cites unavailable Case Evidence"}}
+      end
+    end)
+  end
+
+  defp verify_claim_evidence(items, incident, run) do
+    Enum.reduce_while(items, :ok, fn item, :ok ->
+      result =
+        case item.kind do
+          "observation" ->
+            valid_fresh_observation(item, incident, run)
+
+          "target_verification" ->
+            with :ok <- valid_continuity_evidence(item, incident),
+                 :ok <- validate_target_continuity_verification([item.id], incident) do
+              :ok
+            end
+
+          _other ->
+            {:error, "Recovery conclusion cites unsupported Case Evidence"}
+        end
+
+      case result do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
 
   defp valid_reason(reason) do
     if Opsonde.Providers.AI.valid_resolver_reason?(reason),

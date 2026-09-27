@@ -3,12 +3,20 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.AIInvocation
+  alias Opsonde.Cases.CaseSymptom
 
   def current(incident, intent) do
     cited_ids = intent["evidence_ids"]
 
     with {:ok, source} <- source_evidence(incident) do
-      {:ok, digest(cited_ids, intent["condition_claims"], source)}
+      {:ok,
+       digest(
+         cited_ids,
+         intent["condition_claims"],
+         intent["case_symptom_claims"],
+         CaseSymptom.current(incident),
+         source
+       )}
     end
   end
 
@@ -16,6 +24,8 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
     digest(
       request.conclusion.evidence_ids,
       request.conclusion.condition_claims,
+      request.conclusion.case_symptom_claims,
+      request.case_symptom,
       request.source_evidence
     )
   end
@@ -25,13 +35,15 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
 
   defp source_evidence(_incident), do: {:ok, []}
 
-  defp digest(cited_ids, claims, source) do
+  defp digest(cited_ids, claims, symptom_claims, case_symptom, source) do
     AIInvocation.request_digest(%{
       cited_ids: Enum.sort(cited_ids),
       claims:
         claims
         |> Enum.map(&Map.take(&1, ["condition_id", "revision", "evidence_id"]))
         |> Enum.sort_by(& &1["condition_id"]),
+      case_symptom_id: case_symptom && case_symptom.id,
+      case_symptom_claims: Enum.sort_by(symptom_claims, &{&1["evidence_id"], &1["fact_keys"]}),
       source_ids: source |> Enum.map(& &1.id) |> Enum.sort()
     })
   end

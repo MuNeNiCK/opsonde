@@ -1801,7 +1801,15 @@ defmodule Opsonde.OperationDeliveryTest do
                     %AI.ResolverDecision{
                       intent: %AI.RecoveryConclusion{
                         reason: "The prior verified Target state remains current after resume",
-                        evidence_ids: [verification_id]
+                        evidence_ids: [verification_id],
+                        case_symptom_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => verification_id,
+                            "fact_keys" => ["service"],
+                            "reason" => "The verified service is running"
+                          }
+                        ]
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
                     }}
@@ -2123,7 +2131,15 @@ defmodule Opsonde.OperationDeliveryTest do
                     %AI.ResolverDecision{
                       intent: %AI.RecoveryConclusion{
                         reason: "The requested service is active after direct inspection",
-                        evidence_ids: [evidence.id]
+                        evidence_ids: [evidence.id],
+                        case_symptom_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => evidence.id,
+                            "fact_keys" => ["active_state"],
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
                     }}
@@ -2138,6 +2154,64 @@ defmodule Opsonde.OperationDeliveryTest do
     assert resolved.status == :resolved
     assert %DateTime{} = resolved.resolved_at
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
+  end
+
+  test "Case admission rejects a manual recovery claim for a fact absent from current Evidence",
+       context do
+    {incident, _run, proposal} =
+      authorized_proposal!("manual-missing-fact", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"active_state" => "active"},
+                      evidence: []
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => revisions,
+          "intent" => %{
+            "type" => "recovery_conclusion",
+            "reason" => "The service is active",
+            "evidence_ids" => [evidence.id],
+            "condition_claims" => [],
+            "case_symptom_claims" => [
+              %{
+                "symptom_id" => Opsonde.Cases.CaseSymptom.current(current).id,
+                "evidence_id" => evidence.id,
+                "fact_keys" => ["unobserved_state"],
+                "reason" => "Claimed state"
+              }
+            ]
+          }
+        },
+        :hypothesis,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert {:error, error} = Cases.route_downstream_decision(completed.id, authorize?: false)
+    assert Exception.message(error) =~ "Case symptom claim"
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
   end
 
   test "a resumed recovered Signal Case keeps a still-current prior-run observation eligible",
@@ -2564,12 +2638,20 @@ defmodule Opsonde.OperationDeliveryTest do
                  invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
                ai_invocation: %{
                  test_pid: self(),
-                 respond: fn _request ->
+                 respond: fn request ->
                    {:ok,
                     %AI.ResolverDecision{
                       intent: %AI.RecoveryConclusion{
                         reason: "The current service is active",
-                        evidence_ids: [evidence.id]
+                        evidence_ids: [evidence.id],
+                        case_symptom_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => evidence.id,
+                            "fact_keys" => ["active_state"],
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
                     }}

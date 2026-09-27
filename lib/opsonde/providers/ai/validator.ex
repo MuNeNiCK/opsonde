@@ -1,6 +1,7 @@
 defmodule Opsonde.Providers.AI.Validator do
   @moduledoc false
 
+  alias Opsonde.Cases.CaseSymptom
   alias Opsonde.Providers.{AI, Target}
   alias Opsonde.Targets.SearchQuery
 
@@ -69,6 +70,10 @@ defmodule Opsonde.Providers.AI.Validator do
       valid_retry_context?(request.retry_context) and
       valid_budget?(request.budget) and
       valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
+      CaseSymptom.valid?(request.case_symptom) and
+      ((request.alert_state == :not_applicable and not is_nil(request.case_symptom) and
+          request.conditions == []) or
+         (request.alert_state != :not_applicable and is_nil(request.case_symptom))) and
       valid_resolver_items?(request)
   end
 
@@ -140,9 +145,18 @@ defmodule Opsonde.Providers.AI.Validator do
       Enum.all?(source_evidence ++ cited_evidence ++ context_evidence, &valid_evidence?/1) and
       unique?(source_ids) and unique?(cited_ids) and unique?(context_ids) and
       MapSet.disjoint?(MapSet.new(cited_ids), MapSet.new(context_ids)) and
+      CaseSymptom.valid?(request.case_symptom) and
+      ((conditions == [] and not is_nil(request.case_symptom)) or
+         (conditions != [] and is_nil(request.case_symptom))) and
       AI.valid_resolver_reason?(conclusion.reason) and
       is_list(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
       Enum.all?(conclusion.evidence_ids, &(&1 in cited_ids)) and
+      CaseSymptom.valid_claims?(
+        conclusion.case_symptom_claims,
+        request.case_symptom,
+        conclusion.evidence_ids,
+        cited_evidence
+      ) and
       is_list(claims) and length(claims) == length(conditions) and
       Enum.all?(claims, fn claim ->
         condition = is_map(claim) && Map.get(by_id, claim["condition_id"])
@@ -159,6 +173,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp recovery_review_size(request) do
     encoded = %{
       objective: request.objective,
+      case_symptom: request.case_symptom,
       conditions: Enum.map(request.conditions, &plain_value/1),
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
       cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
@@ -570,7 +585,13 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(conclusion.reason) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) and
-         valid_condition_claims?(conclusion.condition_claims, request, conclusion.evidence_ids) do
+         valid_condition_claims?(conclusion.condition_claims, request, conclusion.evidence_ids) and
+         CaseSymptom.valid_claims?(
+           conclusion.case_symptom_claims,
+           request.case_symptom,
+           conclusion.evidence_ids,
+           request.evidence
+         ) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI recovery conclusion is invalid")}

@@ -2,6 +2,7 @@ defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Signals, Targets}
+  alias Opsonde.Cases.CaseSymptom
   alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Cases.TraversalBoundary
   alias Opsonde.Providers.AI
@@ -579,6 +580,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         max_bytes: limits.max_bytes
       },
       budget: budget(run, turn),
+      case_symptom: CaseSymptom.current(incident),
       conditions: conditions,
       evidence: [],
       historical_evidence: [],

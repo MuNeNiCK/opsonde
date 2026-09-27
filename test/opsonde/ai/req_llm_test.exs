@@ -1634,6 +1634,73 @@ defmodule Opsonde.AI.ReqLLMTest do
            ]
   end
 
+  test "manual recovery schema binds original symptom to current cited fact keys", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    symptom_id = String.duplicate("a", 64)
+
+    observed = %AI.Evidence{
+      id: "observation-current",
+      kind: "observation",
+      target_id: "target-1",
+      content: %{"status" => "applied", "facts" => %{"service_state" => "active"}}
+    }
+
+    request = %{
+      resolver_request()
+      | alert_state: :not_applicable,
+        case_symptom: %{id: symptom_id, text: "Restore the API service"},
+        evidence: [observed],
+        recovery_evidence_ids: [observed.id],
+        disclosure: %{
+          resolver_request().disclosure
+          | allowed_evidence_kinds: ["observation"]
+        }
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "type" => "recovery",
+        "reason" => "The API service is active",
+        "evidence_ids" => [observed.id],
+        "condition_claims" => [],
+        "case_symptom_claims" => [
+          %{
+            "symptom_id" => symptom_id,
+            "evidence_id" => observed.id,
+            "fact_keys" => ["service_state"],
+            "reason" => "The observed state is active"
+          }
+        ]
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.RecoveryConclusion{} = conclusion}} =
+             Adapter.resolve(state, request, %{})
+
+    assert [%{"symptom_id" => ^symptom_id}] = conclusion.case_symptom_claims
+    [wire_request] = requests(context.agent)
+
+    assert user_payload(wire_request)["case_symptom"] == %{
+             "id" => symptom_id,
+             "text" => "Restore the API service"
+           }
+
+    recovery =
+      wire_request
+      |> output_schema()
+      |> get_in(["properties", "intent", "anyOf"])
+      |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["recovery"]))
+
+    claim = get_in(recovery, ["properties", "case_symptom_claims"])
+    assert claim["minItems"] == 1
+    assert get_in(claim, ["items", "properties", "symptom_id", "enum"]) == [symptom_id]
+
+    assert get_in(claim, ["items", "properties", "fact_keys", "items", "enum"]) == [
+             "service_state"
+           ]
+  end
+
   test "streamed and buffered responses produce the same decision", context do
     buffered = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

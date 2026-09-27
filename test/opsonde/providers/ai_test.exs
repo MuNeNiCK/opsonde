@@ -605,17 +605,67 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
 
-    manual_request = %{recovered_request | alert_state: :not_applicable}
+    manual_request = %{
+      recovered_request
+      | alert_state: :not_applicable,
+        case_symptom: %{id: String.duplicate("a", 64), text: "Restore service health"},
+        evidence:
+          later_request.evidence ++
+            [
+              %{
+                verified_evidence
+                | content: Map.put(verified_evidence.content, "facts", %{"service" => "running"})
+              }
+            ]
+    }
 
     assert %AI.ResolverDecision{intent: ^handoff} =
              resolve!(context, manual_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
 
-    assert %AI.ResolverDecision{intent: ^recovery} =
+    manual_recovery = %{
+      recovery
+      | case_symptom_claims: [
+          %{
+            "symptom_id" => manual_request.case_symptom.id,
+            "evidence_id" => "verification-1",
+            "fact_keys" => ["service"],
+            "reason" => "The service is running"
+          }
+        ]
+    }
+
+    assert %AI.ResolverDecision{intent: ^manual_recovery} =
              resolve!(context, manual_request, fn _request ->
-               {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
+               {:ok, %AI.ResolverDecision{intent: manual_recovery, usage: usage()}}
              end)
+
+    for invalid <- [
+          %{manual_recovery | case_symptom_claims: []},
+          %{
+            manual_recovery
+            | case_symptom_claims: [
+                %{
+                  hd(manual_recovery.case_symptom_claims)
+                  | "symptom_id" => String.duplicate("b", 64)
+                }
+              ]
+          },
+          %{
+            manual_recovery
+            | case_symptom_claims: [
+                %{hd(manual_recovery.case_symptom_claims) | "fact_keys" => ["unobserved"]}
+              ]
+          }
+        ] do
+      assert {:error, invalid_recovery} =
+               resolve(context, manual_request, fn _request ->
+                 {:ok, %AI.ResolverDecision{intent: invalid, usage: usage()}}
+               end)
+
+      assert ai_error(invalid_recovery).category == :invalid_output
+    end
 
     ordinary_recovery = %{recovery | evidence_ids: ["observation-1"]}
 
