@@ -854,6 +854,35 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
+  test "Resolver receives a rejected recovery reason and guidance to seek new symptom evidence",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    objective =
+      Jason.encode!(%{
+        "case_title" => "Metrics unavailable",
+        "turn_intent" => %{
+          "source" => "recovery_review_rejected",
+          "review_reason" => "A unit list does not show that the endpoint responds"
+        }
+      })
+
+    request = %{resolver_request() | objective: objective}
+    set_mode(context.agent, {:decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    assert user_payload(wire_request)["objective"] == objective
+
+    assert Enum.any?(Jason.decode!(wire_request.body)["messages"], fn message ->
+             message["role"] == "system" and
+               String.contains?(message["content"], "do not repeat a recovery claim") and
+               String.contains?(message["content"], "direct observation")
+           end)
+  end
+
   test "schema rejection logs only bounded structural diagnostics", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

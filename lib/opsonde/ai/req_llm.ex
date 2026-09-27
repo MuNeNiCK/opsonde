@@ -355,6 +355,13 @@ defmodule Opsonde.AI.ReqLLM do
         "Condition, cite the current observation and explain what its facts establish. " <>
         "The recovery_status field only reports whether a current observation is available; " <>
         "it does not judge its meaning. If facts still show a fault, continue investigation. " <>
+        "If turn_intent.source is recovery_review_rejected, read its review_reason and do not " <>
+        "repeat a recovery claim with unchanged cited evidence. Choose a new observation " <>
+        "that measures the exact rejected symptom, or hand off if no suitable observation " <>
+        "can be made. A successful inventory or discovery request is not proof that a " <>
+        "particular monitored service or endpoint recovered. When a recovered Condition " <>
+        "has recovery_status needs_observation, prioritize a direct observation of that " <>
+        "Condition's Target and native symptom over further visits to related Targets. " <>
         "For a still-firing Condition, investigate its target and do not assign its cause " <>
         "to another Target from timing or inventory proximity alone. " <>
         "A newer verified effect outcome supersedes " <>
