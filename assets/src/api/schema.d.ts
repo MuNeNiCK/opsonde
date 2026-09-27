@@ -2567,60 +2567,65 @@ export interface components {
         };
         Proposal: {
             /** Format: uuid */
-            access_method_id: string;
-            access_method_revision: number;
-            /** @enum {string} */
-            authority_mode: "readonly" | "ask" | "auto" | "full_access";
-            capability: string;
-            case_generation: number;
-            /** Format: uuid */
             case_id: string;
-            evidence_ids: string[];
-            expected_result: {
-                [key: string]: unknown;
-            };
-            /** Format: date-time */
-            expires_at: string;
-            /** Format: uuid */
-            id: string;
-            /** Format: date-time */
-            inserted_at: string;
-            operation: string;
-            parameters: {
-                [key: string]: unknown;
-            };
-            preflight_reason: string | null;
-            /** @enum {string} */
-            preflight_status: "cleared" | "blocked";
-            proposal_digest: string;
-            /** Format: uuid */
-            proposed_for_id: string;
             /** Format: uuid */
             provider_id: string;
-            provider_revision: number;
-            reason: string;
-            /** @enum {string} */
-            request_kind: "observation" | "effect";
-            /** Format: uuid */
-            resolution_run_id: string;
+            affected_conditions: {
+                /** Format: uuid */
+                condition_id: string;
+                revision: number;
+            }[];
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            inserted_at: string;
             revision: number;
-            selectors: {
-                [key: string]: unknown;
-            };
-            /** Format: uuid */
-            source_turn_id: string;
+            evidence_ids: string[];
+            tool_id: string;
             /** @enum {string} */
             status: "proposed" | "blocked" | "recommended" | "awaiting_human" | "reviewing" | "authorized" | "rejected" | "invalidated";
             /** Format: uuid */
-            target_id: string;
+            access_method_id: string;
+            preflight_reason: string | null;
+            expected_result: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
+            /** @enum {string} */
+            authority_mode: "readonly" | "ask" | "auto" | "full_access";
+            parameters: {
+                [key: string]: unknown;
+            };
             target_revision: number;
-            tool_id: string;
-            /** Format: date-time */
-            updated_at: string;
+            provider_revision: number;
+            reason: string;
+            /** Format: uuid */
+            source_turn_id: string;
             verification_intent: {
                 [key: string]: unknown;
             };
+            operation: string;
+            /** Format: uuid */
+            proposed_for_id: string;
+            capability: string;
+            /** Format: uuid */
+            target_id: string;
+            case_generation: number;
             verification_tool: {
+                [key: string]: unknown;
+            };
+            proposal_digest: string;
+            /** Format: uuid */
+            id: string;
+            access_method_revision: number;
+            /** Format: uuid */
+            resolution_run_id: string;
+            /** @enum {string} */
+            preflight_status: "cleared" | "blocked";
+            selectors: {
                 [key: string]: unknown;
             };
         };

@@ -80,7 +80,7 @@ defmodule Opsonde.Providers.AI.Validator do
          } = request
        )
        when is_list(source_evidence) and is_list(cited_evidence) and is_list(context_evidence) do
-    if is_list(request.target_relations) and
+    if is_list(request.conditions) and is_list(request.target_relations) and
          length(source_evidence) + length(cited_evidence) + length(context_evidence) +
            length(request.target_relations) <=
            @max_review_items and
@@ -99,7 +99,9 @@ defmodule Opsonde.Providers.AI.Validator do
         valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
         unique?(context_ids) and
         MapSet.disjoint?(MapSet.new(evidence_ids), MapSet.new(context_ids)) and
-        valid_review_proposal?(request.proposal, evidence_ids)
+        valid_review_proposal?(request.proposal, evidence_ids) and
+        Enum.all?(request.conditions, &valid_condition?/1) and
+        AI.valid_affected_conditions?(request.proposal, request.conditions)
     else
       false
     end
@@ -421,6 +423,7 @@ defmodule Opsonde.Providers.AI.Validator do
       objective: request.objective,
       policy_summary: request.policy_summary,
       proposal: plain_value(request.proposal),
+      conditions: Enum.map(request.conditions, &plain_value/1),
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
       cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
       context_evidence: Enum.map(request.context_evidence, &plain_value/1),
@@ -542,6 +545,7 @@ defmodule Opsonde.Providers.AI.Validator do
                proposal.parameters
              ) and
              exact_proposal?(proposal, tool) and
+             AI.valid_affected_conditions?(proposal, request.conditions) and
              valid_request_verification?(proposal, tool, request.observation_tools) and
              AI.valid_resolver_reason?(proposal.reason) and
              valid_request_evidence_ids?(proposal, evidence_ids) do

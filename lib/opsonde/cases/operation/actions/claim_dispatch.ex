@@ -39,8 +39,14 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     if incident.status == :running and not incident.cancel_requested and run.active and
          run.status == :running and run.generation == operation.case_generation do
       with {:ok, proposal} <- lock(Proposal, operation.proposal_id),
-           {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
-        if current? do
+           {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id),
+           {:ok, affected_current?} <-
+             ConditionContext.affected_current?(
+               incident,
+               proposal.request_kind,
+               proposal.affected_conditions
+             ) do
+        if current? and affected_current? do
           with {:ok, conflict} <- effect_conflict(operation, proposal) do
             claim_after_conflict(operation, incident, run, conflict)
           end

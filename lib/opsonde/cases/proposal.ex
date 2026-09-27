@@ -56,6 +56,7 @@ defmodule Opsonde.Cases.Proposal do
         :parameters,
         :reason,
         :evidence_ids,
+        :affected_conditions,
         :expected_result,
         :verification_intent,
         :verification_tool,
@@ -278,6 +279,13 @@ defmodule Opsonde.Cases.Proposal do
       allow_nil? false
       public? true
       constraints min_length: 0, max_length: 100
+    end
+
+    attribute :affected_conditions, {:array, :map} do
+      allow_nil? false
+      public? true
+      default []
+      constraints max_length: 100
     end
 
     attribute :expected_result, :map do

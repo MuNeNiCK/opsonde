@@ -368,7 +368,16 @@ defmodule Opsonde.ProposalMaterializationTest do
         {:ok, revisions} =
           Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
 
-        Map.put(result, "condition_revisions", revisions)
+        {:ok, conditions} = Opsonde.Cases.ResolverProjection.current_conditions(incident)
+
+        claims =
+          conditions
+          |> Enum.filter(&(&1.state == :firing))
+          |> Enum.map(&%{"condition_id" => &1.id, "revision" => &1.revision})
+
+        result
+        |> Map.put("condition_revisions", revisions)
+        |> put_in(["intent", "affected_conditions"], claims)
       else
         result
       end
@@ -544,6 +553,7 @@ defmodule Opsonde.ProposalMaterializationTest do
       "parameters" => %{"service" => "api"},
       "reason" => "Restart the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{"service" => "running"},
       "tool" => %{
         "request_kind" => "effect",

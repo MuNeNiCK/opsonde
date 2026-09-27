@@ -299,9 +299,42 @@ defmodule Opsonde.Providers.AI do
       :evidence_ids
     ]
 
-    defstruct @enforce_keys ++ [expected_result: %{}, verification_intent: nil]
+    defstruct @enforce_keys ++
+                [affected_conditions: [], expected_result: %{}, verification_intent: nil]
+
     @type t :: %__MODULE__{}
   end
+
+  def valid_affected_conditions?(%Proposal{} = proposal, conditions),
+    do:
+      valid_affected_conditions?(proposal.request_kind, proposal.affected_conditions, conditions)
+
+  def valid_affected_conditions?(:observation, [], _conditions),
+    do: true
+
+  def valid_affected_conditions?(:effect, [], []),
+    do: true
+
+  def valid_affected_conditions?(:effect, claims, conditions)
+      when is_list(claims) and claims != [] and is_list(conditions) do
+    ids = Enum.map(claims, &if(is_map(&1), do: &1["condition_id"]))
+    current = Map.new(conditions, &{&1.id, &1})
+
+    length(claims) <= length(conditions) and length(ids) == MapSet.size(MapSet.new(ids)) and
+      Enum.all?(claims, fn
+        %{"condition_id" => id, "revision" => revision} = claim
+        when is_binary(id) and is_integer(revision) and map_size(claim) == 2 ->
+          case Map.get(current, id) do
+            %Condition{revision: ^revision, state: :firing} -> true
+            _other -> false
+          end
+
+        _other ->
+          false
+      end)
+  end
+
+  def valid_affected_conditions?(_kind, _claims, _conditions), do: false
 
   defmodule RecoveryConclusion do
     @moduledoc false
@@ -460,6 +493,7 @@ defmodule Opsonde.Providers.AI do
 
     defstruct @enforce_keys ++
                 [
+                  conditions: [],
                   initial_target_id: nil,
                   target_relations: [],
                   context_evidence: [],

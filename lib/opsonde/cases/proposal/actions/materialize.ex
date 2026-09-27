@@ -42,6 +42,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     with :ok <- ensure_running(incident, run),
          :ok <- current_conditions(incident, turn.id),
          {:ok, proposal} <- proposal_data(turn),
+         :ok <- current_affected_conditions(incident, proposal.intent),
          {:ok, actor} <- current_actor(incident),
          :ok <-
            valid_evidence(
@@ -79,6 +80,18 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     case ConditionContext.current?(incident, turn_id) do
       {:ok, true} -> :ok
       {:ok, false} -> {:error, "Completed Resolver Turn Conditions changed"}
+      {:error, _error} = error -> error
+    end
+  end
+
+  defp current_affected_conditions(incident, intent) do
+    case ConditionContext.affected_current?(
+           incident,
+           request_kind(intent),
+           intent["affected_conditions"]
+         ) do
+      {:ok, true} -> :ok
+      {:ok, false} -> {:error, "Proposal affected Conditions changed"}
       {:error, _error} = error -> error
     end
   end
@@ -131,6 +144,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       positive?(intent["target_revision"]) and
       positive?(intent["access_method_revision"]) and
       is_map(intent["selectors"]) and is_map(intent["parameters"]) and
+      is_list(intent["affected_conditions"]) and
       request_kind(intent) in [:observation, :effect] and
       exact_request_tool?(intent, request_tool) and
       valid_verification?(request_kind(intent), intent, verification_intent, verification_tool)
@@ -300,6 +314,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       parameters: intent["parameters"],
       reason: intent["reason"],
       evidence_ids: intent["evidence_ids"],
+      affected_conditions: intent["affected_conditions"],
       expected_result: intent["expected_result"],
       verification_intent: proposal.verification_intent,
       verification_tool: proposal.verification_tool,

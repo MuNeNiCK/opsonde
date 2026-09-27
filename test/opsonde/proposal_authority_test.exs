@@ -445,6 +445,14 @@ defmodule Opsonde.ProposalAuthorityTest do
         assert request.report_language == :ja
         refute request.session_id == request.resolver_session_id
         assert request.proposal.tool_id == proposal.tool_id
+        assert request.proposal.affected_conditions == proposal.affected_conditions
+
+        assert [%{"condition_id" => condition_id, "revision" => revision}] =
+                 request.proposal.affected_conditions
+
+        assert [%AI.Condition{id: ^condition_id, revision: ^revision, state: :firing}] =
+                 request.conditions
+
         assert request.initial_target_id == initial_target.id
         assert [%AI.TargetRelation{id: relation_id}] = request.target_relations
         assert relation_id == relation.id
@@ -1607,6 +1615,20 @@ defmodule Opsonde.ProposalAuthorityTest do
       end)
 
     intent = proposal_intent(evidence.id, context, request_kind)
+
+    intent =
+      if incident.trigger_kind == :signal and request_kind == :effect do
+        {:ok, conditions} = Opsonde.Cases.ResolverProjection.current_conditions(incident)
+
+        Map.put(
+          intent,
+          "affected_conditions",
+          Enum.map(conditions, &%{"condition_id" => &1.id, "revision" => &1.revision})
+        )
+      else
+        intent
+      end
+
     intent = if is_binary(reason), do: Map.put(intent, "reason", reason), else: intent
 
     result =
@@ -1675,6 +1697,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       "parameters" => %{"service" => "api"},
       "reason" => "Restart the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{"service" => "running"},
       "tool" => tool,
       "verification_intent" => %{
@@ -1725,6 +1748,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       "parameters" => %{"service" => "api"},
       "reason" => "Inspect the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{},
       "tool" => tool,
       "verification_intent" => %{},

@@ -211,6 +211,7 @@ defmodule Opsonde.AI.ReqLLMTest do
           "type" => "proposal",
           "action" => Map.take(decision, ~w(tool_id selectors parameters)),
           "evidence_ids" => decision["evidence_ids"],
+          "affected_conditions" => decision["affected_conditions"],
           "expected_result_json" => Jason.encode!(decision["expected_result"]),
           "verification" =>
             verification
@@ -1253,6 +1254,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "selectors" => %{"service" => "api"},
       "parameters" => %{"grace_seconds" => 5},
       "evidence_ids" => ["evidence-1"],
+      "affected_conditions" => [],
       "expected_result" => %{"status" => "running"},
       "verification" => %{
         "tool_id" => "observe-tool",

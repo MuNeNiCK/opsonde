@@ -19,6 +19,49 @@ defmodule Opsonde.Providers.AITest do
     %{admin: admin, operator: operator, provider: provider}
   end
 
+  test "an effect on a firing Condition survives a recovered peer but stale or foreign claims do not" do
+    conditions = [
+      %AI.Condition{
+        id: "linux-condition",
+        revision: 4,
+        occurrence: 1,
+        predicate: "Linux endpoint unavailable",
+        subject_key: "linux",
+        subject_ref: %{},
+        state: :recovered,
+        target_id: "linux-target",
+        current_occurred_at_us: 10
+      },
+      %AI.Condition{
+        id: "kubernetes-condition",
+        revision: 7,
+        occurrence: 1,
+        predicate: "Deployment unavailable",
+        subject_key: "deployment",
+        subject_ref: %{},
+        state: :firing,
+        target_id: "kubernetes-target",
+        current_occurred_at_us: 20
+      }
+    ]
+
+    claim = %{"condition_id" => "kubernetes-condition", "revision" => 7}
+    assert AI.valid_affected_conditions?(:effect, [claim], conditions)
+    refute AI.valid_affected_conditions?(:effect, [], conditions)
+    refute AI.valid_affected_conditions?(:effect, [claim, claim], conditions)
+    refute AI.valid_affected_conditions?(:effect, [%{claim | "revision" => 6}], conditions)
+
+    for id <- ["linux-condition", "foreign-condition"] do
+      refute AI.valid_affected_conditions?(
+               :effect,
+               [%{"condition_id" => id, "revision" => 4}],
+               conditions
+             )
+    end
+
+    refute AI.valid_affected_conditions?(:observation, [claim], conditions)
+  end
+
   test "Condition group hints never invent, overlap, or silently omit a Condition" do
     conditions = Enum.map(~w(a b c d), &%{id: &1})
     evidence = [%{id: "observed-switch"}]

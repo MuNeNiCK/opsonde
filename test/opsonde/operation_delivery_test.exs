@@ -1807,7 +1807,14 @@ defmodule Opsonde.OperationDeliveryTest do
         reassessment.revision,
         %{
           "outcome" => "decision",
-          "intent" => signal_proposal_intent(source.id, context),
+          "intent" =>
+            Map.put(
+              signal_proposal_intent(source.id, context),
+              "affected_conditions",
+              Enum.map(revisions, fn %{"id" => id, "revision" => revision} ->
+                %{"condition_id" => id, "revision" => revision}
+              end)
+            ),
           "condition_revisions" => revisions,
           "resolver" => %{
             "provider_id" => context.resolver_provider.id,
@@ -2093,7 +2100,18 @@ defmodule Opsonde.OperationDeliveryTest do
     result =
       if trigger_kind == :signal do
         {:ok, revisions} = Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
-        Map.put(result, "condition_revisions", revisions)
+        result = Map.put(result, "condition_revisions", revisions)
+
+        if request_kind == :effect do
+          claims =
+            Enum.map(revisions, fn %{"id" => id, "revision" => revision} ->
+              %{"condition_id" => id, "revision" => revision}
+            end)
+
+          put_in(result, ["intent", "affected_conditions"], claims)
+        else
+          result
+        end
       else
         result
       end
@@ -2171,6 +2189,7 @@ defmodule Opsonde.OperationDeliveryTest do
       "parameters" => %{"service" => service},
       "reason" => "Restart the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{"service" => "running"},
       "tool" => tool,
       "verification_intent" => %{
@@ -2223,6 +2242,7 @@ defmodule Opsonde.OperationDeliveryTest do
       "parameters" => %{"service" => service},
       "reason" => "Inspect the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{},
       "tool" => tool,
       "verification_intent" => %{},

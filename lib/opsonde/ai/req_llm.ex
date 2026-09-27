@@ -355,7 +355,9 @@ defmodule Opsonde.AI.ReqLLM do
         "observation solely because an older fact differs. A proposal may be an observation or an effect; " <>
         "every Target request is reviewed after you return it. Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
-        "condition is already resolved. A proposal's verification must use an observation " <>
+        "condition is already resolved. For a Signal Case, put the exact ID and revision of " <>
+        "each still-firing Condition addressed by an effect in affected_conditions. " <>
+        "Observation requests leave that list empty. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
         "tool's verification_schema in the user payload. Base every intent only on supplied " <>
@@ -428,6 +430,7 @@ defmodule Opsonde.AI.ReqLLM do
         "target_revision_current" => true
       },
       "proposal" => plain(request.proposal),
+      "current_conditions" => plain(request.conditions),
       "source_evidence" => plain(request.source_evidence),
       "cited_evidence" => plain(request.cited_evidence),
       "recent_case_evidence" => plain(request.context_evidence),
@@ -456,7 +459,12 @@ defmodule Opsonde.AI.ReqLLM do
         "Method's capability set from cited evidence or prior observations, and do not reject " <>
         "a proposal by comparing its capability with a different operation. Review whether the " <>
         "exact proposal is justified by the supplied evidence, permitted by the policy summary, " <>
-        "proportional to the unresolved condition, and acceptably safe. Use needs_human only " <>
+        "proportional to its explicitly affected current Conditions, and acceptably safe. " <>
+        "The initial Case title is historical context, not the only fault in this Case. " <>
+        "A recovered Condition does not negate a different still-firing Condition. " <>
+        "The affected Condition claim identifies scope but is not evidence of causation; " <>
+        "judge whether the cited observation supports this exact effect on the proposed Target. " <>
+        "Use needs_human only " <>
         "when a concrete ambiguity in the supplied evidence or policy prevents a decision, and " <>
         "identify that ambiguity. If retry_context says invalid_output, a previous metered " <>
         "response failed format or schema validation; reconsider the evidence and return one complete " <>
@@ -540,6 +548,7 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, parameters} <- map(action, "parameters"),
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
+         claims when is_list(claims) <- Map.get(value, "affected_conditions", []),
          {:ok, expected_result, verification} <- request_verification(value, tool, request) do
       {:ok,
        %AI.Proposal{
@@ -555,6 +564,7 @@ defmodule Opsonde.AI.ReqLLM do
          parameters: parameters,
          reason: reason,
          evidence_ids: evidence_ids,
+         affected_conditions: claims,
          expected_result: expected_result,
          verification_intent: verification
        }}
@@ -1219,20 +1229,43 @@ defmodule Opsonde.AI.ReqLLM do
 
     observation_evidence_ids = available_evidence_ids(request)
     effect_evidence_ids = AI.proposal_evidence_ids(request)
+    firing_conditions = Enum.filter(request.conditions, &(&1.state == :firing))
+
+    affected_conditions_schema =
+      if firing_conditions == [] do
+        %{"type" => "array", "maxItems" => 0}
+      else
+        %{
+          "type" => "array",
+          "minItems" => 1,
+          "maxItems" => length(firing_conditions),
+          "items" =>
+            object_schema(
+              %{
+                "condition_id" => enum_schema(Enum.map(firing_conditions, & &1.id)),
+                "revision" => %{"type" => "integer", "minimum" => 1}
+              },
+              ~w(condition_id revision)
+            )
+        }
+      end
 
     observation_schema =
       if observation_variants != [] do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => observation_variants},
-          "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0)
+          "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),
+          "affected_conditions" => %{"type" => "array", "maxItems" => 0}
         })
       end
 
     effect_schema =
-      if effect_variants != [] and verification_variants != [] and effect_evidence_ids != [] do
+      if effect_variants != [] and verification_variants != [] and effect_evidence_ids != [] and
+           (request.conditions == [] or firing_conditions != []) do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
+          "affected_conditions" => affected_conditions_schema,
           "expected_result_json" => json_object_string_schema(),
           "verification" => %{"anyOf" => verification_variants}
         })

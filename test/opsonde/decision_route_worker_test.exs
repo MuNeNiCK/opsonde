@@ -208,6 +208,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       "parameters" => %{"service" => "api"},
       "reason" => "Restart the failed service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{"service" => "running"},
       "tool" => %{
         "request_kind" => "effect",

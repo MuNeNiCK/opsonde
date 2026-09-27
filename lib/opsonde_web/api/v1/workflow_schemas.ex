@@ -456,6 +456,16 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         parameters: map(),
         reason: string(1, 500),
         evidence_ids: array(Schemas.uuid(), 0, 100),
+        affected_conditions:
+          array(
+            object(
+              %{condition_id: Schemas.uuid(), revision: positive_integer()},
+              ~w(condition_id revision)a,
+              false
+            ),
+            0,
+            100
+          ),
         expected_result: map(),
         verification_intent: map(),
         verification_tool: map(),
@@ -467,7 +477,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind tool_id capability operation selectors parameters reason evidence_ids expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind tool_id capability operation selectors parameters reason evidence_ids affected_conditions expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
       false
     )
   end

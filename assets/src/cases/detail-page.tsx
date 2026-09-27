@@ -594,6 +594,7 @@ export function CaseDetailPage() {
               </h2>
               <ProposalCard
                 proposal={awaitingProposal}
+                conditions={detail.snapshot.conditions}
                 target={targetName(awaitingProposal.target_id)}
                 method={methodName(awaitingProposal.access_method_id)}
                 provider={providerName(awaitingProposal.provider_id)}

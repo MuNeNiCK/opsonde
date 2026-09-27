@@ -274,6 +274,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       parameters: proposal.parameters,
       reason: proposal.reason,
       evidence_ids: proposal.evidence_ids,
+      affected_conditions: proposal.affected_conditions,
       expected_result: proposal.expected_result,
       verification_intent: proposal.verification_intent,
       verification_tool: proposal.verification_tool,

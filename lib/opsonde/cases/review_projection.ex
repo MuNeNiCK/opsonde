@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.ReviewerEvidence
+  alias Opsonde.Cases.{ConditionContext, ResolverProjection, ReviewerEvidence}
   alias Opsonde.Providers.AI
 
   def build(proposal_id, selection, retry_context \\ nil)
@@ -12,6 +12,14 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
+         {:ok, conditions} <- ResolverProjection.current_conditions(incident),
+         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
+         {:ok, true} <-
+           ConditionContext.affected_current?(
+             incident,
+             proposal.request_kind,
+             proposal.affected_conditions
+           ),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
          {:ok, context_evidence} <-
@@ -26,6 +34,7 @@ defmodule Opsonde.Cases.ReviewProjection do
         report_language: incident.report_language,
         policy_summary: policy_summary(proposal),
         proposal: review_proposal(proposal),
+        conditions: conditions,
         source_evidence: source_evidence,
         cited_evidence: evidence,
         context_evidence: context_evidence,
@@ -184,6 +193,7 @@ defmodule Opsonde.Cases.ReviewProjection do
       parameters: proposal.parameters,
       reason: proposal.reason,
       evidence_ids: proposal.evidence_ids,
+      affected_conditions: proposal.affected_conditions,
       expected_result: proposal.expected_result,
       verification_intent: verification_intent(proposal)
     }

@@ -80,7 +80,13 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
               proposal.authority_mode == run.authority_mode and
               DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt) ||
              {:error, "Authorized Proposal is stale"},
-         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
+         {:ok, true} <-
+           ConditionContext.affected_current?(
+             incident,
+             proposal.request_kind,
+             proposal.affected_conditions
+           ) do
       :ok
     else
       {:ok, false} ->

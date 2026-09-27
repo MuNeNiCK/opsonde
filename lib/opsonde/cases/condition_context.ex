@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.ConditionContext do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.ResolverProjection
+  alias Opsonde.Providers.AI
 
   # The completed Resolver Turn owns the Conditions considered when it made a
   # decision. An authorization based on that Turn must still see exactly those
@@ -17,4 +18,10 @@ defmodule Opsonde.Cases.ConditionContext do
   end
 
   def current?(_incident, _source_turn_id), do: {:ok, true}
+
+  def affected_current?(incident, request_kind, claims) do
+    with {:ok, conditions} <- ResolverProjection.current_conditions(incident) do
+      {:ok, AI.valid_affected_conditions?(request_kind, claims, conditions)}
+    end
+  end
 end

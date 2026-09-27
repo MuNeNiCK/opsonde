@@ -4265,35 +4265,52 @@
       "Proposal": {
         "additionalProperties": false,
         "properties": {
-          "access_method_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "access_method_revision": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "authority_mode": {
-            "enum": [
-              "readonly",
-              "ask",
-              "auto",
-              "full_access"
-            ],
-            "type": "string"
-          },
-          "capability": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
-          },
-          "case_generation": {
-            "minimum": 1,
-            "type": "integer"
-          },
           "case_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "affected_conditions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "condition_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "condition_id",
+                "revision"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 0,
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
           },
           "evidence_ids": {
             "items": {
@@ -4304,86 +4321,9 @@
             "minItems": 0,
             "type": "array"
           },
-          "expected_result": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "inserted_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "operation": {
-            "maxLength": 120,
+          "tool_id": {
+            "maxLength": 200,
             "minLength": 1,
-            "type": "string"
-          },
-          "parameters": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "preflight_reason": {
-            "maxLength": 500,
-            "nullable": true,
-            "type": "string"
-          },
-          "preflight_status": {
-            "enum": [
-              "cleared",
-              "blocked"
-            ],
-            "type": "string"
-          },
-          "proposal_digest": {
-            "maxLength": 64,
-            "minLength": 64,
-            "type": "string"
-          },
-          "proposed_for_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "provider_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "provider_revision": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "reason": {
-            "maxLength": 500,
-            "minLength": 1,
-            "type": "string"
-          },
-          "request_kind": {
-            "enum": [
-              "observation",
-              "effect"
-            ],
-            "type": "string"
-          },
-          "resolution_run_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "revision": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "selectors": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "source_turn_id": {
-            "format": "uuid",
             "type": "string"
           },
           "status": {
@@ -4399,28 +4339,111 @@
             ],
             "type": "string"
           },
-          "target_id": {
+          "access_method_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "preflight_reason": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "expected_result": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "request_kind": {
+            "enum": [
+              "observation",
+              "effect"
+            ],
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object"
           },
           "target_revision": {
             "minimum": 1,
             "type": "integer"
           },
-          "tool_id": {
-            "maxLength": 200,
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 500,
             "minLength": 1,
             "type": "string"
           },
-          "updated_at": {
-            "format": "date-time",
+          "source_turn_id": {
+            "format": "uuid",
             "type": "string"
           },
           "verification_intent": {
             "additionalProperties": true,
             "type": "object"
           },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "proposed_for_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
           "verification_tool": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "proposal_digest": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "access_method_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "preflight_status": {
+            "enum": [
+              "cleared",
+              "blocked"
+            ],
+            "type": "string"
+          },
+          "selectors": {
             "additionalProperties": true,
             "type": "object"
           }
@@ -4448,6 +4471,7 @@
           "parameters",
           "reason",
           "evidence_ids",
+          "affected_conditions",
           "expected_result",
           "verification_intent",
           "verification_tool",

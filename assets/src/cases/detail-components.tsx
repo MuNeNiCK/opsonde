@@ -18,6 +18,7 @@ type Proposal = components["schemas"]["Proposal"];
 
 export function ProposalCard({
   proposal,
+  conditions,
   target,
   method,
   provider,
@@ -26,6 +27,7 @@ export function ProposalCard({
   decide,
 }: {
   proposal: Proposal;
+  conditions: CaseSnapshot["conditions"];
   target: string;
   method: string;
   provider: string;
@@ -60,6 +62,25 @@ export function ProposalCard({
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm">{proposal.reason}</p>
+        {proposal.affected_conditions.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{t("cases.conditionsTitle")}</p>
+            {proposal.affected_conditions.map((claim) => {
+              const condition = conditions.find((item) => item.id === claim.condition_id);
+              return (
+                <div key={claim.condition_id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span>{condition?.predicate ?? claim.condition_id}</span>
+                  <Badge variant={condition?.state === "firing" ? "destructive" : "outline"}>
+                    {condition ? t(`cases.alert.${condition.state}`) : claim.condition_id}
+                  </Badge>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {claim.condition_id} · r{claim.revision}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div
           className={
             proposal.request_kind === "effect" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4"

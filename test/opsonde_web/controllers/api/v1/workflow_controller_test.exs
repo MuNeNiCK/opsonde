@@ -1027,6 +1027,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       "parameters" => %{"service" => "api"},
       "reason" => "Restart the unhealthy API service",
       "evidence_ids" => [evidence_id],
+      "affected_conditions" => [],
       "expected_result" => %{"service" => "running"},
       "tool" => tool,
       "verification_intent" => %{
