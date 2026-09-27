@@ -1408,6 +1408,25 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  test "a partial manual Target effect cannot close the Case without observed symptom recovery",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("manual-partial-effect", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :partial}})
+             )
+
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :partial
+    assert Cases.get_case!(incident.id, authorize?: false).status != :resolved
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.event_type == "case_resolved")
+           )
+  end
+
   test "a second effect rejected before send does not stale source recovery", context do
     enable_signal_automation!(context.admin)
 
