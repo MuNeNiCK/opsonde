@@ -77,6 +77,10 @@ defmodule Opsonde.Cases do
         action: :reconcile_verified_effect,
         args: [:id, :verification_attempt_id]
 
+      define :reconcile_observation_recovery,
+        action: :reconcile_observation_recovery,
+        args: [:id, :observation_operation_id]
+
       define :require_case_attention,
         action: :require_attention,
         args: [

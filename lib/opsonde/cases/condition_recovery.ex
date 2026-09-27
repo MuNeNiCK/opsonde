@@ -4,6 +4,9 @@ defmodule Opsonde.Cases.ConditionRecovery do
   alias Opsonde.{Cases, Signals, Targets}
 
   @max_evidence 256
+  @monitor_wait_seconds 30
+
+  def monitor_wait_seconds, do: @monitor_wait_seconds
 
   def assess_current(incident) do
     with {:ok, baseline} <- baseline_for_case(incident) do

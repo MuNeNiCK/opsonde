@@ -262,6 +262,14 @@ defmodule Opsonde.Cases.Case do
       run Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
     end
 
+    action :reconcile_observation_recovery, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :observation_operation_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.ObservationRecoveryReconcile
+    end
+
     action :require_attention, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -443,6 +451,7 @@ defmodule Opsonde.Cases.Case do
              :update_record,
              :require_attention,
              :reconcile_verified_effect,
+             :reconcile_observation_recovery,
              :resume_after_target_registration,
              :route_target_discovery,
              :route_related_target,

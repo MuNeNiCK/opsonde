@@ -219,24 +219,38 @@ defmodule Opsonde.Cases.OperationDelivery do
          incident
        ) do
     with :ok <- available_pending(incident.pending_intent, operation),
-         {:ok, result} <-
-           Cases.start_turn(
-             operation.case_id,
-             operation.resolution_run_id,
-             "operation:observation:next-turn:#{operation.id}",
-             %{
-               "objective" => "Continue resolution with the reviewed Target observation",
-               "source" => "observation",
-               "source_turn_id" => proposal.source_turn_id,
-               "evidence_id" => evidence.id
-             },
-             %{"action" => "continue_resolution", "operation_id" => operation.id},
-             "Review Resolver limits or continue the Case manually",
-             authorize?: false
-           ) do
-      set_observation_pending(operation, proposal, evidence, incident, result)
+         {:ok, reconciled} <- maybe_reconcile_observation(operation, incident) do
+      if reconciled.status == :resolved do
+        :ok
+      else
+        with {:ok, result} <-
+               Cases.start_turn(
+                 operation.case_id,
+                 operation.resolution_run_id,
+                 "operation:observation:next-turn:#{operation.id}",
+                 %{
+                   "objective" => "Continue resolution with the reviewed Target observation",
+                   "source" => "observation",
+                   "source_turn_id" => proposal.source_turn_id,
+                   "evidence_id" => evidence.id
+                 },
+                 %{"action" => "continue_resolution", "operation_id" => operation.id},
+                 "Review Resolver limits or continue the Case manually",
+                 authorize?: false
+               ) do
+          set_observation_pending(operation, proposal, evidence, reconciled, result)
+        end
+      end
     end
   end
+
+  defp maybe_reconcile_observation(
+         %{status: :applied} = operation,
+         %{trigger_kind: :signal} = incident
+       ),
+       do: Cases.reconcile_observation_recovery(incident.id, operation.id, authorize?: false)
+
+  defp maybe_reconcile_observation(_operation, incident), do: {:ok, incident}
 
   defp set_observation_pending(_operation, _proposal, _evidence, _incident, %{status: :exhausted}),
        do: :ok

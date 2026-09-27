@@ -19,8 +19,6 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
   alias Opsonde.Cases.Case.Actions.RecoveryCompletion
   alias Opsonde.Cases.Case.Actions.SplitConditions
 
-  @monitor_wait_seconds 30
-
   @impl true
   def run(input, _opts, _context) do
     Ash.transact([Case, ResolutionRun, Evidence, CaseEvent, Turn], fn ->
@@ -82,7 +80,7 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
   defp wait_or_investigate(incident, run, attempt, evidence, assessments) do
     deadline =
       attempt.completed_at
-      |> DateTime.add(@monitor_wait_seconds, :second)
+      |> DateTime.add(ConditionRecovery.monitor_wait_seconds(), :second)
       |> min_datetime(run.deadline_at)
 
     if DateTime.compare(DateTime.utc_now(), deadline) in [:eq, :gt] do
