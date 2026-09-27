@@ -22,8 +22,13 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"turn_id" => turn_id}}) when is_binary(turn_id) do
     case route(turn_id) do
-      {:ok, _result} -> :ok
-      {:error, error} -> require_attention(turn_id, error)
+      {:ok, _result} ->
+        :ok
+
+      {:error, error} ->
+        if rejected_target_selection?(turn_id, error),
+          do: reconsider_target_selection(turn_id),
+          else: require_attention(turn_id, error)
     end
   end
 
@@ -72,7 +77,7 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
         with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
           case current_conditions?(incident, turn) do
             {:ok, true} -> route_case_split(incident, turn)
-            {:ok, false} -> split_continuation(turn, &supersede_stale_route/1)
+            {:ok, false} -> locked_continuation(turn, &supersede_stale_route/1)
             {:error, _error} = error -> error
           end
         end
@@ -80,7 +85,7 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
     end
   end
 
-  defp split_continuation(turn, continuation) do
+  defp locked_continuation(turn, continuation) do
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
       with :ok <- CaseAdmissionLock.acquire() do
         continuation.(turn)
@@ -144,7 +149,7 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
 
       {:error, error} ->
         if rejected_split?(error),
-          do: split_continuation(turn, &continue_after_rejected_split/1),
+          do: locked_continuation(turn, &continue_after_rejected_split/1),
           else: {:error, error}
     end
   end
@@ -173,6 +178,59 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
              },
              intent,
              "Continue investigation with current Target observations",
+             authorize?: false
+           ),
+         {:ok, _pending} <- set_retry_pending(started, turn.id) do
+      {:ok, started}
+    end
+  end
+
+  defp rejected_target_selection?(turn_id, error) do
+    if candidate_citation_rejected?(error) do
+      case Cases.get_turn(turn_id, authorize?: false) do
+        {:ok, turn} -> decision_type(turn) == {:ok, "target_selection"}
+        _unavailable -> false
+      end
+    else
+      false
+    end
+  end
+
+  defp candidate_citation_rejected?(%Ash.Error.Unknown{errors: errors}),
+    do: Enum.any?(errors, &candidate_citation_rejected?/1)
+
+  defp candidate_citation_rejected?(%Ash.Error.Unknown.UnknownError{
+         error: "Target was not offered by the cited candidate evidence"
+       }),
+       do: true
+
+  defp candidate_citation_rejected?(_error), do: false
+
+  defp reconsider_target_selection(turn_id) do
+    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
+      case locked_continuation(turn, &continue_after_rejected_target_selection/1) do
+        {:ok, _result} -> :ok
+        {:error, error} -> require_attention(turn_id, error)
+      end
+    end
+  end
+
+  defp continue_after_rejected_target_selection(turn) do
+    intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
+
+    with {:ok, started} <-
+           Cases.start_turn(
+             turn.case_id,
+             turn.resolution_run_id,
+             "resolver:target-selection-rejected:#{turn.id}",
+             %{
+               "objective" => "Select a current Target with supporting candidate evidence",
+               "source" => "resolver_target_selection_rejected",
+               "rejection_code" => "candidate_citation_changed",
+               "source_turn_id" => turn.id
+             },
+             intent,
+             "Review Resolver limits",
              authorize?: false
            ),
          {:ok, _pending} <- set_retry_pending(started, turn.id) do

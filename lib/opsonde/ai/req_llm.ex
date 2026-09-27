@@ -464,6 +464,9 @@ defmodule Opsonde.AI.ReqLLM do
         "For target_selection, return the candidate_ref from exactly one supplied " <>
         "target_candidates entry. Choose it using that entry's Target facts and " <>
         "supporting_evidence_ids; explain why the evidence supports investigating that Target. " <>
+        "If turn_intent.source is resolver_target_selection_rejected, the prior citation was " <>
+        "not a current candidate for that Target. Reconsider the current target_candidates " <>
+        "or search again; do not repeat the rejected citation. " <>
         "When condition_groups is offered, describe tentative related, independent, or unknown " <>
         "Condition groups using only supplied Condition IDs and Evidence IDs. Groups must not " <>
         "overlap. Graph proximity and timing alone mean unknown; cite observations when asserting " <>

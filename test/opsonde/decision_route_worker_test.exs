@@ -129,6 +129,41 @@ defmodule Opsonde.DecisionRouteWorkerTest do
     assert Cases.list_evidence!(actor: context.admin) == []
   end
 
+  test "rejected Target selection is re-evaluated with current candidates", context do
+    {incident, run} = open_case!("selection-rejected", context.operator)
+    unrelated = evidence!(incident, run, "selection-rejected")
+
+    turn =
+      completed_turn!(incident, run, "selection-rejected", %{
+        "type" => "target_selection",
+        "target_id" => context.target.id,
+        "target_revision" => context.target.revision,
+        "evidence_ids" => [unrelated.id],
+        "reason" => "The observation shows the Target"
+      })
+
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+
+    refreshed = Cases.get_case!(incident.id, authorize?: false)
+    assert refreshed.status == :running
+    assert refreshed.selected_target_id == nil
+    assert refreshed.pending_intent["action"] == "resolve_turn"
+    assert refreshed.pending_intent["source_turn_id"] == turn.id
+
+    assert [next_turn] =
+             Cases.list_turns!(actor: context.admin)
+             |> Enum.filter(&(&1.case_id == incident.id and &1.id != turn.id))
+
+    assert next_turn.intent["source"] == "resolver_target_selection_rejected"
+    assert next_turn.intent["rejection_code"] == "candidate_citation_changed"
+    assert next_turn.status == :started
+
+    assert Cases.list_case_events!(actor: context.admin)
+           |> Enum.count(&(&1.event_type == "case_target_selected")) == 0
+  end
+
   defp open_case!(source_ref, actor) do
     incident =
       Cases.open_case!(
