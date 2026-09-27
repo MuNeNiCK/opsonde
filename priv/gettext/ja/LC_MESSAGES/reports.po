@@ -28,8 +28,8 @@ msgstr "対応が必要"
 msgid "Not established"
 msgstr "未確認"
 
-msgid "Observed condition"
-msgstr "確認された状態"
+msgid "Monitored conditions"
+msgstr "監視された事象"
 
 msgid "Opened at"
 msgstr "受付日時"
@@ -52,11 +52,14 @@ msgstr "解決試行"
 msgid "Resolved"
 msgstr "解決済み"
 
-msgid "Recovery verification"
-msgstr "復旧確認"
+msgid "Target verification"
+msgstr "対象操作の検証"
 
-msgid "Post-action observation"
-msgstr "変更後の観測結果"
+msgid "Cited evidence"
+msgstr "判断に引用した証拠"
+
+msgid "Recovery reviews"
+msgstr "復旧判断の審査"
 
 msgid "Source"
 msgstr "発生元"

@@ -32,6 +32,33 @@
             "nullable": true,
             "type": "string"
           },
+          "review_evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "review_provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "review_reason": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string"
+          },
+          "review_source_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "review_verdict": {
+            "maxLength": 80,
+            "nullable": true,
+            "type": "string"
+          },
           "type": {
             "maxLength": 80,
             "minLength": 1,
@@ -45,6 +72,11 @@
           "actor_id",
           "type",
           "related_case_id",
+          "review_verdict",
+          "review_reason",
+          "review_source_turn_id",
+          "review_provider_id",
+          "review_evidence_ids",
           "inserted_at"
         ],
         "type": "object"
@@ -3177,11 +3209,11 @@
           },
           "recovery_status": {
             "enum": [
-              "healthy",
+              "ready_for_review",
               "firing",
               "stale_source",
               "unmapped_target",
-              "missing_subject_proof",
+              "needs_observation",
               "target_changed",
               "unknown"
             ],
@@ -3665,6 +3697,37 @@
             "minimum": 1,
             "type": "integer"
           },
+          "cited_evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "facts": {
+                  "maxLength": 10000,
+                  "nullable": true,
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "observed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "observed_at",
+                "facts"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "conclusion": {
             "maxLength": 10000,
             "nullable": true,
@@ -3675,23 +3738,63 @@
             "nullable": true,
             "type": "string"
           },
-          "condition": {
-            "additionalProperties": false,
-            "nullable": true,
-            "properties": {
-              "evidence_id": {
-                "format": "uuid",
-                "type": "string"
+          "conditions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assessment": {
+                  "maxLength": 10000,
+                  "nullable": true,
+                  "type": "string"
+                },
+                "evidence_facts": {
+                  "maxLength": 10000,
+                  "nullable": true,
+                  "type": "string"
+                },
+                "evidence_id": {
+                  "format": "uuid",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "predicate": {
+                  "type": "string"
+                },
+                "source_evidence_id": {
+                  "format": "uuid",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "source_state": {
+                  "type": "string"
+                },
+                "symptom": {
+                  "type": "string"
+                },
+                "target_id": {
+                  "format": "uuid",
+                  "nullable": true,
+                  "type": "string"
+                }
               },
-              "text": {
-                "type": "string"
-              }
+              "required": [
+                "id",
+                "target_id",
+                "predicate",
+                "source_state",
+                "symptom",
+                "source_evidence_id",
+                "assessment",
+                "evidence_id",
+                "evidence_facts"
+              ],
+              "type": "object"
             },
-            "required": [
-              "text",
-              "evidence_id"
-            ],
-            "type": "object"
+            "type": "array"
           },
           "digest": {
             "maxLength": 64,
@@ -3709,28 +3812,59 @@
           "outcome": {
             "type": "string"
           },
-          "recovery_observation": {
-            "additionalProperties": false,
-            "nullable": true,
-            "properties": {
-              "evidence_id": {
-                "format": "uuid",
-                "type": "string"
+          "recovery_reviews": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "inserted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "provider_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "reason": {
+                  "maxLength": 1000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_turn_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "verdict": {
+                  "enum": [
+                    "approved",
+                    "rejected",
+                    "needs_human"
+                  ],
+                  "type": "string"
+                }
               },
-              "facts": {
-                "type": "string"
-              },
-              "observed_at": {
-                "format": "date-time",
-                "type": "string"
-              }
+              "required": [
+                "id",
+                "source_turn_id",
+                "verdict",
+                "reason",
+                "evidence_ids",
+                "provider_id",
+                "inserted_at"
+              ],
+              "type": "object"
             },
-            "required": [
-              "evidence_id",
-              "facts",
-              "observed_at"
-            ],
-            "type": "object"
+            "type": "array"
           },
           "required_human_input": {
             "maxLength": 10000,
@@ -3810,12 +3944,13 @@
           "source",
           "source_ref",
           "severity",
-          "condition",
+          "conditions",
           "actions",
           "verifications",
-          "recovery_observation",
+          "cited_evidence",
           "conclusion",
           "conclusion_turn_id",
+          "recovery_reviews",
           "stop_reason",
           "required_human_input",
           "case_id",

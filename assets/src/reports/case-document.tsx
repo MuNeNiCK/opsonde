@@ -16,17 +16,22 @@ const copy = {
     target: "対象 ID",
     source: "検知元",
     severity: "重要度",
-    condition: "確認された状態",
+    condition: "監視された事象",
     actions: "実施した操作",
-    verification: "復旧確認",
+    verification: "対象操作の検証",
+    cited: "判断に引用した証拠",
     assessment: "Resolver の判断",
+    reviewer: "Reviewer の判定",
+    reviewApproved: "承認",
+    reviewRejected: "否認",
+    reviewNeedsHuman: "確認が必要",
     outstanding: "残る事項",
     evidence: "証拠",
     observed: "観測",
     record: "記録",
-    noCondition: "確認された状態の記録はありません。",
+    noCondition: "監視された事象はありません。",
     noActions: "実施した操作の記録はありません。",
-    noVerification: "復旧確認の記録はありません。",
+    noVerification: "対象操作の検証記録はありません。",
     noAssessment: "判断の記録はありません。",
     noOutstanding: "未解決事項の記録はありません。確認範囲は上記の証拠を参照してください。",
     noDetail: "詳細の記録なし",
@@ -44,6 +49,8 @@ const copy = {
       unknown: "結果不明",
       verified: "確認済み",
       not_verified: "未確認",
+      firing: "障害継続",
+      recovered: "復旧通知済み",
     },
   },
   en: {
@@ -58,17 +65,22 @@ const copy = {
     target: "Target ID",
     source: "Source",
     severity: "Severity",
-    condition: "Observed condition",
+    condition: "Monitored conditions",
     actions: "Actions taken",
-    verification: "Recovery checks",
+    verification: "Target operation checks",
+    cited: "Evidence cited by Resolver",
     assessment: "Resolver assessment",
+    reviewer: "Reviewer decisions",
+    reviewApproved: "Approved",
+    reviewRejected: "Rejected",
+    reviewNeedsHuman: "Needs input",
     outstanding: "Outstanding items",
     evidence: "Evidence",
     observed: "Observed",
     record: "Record",
-    noCondition: "No confirmed condition was recorded.",
+    noCondition: "No monitoring condition was recorded.",
     noActions: "No actions were recorded.",
-    noVerification: "No recovery check was recorded.",
+    noVerification: "No Target operation check was recorded.",
     noAssessment: "No assessment was recorded.",
     noOutstanding:
       "No outstanding items were recorded. See the evidence above for the scope of verification.",
@@ -87,6 +99,8 @@ const copy = {
       unknown: "Unknown",
       verified: "Verified",
       not_verified: "Not verified",
+      firing: "Firing",
+      recovered: "Recovery reported",
     },
   },
 } as const;
@@ -173,11 +187,31 @@ export function CaseReportDocument({ report }: { report: Report }) {
             <span>01</span>
             {c.condition}
           </h2>
-          <p className="report-prose">{document.condition?.text ?? c.noCondition}</p>
-          {document.condition && (
-            <p className="report-ref">
-              {c.evidence} · {document.condition.evidence_id}
-            </p>
+          {document.conditions.length ? (
+            <ol className="report-list">
+              {document.conditions.map((condition) => (
+                <li key={condition.id}>
+                  <div className="report-list-head">
+                    <strong>{condition.symptom}</strong>
+                    <span>{status(condition.source_state, locale)}</span>
+                  </div>
+                  {condition.source_evidence_id && (
+                    <small>
+                      {c.evidence} · {condition.source_evidence_id}
+                    </small>
+                  )}
+                  <p>{condition.assessment ?? c.noAssessment}</p>
+                  {condition.evidence_id && (
+                    <small>
+                      {c.cited} · {condition.evidence_id}
+                      {condition.evidence_facts ? ` · ${condition.evidence_facts}` : ""}
+                    </small>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="report-prose">{c.noCondition}</p>
           )}
         </section>
 
@@ -242,17 +276,6 @@ export function CaseReportDocument({ report }: { report: Report }) {
           ) : (
             <p className="report-prose">{c.noVerification}</p>
           )}
-          {document.recovery_observation && (
-            <div className="report-observation">
-              <strong>
-                {c.observed} · {date(document.recovery_observation.observed_at, locale)}
-              </strong>
-              <p>{document.recovery_observation.facts}</p>
-              <small>
-                {c.evidence} · {document.recovery_observation.evidence_id}
-              </small>
-            </div>
-          )}
         </section>
 
         <section className="report-section">
@@ -265,6 +288,44 @@ export function CaseReportDocument({ report }: { report: Report }) {
             <p className="report-ref">
               {c.record} · {document.conclusion_turn_id}
             </p>
+          )}
+          {document.cited_evidence.length > 0 && (
+            <div className="report-observation">
+              <strong>{c.cited}</strong>
+              <ul className="space-y-2">
+                {document.cited_evidence.map((item) => (
+                  <li key={item.id}>
+                    <span>{item.facts ?? c.noDetail}</span>
+                    <small className="block">
+                      {c.evidence} · {item.id}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {document.recovery_reviews.length > 0 && (
+            <div className="report-observation">
+              <strong>{c.reviewer}</strong>
+              <ul className="space-y-2">
+                {document.recovery_reviews.map((review) => (
+                  <li key={review.id}>
+                    <p>
+                      {review.verdict === "approved"
+                        ? c.reviewApproved
+                        : review.verdict === "rejected"
+                          ? c.reviewRejected
+                          : c.reviewNeedsHuman}
+                      {" · "}
+                      {review.reason}
+                    </p>
+                    <small className="block">
+                      {c.record} · {review.id} · {c.evidence} · {review.evidence_ids.join(", ")}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </section>
 

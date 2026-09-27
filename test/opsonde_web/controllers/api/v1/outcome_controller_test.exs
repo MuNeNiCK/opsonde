@@ -378,8 +378,8 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
              "data" => %{
                "document" => %{
                  "title" => "Resolved service incident",
-                 "condition" => nil,
-                 "recovery_observation" => nil,
+                 "conditions" => [],
+                 "cited_evidence" => [],
                  "text" => text
                }
              }

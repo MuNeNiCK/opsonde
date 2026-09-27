@@ -49,6 +49,19 @@ defmodule Opsonde.Reports.Report.Content do
 
   @event_fields [:id, :resolution_run_id, :actor_id, :event_type, :inserted_at]
 
+  @condition_fields [
+    :id,
+    :signal_correlation_id,
+    :target_id,
+    :predicate,
+    :subject_ref,
+    :state,
+    :occurrence,
+    :revision,
+    :first_fired_at,
+    :current_occurred_at
+  ]
+
   @turn_fields [
     :id,
     :resolution_run_id,
@@ -202,7 +215,11 @@ defmodule Opsonde.Reports.Report.Content do
       "labels" => labels(locale),
       "outcome_label" => outcome_label(locale, incident.status),
       "case" => plain(incident, @case_fields),
+      "conditions" => plain(Map.get(records, :conditions, []), @condition_fields),
       "timeline" => plain(records.events, @event_fields),
+      "resolution_turn_id" => resolution_turn_id(events),
+      "resolution_review_event_id" => resolution_review_event_id(events),
+      "recovery_reviews" => recovery_reviews(events),
       "target_path" =>
         events |> Enum.filter(&(&1.event_type in @target_events)) |> Enum.map(&target_event/1),
       "resolution_runs" => plain(records.runs, @run_fields),
@@ -220,6 +237,40 @@ defmodule Opsonde.Reports.Report.Content do
     }
   end
 
+  defp resolution_turn_id(events) do
+    events
+    |> Enum.find(&(&1.event_type == "case_resolved"))
+    |> case do
+      nil -> nil
+      event -> event.data["source_turn_id"]
+    end
+  end
+
+  defp resolution_review_event_id(events) do
+    events
+    |> Enum.find(&(&1.event_type == "case_resolved"))
+    |> case do
+      nil -> nil
+      event -> event.data["recovery_review_event_id"]
+    end
+  end
+
+  defp recovery_reviews(events) do
+    events
+    |> Enum.filter(&(&1.event_type == "recovery_review_decided"))
+    |> Enum.map(fn event ->
+      %{
+        "id" => event.id,
+        "source_turn_id" => event.data["source_turn_id"],
+        "verdict" => event.data["verdict"],
+        "reason" => event.data["reason"],
+        "evidence_ids" => event.data["evidence_ids"],
+        "provider_id" => event.data["provider_id"],
+        "inserted_at" => event.inserted_at
+      }
+    end)
+  end
+
   def digest(content) do
     content
     |> :erlang.term_to_binary([:deterministic])
@@ -231,6 +282,7 @@ defmodule Opsonde.Reports.Report.Content do
     Gettext.with_locale(Opsonde.Gettext, locale, fn ->
       %{
         "summary" => dgettext("reports", "Summary"),
+        "conditions" => dgettext("reports", "Monitored conditions"),
         "timeline" => dgettext("reports", "Timeline"),
         "target_path" => dgettext("reports", "Target path"),
         "resolution_runs" => dgettext("reports", "Resolution runs"),

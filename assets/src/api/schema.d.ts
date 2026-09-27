@@ -1450,6 +1450,13 @@ export interface components {
             related_case_id: string | null;
             /** Format: uuid */
             resolution_run_id: string | null;
+            review_evidence_ids: string[];
+            /** Format: uuid */
+            review_provider_id: string | null;
+            review_reason: string | null;
+            /** Format: uuid */
+            review_source_turn_id: string | null;
+            review_verdict: string | null;
             type: string;
         };
         AIService: {
@@ -2288,7 +2295,7 @@ export interface components {
             /** Format: uuid */
             recovery_evidence_id: string | null;
             /** @enum {string} */
-            recovery_status: "healthy" | "firing" | "stale_source" | "unmapped_target" | "missing_subject_proof" | "target_changed" | "unknown";
+            recovery_status: "ready_for_review" | "firing" | "stale_source" | "unmapped_target" | "needs_observation" | "target_changed" | "unknown";
             revision: number;
             /** Format: uuid */
             signal_correlation_id: string;
@@ -2417,27 +2424,52 @@ export interface components {
             /** Format: uuid */
             case_id: string;
             case_revision: number;
+            cited_evidence: {
+                facts: string | null;
+                /** Format: uuid */
+                id: string;
+                kind: string;
+                /** Format: date-time */
+                observed_at: string;
+            }[];
             conclusion: string | null;
             /** Format: uuid */
             conclusion_turn_id: string | null;
-            condition: {
+            conditions: {
+                assessment: string | null;
+                evidence_facts: string | null;
                 /** Format: uuid */
-                evidence_id: string;
-                text: string;
-            } | null;
+                evidence_id: string | null;
+                /** Format: uuid */
+                id: string;
+                predicate: string;
+                /** Format: uuid */
+                source_evidence_id: string | null;
+                source_state: string;
+                symptom: string;
+                /** Format: uuid */
+                target_id: string | null;
+            }[];
             digest: string;
             /** Format: date-time */
             finished_at: string;
             /** Format: date-time */
             opened_at: string;
             outcome: string;
-            recovery_observation: {
+            recovery_reviews: {
+                evidence_ids: string[];
                 /** Format: uuid */
-                evidence_id: string;
-                facts: string;
+                id: string;
                 /** Format: date-time */
-                observed_at: string;
-            } | null;
+                inserted_at: string;
+                /** Format: uuid */
+                provider_id: string;
+                reason: string;
+                /** Format: uuid */
+                source_turn_id: string;
+                /** @enum {string} */
+                verdict: "approved" | "rejected" | "needs_human";
+            }[];
             required_human_input: string | null;
             severity: string;
             source: string;

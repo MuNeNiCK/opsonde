@@ -2,11 +2,12 @@ defmodule Opsonde.Reports.Report.Actions.Generate do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Reports
+  alias Opsonde.{Cases, Reports, Signals}
 
   alias Opsonde.Cases.{
     Approval,
     Case,
+    CaseConditionMembership,
     CaseEvent,
     Evidence,
     Operation,
@@ -23,6 +24,8 @@ defmodule Opsonde.Reports.Report.Actions.Generate do
   @resources [
     Report,
     Case,
+    CaseConditionMembership,
+    Signals.Condition,
     ResolutionRun,
     CaseEvent,
     Turn,
@@ -108,7 +111,9 @@ defmodule Opsonde.Reports.Report.Actions.Generate do
        do: :ok
 
   defp records(case_id) do
-    with {:ok, runs} <- read(ResolutionRun, case_id, generation: :asc, id: :asc),
+    with {:ok, memberships} <- Cases.active_conditions_for_case(case_id, authorize?: false),
+         {:ok, conditions} <- conditions(memberships),
+         {:ok, runs} <- read(ResolutionRun, case_id, generation: :asc, id: :asc),
          {:ok, events} <- read(CaseEvent, case_id, inserted_at: :asc, id: :asc),
          {:ok, turns} <- read(Turn, case_id, started_at: :asc, id: :asc),
          {:ok, evidence} <- read(Evidence, case_id, observed_at: :asc, id: :asc),
@@ -120,6 +125,7 @@ defmodule Opsonde.Reports.Report.Actions.Generate do
            read(VerificationAttempt, case_id, accepted_at: :asc, id: :asc) do
       {:ok,
        %{
+         conditions: conditions,
          runs: runs,
          events: events,
          turns: turns,
@@ -130,6 +136,19 @@ defmodule Opsonde.Reports.Report.Actions.Generate do
          operations: operations,
          verifications: verifications
        }}
+    end
+  end
+
+  defp conditions(memberships) do
+    Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, items} ->
+      case Signals.get_condition(membership.condition_id, authorize?: false) do
+        {:ok, condition} -> {:cont, {:ok, [condition | items]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, conditions} -> {:ok, Enum.reverse(conditions)}
+      error -> error
     end
   end
 

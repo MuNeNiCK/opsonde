@@ -325,12 +325,16 @@ defmodule Opsonde.CaseReportTest do
     assert content["verifications"] |> hd() |> Map.fetch!("status") == "unknown"
   end
 
-  test "readable projection cites observation after the applied change", _context do
+  test "readable projection shows every monitored condition and only cited recovery facts",
+       _context do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
     later = DateTime.utc_now() |> DateTime.add(1, :second) |> DateTime.to_iso8601()
-    evidence_id = Ash.UUID.generate()
-    proposal_id = Ash.UUID.generate()
+    source_id = Ash.UUID.generate()
+    cited_id = Ash.UUID.generate()
+    uncited_id = Ash.UUID.generate()
+    condition_id = Ash.UUID.generate()
     turn_id = Ash.UUID.generate()
+    review_id = Ash.UUID.generate()
 
     report = %Report{
       case_id: Ash.UUID.generate(),
@@ -338,43 +342,107 @@ defmodule Opsonde.CaseReportTest do
       language: :en,
       content_digest: String.duplicate("a", 64),
       content: %{
-        "case" => %{"title" => "Service restored", "inserted_at" => now, "updated_at" => later},
+        "case" => %{
+          "title" => "Optical link incident",
+          "status" => "resolved",
+          "inserted_at" => now,
+          "updated_at" => later
+        },
         "outcome_label" => "Resolved",
+        "resolution_turn_id" => turn_id,
+        "resolution_review_event_id" => review_id,
+        "recovery_reviews" => [
+          %{
+            "id" => review_id,
+            "source_turn_id" => turn_id,
+            "verdict" => "approved",
+            "reason" => "The laser reading directly addresses the optical symptom",
+            "evidence_ids" => [cited_id],
+            "provider_id" => Ash.UUID.generate(),
+            "inserted_at" => later
+          }
+        ],
+        "conditions" => [
+          %{
+            "id" => condition_id,
+            "revision" => 2,
+            "predicate" => "VendorOpticalFault",
+            "state" => "recovered"
+          }
+        ],
         "resolver_turns" => [
           %{
             "id" => turn_id,
-            "decision" => %{"type" => "recovery_conclusion", "reason" => "Service is running"}
+            "decision" => %{
+              "type" => "recovery_conclusion",
+              "reason" => "The link is usable again",
+              "evidence_ids" => [cited_id],
+              "condition_claims" => [
+                %{
+                  "condition_id" => condition_id,
+                  "revision" => 2,
+                  "evidence_id" => cited_id,
+                  "reason" => "The optical reading is within the expected range"
+                }
+              ]
+            }
           }
         ],
-        "operations" => [
-          %{
-            "id" => Ash.UUID.generate(),
-            "proposal_id" => proposal_id,
-            "request_kind" => "effect",
-            "status" => "applied",
-            "completed_at" => now,
-            "operation" => "service.restart"
-          }
-        ],
-        "proposals" => [%{"id" => proposal_id, "evidence_ids" => []}],
+        "operations" => [],
+        "verifications" => [],
         "raw_evidence" => [
           %{
-            "id" => evidence_id,
+            "id" => source_id,
+            "kind" => "signal_event",
+            "source_ref" => "native-optical-event",
+            "observed_at" => now,
+            "content" => %{
+              "condition_id" => condition_id,
+              "state" => "firing",
+              "attributes" => %{
+                "title" => "Optical link fault",
+                "labels" => %{"vendor_fiber_lane" => "uplink-3"}
+              }
+            }
+          },
+          %{
+            "id" => cited_id,
             "kind" => "observation",
             "observed_at" => later,
-            "content" => %{"facts" => %{"active_state" => "active"}}
+            "content" => %{"facts" => %{"laser_bias_ma" => 1.9}}
+          },
+          %{
+            "id" => uncited_id,
+            "kind" => "observation",
+            "observed_at" => later,
+            "content" => %{"facts" => %{"unrelated_port" => "healthy"}}
           }
         ]
       }
     }
 
     document = Document.build(report)
-    assert document["recovery_observation"]["evidence_id"] == evidence_id
-    assert document["recovery_observation"]["facts"] == "active_state=active"
-    assert document["text"] =~ "Post-action observation: active_state=active"
-    assert document["text"] =~ evidence_id
+
+    assert [
+             %{
+               "id" => ^condition_id,
+               "source_evidence_id" => ^source_id,
+               "evidence_id" => ^cited_id
+             } = condition
+           ] = document["conditions"]
+
+    assert condition["symptom"] =~ "vendor_fiber_lane=uplink-3"
+    assert condition["evidence_facts"] == "laser_bias_ma=1.9"
+    assert Enum.map(document["cited_evidence"], & &1["id"]) == [cited_id]
+    refute document["text"] =~ uncited_id
+    refute document["text"] =~ "unrelated_port"
     assert document["conclusion_turn_id"] == turn_id
-    assert document["text"] =~ "Resolver assessment\nService is running"
+    assert document["recovery_reviews"] |> hd() |> Map.fetch!("id") == review_id
+
+    without_review =
+      %{report | content: Map.put(report.content, "resolution_review_event_id", nil)}
+
+    assert Document.build(without_review)["conclusion"] == nil
   end
 
   defp open!(source_ref, actor) do

@@ -240,6 +240,50 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         false
       )
 
+    condition =
+      object(
+        %{
+          id: Schemas.uuid(),
+          target_id: nullable_uuid(),
+          predicate: %Schema{type: :string},
+          source_state: %Schema{type: :string},
+          symptom: %Schema{type: :string},
+          source_evidence_id: nullable_uuid(),
+          assessment: nullable_string(10_000),
+          evidence_id: nullable_uuid(),
+          evidence_facts: nullable_string(10_000)
+        },
+        ~w(id target_id predicate source_state symptom source_evidence_id assessment evidence_id evidence_facts)a,
+        false
+      )
+
+    cited_evidence =
+      object(
+        %{
+          id: Schemas.uuid(),
+          kind: %Schema{type: :string},
+          observed_at: Schemas.timestamp(),
+          facts: nullable_string(10_000)
+        },
+        ~w(id kind observed_at facts)a,
+        false
+      )
+
+    recovery_review =
+      object(
+        %{
+          id: Schemas.uuid(),
+          source_turn_id: Schemas.uuid(),
+          verdict: enum(~w(approved rejected needs_human)),
+          reason: string(1, 1_000),
+          evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
+          provider_id: Schemas.uuid(),
+          inserted_at: Schemas.timestamp()
+        },
+        ~w(id source_turn_id verdict reason evidence_ids provider_id inserted_at)a,
+        false
+      )
+
     object(
       %{
         title: %Schema{type: :string},
@@ -250,28 +294,13 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         source: %Schema{type: :string},
         source_ref: %Schema{type: :string},
         severity: %Schema{type: :string},
-        condition: %Schema{
-          type: :object,
-          properties: %{text: %Schema{type: :string}, evidence_id: Schemas.uuid()},
-          required: [:text, :evidence_id],
-          additionalProperties: false,
-          nullable: true
-        },
+        conditions: %Schema{type: :array, items: condition},
         actions: %Schema{type: :array, items: action},
         verifications: %Schema{type: :array, items: verification},
-        recovery_observation: %Schema{
-          type: :object,
-          properties: %{
-            evidence_id: Schemas.uuid(),
-            facts: %Schema{type: :string},
-            observed_at: Schemas.timestamp()
-          },
-          required: ~w(evidence_id facts observed_at)a,
-          additionalProperties: false,
-          nullable: true
-        },
+        cited_evidence: %Schema{type: :array, items: cited_evidence},
         conclusion: nullable_string(10_000),
         conclusion_turn_id: nullable_uuid(),
+        recovery_reviews: %Schema{type: :array, items: recovery_review},
         stop_reason: nullable_string(10_000),
         required_human_input: nullable_string(10_000),
         case_id: Schemas.uuid(),
@@ -279,7 +308,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         digest: digest(),
         text: %Schema{type: :string}
       },
-      ~w(title outcome opened_at finished_at target_id source source_ref severity condition actions verifications recovery_observation conclusion conclusion_turn_id stop_reason required_human_input case_id case_revision digest text)a,
+      ~w(title outcome opened_at finished_at target_id source source_ref severity conditions actions verifications cited_evidence conclusion conclusion_turn_id recovery_reviews stop_reason required_human_input case_id case_revision digest text)a,
       false
     )
   end

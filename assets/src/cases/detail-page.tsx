@@ -222,6 +222,16 @@ export function CaseDetailPage() {
   }
 
   const incident = detail.snapshot.case;
+  const conditionName = (condition: CaseSnapshot["conditions"][number]) => {
+    const first = detail.evidence.find(
+      (entry) =>
+        entry.kind === "signal_event" &&
+        entry.content["condition_id"] === condition.id &&
+        entry.content["state"] === "firing",
+    );
+    const attributes = first?.content["attributes"] as Record<string, unknown> | undefined;
+    return typeof attributes?.title === "string" ? attributes.title : condition.predicate;
+  };
   const currentConditionRevisions = JSON.stringify(
     detail.snapshot.conditions
       .map((condition) => ({ id: condition.id, revision: condition.revision }))
@@ -397,6 +407,34 @@ export function CaseDetailPage() {
         </Alert>
       )}
 
+      {detail.timeline.some((event) => event.type === "recovery_review_decided") && (
+        <Card>
+          <CardContent className="space-y-3 p-5">
+            <h2 className="text-lg font-semibold">{t("cases.recoveryReviews")}</h2>
+            <ul className="space-y-3">
+              {detail.timeline
+                .filter((event) => event.type === "recovery_review_decided")
+                .map((event) => (
+                  <li key={event.id} className="rounded-lg border p-3">
+                    <Badge
+                      variant={event.review_verdict === "rejected" ? "destructive" : "outline"}
+                    >
+                      {t(`cases.recoveryReviewStatus.${event.review_verdict}`)}
+                    </Badge>
+                    <p className="mt-2 text-sm">{event.review_reason}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {t("cases.recoveryReviewEvidence")}: {event.review_evidence_ids.join(", ")}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {event.id} · {event.review_source_turn_id}
+                    </p>
+                  </li>
+                ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {incident.trigger_kind === "signal" && (
         <Card>
           <CardContent className="space-y-4 p-5">
@@ -449,9 +487,7 @@ export function CaseDetailPage() {
                             const condition = detail.snapshot.conditions.find(
                               (item) => item.id === id,
                             );
-                            return typeof condition?.subject_ref.name === "string"
-                              ? condition.subject_ref.name
-                              : id;
+                            return condition ? conditionName(condition) : id;
                           })
                           .join(", ")}
                         {group.reason && (
@@ -465,12 +501,7 @@ export function CaseDetailPage() {
             )}
             <ul className="divide-y rounded-lg border">
               {detail.snapshot.conditions.map((item) => {
-                const name =
-                  typeof item.subject_ref.name === "string" ? item.subject_ref.name : item.id;
-                const namespace =
-                  typeof item.subject_ref.namespace === "string"
-                    ? item.subject_ref.namespace
-                    : null;
+                const name = conditionName(item);
                 return (
                   <li key={item.id} className="flex flex-wrap items-start gap-3 p-3">
                     {canOperate &&
@@ -491,15 +522,11 @@ export function CaseDetailPage() {
                       )}
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">
-                          {namespace ? `${namespace}/${name}` : name}
-                        </span>
+                        <span className="font-medium">{name}</span>
                         <Badge variant={item.state === "firing" ? "destructive" : "outline"}>
                           {t(`cases.alert.${item.state}`)}
                         </Badge>
-                        <Badge
-                          variant={item.recovery_status === "healthy" ? "secondary" : "outline"}
-                        >
+                        <Badge variant="outline">
                           {t(`cases.conditionRecovery.${item.recovery_status}`)}
                         </Badge>
                       </div>
@@ -733,13 +760,20 @@ function CompletedCaseSummary({
               <Search className="size-4 text-muted-foreground" aria-hidden="true" />
               <h3>{t("cases.completionSummary.cause")}</h3>
             </div>
-            {document.condition ? (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">
-                  {t("cases.completionSummary.confirmedCondition")}
-                </p>
-                <p className="mt-1 text-sm leading-relaxed">{document.condition.text}</p>
-              </div>
+            {document.conditions.length > 0 ? (
+              <ul className="space-y-2">
+                {document.conditions.map((condition) => (
+                  <li key={condition.id} className="text-sm leading-relaxed">
+                    <span className="font-medium">{condition.symptom}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {t(`cases.alert.${condition.source_state}`)}
+                    </span>
+                    {condition.assessment && (
+                      <p className="text-xs text-muted-foreground">{condition.assessment}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
             ) : (
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {t("cases.completionSummary.causeUnavailable")}
@@ -804,11 +838,14 @@ function CompletedCaseSummary({
                 ))}
               </ul>
             )}
-            {document.recovery_observation && (
-              <p className="text-xs text-muted-foreground">
-                {t("cases.completionSummary.postActionObservation")}:{" "}
-                {document.recovery_observation.facts}
-              </p>
+            {document.cited_evidence.length > 0 && (
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {document.cited_evidence.map((item) => (
+                  <li key={item.id}>
+                    {item.facts ?? item.kind} · {item.id}
+                  </li>
+                ))}
+              </ul>
             )}
             {conditions.length > 0 && (
               <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
