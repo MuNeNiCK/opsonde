@@ -135,6 +135,7 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
       ).value
 
     selected = Cases.route_target_discovery!(selection_turn.id, authorize?: false)
+    assert Cases.get_resolution_run!(selected.run.id, authorize?: false).no_progress_turns == 2
 
     downstream_turn =
       Cases.complete_turn!(
@@ -228,7 +229,7 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     events = Cases.list_case_events!(actor: context.admin)
     assert Enum.count(events, &(&1.event_type == "case_target_selected")) == 1
     assert Enum.count(events, &(&1.event_type == "case_target_selection_unchanged")) == 1
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 2
   end
 
   test "stale selection and non-discovery results fail without a next Turn", context do

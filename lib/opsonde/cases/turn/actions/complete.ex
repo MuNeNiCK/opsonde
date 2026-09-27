@@ -35,7 +35,7 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
   defp complete(turn, arguments, digest, actor) do
     kind =
       case arguments.progress_kind do
-        :none -> :no_progress
+        kind when kind in [:none, :hypothesis] -> :no_progress
         :observation_pending -> :pending_result
         _other -> :progress
       end
