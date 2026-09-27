@@ -1231,6 +1231,111 @@ defmodule Opsonde.OperationDeliveryTest do
              ConditionRecovery.assess_current(incident)
   end
 
+  test "a later dispatched effect on one Condition invalidates earlier source recovery",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, initial_proposal, signal_provider} =
+      authorized_proposal!("later-dispatched-effect", context, trigger_kind: :signal)
+
+    first = Cases.accept_operation!(initial_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    first_attempt = Cases.verification_attempt_by_operation!(first.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(first_attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Verification{
+                      status: :not_verified,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"active_state" => "inactive"}
+                    }}
+                 )
+             )
+
+    assert_receive {:verify, _, _}
+    [observation_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    source = hd(Cases.signal_context_evidence!(incident.id, authorize?: false))
+
+    observation_intent = signal_proposal_intent(source.id, context, :observation)
+
+    observation_proposal =
+      complete_signal_proposal!(observation_turn, observation_intent, incident, context)
+
+    observation = Cases.accept_operation!(observation_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(observation.id,
+               target_invocation:
+                 invocation({
+                   :ok,
+                   %Target.Observation{
+                     facts: %{"unit" => "api.service", "active_state" => "inactive"},
+                     observed_at: DateTime.utc_now()
+                   }
+                 })
+             )
+
+    assert_receive {:observe, _, _}
+    observation_evidence = operation_evidence_record(observation.id)
+    [effect_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+
+    second_intent =
+      signal_proposal_intent(observation_evidence.id, context, :effect)
+      |> Map.put(
+        "affected_conditions",
+        Enum.map(revisions, fn %{"id" => id, "revision" => revision} ->
+          %{"condition_id" => id, "revision" => revision}
+        end)
+      )
+
+    second_proposal = complete_signal_proposal!(effect_turn, second_intent, incident, context)
+    second = Cases.accept_operation!(second_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(second.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    assert Cases.get_operation!(second.id, authorize?: false).status == :applied
+
+    recover_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "recovered-before-second-effect",
+      DateTime.add(second.accepted_at, -1, :microsecond)
+    )
+
+    assert {:ok, [%{status: :stale_source}]} = ConditionRecovery.assess_current(incident)
+
+    second_attempt = Cases.verification_attempt_by_operation!(second.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(second_attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    assert {:ok, [%{status: :ready_for_review, evidence_id: evidence_id}]} =
+             ConditionRecovery.assess_current(incident)
+
+    assert is_binary(evidence_id)
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
        context do
     enable_signal_automation!(context.admin)
@@ -2257,6 +2362,35 @@ defmodule Opsonde.OperationDeliveryTest do
 
     refute_receive {:effect, _, _}
     refute_receive {:verify, _, _}
+  end
+
+  defp complete_signal_proposal!(turn, intent, incident, context) do
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => revisions,
+          "intent" => intent,
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(completed.id, authorize?: false)
+    Cases.proposal_by_source_turn!(completed.id, authorize?: false)
   end
 
   defp authorized_proposal!(suffix, context, opts \\ []) do

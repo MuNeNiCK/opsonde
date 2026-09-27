@@ -76,9 +76,6 @@ defmodule Opsonde.Cases.ConditionRecovery do
       condition.state != :recovered ->
         result(condition, :firing)
 
-      DateTime.compare(condition.current_occurred_at, after_at) == :lt ->
-        result(condition, :stale_source)
-
       is_nil(condition.target_id) ->
         result(condition, :unmapped_target)
 
@@ -86,8 +83,13 @@ defmodule Opsonde.Cases.ConditionRecovery do
         case Targets.get_target(condition.target_id, authorize?: false) do
           {:ok, %{active: true, revision: revision}} ->
             case Enum.find(evidence, &current_evidence?(&1, condition, after_at, revision)) do
-              nil -> result(condition, :needs_observation)
-              item -> result(condition, :ready_for_review, item.id)
+              nil ->
+                if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
+                  do: result(condition, :stale_source),
+                  else: result(condition, :needs_observation)
+
+              item ->
+                result(condition, :ready_for_review, item.id)
             end
 
           _other ->
