@@ -711,6 +711,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp public_failure(:invalid_output), do: "Reviewer output is invalid"
   defp public_failure(:unavailable), do: "Reviewer AI is unavailable"
   defp public_failure(:budget_exhausted), do: "Reviewer AI budget is exhausted"
+  defp public_failure(:disclosure_limit), do: "Reviewer evidence exceeds the AI input limit"
   defp public_failure(_category), do: "Reviewer delivery failed"
 
   defp public_failure_atom(category) do
@@ -724,6 +725,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
       "invalid_output" -> public_failure(:invalid_output)
       "unavailable" -> public_failure(:unavailable)
       "budget_exhausted" -> public_failure(:budget_exhausted)
+      "disclosure_limit" -> public_failure(:disclosure_limit)
       _category -> public_failure(:failed)
     end
   end

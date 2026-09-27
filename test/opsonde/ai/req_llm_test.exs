@@ -1388,6 +1388,75 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, request, %{})
   end
 
+  test "observation proposals may name current investigative Conditions without effect authority",
+       context do
+    condition = %AI.Condition{
+      id: "condition-1",
+      revision: 3,
+      occurrence: 1,
+      predicate: "service unavailable",
+      subject_key: "service",
+      subject_ref: %{},
+      state: :firing,
+      target_id: "target-1",
+      current_occurred_at_us: 1
+    }
+
+    tool = %{
+      proposal_tool()
+      | request_kind: :observation,
+        capability: "observe.command",
+        operation: "service.inspect"
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 4,
+        conditions: [condition],
+        disclosure: %{disclosure() | allowed_target_ids: ["target-1"]},
+        proposal_tools: [tool]
+    }
+
+    claim = %{"condition_id" => condition.id, "revision" => condition.revision}
+
+    set_mode(context.agent, {
+      :raw_text,
+      Jason.encode!(%{
+        "reason" => "Inspect this service",
+        "intent" => %{
+          "type" => "proposal",
+          "action" => %{
+            "tool_id" => tool.id,
+            "selectors" => %{"service" => "api"},
+            "parameters" => %{"grace_seconds" => 5}
+          },
+          "evidence_ids" => [],
+          "affected_conditions" => [claim]
+        }
+      })
+    })
+
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Proposal{
+                request_kind: :observation,
+                affected_conditions: [^claim],
+                verification_intent: nil
+              }
+            }} = Adapter.resolve(state, request, %{})
+
+    [wire] = requests(context.agent)
+
+    proposal_schema =
+      output_schema(wire)["properties"]["intent"]["anyOf"]
+      |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["proposal"]))
+
+    assert proposal_schema["properties"]["affected_conditions"]["minItems"] == 0
+  end
+
   test "malformed output, deadline, and caller cancellation stay typed", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{

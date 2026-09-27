@@ -59,7 +59,23 @@ defmodule Opsonde.Providers.AITest do
              )
     end
 
-    refute AI.valid_affected_conditions?(:observation, [claim], conditions)
+    assert AI.valid_affected_conditions?(:observation, [], conditions)
+    assert AI.valid_affected_conditions?(:observation, [claim], conditions)
+
+    assert AI.valid_affected_conditions?(
+             :observation,
+             [%{"condition_id" => "linux-condition", "revision" => 4}],
+             conditions
+           )
+
+    refute AI.valid_affected_conditions?(:observation, [claim, claim], conditions)
+    refute AI.valid_affected_conditions?(:observation, [%{claim | "revision" => 6}], conditions)
+
+    refute AI.valid_affected_conditions?(
+             :observation,
+             [%{"condition_id" => "foreign", "revision" => 7}],
+             conditions
+           )
   end
 
   test "Condition group hints never invent, overlap, or silently omit a Condition" do

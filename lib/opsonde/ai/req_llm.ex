@@ -199,7 +199,9 @@ defmodule Opsonde.AI.ReqLLM do
         "Compare the native symptom, the claimed effect, and the observation's actual facts. " <>
         "Review recent Case evidence, including prior ResolutionRuns and effect chronology, " <>
         "even when the Resolver did not cite it. A post-effect failure may be caused by the " <>
-        "effect; an earlier successful observation can contradict a claim of host outage. " <>
+        "effect. An Evidence item with details_compacted retains its canonical facts but omits " <>
+        "duplicate transport details; do not assume facts absent from that item. " <>
+        "An earlier successful observation can contradict a claim of host outage. " <>
         "A recovered monitoring state establishes only what the source reported. " <>
         "Read the source attributes to identify what was actually monitored; do not expand " <>
         "a broad alert title into an unobserved host-wide failure. A recovered source event " <>
@@ -365,7 +367,8 @@ defmodule Opsonde.AI.ReqLLM do
         "For an effect, take evidence_ids only from effect_evidence_ids in the user payload; " <>
         "these are current Target observations. A signal_event identifies a Condition but " <>
         "cannot be cited as evidence for an effect. " <>
-        "Observation requests leave that list empty. A proposal's verification must use an observation " <>
+        "Observation proposals may name current Conditions being investigated or leave that " <>
+        "list empty; naming them does not authorize an effect. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
         "tool's verification_schema in the user payload. Base every intent only on supplied " <>
@@ -373,7 +376,10 @@ defmodule Opsonde.AI.ReqLLM do
         "observation establishes their preconditions. If supplied Evidence shows an " <>
         "unresolved condition, no proposal tool is available, and a suitable observation " <>
         "tool is supplied, choose that observation request before handoff. Select the narrowest " <>
-        "request whose output directly examines the unresolved condition. Fill its " <>
+        "request whose output directly examines the unresolved condition. When a typed " <>
+        "observation and a generic command answer the same question, choose the typed " <>
+        "observation; a generic command may be rejected when its read-only nature cannot " <>
+        "be proven. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
         "A monitoring job, instance, or alert name does not establish an OS resource name. " <>
         "When a required selector is unknown, use the Target's discovery operation before " <>
@@ -1279,31 +1285,12 @@ defmodule Opsonde.AI.ReqLLM do
     effect_evidence_ids = AI.proposal_evidence_ids(request)
     firing_conditions = Enum.filter(request.conditions, &(&1.state == :firing))
 
-    affected_conditions_schema =
-      if firing_conditions == [] do
-        %{"type" => "array", "maxItems" => 0}
-      else
-        %{
-          "type" => "array",
-          "minItems" => 1,
-          "maxItems" => length(firing_conditions),
-          "items" =>
-            object_schema(
-              %{
-                "condition_id" => enum_schema(Enum.map(firing_conditions, & &1.id)),
-                "revision" => %{"type" => "integer", "minimum" => 1}
-              },
-              ~w(condition_id revision)
-            )
-        }
-      end
-
     observation_schema =
       if observation_variants != [] do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => observation_variants},
           "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),
-          "affected_conditions" => %{"type" => "array", "maxItems" => 0}
+          "affected_conditions" => condition_claims_schema(request.conditions, 0)
         })
       end
 
@@ -1313,7 +1300,7 @@ defmodule Opsonde.AI.ReqLLM do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
-          "affected_conditions" => affected_conditions_schema,
+          "affected_conditions" => condition_claims_schema(firing_conditions, 1),
           "expected_result_json" => json_object_string_schema(),
           "verification" => %{"anyOf" => verification_variants}
         })
@@ -1324,6 +1311,24 @@ defmodule Opsonde.AI.ReqLLM do
       [single] -> single
       variants -> %{"anyOf" => variants}
     end
+  end
+
+  defp condition_claims_schema([], _minimum), do: %{"type" => "array", "maxItems" => 0}
+
+  defp condition_claims_schema(conditions, minimum) do
+    %{
+      "type" => "array",
+      "minItems" => minimum,
+      "maxItems" => length(conditions),
+      "items" =>
+        object_schema(
+          %{
+            "condition_id" => enum_schema(Enum.map(conditions, & &1.id)),
+            "revision" => %{"type" => "integer", "minimum" => 1}
+          },
+          ~w(condition_id revision)
+        )
+    }
   end
 
   defp recovery_schema(%{alert_state: state} = request)

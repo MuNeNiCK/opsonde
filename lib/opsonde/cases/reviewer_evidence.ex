@@ -23,9 +23,23 @@ defmodule Opsonde.Cases.ReviewerEvidence do
            kind: item.kind,
            target_id: item.content["target_id"],
            observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
-           content: item.content
+           content: project_content(item.content)
          }
        end)}
     end
   end
+
+  def project_content(%{"facts" => facts, "details" => details} = content)
+      when is_map(facts) and is_map(details) do
+    if details["facts"] == facts and
+         Enum.all?(Map.keys(details), &(&1 in ~w(facts evidence observed_at))) do
+      content
+      |> Map.delete("details")
+      |> Map.put("details_compacted", true)
+    else
+      content
+    end
+  end
+
+  def project_content(content), do: content
 end

@@ -309,14 +309,21 @@ defmodule Opsonde.Providers.AI do
     do:
       valid_affected_conditions?(proposal.request_kind, proposal.affected_conditions, conditions)
 
-  def valid_affected_conditions?(:observation, [], _conditions),
-    do: true
+  def valid_affected_conditions?(:observation, claims, conditions)
+      when is_list(claims) and is_list(conditions),
+      do: valid_condition_claims?(claims, conditions, false)
 
   def valid_affected_conditions?(:effect, [], []),
     do: true
 
   def valid_affected_conditions?(:effect, claims, conditions)
       when is_list(claims) and claims != [] and is_list(conditions) do
+    valid_condition_claims?(claims, conditions, true)
+  end
+
+  def valid_affected_conditions?(_kind, _claims, _conditions), do: false
+
+  defp valid_condition_claims?(claims, conditions, firing_only?) do
     ids = Enum.map(claims, &if(is_map(&1), do: &1["condition_id"]))
     current = Map.new(conditions, &{&1.id, &1})
 
@@ -325,16 +332,17 @@ defmodule Opsonde.Providers.AI do
         %{"condition_id" => id, "revision" => revision} = claim
         when is_binary(id) and is_integer(revision) and map_size(claim) == 2 ->
           case Map.get(current, id) do
-            %Condition{revision: ^revision, state: :firing} -> true
-            _other -> false
+            %Condition{revision: ^revision, state: state} ->
+              not firing_only? or state == :firing
+
+            _other ->
+              false
           end
 
         _other ->
           false
       end)
   end
-
-  def valid_affected_conditions?(_kind, _claims, _conditions), do: false
 
   defmodule RecoveryConclusion do
     @moduledoc false
