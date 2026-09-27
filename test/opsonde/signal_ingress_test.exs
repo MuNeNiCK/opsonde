@@ -970,6 +970,106 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.active_conditions_for_case!(grandchild.id, authorize?: false)) == 1
   end
 
+  test "a rolled-back Condition split keeps its memberships, budgets and jobs retryable",
+       context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("rollback-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "rollback-host",
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for key <- ["fault-a", "fault-b"] do
+        event("rollback-split", key, :firing, at,
+          target_ref: %{kind: :hostname, value: "rollback-host"},
+          attributes: %{"labels" => %{"alertname" => "ArbitraryFault", "subsystem" => key}}
+        )
+      end
+
+    ingest!(
+      context.provider,
+      envelope("rollback-split", at),
+      invocation("rollback-split", events)
+    )
+
+    [parent] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
+    run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      %{
+        "outcome" => "decision",
+        "condition_revisions" => snapshot,
+        "intent" => %{"type" => "handoff", "reason" => "Investigate both symptoms"}
+      },
+      :none,
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+      "Review the Resolver decision",
+      authorize?: false
+    )
+
+    parent = Cases.get_case!(parent.id, authorize?: false)
+    moved_id = hd(snapshot)["id"]
+    jobs_before = Repo.aggregate(Oban.Job, :count)
+
+    assert {:error, {:simulated_failure, rolled_back_id}} =
+             Repo.transaction(fn ->
+               child =
+                 Cases.split_case_conditions!(
+                   parent.id,
+                   parent.revision,
+                   [moved_id],
+                   snapshot,
+                   "Separate fault-a",
+                   actor: context.admin
+                 )
+
+               Repo.rollback({:simulated_failure, child.id})
+             end)
+
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 2
+
+    assert Cases.active_resolution_run!(parent.id, authorize?: false).max_ai_usage_units ==
+             run.max_ai_usage_units
+
+    assert Repo.aggregate(Oban.Job, :count) == jobs_before
+    assert {:error, _not_found} = Cases.get_case(rolled_back_id, authorize?: false)
+
+    child =
+      Cases.split_case_conditions!(
+        parent.id,
+        parent.revision,
+        [moved_id],
+        snapshot,
+        "Separate fault-a",
+        actor: context.admin
+      )
+
+    assert child.id != rolled_back_id
+    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1
+
+    assert [%{condition_id: ^moved_id}] =
+             Cases.active_conditions_for_case!(child.id, authorize?: false)
+
+    parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    child_run = Cases.active_resolution_run!(child.id, authorize?: false)
+    assert parent_run.max_ai_usage_units + child_run.max_ai_usage_units == run.max_ai_usage_units
+  end
+
   test "an oversized Target graph preserves native alerts in separate Cases", context do
     enable_signal_automation!(context.admin)
 
