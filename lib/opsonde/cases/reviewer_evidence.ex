@@ -13,12 +13,18 @@ defmodule Opsonde.Cases.ReviewerEvidence do
   def recent(case_id, target_id, cited_ids) do
     with {:ok, target_evidence} <-
            Cases.review_target_context_evidence(case_id, target_id, authorize?: false),
+         :ok <- complete_target_context(target_evidence),
          {:ok, case_evidence} <- Cases.review_context_evidence(case_id, authorize?: false) do
       {:ok,
        (chronology_anchors(target_evidence) ++ target_evidence ++ case_evidence)
        |> project(cited_ids)}
     end
   end
+
+  defp complete_target_context(target_evidence) when length(target_evidence) <= 100, do: :ok
+
+  defp complete_target_context(_target_evidence),
+    do: {:error, :review_context_incomplete}
 
   defp project(evidence, cited_ids) do
     excluded = MapSet.new(cited_ids)

@@ -690,8 +690,15 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
   defp failure(error) do
     case find_error(error) do
-      %AI.Error{category: category} -> {to_string(category), public_failure(category)}
-      _error -> {"failed", "Reviewer delivery failed"}
+      %AI.Error{category: category} ->
+        {to_string(category), public_failure(category)}
+
+      :review_context_incomplete ->
+        {"review_context_incomplete",
+         "Reviewer Target history exceeds the evidence window; review manually"}
+
+      _error ->
+        {"failed", "Reviewer delivery failed"}
     end
   end
 
@@ -731,6 +738,8 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp find_error(%AI.Error{} = error), do: error
+
+  defp find_error(:review_context_incomplete), do: :review_context_incomplete
 
   defp find_error(%{errors: errors}) when is_list(errors),
     do: Enum.find_value(errors, &find_error/1)

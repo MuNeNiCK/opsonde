@@ -91,7 +91,7 @@ defmodule Opsonde.Cases.Evidence do
                  get_path(content, ["target_id"]) == ^arg(:target_id)
              )
 
-      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 100)
+      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 101)
     end
 
     read :condition_assessment_candidates do

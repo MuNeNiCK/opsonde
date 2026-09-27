@@ -916,6 +916,59 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "Auto stops review when same-Target chronology exceeds its evidence window", context do
+    configure_mode!(:auto, context.admin)
+
+    {incident, run, proposal} = proposal!("review-target-overflow", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    observed_at = DateTime.utc_now()
+
+    for index <- 1..101 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-target-overflow-#{index}",
+        "observation",
+        "target",
+        "target-inspection-#{index}",
+        %{
+          "target_id" => context.target.id,
+          "operation" => "generic.inspect",
+          "status" => "applied",
+          "facts" => %{"sample" => index}
+        },
+        DateTime.add(observed_at, index, :microsecond),
+        authorize?: false
+      )
+    end
+
+    selection = %AI.Selection{
+      role: :reviewer,
+      provider_id: context.reviewer_provider.id,
+      provider_revision: context.reviewer_provider.revision,
+      assignment_id: context.reviewer_assignment.id,
+      assignment_revision: context.reviewer_assignment.revision,
+      source: :assignment
+    }
+
+    assert {:error, :review_context_incomplete} =
+             ReviewProjection.build(reviewing.id, selection)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 respond: fn _ -> flunk("incomplete Reviewer context was sent") end
+               }
+             )
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason =~ "Reviewer Target history exceeds the evidence window"
+    assert Cases.list_approvals!(actor: context.admin) == []
+    refute_receive {:effect, _, _}
+  end
+
   test "native Signal recovery during Reviewer delivery supersedes the Proposal without approval",
        context do
     configure_mode!(:auto, context.admin)
