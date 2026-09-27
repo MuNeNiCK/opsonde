@@ -64,6 +64,72 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert Enum.all?(events, &(&1.condition_id == condition.id))
   end
 
+  test "arbitrary Generic and Zabbix symptoms reach separate Resolver turns", context do
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      true,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Exercise native arbitrary sources",
+      actor: context.admin
+    )
+
+    original_window = Application.fetch_env!(:opsonde, :case_collect_seconds)
+    Application.put_env(:opsonde, :case_collect_seconds, 0)
+    on_exit(fn -> Application.put_env(:opsonde, :case_collect_seconds, original_window) end)
+
+    generic =
+      generic_payload(DateTime.utc_now(), "firing")
+      |> Map.merge(%{
+        "event_key" => "uncatalogued-vibration",
+        "title" => "Uncatalogued vibration pattern"
+      })
+
+    zabbix =
+      zabbix_payload("1", "1726650000")
+      |> Map.merge(%{"event_id" => "9009", "event_name" => "Unexpected optical attenuation"})
+
+    assert response(
+             context.conn
+             |> authorized()
+             |> post_json("/api/v1/signals/generic/#{context.generic.id}", generic),
+             202
+           )
+
+    assert response(
+             build_conn()
+             |> authorized()
+             |> post_json("/api/v1/signals/zabbix/#{context.zabbix.id}", zabbix),
+             202
+           )
+
+    cases = Cases.list_cases!(actor: context.admin)
+    assert length(cases) == 2
+
+    for incident <- cases do
+      assert [membership] = Cases.active_conditions_for_case!(incident.id, authorize?: false)
+      assert membership.case_id == incident.id
+
+      assert :ok =
+               Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+                 args: %{"case_id" => incident.id}
+               })
+    end
+
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
+
+    assert Enum.sort(Enum.map(Signals.list_conditions!(actor: context.admin), & &1.predicate)) ==
+             ["UnclassifiedSignal", "UnclassifiedSignal"]
+  end
+
   test "Generic webhook rejects malformed canonical fields and wrong credentials", context do
     path = "/api/v1/signals/generic/#{context.generic.id}"
     valid = generic_payload(DateTime.utc_now(), "firing")
