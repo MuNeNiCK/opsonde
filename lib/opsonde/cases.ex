@@ -214,6 +214,10 @@ defmodule Opsonde.Cases do
         action: :recovery_review_history,
         args: [:case_id]
 
+      define :observation_progress_history,
+        action: :observation_progress_history,
+        args: [:case_id, :resolution_run_id]
+
       define :create_case_event_record, action: :create_record
     end
 
@@ -359,6 +363,7 @@ defmodule Opsonde.Cases do
       define :record_operation_no_send, action: :record_no_send, args: [:expected_revision]
       define :accept_operation, action: :accept, args: [:proposal_id]
       define :claim_operation_dispatch, action: :claim_dispatch, args: [:id]
+      define :account_observation_progress, action: :account_observation_progress, args: [:id]
     end
 
     resource Opsonde.Cases.VerificationAttempt do

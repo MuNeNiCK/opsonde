@@ -61,6 +61,18 @@ defmodule Opsonde.Cases.CaseEvent do
       prepare build(sort: [inserted_at: :desc, id: :desc], limit: 501)
     end
 
+    read :observation_progress_history do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+
+      filter expr(
+               case_id == ^arg(:case_id) and resolution_run_id == ^arg(:resolution_run_id) and
+                 event_type == "observation_progress"
+             )
+
+      prepare build(sort: [inserted_at: :desc, id: :desc], limit: 1_001)
+    end
+
     create :create_record do
       accept [
         :case_id,
@@ -76,7 +88,13 @@ defmodule Opsonde.Cases.CaseEvent do
   end
 
   policies do
-    policy action([:by_idempotency, :target_history, :recovery_review_history, :create_record]) do
+    policy action([
+             :by_idempotency,
+             :target_history,
+             :recovery_review_history,
+             :observation_progress_history,
+             :create_record
+           ]) do
       forbid_if always()
     end
 

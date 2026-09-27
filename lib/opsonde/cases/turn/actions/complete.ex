@@ -33,7 +33,13 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
   end
 
   defp complete(turn, arguments, digest, actor) do
-    kind = if arguments.progress_kind == :none, do: :no_progress, else: :progress
+    kind =
+      case arguments.progress_kind do
+        :none -> :no_progress
+        :observation_pending -> :pending_result
+        _other -> :progress
+      end
+
     ledger_key = Budget.key("turn:complete", "#{turn.id}:#{digest}")
 
     Budget.consume(

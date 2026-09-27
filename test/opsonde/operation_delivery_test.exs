@@ -487,6 +487,83 @@ defmodule Opsonde.OperationDeliveryTest do
     assert evidence.content["operation"] == "service.inspect"
     assert evidence.content["selectors"] == %{"service" => "api"}
     assert evidence.content["details"] == failed.result_details
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    assert run.no_progress_turns == 1
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("failed observation was resent") end)
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+  end
+
+  test "only a new observation result resets the no-progress budget", context do
+    {incident, run, proposal} =
+      authorized_proposal!("observation-progress", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(first, %{"service" => "api", "state" => "active"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    duplicate = continue_observation!(incident, context, first.id)
+    assert :ok = deliver_observation(duplicate, %{"service" => "api", "state" => "active"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+
+    changed = continue_observation!(incident, context, duplicate.id)
+    assert :ok = deliver_observation(changed, %{"service" => "api", "state" => "inactive"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    repeated = continue_observation!(incident, context, changed.id)
+    assert :ok = deliver_observation(repeated, %{"service" => "api", "state" => "inactive"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+
+    changed_input = continue_observation!(incident, Map.put(context, :service, "db"), repeated.id)
+    assert :ok = deliver_observation(changed_input, %{"service" => "api", "state" => "inactive"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    assert :ok =
+             OperationDelivery.run(changed_input.id,
+               target_invocation: invocation(fn -> flunk("completed observation was resent") end)
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+  end
+
+  test "failed observations stop before another paid Resolver turn", context do
+    {incident, run, proposal} =
+      authorized_proposal!("observation-no-progress", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation({:error, :failed, "Target read failed"})
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+
+    second = continue_observation!(incident, context, first.id)
+
+    assert :ok =
+             OperationDelivery.run(second.id,
+               target_invocation: invocation({:error, :failed, "Target read failed"})
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 2
+
+    third = continue_observation!(incident, context, second.id)
+
+    assert :ok =
+             OperationDelivery.run(third.id,
+               target_invocation: invocation({:error, :failed, "Target read still failed"})
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 3
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "No-progress turn limit exhausted"
   end
 
   test "authorization changed after acceptance fails before Target dispatch", context do
@@ -2523,6 +2600,49 @@ defmodule Opsonde.OperationDeliveryTest do
 
     Cases.route_downstream_decision!(completed.id, authorize?: false)
     Cases.proposal_by_source_turn!(completed.id, authorize?: false)
+  end
+
+  defp deliver_observation(operation, facts) do
+    OperationDelivery.run(operation.id,
+      target_invocation:
+        invocation({
+          :ok,
+          %Target.Observation{facts: facts, observed_at: DateTime.utc_now()}
+        })
+    )
+  end
+
+  defp continue_observation!(incident, context, prior_operation_id) do
+    evidence = operation_evidence_record(prior_operation_id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    result = %{
+      "outcome" => "decision",
+      "intent" => proposal_intent(evidence.id, context, :observation),
+      "resolver" => %{
+        "provider_id" => context.resolver_provider.id,
+        "provider_revision" => context.resolver_provider.revision,
+        "assignment_id" => context.resolver_assignment.id,
+        "assignment_revision" => context.resolver_assignment.revision
+      },
+      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+    }
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        result,
+        :observation_pending,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(completed.id, authorize?: false)
+    proposal = Cases.proposal_by_source_turn!(completed.id, authorize?: false)
+    Cases.accept_operation!(proposal.id, authorize?: false)
   end
 
   defp authorized_proposal!(suffix, context, opts \\ []) do

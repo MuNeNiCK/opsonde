@@ -215,6 +215,7 @@ defmodule Opsonde.Cases.Budget do
   defp limit(:ai_usage), do: {:ai_usage_units, :max_ai_usage_units}
   defp limit(:no_progress), do: nil
   defp limit(:progress), do: nil
+  defp limit(:pending_result), do: nil
 
   defp next_counters(run, :progress, _amount) do
     run |> current_counters() |> Map.put(:no_progress_turns, 0)
@@ -223,6 +224,8 @@ defmodule Opsonde.Cases.Budget do
   defp next_counters(run, :no_progress, amount) do
     Map.update!(current_counters(run), :no_progress_turns, &(&1 + amount))
   end
+
+  defp next_counters(run, :pending_result, _amount), do: current_counters(run)
 
   defp next_counters(run, kind, amount) do
     {counter, _maximum} = limit(kind)

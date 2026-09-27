@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.OperationDelivery do
   @moduledoc false
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Operation, OperationClaim}
+  alias Opsonde.Cases.{BudgetResult, Operation, OperationClaim}
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.{PolicyRequest, RequestClearance}
 
@@ -161,10 +161,28 @@ defmodule Opsonde.Cases.OperationDelivery do
              operation.completed_at,
              authorize?: false
            ),
+         {:ok, progress} <- account_observation_progress(operation),
          {:ok, incident} <- Cases.get_case(operation.case_id, authorize?: false) do
-      continue_handoff(operation, proposal, evidence, incident)
+      if progress == :exhausted or incident.status != :running,
+        do: :ok,
+        else: continue_handoff(operation, proposal, evidence, incident)
     end
   end
+
+  defp account_observation_progress(%Operation{request_kind: :observation} = operation) do
+    case Cases.account_observation_progress(operation.id, authorize?: false) do
+      {:ok, %BudgetResult{status: :exhausted}} ->
+        {:ok, :exhausted}
+
+      {:ok, %BudgetResult{status: status}} when status in [:charged, :duplicate] ->
+        {:ok, :continue}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp account_observation_progress(_operation), do: {:ok, :continue}
 
   defp continue_handoff(
          %{outcome_category: category} = operation,
@@ -317,6 +335,9 @@ defmodule Opsonde.Cases.OperationDelivery do
     do: :ok
 
   defp available_pending(%{"action" => "dispatch_operation", "operation_id" => id}, %{id: id}),
+    do: :ok
+
+  defp available_pending(%{"action" => "resolve_turn", "operation_id" => id}, %{id: id}),
     do: :ok
 
   defp available_pending(pending, _operation) when map_size(pending) == 0, do: :ok

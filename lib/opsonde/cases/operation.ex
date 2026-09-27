@@ -131,6 +131,13 @@ defmodule Opsonde.Cases.Operation do
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Operation.Actions.ClaimDispatch
     end
+
+    action :account_observation_progress, :struct do
+      constraints instance_of: Opsonde.Cases.BudgetResult
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Operation.Actions.AccountObservationProgress
+    end
   end
 
   policies do
@@ -141,7 +148,8 @@ defmodule Opsonde.Cases.Operation do
              :record_outcome,
              :record_no_send,
              :accept,
-             :claim_dispatch
+             :claim_dispatch,
+             :account_observation_progress
            ]) do
       forbid_if always()
     end

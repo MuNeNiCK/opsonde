@@ -580,6 +580,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp json_value(value) when is_atom(value), do: to_string(value)
   defp json_value(value), do: value
 
+  defp progress_kind(%AI.Proposal{request_kind: :observation}, _request),
+    do: :observation_pending
+
   defp progress_kind(%AI.Proposal{}, _request), do: :proposal
   defp progress_kind(%AI.RecoveryConclusion{}, _request), do: :source_change
   defp progress_kind(%AI.Handoff{}, _request), do: :human_input

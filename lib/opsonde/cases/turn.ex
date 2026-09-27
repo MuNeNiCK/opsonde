@@ -107,7 +107,15 @@ defmodule Opsonde.Cases.Turn do
       argument :progress_kind, :atom,
         allow_nil?: false,
         constraints: [
-          one_of: [:evidence, :hypothesis, :proposal, :source_change, :human_input, :none]
+          one_of: [
+            :evidence,
+            :hypothesis,
+            :proposal,
+            :observation_pending,
+            :source_change,
+            :human_input,
+            :none
+          ]
         ]
 
       argument :pending_intent, :map, allow_nil?: false
@@ -175,7 +183,16 @@ defmodule Opsonde.Cases.Turn do
 
     attribute :progress_kind, :atom do
       public? true
-      constraints one_of: [:evidence, :hypothesis, :proposal, :source_change, :human_input, :none]
+
+      constraints one_of: [
+                    :evidence,
+                    :hypothesis,
+                    :proposal,
+                    :observation_pending,
+                    :source_change,
+                    :human_input,
+                    :none
+                  ]
     end
 
     attribute :started_at, :utc_datetime_usec do
