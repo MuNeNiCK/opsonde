@@ -442,8 +442,8 @@ defmodule Opsonde.Cases.ResolverProjection do
     evidence
     |> Enum.filter(fn item ->
       item.resolution_run_id == run.id and
-        ((match?(%{"status" => "applied"}, item.content) and
-            item.kind == "operation_outcome") or
+        ((item.kind == "operation_outcome" and item.content["status"] == "applied" and
+            item.content["target_id"] == target.id) or
            (item.kind == "signal_event" and
               MapSet.member?(condition_ids, item.content["condition_id"])))
     end)

@@ -633,20 +633,21 @@ defmodule Opsonde.OperationDeliveryTest do
                target_invocation: invocation({:error, :timeout, "endpoint timed out"})
              )
 
+    Cases.append_evidence!(
+      incident.id,
+      run.id,
+      nil,
+      "unrelated-success-after-failure",
+      "operation_outcome",
+      "target",
+      Ecto.UUID.generate(),
+      %{"status" => "applied", "target_id" => Ecto.UUID.generate()},
+      DateTime.utc_now(),
+      authorize?: false
+    )
+
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
-
-    capabilities = %Target.Capabilities{
-      observations: [
-        %Target.Operation{
-          capability: "observe.service",
-          operation: "service.inspect",
-          description: "Inspect a service",
-          input_schema: %{"type" => "object"}
-        }
-      ],
-      effects: []
-    }
 
     assert {:ok, request} =
              ResolverProjection.build(
@@ -657,7 +658,9 @@ defmodule Opsonde.OperationDeliveryTest do
                  provider_revision: context.resolver_provider.revision,
                  source: :assignment
                },
-               invocation({:ok, capabilities})
+               invocation(fn ->
+                 flunk("unrelated Target outcome reopened the failed Access Method")
+               end)
              )
 
     assert request.observation_tools == []
