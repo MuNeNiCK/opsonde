@@ -296,7 +296,8 @@ const en = {
       conditionsTitle: "Current conditions",
       conditionsDescription: "{{count}} monitoring conditions are assigned to this Case.",
       conditionHypotheses: "AI investigation hypotheses",
-      conditionHypothesesDescription: "These are possible relationships. No change or Case split is performed automatically.",
+      conditionHypothesesDescription:
+        "These are possible relationships, not confirmed causes. Recovery checks may separate Conditions after verification.",
       conditionHypothesesUnknown: "A shared cause is not established yet.",
       conditionGroupAssessment: {
         related: "Possibly related",

@@ -291,7 +291,8 @@ const ja = {
       conditionsTitle: "現在の障害条件",
       conditionsDescription: "このケースには{{count}}件の監視条件が割り当てられています。",
       conditionHypotheses: "AIの調査仮説",
-      conditionHypothesesDescription: "関係の候補です。変更やケース分離は自動実行されません。",
+      conditionHypothesesDescription:
+        "原因が確定したものではありません。復旧確認の結果により条件が別ケースへ分かれることがあります。",
       conditionHypothesesUnknown: "共通原因はまだ判断できません。",
       conditionGroupAssessment: {
         related: "関連する可能性",
