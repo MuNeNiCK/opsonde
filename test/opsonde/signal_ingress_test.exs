@@ -90,6 +90,55 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_evidence!(actor: context.admin)) == 1
   end
 
+  test "a pending manual dispatch never absorbs a nearby native Signal", context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("shared-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "shared-host",
+      actor: context.admin
+    )
+
+    manual =
+      Cases.open_case!(
+        :manual,
+        "api",
+        "manual-shared-host",
+        "Investigate shared host",
+        :warning,
+        %{},
+        target.id,
+        :en,
+        actor: context.admin
+      )
+
+    assert Cases.case_dispatch!(manual.id, authorize?: false).state == :collecting
+    received_at = DateTime.add(DateTime.utc_now(), -1, :second)
+
+    ingest!(
+      context.provider,
+      envelope("manual-nearby-signal", received_at),
+      invocation("manual-nearby-signal", [
+        event("manual-nearby-signal", "disk-errors", :firing, received_at,
+          target_ref: %{kind: :hostname, value: "shared-host"}
+        )
+      ])
+    )
+
+    cases = Cases.list_cases!(actor: context.admin)
+    assert length(cases) == 2
+    signal_case = Enum.find(cases, &(&1.trigger_kind == :signal))
+    assert signal_case.id != manual.id
+    assert [membership] = Cases.active_conditions_for_case!(signal_case.id, authorize?: false)
+    assert membership.case_id == signal_case.id
+    assert Cases.active_conditions_for_case!(manual.id, authorize?: false) == []
+  end
+
   test "one grouped receipt persists separate source events and opens only firing Cases",
        context do
     enable_signal_automation!(context.admin)
