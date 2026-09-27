@@ -444,7 +444,8 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:resolve, %AI.ResolverDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          :ok <- validate_resolver_intent(decision.intent, request),
-         true <- encoded_size(%{}, [decision.intent]) <= @max_output_bytes do
+         :ok <- validate_condition_assessments(decision, request),
+         true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
       :ok
     else
       false -> {:error, ai_error(:invalid_output, "AI Resolver output is too large")}
@@ -653,6 +654,61 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_condition_claims?(_claims, _request, _evidence_ids), do: false
+
+  defp validate_condition_assessments(
+         %AI.ResolverDecision{condition_assessments: []},
+         _request
+       ),
+       do: :ok
+
+  defp validate_condition_assessments(
+         %AI.ResolverDecision{
+           intent: intent,
+           condition_assessments: assessments
+         },
+         request
+       )
+       when is_list(assessments) do
+    expected = Map.new(request.conditions, &{&1.id, &1})
+    visible = MapSet.new(Enum.map(request.evidence, & &1.id))
+
+    valid? =
+      request.alert_state == :recovered and
+        not match?(%AI.RecoveryConclusion{}, intent) and
+        map_size(expected) > 0 and length(assessments) == map_size(expected) and
+        MapSet.new(Enum.map(assessments, &if(is_map(&1), do: &1["condition_id"]))) ==
+          MapSet.new(Map.keys(expected)) and
+        Enum.all?(assessments, fn assessment ->
+          condition = is_map(assessment) && Map.get(expected, assessment["condition_id"])
+          ids = is_map(assessment) && assessment["evidence_ids"]
+          status = is_map(assessment) && assessment["status"]
+
+          condition && map_size(assessment) == 5 &&
+            assessment["revision"] == condition.revision &&
+            AI.valid_resolver_reason?(assessment["reason"]) &&
+            is_list(ids) && length(ids) <= 3 && unique?(ids) &&
+            Enum.all?(ids, fn id ->
+              id in condition.recovery_evidence_ids and MapSet.member?(visible, id)
+            end) &&
+            case status do
+              "unknown" ->
+                true
+
+              value when value in ["recovered", "still_failing"] ->
+                ids != []
+
+              _other ->
+                false
+            end
+        end)
+
+    if valid?,
+      do: :ok,
+      else: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid")}
+  end
+
+  defp validate_condition_assessments(_decision, _request),
+    do: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid")}
 
   defp traversal_destination?(relationship, selected_target_id, traversal) do
     next_target =

@@ -136,8 +136,14 @@ defmodule Opsonde.AI.ReqLLM do
              resolver_output(value, request)
            end) do
       case result do
-        {:ok, {intent, groups}, usage} ->
-          {:ok, %AI.ResolverDecision{intent: intent, condition_groups: groups, usage: usage}}
+        {:ok, {intent, groups, assessments}, usage} ->
+          {:ok,
+           %AI.ResolverDecision{
+             intent: intent,
+             condition_groups: groups,
+             condition_assessments: assessments,
+             usage: usage
+           }}
 
         error ->
           error
@@ -355,6 +361,11 @@ defmodule Opsonde.AI.ReqLLM do
         "replace an earlier current observation of the actual symptom. " <>
         "The recovery_status field only reports whether current observations are available; " <>
         "it does not judge its meaning. If facts still show a fault, continue investigation. " <>
+        "After a monitoring recovery, you may include condition_assessments while choosing " <>
+        "another observation or handoff. For each Condition say recovered, still_failing, " <>
+        "or unknown and cite only relevant visible Evidence. These assessments are advisory " <>
+        "and do not close the Case. Omit condition_assessments for the recovery intent; " <>
+        "its condition_claims are independently reviewed. " <>
         "If turn_intent.source is recovery_review_rejected, read its review_reason. Also read " <>
         "last_rejected_recovery_review when present, including after an operator resume. Do not " <>
         "repeat a recovery claim with unchanged cited evidence. Choose a new observation " <>
@@ -518,8 +529,12 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp resolver_output(%{"reason" => reason, "intent" => intent} = value, request)
        when is_binary(reason) and is_map(intent) do
-    with {:ok, parsed} <- intent(Map.put(intent, "reason", reason), request) do
-      {:ok, {parsed, Map.get(value, "condition_groups", [])}}
+    with {:ok, parsed} <- intent(Map.put(intent, "reason", reason), request),
+         groups when is_list(groups) <- Map.get(value, "condition_groups", []),
+         assessments when is_list(assessments) <- Map.get(value, "condition_assessments", []) do
+      {:ok, {parsed, groups, assessments}}
+    else
+      _invalid -> invalid_output()
     end
   end
 
@@ -1145,7 +1160,7 @@ defmodule Opsonde.AI.ReqLLM do
 
         case Regex.run(~r/property '([A-Za-z_]+)' is required/, message) do
           [_, field]
-          when field in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_claims required_input tool_id selectors parameters) ->
+          when field in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors parameters) ->
             "/intent/" <> field
 
           _other ->
@@ -1206,7 +1221,7 @@ defmodule Opsonde.AI.ReqLLM do
         []
     end)
     |> Enum.filter(
-      &(&1 in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_groups condition_ids assessment revision evidence_id tool_id selectors parameters required_input))
+      &(&1 in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors parameters required_input))
     )
     |> Enum.uniq()
     |> Enum.sort()
@@ -1228,8 +1243,12 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp known_schema_path(path) when is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [top | _rest] when top in ~w(intent reason condition_groups verdict status) -> top
-      _other -> "other"
+      [top | _rest]
+      when top in ~w(intent reason condition_groups condition_assessments verdict status) ->
+        top
+
+      _other ->
+        "other"
     end
   end
 
@@ -1301,7 +1320,40 @@ defmodule Opsonde.AI.ReqLLM do
         do: Map.put(properties, "condition_groups", condition_group_schema()),
         else: properties
 
+    properties =
+      if request.alert_state == :recovered and request.conditions != [],
+        do:
+          Map.put(
+            properties,
+            "condition_assessments",
+            condition_assessments_schema(request)
+          ),
+        else: properties
+
     object_schema(properties, ~w(reason intent))
+  end
+
+  defp condition_assessments_schema(request) do
+    %{
+      "type" => "array",
+      "minItems" => length(request.conditions),
+      "maxItems" => length(request.conditions),
+      "items" =>
+        object_schema(
+          %{
+            "condition_id" => enum_schema(Enum.map(request.conditions, & &1.id)),
+            "revision" => %{"type" => "integer", "minimum" => 1},
+            "status" => enum_schema(~w(recovered still_failing unknown)),
+            "evidence_ids" => %{
+              "type" => "array",
+              "items" => enum_schema(available_evidence_ids(request)),
+              "maxItems" => 3
+            },
+            "reason" => bounded_string_schema(AI.resolver_reason_codepoints())
+          },
+          ~w(condition_id revision status evidence_ids reason)
+        )
+    }
   end
 
   defp condition_group_schema do

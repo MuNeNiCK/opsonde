@@ -328,6 +328,13 @@ const en = {
         target_changed: "Target changed",
         unknown: "Recovery unconfirmed",
       },
+      aiConditionAssessment: {
+        recovered: "AI assessment: recovered",
+        still_failing: "AI assessment: still failing",
+        unknown: "AI assessment: unknown",
+      },
+      aiConditionAssessmentTurn: "Assessment from Turn {{ordinal}}",
+      aiConditionAssessmentEvidence: "Cited evidence",
       description:
         "Follow incoming Signals through autonomous investigation, effects, and recovery.",
       requestFailed: "The request failed. Review the values and connection, then try again.",

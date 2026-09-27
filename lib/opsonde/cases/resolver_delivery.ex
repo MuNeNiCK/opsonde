@@ -459,6 +459,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
              request.conditions,
              request.evidence ++ request.observation_results
            ),
+         "condition_assessments" => decision.condition_assessments,
          "resolver" => %{
            "provider_id" => selection.provider_id,
            "provider_revision" => selection.provider_revision,

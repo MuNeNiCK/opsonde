@@ -1775,6 +1775,15 @@ export interface components {
             case_id: string;
             /** Format: date-time */
             completed_at: string | null;
+            condition_assessments: {
+                /** Format: uuid */
+                condition_id: string;
+                evidence_ids: string[];
+                reason: string;
+                revision: number;
+                /** @enum {string} */
+                status: "recovered" | "still_failing" | "unknown";
+            }[] | null;
             condition_groups: {
                 /** @enum {string} */
                 assessment: "related" | "independent" | "unknown";

@@ -1922,6 +1922,87 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Cases.list_operations!(actor: context.admin)) == 1
   end
 
+  test "a recovered Signal with a still-failing Target observation persists a nonterminal assessment",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal, _signal_provider} =
+      authorized_proposal!("still-failing-assessment", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "inactive"},
+                      evidence: [%{"check" => "current"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :recovered
+                   assert [%AI.Condition{} = condition] = request.conditions
+                   assert evidence.id in condition.recovery_evidence_ids
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Handoff{
+                        reason: "Service remains inactive despite monitoring recovery",
+                        required_input: "Check the monitoring rule and service"
+                      },
+                      condition_assessments: [
+                        %{
+                          "condition_id" => condition.id,
+                          "revision" => condition.revision,
+                          "status" => "still_failing",
+                          "evidence_ids" => [evidence.id],
+                          "reason" => "Direct service inspection reports inactive"
+                        }
+                      ],
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+
+    assert [%{"status" => "still_failing", "evidence_ids" => [evidence_id]}] =
+             completed.result["condition_assessments"]
+
+    assert [%{"status" => "still_failing"}] =
+             OpsondeWeb.API.V1.WorkflowJSON.turn(completed).condition_assessments
+
+    assert evidence_id == evidence.id
+
+    assert Cases.route_downstream_decision!(completed.id, authorize?: false).status ==
+             :needs_attention
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.event_type == "case_resolved")
+           )
+  end
+
   test "a manual Case can conclude from a real current-run Target observation", context do
     {incident, run, proposal} =
       authorized_proposal!("manual-observation-recovery", context, request_kind: :observation)

@@ -252,6 +252,16 @@ export function CaseDetailPage() {
     .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
   const conditionHypotheses =
     latestGroupTurn?.condition_groups?.filter((group) => group.assessment !== "unknown") ?? [];
+  const latestAssessmentTurn = [...detail.turns]
+    .filter(
+      (turn) =>
+        turn.condition_assessments !== null &&
+        turn.condition_assessments.length > 0 &&
+        turn.condition_revisions !== null &&
+        JSON.stringify([...turn.condition_revisions].sort((a, b) => a.id.localeCompare(b.id))) ===
+          currentConditionRevisions,
+    )
+    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
@@ -509,6 +519,9 @@ export function CaseDetailPage() {
             <ul className="divide-y rounded-lg border">
               {detail.snapshot.conditions.map((item) => {
                 const name = conditionName(item);
+                const assessment = latestAssessmentTurn?.condition_assessments?.find(
+                  (entry) => entry.condition_id === item.id && entry.revision === item.revision,
+                );
                 return (
                   <li key={item.id} className="flex flex-wrap items-start gap-3 p-3">
                     {canOperate &&
@@ -538,6 +551,31 @@ export function CaseDetailPage() {
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">{item.predicate}</p>
+                      {assessment && (
+                        <div className="space-y-1 text-xs">
+                          <p className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">
+                              {t(`cases.aiConditionAssessment.${assessment.status}`)}
+                            </Badge>
+                            <span>{assessment.reason}</span>
+                          </p>
+                          <p className="text-muted-foreground">
+                            {t("cases.aiConditionAssessmentTurn", {
+                              ordinal: latestAssessmentTurn.ordinal,
+                            })}
+                          </p>
+                          {assessment.evidence_ids.length > 0 && (
+                            <details className="text-muted-foreground">
+                              <summary>{t("cases.aiConditionAssessmentEvidence")}</summary>
+                              <ul className="mt-1 space-y-1 font-mono">
+                                {assessment.evidence_ids.map((id) => (
+                                  <li key={id}>{id}</li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
+                        </div>
+                      )}
                       <p className="font-mono text-xs text-muted-foreground">{item.id}</p>
                     </div>
                   </li>

@@ -1247,6 +1247,77 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
   end
 
+  test "recovered Condition assessments survive ReqLLM object decoding", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    condition = %AI.Condition{
+      id: "condition-1",
+      revision: 2,
+      occurrence: 1,
+      predicate: "Endpoint unavailable",
+      subject_key: "endpoint",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 10,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: ["direct-observation"]
+    }
+
+    observation = %AI.Evidence{
+      id: "direct-observation",
+      kind: "observation",
+      target_id: "target-1",
+      observed_at_us: 11,
+      content: %{"status" => "applied", "facts" => %{"endpoint_up" => false}}
+    }
+
+    request = %{
+      resolver_request()
+      | alert_state: :recovered,
+        conditions: [condition],
+        evidence: [observation],
+        recovery_evidence_ids: [observation.id]
+    }
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "status" => "still_failing",
+      "evidence_ids" => [observation.id],
+      "reason" => "The endpoint still fails"
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Continue investigating the endpoint",
+        "intent" => %{
+          "type" => "handoff",
+          "required_input" => "Inspect the endpoint"
+        },
+        "condition_assessments" => [claim]
+      }
+    })
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{},
+              condition_assessments: [^claim]
+            }} = Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    schema = output_schema(wire_request)
+    assert get_in(schema, ["properties", "condition_assessments", "maxItems"]) == 1
+
+    assert get_in(user_payload(wire_request), [
+             "conditions",
+             Access.at(0),
+             "recovery_evidence_ids"
+           ]) ==
+             [observation.id]
+  end
+
   test "recovery schema exposes only eligible Target recovery Evidence", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

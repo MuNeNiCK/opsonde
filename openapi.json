@@ -1286,6 +1286,51 @@
             "nullable": true,
             "type": "string"
           },
+          "condition_assessments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "condition_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "reason": {
+                  "maxLength": 500,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "status": {
+                  "enum": [
+                    "recovered",
+                    "still_failing",
+                    "unknown"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "condition_id",
+                "revision",
+                "status",
+                "evidence_ids",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "condition_groups": {
             "items": {
               "additionalProperties": false,
@@ -1431,6 +1476,7 @@
           "decision",
           "condition_revisions",
           "condition_groups",
+          "condition_assessments",
           "failure_category",
           "failure_message",
           "progress_kind",

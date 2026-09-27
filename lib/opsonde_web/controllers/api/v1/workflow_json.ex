@@ -186,6 +186,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       decision: turn.result["intent"],
       condition_revisions: turn.result["condition_revisions"],
       condition_groups: turn.result["condition_groups"],
+      condition_assessments: turn.result["condition_assessments"],
       failure_category: turn.result["category"],
       failure_message: turn.result["message"],
       progress_kind: turn.progress_kind,

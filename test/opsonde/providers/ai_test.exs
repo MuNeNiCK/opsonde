@@ -152,6 +152,93 @@ defmodule Opsonde.Providers.AITest do
              end)
   end
 
+  test "recovered source permits still-failing and unknown assessments without closure",
+       context do
+    evidence = %AI.Evidence{
+      id: "endpoint-down",
+      kind: "observation",
+      target_id: "target-1",
+      observed_at_us: 20,
+      content: %{"status" => "applied", "facts" => %{"endpoint_up" => false}}
+    }
+
+    condition = %AI.Condition{
+      id: "endpoint-condition",
+      revision: 2,
+      occurrence: 1,
+      predicate: "Endpoint unavailable",
+      subject_key: "endpoint",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 19,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: [evidence.id]
+    }
+
+    request = %{
+      resolver_request(context.provider.revision)
+      | alert_state: :recovered,
+        conditions: [condition],
+        evidence: [evidence],
+        recovery_evidence_ids: [evidence.id]
+    }
+
+    handoff = %AI.Handoff{
+      reason: "Monitoring recovered, but the endpoint observation still shows failure",
+      required_input: "Check the monitoring rule and endpoint"
+    }
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "status" => "still_failing",
+      "evidence_ids" => [evidence.id],
+      "reason" => "The endpoint still fails"
+    }
+
+    decision = %AI.ResolverDecision{
+      intent: handoff,
+      condition_assessments: [claim],
+      usage: usage()
+    }
+
+    assert %AI.ResolverDecision{condition_assessments: [^claim]} =
+             resolve!(context, request, fn _request -> {:ok, decision} end)
+
+    unknown = %{claim | "status" => "unknown", "evidence_ids" => []}
+
+    assert %AI.ResolverDecision{condition_assessments: [^unknown]} =
+             resolve!(context, request, fn _request ->
+               {:ok, %{decision | condition_assessments: [unknown]}}
+             end)
+
+    for invalid <- [%{claim | "revision" => 1}, %{claim | "evidence_ids" => ["unseen"]}] do
+      assert {:error, _error} =
+               resolve(context, request, fn _request ->
+                 {:ok, %{decision | condition_assessments: [invalid]}}
+               end)
+    end
+
+    recovery = %AI.RecoveryConclusion{
+      reason: "Recovered",
+      evidence_ids: [evidence.id],
+      condition_claims: [
+        %{
+          "condition_id" => condition.id,
+          "revision" => condition.revision,
+          "evidence_id" => evidence.id,
+          "reason" => "Endpoint recovered"
+        }
+      ]
+    }
+
+    assert {:error, _error} =
+             resolve(context, request, fn _request ->
+               {:ok, %{decision | intent: recovery}}
+             end)
+  end
+
   test "Condition group hints never invent, overlap, or silently omit a Condition" do
     conditions = Enum.map(~w(a b c d), &%{id: &1})
     evidence = [%{id: "observed-switch"}]

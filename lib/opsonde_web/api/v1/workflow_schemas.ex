@@ -348,6 +348,20 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
               false
             )
           ),
+        condition_assessments:
+          nullable_array(
+            object(
+              %{
+                condition_id: Schemas.uuid(),
+                revision: positive_integer(),
+                status: enum(~w(recovered still_failing unknown)),
+                evidence_ids: array(Schemas.uuid()),
+                reason: string(1, 500)
+              },
+              [:condition_id, :revision, :status, :evidence_ids, :reason],
+              false
+            )
+          ),
         failure_category: nullable_string(),
         failure_message: nullable_string(),
         progress_kind:
@@ -358,7 +372,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id ordinal status intent outcome decision condition_revisions condition_groups failure_category failure_message progress_kind started_at completed_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id ordinal status intent outcome decision condition_revisions condition_groups condition_assessments failure_category failure_message progress_kind started_at completed_at revision inserted_at updated_at)a,
       false
     )
   end

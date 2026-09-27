@@ -323,6 +323,13 @@ const ja = {
         target_changed: "対象が変更された",
         unknown: "復旧は未確認",
       },
+      aiConditionAssessment: {
+        recovered: "AI判断: 復旧",
+        still_failing: "AI判断: 障害継続",
+        unknown: "AI判断: 不明",
+      },
+      aiConditionAssessmentTurn: "Turn {{ordinal}} 時点の判断",
+      aiConditionAssessmentEvidence: "引用した証拠",
       description: "受信Signalから自律調査、変更、復旧までを追跡します。",
       requestFailed: "操作に失敗しました。入力値と接続を確認して再試行してください。",
       refresh: "更新",

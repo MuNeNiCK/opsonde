@@ -392,7 +392,7 @@ defmodule Opsonde.Providers.AI do
   defmodule ResolverDecision do
     @moduledoc false
     @enforce_keys [:intent, :usage]
-    defstruct @enforce_keys ++ [condition_groups: []]
+    defstruct @enforce_keys ++ [condition_groups: [], condition_assessments: []]
     @type t :: %__MODULE__{}
   end
 
