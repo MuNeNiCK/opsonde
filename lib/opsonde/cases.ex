@@ -281,6 +281,10 @@ defmodule Opsonde.Cases do
         action: :review_context,
         args: [:case_id]
 
+      define :review_target_context_evidence,
+        action: :review_target_context,
+        args: [:case_id, :target_id]
+
       define :condition_assessment_evidence,
         action: :condition_assessment_candidates,
         args: [:case_id, :after]

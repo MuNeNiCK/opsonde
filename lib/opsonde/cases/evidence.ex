@@ -81,6 +81,19 @@ defmodule Opsonde.Cases.Evidence do
       prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 100)
     end
 
+    read :review_target_context do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :target_id, :uuid, allow_nil?: false
+
+      filter expr(
+               case_id == ^arg(:case_id) and
+                 kind in ["observation", "operation_outcome", "target_verification"] and
+                 get_path(content, ["target_id"]) == ^arg(:target_id)
+             )
+
+      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 100)
+    end
+
     read :condition_assessment_candidates do
       argument :case_id, :uuid, allow_nil?: false
       argument :after, :utc_datetime_usec, allow_nil?: false

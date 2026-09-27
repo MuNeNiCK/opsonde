@@ -23,7 +23,11 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
          {:ok, context_evidence} <-
-           ReviewerEvidence.recent(incident.id, Enum.map(evidence, & &1.id)),
+           ReviewerEvidence.recent(
+             incident.id,
+             proposal.target_id,
+             Enum.map(evidence, & &1.id)
+           ),
          {:ok, target_relations} <- target_relations(incident, proposal) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,

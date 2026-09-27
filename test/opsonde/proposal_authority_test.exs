@@ -773,9 +773,89 @@ defmodule Opsonde.ProposalAuthorityTest do
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
     initial_turn_count = length(Cases.list_turns!(actor: context.admin))
 
+    observed_at = DateTime.utc_now()
+
+    before_effect =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-rejection:reachable-before-effect",
+        "observation",
+        "target",
+        "linux-identity",
+        %{
+          "target_id" => context.target.id,
+          "operation" => "linux.identity.inspect",
+          "status" => "applied",
+          "facts" => %{"reachable" => true}
+        },
+        DateTime.add(observed_at, -10, :second),
+        authorize?: false
+      )
+
+    applied_effect =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-rejection:prior-effect",
+        "operation_outcome",
+        "target",
+        "bmc-power-reset",
+        %{
+          "target_id" => context.target.id,
+          "operation" => "bmc.power.reset",
+          "status" => "applied"
+        },
+        DateTime.add(observed_at, -5, :second),
+        authorize?: false
+      )
+
+    after_effect =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-rejection:unreachable-after-effect",
+        "observation",
+        "target",
+        "linux-identity",
+        %{
+          "target_id" => context.target.id,
+          "operation" => "linux.identity.inspect",
+          "status" => "failed",
+          "facts" => %{"reachable" => false}
+        },
+        observed_at,
+        authorize?: false
+      )
+
+    unrelated_target_id = Ecto.UUID.generate()
+
+    for index <- 1..101 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-rejection:unrelated-#{index}",
+        "observation",
+        "target",
+        "unrelated-inspection",
+        %{
+          "target_id" => unrelated_target_id,
+          "operation" => "generic.inspect",
+          "status" => "applied",
+          "facts" => %{"sample" => index}
+        },
+        DateTime.add(observed_at, index, :microsecond),
+        authorize?: false
+      )
+    end
+
     response = %AI.ReviewDecision{
       verdict: :rejected,
-      reason: "Try a non-disruptive alternative",
+      reason: "The guest was reachable before reset; the later failure may be caused by it",
       usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
     }
 
@@ -785,6 +865,20 @@ defmodule Opsonde.ProposalAuthorityTest do
                  test_pid: self(),
                  respond: fn request ->
                    refute request.session_id == request.resolver_session_id
+
+                   chronology =
+                     request.context_evidence
+                     |> Enum.filter(
+                       &(&1.id in [before_effect.id, applied_effect.id, after_effect.id])
+                     )
+                     |> Enum.sort_by(& &1.observed_at_us)
+
+                   assert Enum.map(chronology, & &1.id) == [
+                            before_effect.id,
+                            applied_effect.id,
+                            after_effect.id
+                          ]
+
                    {:ok, response}
                  end
                }
