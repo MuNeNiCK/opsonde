@@ -54,6 +54,44 @@
             "nullable": true,
             "type": "string"
           },
+          "review_symptom_assessment": {
+            "additionalProperties": false,
+            "nullable": true,
+            "properties": {
+              "evidence_ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "unsupported",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "symptom_id": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": [
+              "symptom_id",
+              "status",
+              "evidence_ids",
+              "reason"
+            ],
+            "type": "object"
+          },
           "review_verdict": {
             "maxLength": 80,
             "nullable": true,
@@ -77,6 +115,7 @@
           "review_source_turn_id",
           "review_provider_id",
           "review_evidence_ids",
+          "review_symptom_assessment",
           "inserted_at"
         ],
         "type": "object"
@@ -3448,6 +3487,27 @@
           "cancel_requested": {
             "type": "boolean"
           },
+          "case_symptom": {
+            "additionalProperties": false,
+            "nullable": true,
+            "properties": {
+              "id": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "text"
+            ],
+            "type": "object"
+          },
           "condition_count": {
             "minimum": 0,
             "nullable": true,
@@ -3593,6 +3653,7 @@
           "status",
           "operator_action",
           "initial_context",
+          "case_symptom",
           "authority_setting_id",
           "authority_setting_revision",
           "authority_mode",
@@ -3744,6 +3805,74 @@
             "minimum": 1,
             "type": "integer"
           },
+          "case_symptom": {
+            "additionalProperties": false,
+            "nullable": true,
+            "properties": {
+              "claim_evidence": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidence_id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "fact_keys": {
+                      "items": {
+                        "maxLength": 120,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "facts": {
+                      "maxLength": 10000,
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "evidence_id",
+                    "fact_keys",
+                    "facts"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              "review_reason": {
+                "maxLength": 1000,
+                "nullable": true,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "unsupported",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "text",
+              "status",
+              "review_reason",
+              "claim_evidence"
+            ],
+            "type": "object"
+          },
           "cited_evidence": {
             "items": {
               "additionalProperties": false,
@@ -3891,6 +4020,44 @@
                   "format": "uuid",
                   "type": "string"
                 },
+                "symptom_assessment": {
+                  "additionalProperties": false,
+                  "nullable": true,
+                  "properties": {
+                    "evidence_ids": {
+                      "items": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "reason": {
+                      "maxLength": 1000,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "supported",
+                        "unsupported",
+                        "unknown"
+                      ],
+                      "type": "string"
+                    },
+                    "symptom_id": {
+                      "maxLength": 64,
+                      "minLength": 64,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "symptom_id",
+                    "status",
+                    "evidence_ids",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
                 "verdict": {
                   "enum": [
                     "approved",
@@ -3906,6 +4073,7 @@
                 "verdict",
                 "reason",
                 "evidence_ids",
+                "symptom_assessment",
                 "provider_id",
                 "inserted_at"
               ],
@@ -3992,6 +4160,7 @@
           "source_ref",
           "severity",
           "conditions",
+          "case_symptom",
           "actions",
           "verifications",
           "cited_evidence",

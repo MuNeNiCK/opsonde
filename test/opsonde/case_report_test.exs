@@ -3,6 +3,7 @@ defmodule Opsonde.CaseReportTest do
 
   alias Opsonde.{Accounts, Cases, Reports}
   alias Opsonde.Cases.{Case, Operation, VerificationAttempt}
+  alias Opsonde.Cases.CaseSymptom
   alias Opsonde.Reports.Report.Content
   alias Opsonde.Reports.Report.Document
   alias Opsonde.Reports.Report
@@ -443,6 +444,183 @@ defmodule Opsonde.CaseReportTest do
       %{report | content: Map.put(report.content, "resolution_review_event_id", nil)}
 
     assert Document.build(without_review)["conclusion"] == nil
+  end
+
+  test "manual report shows only the accepted fact keys for its original symptom", _context do
+    case_id = Ash.UUID.generate()
+    evidence_id = Ash.UUID.generate()
+    unrelated_id = Ash.UUID.generate()
+    turn_id = Ash.UUID.generate()
+    review_id = Ash.UUID.generate()
+    original = "vendor_power_rail=degraded"
+
+    symptom =
+      CaseSymptom.current(%{
+        id: case_id,
+        trigger_kind: :manual,
+        title: "Power rail case",
+        initial_context: %{"symptom" => original}
+      })
+
+    claim = %{
+      "symptom_id" => symptom.id,
+      "evidence_id" => evidence_id,
+      "fact_keys" => ["vendor_power_rail"],
+      "reason" => "The same power rail is now healthy"
+    }
+
+    assessment = %{
+      "symptom_id" => symptom.id,
+      "status" => "supported",
+      "evidence_ids" => [evidence_id],
+      "reason" => "The observed rail state supports recovery"
+    }
+
+    report = %Report{
+      case_id: case_id,
+      case_revision: 3,
+      language: :en,
+      content_digest: String.duplicate("b", 64),
+      content: %{
+        "case" => %{
+          "id" => case_id,
+          "trigger_kind" => "manual",
+          "title" => "Power rail case",
+          "initial_context" => %{"symptom" => original},
+          "status" => "resolved"
+        },
+        "outcome_label" => "Resolved",
+        "resolution_turn_id" => turn_id,
+        "resolution_review_event_id" => review_id,
+        "resolver_turns" => [
+          %{
+            "id" => turn_id,
+            "decision" => %{
+              "type" => "recovery_conclusion",
+              "reason" => "Power rail recovered",
+              "evidence_ids" => [evidence_id],
+              "case_symptom_claims" => [claim]
+            }
+          }
+        ],
+        "recovery_reviews" => [
+          %{
+            "id" => review_id,
+            "source_turn_id" => turn_id,
+            "verdict" => "approved",
+            "reason" => "Observed rail is healthy",
+            "evidence_ids" => [evidence_id],
+            "case_symptom_claims" => [claim],
+            "symptom_assessment" => assessment
+          }
+        ],
+        "raw_evidence" => [
+          %{
+            "id" => evidence_id,
+            "kind" => "observation",
+            "content" => %{
+              "facts" => %{
+                "vendor_power_rail" => "healthy",
+                "unrelated_fan" => "healthy"
+              }
+            }
+          },
+          %{
+            "id" => unrelated_id,
+            "kind" => "observation",
+            "content" => %{"facts" => %{"other_rail" => "healthy"}}
+          }
+        ]
+      }
+    }
+
+    document = Document.build(report)
+
+    assert document["case_symptom"] == %{
+             "id" => symptom.id,
+             "text" => original,
+             "status" => "supported",
+             "review_reason" => "Observed rail is healthy",
+             "claim_evidence" => [
+               %{
+                 "evidence_id" => evidence_id,
+                 "fact_keys" => ["vendor_power_rail"],
+                 "facts" => "vendor_power_rail=healthy"
+               }
+             ]
+           }
+
+    assert document["text"] =~ "vendor_power_rail=healthy"
+    refute document["text"] =~ "unrelated_fan"
+    refute document["text"] =~ unrelated_id
+    assert document["recovery_reviews"] |> hd() |> Map.fetch!("symptom_assessment") == assessment
+    refute Map.has_key?(hd(document["recovery_reviews"]), "case_symptom_claims")
+
+    without_acceptance =
+      %{report | content: Map.put(report.content, "resolution_review_event_id", nil)}
+      |> Document.build()
+
+    assert without_acceptance["case_symptom"]["status"] == "unknown"
+    assert without_acceptance["case_symptom"]["claim_evidence"] == []
+  end
+
+  test "unresolved audit report keeps the original objective without implying recovery",
+       _context do
+    case_id = Ash.UUID.generate()
+    evidence_id = Ash.UUID.generate()
+    objective = "Confirm BMC thermal alarm is cleared"
+
+    symptom =
+      CaseSymptom.current(%{
+        id: case_id,
+        trigger_kind: :audit,
+        title: "Thermal audit",
+        initial_context: %{"objective" => objective}
+      })
+
+    report = %Report{
+      case_id: case_id,
+      case_revision: 4,
+      language: :en,
+      content_digest: String.duplicate("c", 64),
+      content: %{
+        "case" => %{
+          "id" => case_id,
+          "trigger_kind" => "audit",
+          "title" => "Thermal audit",
+          "initial_context" => %{"objective" => objective},
+          "status" => "needs_attention"
+        },
+        "outcome_label" => "Needs attention",
+        "unresolved" => %{"stop_reason" => "Thermal state remains uncertain"},
+        "recovery_reviews" => [
+          %{
+            "id" => Ash.UUID.generate(),
+            "source_turn_id" => Ash.UUID.generate(),
+            "verdict" => "rejected",
+            "reason" => "Temperature observation does not cover the alarm",
+            "evidence_ids" => [evidence_id],
+            "case_symptom_claims" => [
+              %{"symptom_id" => symptom.id, "evidence_id" => evidence_id}
+            ],
+            "symptom_assessment" => %{
+              "symptom_id" => symptom.id,
+              "status" => "unsupported",
+              "evidence_ids" => [evidence_id],
+              "reason" => "Alarm status was not observed"
+            }
+          }
+        ]
+      }
+    }
+
+    document = Document.build(report)
+    assert document["case_symptom"]["text"] == objective
+    assert document["case_symptom"]["status"] == "unsupported"
+    assert document["case_symptom"]["claim_evidence"] == []
+    assert document["conclusion"] == nil
+    assert document["text"] =~ "Recovery not confirmed"
+    refute document["text"] =~ "Recovery confirmed"
   end
 
   defp open!(source_ref, actor) do

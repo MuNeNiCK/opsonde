@@ -24,6 +24,34 @@ defmodule OpsondeWeb.API.Schemas do
   def uuid, do: %Schema{type: :string, format: :uuid}
   def timestamp, do: %Schema{type: :string, format: :"date-time"}
 
+  def case_symptom(nullable? \\ false) do
+    %Schema{
+      type: :object,
+      nullable: nullable?,
+      properties: %{
+        id: %Schema{type: :string, minLength: 64, maxLength: 64},
+        text: %Schema{type: :string, minLength: 1, maxLength: 2_000}
+      },
+      required: [:id, :text],
+      additionalProperties: false
+    }
+  end
+
+  def symptom_assessment(nullable? \\ false) do
+    %Schema{
+      type: :object,
+      nullable: nullable?,
+      properties: %{
+        symptom_id: %Schema{type: :string, minLength: 64, maxLength: 64},
+        status: %Schema{type: :string, enum: ~w(supported unsupported unknown)},
+        evidence_ids: %Schema{type: :array, items: uuid()},
+        reason: %Schema{type: :string, minLength: 1, maxLength: 1_000}
+      },
+      required: [:symptom_id, :status, :evidence_ids, :reason],
+      additionalProperties: false
+    }
+  end
+
   def id_parameter(name \\ :id) do
     [{name, [in: :path, required: true, schema: uuid()]}]
   end

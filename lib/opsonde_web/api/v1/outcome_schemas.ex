@@ -269,6 +269,31 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         false
       )
 
+    symptom_citation =
+      object(
+        %{
+          evidence_id: Schemas.uuid(),
+          fact_keys: %Schema{type: :array, items: string(1, 120)},
+          facts: nullable_string(10_000)
+        },
+        ~w(evidence_id fact_keys facts)a,
+        false
+      )
+
+    case_symptom =
+      object(
+        %{
+          id: digest(),
+          text: string(1, 2_000),
+          status: enum(~w(supported unsupported unknown)),
+          review_reason: nullable_string(1_000),
+          claim_evidence: %Schema{type: :array, items: symptom_citation}
+        },
+        ~w(id text status review_reason claim_evidence)a,
+        false
+      )
+      |> Map.put(:nullable, true)
+
     recovery_review =
       object(
         %{
@@ -277,10 +302,11 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
           verdict: enum(~w(approved rejected needs_human)),
           reason: string(1, 1_000),
           evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
+          symptom_assessment: Schemas.symptom_assessment(true),
           provider_id: Schemas.uuid(),
           inserted_at: Schemas.timestamp()
         },
-        ~w(id source_turn_id verdict reason evidence_ids provider_id inserted_at)a,
+        ~w(id source_turn_id verdict reason evidence_ids symptom_assessment provider_id inserted_at)a,
         false
       )
 
@@ -295,6 +321,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         source_ref: %Schema{type: :string},
         severity: %Schema{type: :string},
         conditions: %Schema{type: :array, items: condition},
+        case_symptom: case_symptom,
         actions: %Schema{type: :array, items: action},
         verifications: %Schema{type: :array, items: verification},
         cited_evidence: %Schema{type: :array, items: cited_evidence},
@@ -308,7 +335,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         digest: digest(),
         text: %Schema{type: :string}
       },
-      ~w(title outcome opened_at finished_at target_id source source_ref severity conditions actions verifications cited_evidence conclusion conclusion_turn_id recovery_reviews stop_reason required_human_input case_id case_revision digest text)a,
+      ~w(title outcome opened_at finished_at target_id source source_ref severity conditions case_symptom actions verifications cited_evidence conclusion conclusion_turn_id recovery_reviews stop_reason required_human_input case_id case_revision digest text)a,
       false
     )
   end

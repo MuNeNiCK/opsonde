@@ -18,6 +18,21 @@ defmodule Opsonde.Cases.CaseSymptom do
     %{id: digest, text: text}
   end
 
+  def current(%{
+        "id" => id,
+        "trigger_kind" => kind,
+        "title" => title,
+        "initial_context" => context
+      })
+      when kind in ["manual", "audit"] do
+    current(%{
+      id: id,
+      trigger_kind: if(kind == "manual", do: :manual, else: :audit),
+      title: title,
+      initial_context: context
+    })
+  end
+
   def current(_incident), do: nil
 
   def valid?(nil), do: true

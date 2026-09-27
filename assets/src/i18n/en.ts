@@ -293,6 +293,12 @@ const en = {
     },
     cases: {
       title: "Cases",
+      caseSymptom: "Original Case symptom",
+      symptomReviewStatus: {
+        supported: "Supported",
+        unsupported: "Unsupported",
+        unknown: "Unclear",
+      },
       conditionsTitle: "Current conditions",
       pastConditionsTitle: "Previously assigned conditions",
       pastConditionDetachedAt: "Moved out",

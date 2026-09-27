@@ -288,6 +288,12 @@ const ja = {
     },
     cases: {
       title: "ケース",
+      caseSymptom: "受付時の症状",
+      symptomReviewStatus: {
+        supported: "回復を確認",
+        unsupported: "回復を確認できず",
+        unknown: "判断できず",
+      },
       conditionsTitle: "現在の障害条件",
       pastConditionsTitle: "以前このケースにあった障害条件",
       pastConditionDetachedAt: "分離日時",

@@ -424,6 +424,16 @@ export function CaseDetailPage() {
         </Alert>
       )}
 
+      {incident.case_symptom && (
+        <Card>
+          <CardContent className="space-y-2 p-5">
+            <h2 className="text-lg font-semibold">{t("cases.caseSymptom")}</h2>
+            <p className="text-sm">{incident.case_symptom.text}</p>
+            <p className="font-mono text-xs text-muted-foreground">{incident.case_symptom.id}</p>
+          </CardContent>
+        </Card>
+      )}
+
       {detail.timeline.some((event) => event.type === "recovery_review_decided") && (
         <Card>
           <CardContent className="space-y-3 p-5">
@@ -439,6 +449,18 @@ export function CaseDetailPage() {
                       {t(`cases.recoveryReviewStatus.${event.review_verdict}`)}
                     </Badge>
                     <p className="mt-2 text-sm">{event.review_reason}</p>
+                    {event.review_symptom_assessment && (
+                      <div className="mt-2 space-y-1 text-sm">
+                        <Badge variant="outline">
+                          {t(`cases.symptomReviewStatus.${event.review_symptom_assessment.status}`)}
+                        </Badge>
+                        <p>{event.review_symptom_assessment.reason}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {t("cases.recoveryReviewEvidence")}:{" "}
+                          {event.review_symptom_assessment.evidence_ids.join(", ")}
+                        </p>
+                      </div>
+                    )}
                     <p className="mt-2 text-xs text-muted-foreground">
                       {t("cases.recoveryReviewEvidence")}: {event.review_evidence_ids.join(", ")}
                     </p>

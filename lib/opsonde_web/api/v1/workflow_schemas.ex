@@ -109,6 +109,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         status: enum(~w(running needs_attention resolved cancelled)),
         operator_action: enum(~w(none decision_required input_required intervention_required)),
         initial_context: map(),
+        case_symptom: Schemas.case_symptom(true),
         authority_setting_id: Schemas.uuid(),
         authority_setting_revision: positive_integer(),
         authority_mode: authority_mode(),
@@ -125,7 +126,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref split_parent_id title severity condition_count firing_condition_count report_language status operator_action initial_context authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref split_parent_id title severity condition_count firing_condition_count report_language status operator_action initial_context case_symptom authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end
@@ -300,6 +301,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         review_source_turn_id: nullable_uuid(),
         review_provider_id: nullable_uuid(),
         review_evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
+        review_symptom_assessment: Schemas.symptom_assessment(true),
         inserted_at: Schemas.timestamp()
       },
       [
@@ -314,6 +316,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         :review_source_turn_id,
         :review_provider_id,
         :review_evidence_ids,
+        :review_symptom_assessment,
         :inserted_at
       ],
       false

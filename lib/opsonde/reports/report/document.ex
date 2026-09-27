@@ -3,6 +3,7 @@ defmodule Opsonde.Reports.Report.Document do
   use Gettext, backend: Opsonde.Gettext
 
   alias Opsonde.Reports.Report
+  alias Opsonde.Cases.CaseSymptom
 
   def build(%Report{} = report) do
     content = report.content
@@ -16,6 +17,16 @@ defmodule Opsonde.Reports.Report.Document do
     cited = conclusion |> map() |> Map.get("evidence_ids") |> list()
     claims = conclusion |> map() |> Map.get("condition_claims") |> list()
 
+    case_symptom =
+      documented_case_symptom(
+        incident,
+        conclusion_turn,
+        conclusion,
+        recovery_reviews,
+        evidence,
+        content
+      )
+
     document = %{
       "title" => incident["title"],
       "outcome" => content["outcome_label"],
@@ -26,13 +37,14 @@ defmodule Opsonde.Reports.Report.Document do
       "source_ref" => incident["source_ref"],
       "severity" => incident["severity"],
       "conditions" => monitored_conditions(list(content["conditions"]), evidence, claims),
+      "case_symptom" => case_symptom,
       "actions" =>
         Enum.filter(operations, &(&1["request_kind"] == "effect")) |> Enum.map(&action/1),
       "verifications" => Enum.map(verifications, &verification/1),
-      "cited_evidence" => cited_evidence(cited, evidence),
+      "cited_evidence" => presented_cited_evidence(cited, evidence, case_symptom),
       "conclusion" => conclusion && nonblank(conclusion["reason"]),
       "conclusion_turn_id" => conclusion_turn && conclusion_turn["id"],
-      "recovery_reviews" => recovery_reviews,
+      "recovery_reviews" => Enum.map(recovery_reviews, &Map.delete(&1, "case_symptom_claims")),
       "stop_reason" => nonblank(get_in(content, ["unresolved", "stop_reason"])),
       "required_human_input" => nonblank(get_in(content, ["unresolved", "required_human_input"])),
       "case_id" => report.case_id,
@@ -59,6 +71,94 @@ defmodule Opsonde.Reports.Report.Document do
   end
 
   defp accepted_conclusion_turn(_incident, _content, _recovery_reviews), do: nil
+
+  defp documented_case_symptom(incident, conclusion_turn, conclusion, reviews, evidence, content) do
+    case CaseSymptom.current(incident) do
+      nil ->
+        nil
+
+      %{id: symptom_id, text: symptom_text} ->
+        claims = conclusion |> map() |> Map.get("case_symptom_claims") |> list()
+
+        review =
+          if conclusion_turn do
+            Enum.find(reviews, &(&1["id"] == content["resolution_review_event_id"]))
+          end
+
+        citations = accepted_symptom_citations(claims, cited_evidence_ids(conclusion), evidence)
+
+        accepted? =
+          not is_nil(review) and review["source_turn_id"] == conclusion_turn["id"] and
+            review["verdict"] == "approved" and review["case_symptom_claims"] == claims and
+            CaseSymptom.valid_assessment?(
+              review["symptom_assessment"],
+              %{id: symptom_id},
+              claims,
+              :approved
+            ) and length(citations) == length(claims)
+
+        latest =
+          if accepted? do
+            review
+          else
+            reviews
+            |> Enum.filter(&(get_in(&1, ["symptom_assessment", "symptom_id"]) == symptom_id))
+            |> List.last()
+          end
+
+        %{
+          "id" => symptom_id,
+          "text" => symptom_text,
+          "status" => if(accepted?, do: "supported", else: assessment_status(latest)),
+          "review_reason" => latest && latest["reason"],
+          "claim_evidence" => if(accepted?, do: citations, else: [])
+        }
+    end
+  end
+
+  defp cited_evidence_ids(conclusion),
+    do: conclusion |> map() |> Map.get("evidence_ids") |> list()
+
+  defp accepted_symptom_citations(claims, cited_ids, evidence) do
+    Enum.flat_map(claims, fn claim ->
+      item = Enum.find(evidence, &(&1["id"] == claim["evidence_id"]))
+      facts = item |> map() |> Map.get("content") |> map() |> Map.get("facts") |> map()
+      keys = claim["fact_keys"]
+
+      if (item && claim["evidence_id"] in cited_ids) and is_list(keys) and keys != [] and
+           Enum.all?(keys, &Map.has_key?(facts, &1)) do
+        [
+          %{
+            "evidence_id" => item["id"],
+            "fact_keys" => keys,
+            "facts" => facts |> Map.take(keys) |> facts_text()
+          }
+        ]
+      else
+        []
+      end
+    end)
+  end
+
+  defp assessment_status(%{"symptom_assessment" => %{"status" => status}})
+       when status in ["unsupported", "unknown"],
+       do: status
+
+  defp assessment_status(_review), do: "unknown"
+
+  defp presented_cited_evidence(ids, evidence, nil), do: cited_evidence(ids, evidence)
+
+  defp presented_cited_evidence(_ids, evidence, %{"claim_evidence" => citations}) do
+    Enum.map(citations, fn citation ->
+      item = Enum.find(evidence, &(&1["id"] == citation["evidence_id"]))
+
+      %{
+        "id" => citation["evidence_id"],
+        "kind" => item && item["kind"],
+        "facts" => citation["facts"]
+      }
+    end)
+  end
 
   defp monitored_conditions(conditions, evidence, claims) do
     Enum.map(conditions, fn condition ->
@@ -173,28 +273,7 @@ defmodule Opsonde.Reports.Report.Document do
         "#{dgettext("reports", "Opened at")}: #{document["opened_at"] || unknown}",
         "#{dgettext("reports", "Finished at")}: #{document["finished_at"] || unknown}",
         "",
-        dgettext("reports", "Monitored conditions"),
-        entries(
-          document["conditions"],
-          fn condition ->
-            "• #{condition["symptom"]} [#{condition["source_state"]}] (#{condition["id"]})" <>
-              if(condition["source_evidence_id"],
-                do: " · #{dgettext("reports", "Evidence")}: #{condition["source_evidence_id"]}",
-                else: ""
-              ) <>
-              if(condition["assessment"],
-                do:
-                  "\n  #{condition["assessment"]} · #{dgettext("reports", "Evidence")}: #{condition["evidence_id"]}" <>
-                    if(condition["evidence_facts"],
-                      do: " · #{condition["evidence_facts"]}",
-                      else: ""
-                    ),
-                else: "\n  #{unknown}"
-              )
-          end,
-          unknown
-        ),
-        "",
+        symptom_section(document, unknown),
         dgettext("reports", "Actions"),
         entries(
           document["actions"],
@@ -250,6 +329,52 @@ defmodule Opsonde.Reports.Report.Document do
     end)
   end
 
+  defp symptom_section(%{"case_symptom" => %{} = symptom}, unknown) do
+    [
+      dgettext("reports", "Case symptom"),
+      "• #{symptom["text"]} [#{symptom_status_label(symptom["status"])}] (#{symptom["id"]})",
+      if(symptom["review_reason"],
+        do: "  #{dgettext("reports", "Recovery reviews")}: #{symptom["review_reason"]}",
+        else: nil
+      ),
+      entries(
+        symptom["claim_evidence"],
+        fn item ->
+          "  #{dgettext("reports", "Evidence")}: #{item["evidence_id"]} · #{Enum.join(item["fact_keys"], ", ")} · #{item["facts"] || unknown}"
+        end,
+        unknown
+      ),
+      ""
+    ]
+  end
+
+  defp symptom_section(document, unknown) do
+    [
+      dgettext("reports", "Monitored conditions"),
+      entries(
+        document["conditions"],
+        fn condition ->
+          "• #{condition["symptom"]} [#{condition["source_state"]}] (#{condition["id"]})" <>
+            if(condition["source_evidence_id"],
+              do: " · #{dgettext("reports", "Evidence")}: #{condition["source_evidence_id"]}",
+              else: ""
+            ) <>
+            if(condition["assessment"],
+              do:
+                "\n  #{condition["assessment"]} · #{dgettext("reports", "Evidence")}: #{condition["evidence_id"]}" <>
+                  if(condition["evidence_facts"],
+                    do: " · #{condition["evidence_facts"]}",
+                    else: ""
+                  ),
+              else: "\n  #{unknown}"
+            )
+        end,
+        unknown
+      ),
+      ""
+    ]
+  end
+
   defp entries([], _render, unknown), do: unknown
   defp entries(items, render, _unknown), do: Enum.map(items, render)
 
@@ -262,6 +387,10 @@ defmodule Opsonde.Reports.Report.Document do
   defp status_label("verified"), do: dgettext("reports", "Verified")
   defp status_label("not_verified"), do: dgettext("reports", "Not verified")
   defp status_label(value), do: value
+
+  defp symptom_status_label("supported"), do: dgettext("reports", "Recovery confirmed")
+  defp symptom_status_label("unsupported"), do: dgettext("reports", "Recovery not confirmed")
+  defp symptom_status_label(_status), do: dgettext("reports", "Recovery unknown")
 
   defp action_name(item) do
     parameters = map(item["parameters"])

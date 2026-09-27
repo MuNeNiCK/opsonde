@@ -2,6 +2,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   @moduledoc false
 
   alias OpsondeWeb.API.V1.OutcomeJSON
+  alias Opsonde.Cases.CaseSymptom
 
   def authority(setting) do
     %{
@@ -39,6 +40,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       status: incident.status,
       operator_action: operator_action(incident),
       initial_context: incident.initial_context,
+      case_symptom: CaseSymptom.current(incident),
       authority_setting_id: incident.authority_setting_id,
       authority_setting_revision: incident.authority_setting_revision,
       authority_mode: incident.authority_mode,
@@ -152,6 +154,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       review_source_turn_id: review_value(event, "source_turn_id"),
       review_provider_id: review_value(event, "provider_id"),
       review_evidence_ids: review_evidence_ids(event),
+      review_symptom_assessment: review_value(event, "symptom_assessment"),
       inserted_at: event.inserted_at
     }
   end

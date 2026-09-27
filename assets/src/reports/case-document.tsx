@@ -17,6 +17,10 @@ const copy = {
     source: "検知元",
     severity: "重要度",
     condition: "監視された事象",
+    caseSymptom: "ケースの症状",
+    symptomSupported: "復旧を確認",
+    symptomUnsupported: "復旧を確認できず",
+    symptomUnknown: "復旧は未確認",
     actions: "実施した操作",
     verification: "対象操作の検証",
     cited: "判断に引用した証拠",
@@ -66,6 +70,10 @@ const copy = {
     source: "Source",
     severity: "Severity",
     condition: "Monitored conditions",
+    caseSymptom: "Case symptom",
+    symptomSupported: "Recovery confirmed",
+    symptomUnsupported: "Recovery not confirmed",
+    symptomUnknown: "Recovery unknown",
     actions: "Actions taken",
     verification: "Target operation checks",
     cited: "Evidence cited by Resolver",
@@ -185,9 +193,38 @@ export function CaseReportDocument({ report }: { report: Report }) {
         <section className="report-section">
           <h2>
             <span>01</span>
-            {c.condition}
+            {document.case_symptom ? c.caseSymptom : c.condition}
           </h2>
-          {document.conditions.length ? (
+          {document.case_symptom ? (
+            <div className="report-observation">
+              <div className="report-list-head">
+                <strong>{document.case_symptom.text}</strong>
+                <span>
+                  {document.case_symptom.status === "supported"
+                    ? c.symptomSupported
+                    : document.case_symptom.status === "unsupported"
+                      ? c.symptomUnsupported
+                      : c.symptomUnknown}
+                </span>
+              </div>
+              <small className="block">
+                {c.record} · {document.case_symptom.id}
+              </small>
+              {document.case_symptom.review_reason && <p>{document.case_symptom.review_reason}</p>}
+              {document.case_symptom.claim_evidence.length > 0 && (
+                <ul className="space-y-2">
+                  {document.case_symptom.claim_evidence.map((item) => (
+                    <li key={`${item.evidence_id}:${item.fact_keys.join(",")}`}>
+                      <span>{item.facts ?? c.noDetail}</span>
+                      <small className="block">
+                        {c.evidence} · {item.evidence_id} · {item.fact_keys.join(", ")}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : document.conditions.length ? (
             <ol className="report-list">
               {document.conditions.map((condition) => (
                 <li key={condition.id}>
@@ -322,6 +359,17 @@ export function CaseReportDocument({ report }: { report: Report }) {
                     <small className="block">
                       {c.record} · {review.id} · {c.evidence} · {review.evidence_ids.join(", ")}
                     </small>
+                    {review.symptom_assessment && (
+                      <small className="block">
+                        {review.symptom_assessment.status === "supported"
+                          ? c.symptomSupported
+                          : review.symptom_assessment.status === "unsupported"
+                            ? c.symptomUnsupported
+                            : c.symptomUnknown}
+                        {" · "}
+                        {review.symptom_assessment.reason}
+                      </small>
+                    )}
                   </li>
                 ))}
               </ul>
