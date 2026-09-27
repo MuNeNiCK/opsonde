@@ -435,10 +435,17 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
   end
 
   defp validate_extension(run, arguments) do
-    if Enum.all?(@limit_fields, &(Map.fetch!(arguments, &1) >= Map.fetch!(run, &1))) do
-      :ok
-    else
-      {:error, "Resume limits cannot reduce the prior run limits"}
+    case Enum.find(@limit_fields, &(Map.fetch!(arguments, &1) < Map.fetch!(run, &1))) do
+      nil ->
+        :ok
+
+      field ->
+        {:error,
+         Ash.Error.Changes.InvalidAttribute.exception(
+           field: field,
+           value: Map.fetch!(arguments, field),
+           message: "cannot be lower than the prior run limit"
+         )}
     end
   end
 

@@ -425,6 +425,23 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
 
+    lower_limits =
+      resume_input(attention, paused_run, paused_run.revision)
+      |> Map.put("max_resolver_turns", paused_run.max_resolver_turns - 1)
+
+    rejected =
+      post_json(
+        "/api/v1/cases/#{incident["id"]}/resume",
+        %{"case" => lower_limits},
+        context.operator_token
+      )
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"fields" => fields}}} =
+             json_response(rejected, 422)
+
+    assert "max_resolver_turns" in fields
+    assert Cases.active_resolution_run!(incident["id"], authorize?: false).id == paused_run.id
+
     stale =
       post_json(
         "/api/v1/cases/#{incident["id"]}/resume",
