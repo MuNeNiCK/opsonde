@@ -2708,6 +2708,68 @@ defmodule Opsonde.OperationDeliveryTest do
              "last_rejected_recovery_review",
              "evidence_ids"
            ]) == [evidence.id]
+
+    source = hd(Cases.signal_context_evidence!(incident.id, authorize?: false))
+
+    proposal =
+      complete_signal_proposal!(
+        resumed_turn,
+        signal_proposal_intent(source.id, context, :observation),
+        incident,
+        context
+      )
+
+    observation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(observation, %{
+               "unit" => "api.service",
+               "active_state" => "active"
+             })
+
+    fresh = operation_evidence_record(observation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    fresh_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(fresh_turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert fresh.id in request.recovery_evidence_ids
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The service is active in a fresh direct observation",
+                        evidence_ids: [fresh.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => fresh.id,
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.route_downstream_decision!(fresh_turn.id, authorize?: false).pending_intent[
+             "action"
+           ] == "review_recovery"
+
+    approve_recovery!(fresh_turn, context)
+
+    assert Enum.count(Cases.list_case_events!(actor: context.admin), fn event ->
+             event.case_id == incident.id and event.event_type == "recovery_review_decided"
+           end) == 2
   end
 
   test "a missing recovery Reviewer stops a manual Case without claiming resolution", context do
