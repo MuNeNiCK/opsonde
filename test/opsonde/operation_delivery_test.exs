@@ -3123,7 +3123,7 @@ defmodule Opsonde.OperationDeliveryTest do
            "operation-#{suffix}",
            "Operation #{suffix}",
            :warning,
-           %{},
+           %{"desired_outcome" => "Target responds as expected"},
            context.target.id,
            :en,
            actor: context.operator

@@ -30,9 +30,10 @@ defmodule OpsondeWeb.API.Schemas do
       nullable: nullable?,
       properties: %{
         id: %Schema{type: :string, minLength: 64, maxLength: 64},
-        text: %Schema{type: :string, minLength: 1, maxLength: 2_000}
+        text: %Schema{type: :string, minLength: 1, maxLength: 2_000},
+        desired_outcome: %Schema{type: :string, minLength: 1, maxLength: 2_000}
       },
-      required: [:id, :text],
+      required: [:id, :text, :desired_outcome],
       additionalProperties: false
     }
   end

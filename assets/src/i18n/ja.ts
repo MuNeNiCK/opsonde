@@ -765,6 +765,7 @@ const ja = {
       scheduleDescription: "個別Targetまたは1つの管理境界を指定します。",
       name: "名前",
       objective: "調査目的",
+      desiredOutcome: "達成条件（実測で確認したい状態）",
       timezone: "タイムゾーン",
       cron: "Cron式",
       reportLanguage: "レポート言語",

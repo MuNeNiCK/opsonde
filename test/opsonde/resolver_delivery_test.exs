@@ -473,7 +473,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         "interrupted",
         "Service is unavailable",
         :critical,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: context.operator
@@ -677,7 +677,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         "proposal-snapshot",
         "Case proposal-snapshot",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         target.id,
         :en,
         actor: context.operator
@@ -809,7 +809,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         "relationship-snapshot",
         "Investigate Linux I/O errors",
         :critical,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         linux.id,
         :en,
         actor: context.operator
@@ -897,7 +897,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         source_ref,
         "Case #{source_ref}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: actor
@@ -927,7 +927,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         source_ref,
         "Case #{source_ref}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         target.id,
         :en,
         actor: actor

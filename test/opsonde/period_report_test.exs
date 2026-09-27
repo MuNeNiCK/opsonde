@@ -23,7 +23,7 @@ defmodule Opsonde.PeriodReportTest do
         "period-1",
         "Service unavailable",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         target.id,
         :en,
         actor: admin
@@ -83,7 +83,7 @@ defmodule Opsonde.PeriodReportTest do
       "period-other",
       "Other target",
       :warning,
-      %{},
+      %{"desired_outcome" => "Target responds as expected"},
       other.id,
       :en,
       actor: admin
@@ -162,7 +162,7 @@ defmodule Opsonde.PeriodReportTest do
         "case-#{index}",
         "Period Case #{index}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: admin

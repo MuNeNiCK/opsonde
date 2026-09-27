@@ -782,6 +782,7 @@ const en = {
       scheduleDescription: "Choose either specific Targets or one management boundary.",
       name: "Name",
       objective: "Investigation objective",
+      desiredOutcome: "Desired outcome (observable state)",
       timezone: "Timezone",
       cron: "Cron expression",
       reportLanguage: "Report language",

@@ -77,7 +77,7 @@ defmodule Opsonde.Reports.Report.Document do
       nil ->
         nil
 
-      %{id: symptom_id, text: symptom_text} ->
+      %{id: symptom_id, text: symptom_text, desired_outcome: desired_outcome} ->
         claims = conclusion |> map() |> Map.get("case_symptom_claims") |> list()
 
         review =
@@ -109,6 +109,7 @@ defmodule Opsonde.Reports.Report.Document do
         %{
           "id" => symptom_id,
           "text" => symptom_text,
+          "desired_outcome" => desired_outcome,
           "status" => if(accepted?, do: "supported", else: assessment_status(latest)),
           "review_reason" => latest && latest["reason"],
           "claim_evidence" => if(accepted?, do: citations, else: [])
@@ -333,6 +334,7 @@ defmodule Opsonde.Reports.Report.Document do
     [
       dgettext("reports", "Case symptom"),
       "• #{symptom["text"]} [#{symptom_status_label(symptom["status"])}] (#{symptom["id"]})",
+      "  #{dgettext("reports", "Desired outcome")}: #{symptom["desired_outcome"]}",
       if(symptom["review_reason"],
         do: "  #{dgettext("reports", "Recovery reviews")}: #{symptom["review_reason"]}",
         else: nil

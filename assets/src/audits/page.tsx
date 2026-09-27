@@ -100,7 +100,7 @@ export function AuditPage() {
         body: {
           audit_schedule: {
             name: formValue(form, "name"),
-            objective: formValue(form, "objective"),
+            desired_outcome: formValue(form, "desired_outcome"),
             timezone: formValue(form, "timezone"),
             cron_expression: formValue(form, "cron_expression"),
             report_language: formValue(form, "report_language") === "ja" ? "ja" : "en",
@@ -189,8 +189,8 @@ export function AuditPage() {
                 defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone}
               />
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="audit-objective">{t("audits.objective")}</Label>
-                <Textarea id="audit-objective" name="objective" required />
+                <Label htmlFor="audit-desired-outcome">{t("audits.desiredOutcome")}</Label>
+                <Textarea id="audit-desired-outcome" name="desired_outcome" required />
               </div>
               <Field
                 id="audit-cron"
@@ -269,7 +269,7 @@ export function AuditPage() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <CardTitle>{schedule.name}</CardTitle>
-                    <CardDescription>{schedule.objective}</CardDescription>
+                    <CardDescription>{schedule.desired_outcome}</CardDescription>
                   </div>
                   <Badge variant={schedule.active ? "default" : "outline"}>
                     {t(schedule.active ? "audits.active" : "audits.inactive")}

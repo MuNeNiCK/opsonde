@@ -105,7 +105,7 @@ defmodule OpsondeWeb.API.V1.AuditController do
     with {:ok, schedule} <-
            Audits.schedule_audit(
              input["name"],
-             input["objective"],
+             input["desired_outcome"],
              input["timezone"],
              input["cron_expression"],
              input["report_language"],

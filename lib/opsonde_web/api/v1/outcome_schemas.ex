@@ -131,7 +131,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       %{
         id: Schemas.uuid(),
         name: string(1, 120),
-        objective: string(1, 2_000),
+        desired_outcome: string(1, 2_000),
         timezone: string(1, 120),
         cron_expression: string(1, 120),
         report_language: enum(~w(en ja)),
@@ -143,7 +143,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id name objective timezone cron_expression report_language target_ids management_boundary_id active next_run_at revision inserted_at updated_at)a,
+      ~w(id name desired_outcome timezone cron_expression report_language target_ids management_boundary_id active next_run_at revision inserted_at updated_at)a,
       false
     )
   end
@@ -153,14 +153,14 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       :audit_schedule,
       %{
         name: string(1, 120),
-        objective: string(1, 2_000),
+        desired_outcome: string(1, 2_000),
         timezone: string(1, 120),
         cron_expression: string(1, 120),
         report_language: enum(~w(en ja)),
         target_ids: %Schema{type: :array, items: Schemas.uuid()},
         management_boundary_id: nullable_uuid()
       },
-      ~w(name objective timezone cron_expression report_language)a
+      ~w(name desired_outcome timezone cron_expression report_language)a
     )
   end
 
@@ -285,11 +285,12 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         %{
           id: digest(),
           text: string(1, 2_000),
+          desired_outcome: string(1, 2_000),
           status: enum(~w(supported unsupported unknown)),
           review_reason: nullable_string(1_000),
           claim_evidence: %Schema{type: :array, items: symptom_citation}
         },
-        ~w(id text status review_reason claim_evidence)a,
+        ~w(id text desired_outcome status review_reason claim_evidence)a,
         false
       )
       |> Map.put(:nullable, true)

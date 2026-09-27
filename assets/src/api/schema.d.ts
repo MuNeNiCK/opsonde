@@ -1965,7 +1965,10 @@ export interface components {
         };
         CreateCaseRequest: {
             case: {
-                initial_context?: {
+                initial_context: {
+                    desired_outcome: string;
+                    observed_problem?: string;
+                } & {
                     [key: string]: unknown;
                 };
                 /** Format: uuid */
@@ -2364,6 +2367,7 @@ export interface components {
             authority_setting_revision: number;
             cancel_requested: boolean;
             case_symptom: {
+                desired_outcome: string;
                 id: string;
                 text: string;
             } | null;
@@ -2450,6 +2454,7 @@ export interface components {
                     fact_keys: string[];
                     facts: string | null;
                 }[];
+                desired_outcome: string;
                 id: string;
                 review_reason: string | null;
                 /** @enum {string} */
@@ -2577,6 +2582,7 @@ export interface components {
         AuditSchedule: {
             active: boolean;
             cron_expression: string;
+            desired_outcome: string;
             /** Format: uuid */
             id: string;
             /** Format: date-time */
@@ -2586,7 +2592,6 @@ export interface components {
             name: string;
             /** Format: date-time */
             next_run_at: string;
-            objective: string;
             /** @enum {string} */
             report_language: "en" | "ja";
             revision: number;
@@ -2762,10 +2767,10 @@ export interface components {
         CreateAuditScheduleRequest: {
             audit_schedule: {
                 cron_expression: string;
+                desired_outcome: string;
                 /** Format: uuid */
                 management_boundary_id?: string | null;
                 name: string;
-                objective: string;
                 /** @enum {string} */
                 report_language: "en" | "ja";
                 target_ids?: string[];

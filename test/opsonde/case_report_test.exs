@@ -459,7 +459,10 @@ defmodule Opsonde.CaseReportTest do
         id: case_id,
         trigger_kind: :manual,
         title: "Power rail case",
-        initial_context: %{"symptom" => original}
+        initial_context: %{
+          "observed_problem" => original,
+          "desired_outcome" => "Power rail is healthy"
+        }
       })
 
     claim = %{
@@ -486,7 +489,10 @@ defmodule Opsonde.CaseReportTest do
           "id" => case_id,
           "trigger_kind" => "manual",
           "title" => "Power rail case",
-          "initial_context" => %{"symptom" => original},
+          "initial_context" => %{
+            "observed_problem" => original,
+            "desired_outcome" => "Power rail is healthy"
+          },
           "status" => "resolved"
         },
         "outcome_label" => "Resolved",
@@ -539,6 +545,7 @@ defmodule Opsonde.CaseReportTest do
     assert document["case_symptom"] == %{
              "id" => symptom.id,
              "text" => original,
+             "desired_outcome" => "Power rail is healthy",
              "status" => "supported",
              "review_reason" => "Observed rail is healthy",
              "claim_evidence" => [
@@ -575,7 +582,7 @@ defmodule Opsonde.CaseReportTest do
         id: case_id,
         trigger_kind: :audit,
         title: "Thermal audit",
-        initial_context: %{"objective" => objective}
+        initial_context: %{"desired_outcome" => objective}
       })
 
     report = %Report{
@@ -588,7 +595,7 @@ defmodule Opsonde.CaseReportTest do
           "id" => case_id,
           "trigger_kind" => "audit",
           "title" => "Thermal audit",
-          "initial_context" => %{"objective" => objective},
+          "initial_context" => %{"desired_outcome" => objective},
           "status" => "needs_attention"
         },
         "outcome_label" => "Needs attention",
@@ -615,7 +622,8 @@ defmodule Opsonde.CaseReportTest do
     }
 
     document = Document.build(report)
-    assert document["case_symptom"]["text"] == objective
+    assert document["case_symptom"]["text"] == "Thermal audit"
+    assert document["case_symptom"]["desired_outcome"] == objective
     assert document["case_symptom"]["status"] == "unsupported"
     assert document["case_symptom"]["claim_evidence"] == []
     assert document["conclusion"] == nil
@@ -630,7 +638,7 @@ defmodule Opsonde.CaseReportTest do
       source_ref,
       "Case #{source_ref}",
       :warning,
-      %{"source_ref" => source_ref},
+      %{"source_ref" => source_ref, "desired_outcome" => "Target responds as expected"},
       nil,
       :en,
       actor: actor

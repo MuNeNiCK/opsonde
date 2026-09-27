@@ -140,10 +140,18 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         source_ref: string(1, 500),
         title: string(1, 200),
         severity: enum(~w(info warning error critical)),
-        initial_context: map(),
+        initial_context:
+          object(
+            %{
+              desired_outcome: string(1, 2_000),
+              observed_problem: string(1, 2_000)
+            },
+            [:desired_outcome],
+            true
+          ),
         initial_target_id: nullable_uuid()
       },
-      ~w(trigger_kind source source_ref title severity)a
+      ~w(trigger_kind source source_ref title severity initial_context)a
     )
   end
 

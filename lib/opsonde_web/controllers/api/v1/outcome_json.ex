@@ -37,7 +37,7 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
     %{
       id: schedule.id,
       name: schedule.name,
-      objective: schedule.objective,
+      desired_outcome: schedule.objective,
       timezone: schedule.timezone,
       cron_expression: schedule.cron_expression,
       report_language: schedule.report_language,

@@ -131,7 +131,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         "initial-target",
         "Initial Target",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         context.linux.id,
         :en,
         actor: context.operator
@@ -154,7 +154,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         "initial-target",
         "Initial Target",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         context.linux.id,
         :en,
         actor: context.operator
@@ -268,7 +268,7 @@ defmodule Opsonde.CaseTargetSelectionTest do
         source_ref,
         "Case #{source_ref}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: actor

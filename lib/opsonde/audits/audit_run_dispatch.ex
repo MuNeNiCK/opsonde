@@ -33,7 +33,7 @@ defmodule Opsonde.Audits.AuditRunDispatch do
            "Scheduled audit: #{schedule.name}",
            :info,
            %{
-             "objective" => schedule.objective,
+             "desired_outcome" => schedule.objective,
              "audit_schedule_id" => schedule.id,
              "audit_run_id" => run.id,
              "scheduled_for" => DateTime.to_iso8601(run.scheduled_for)

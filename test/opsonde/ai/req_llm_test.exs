@@ -1648,7 +1648,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     request = %{
       resolver_request()
       | alert_state: :not_applicable,
-        case_symptom: %{id: symptom_id, text: "Restore the API service"},
+        case_symptom: %{
+          id: symptom_id,
+          text: "The API service is unavailable",
+          desired_outcome: "The API service responds to health checks"
+        },
         evidence: [observed],
         recovery_evidence_ids: [observed.id],
         disclosure: %{
@@ -1683,7 +1687,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert user_payload(wire_request)["case_symptom"] == %{
              "id" => symptom_id,
-             "text" => "Restore the API service"
+             "text" => "The API service is unavailable",
+             "desired_outcome" => "The API service responds to health checks"
            }
 
     recovery =
@@ -1785,7 +1790,11 @@ defmodule Opsonde.AI.ReqLLMTest do
       objective: "Restore the API service",
       report_language: :en,
       conditions: [],
-      case_symptom: %{id: symptom_id, text: "Restore the API service"},
+      case_symptom: %{
+        id: symptom_id,
+        text: "The API service is unavailable",
+        desired_outcome: "The API service responds to health checks"
+      },
       source_evidence: [],
       cited_evidence: [evidence],
       conclusion: %AI.RecoveryConclusion{
@@ -1820,7 +1829,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert reviewer_payload(wire)["case_symptom"] == %{
              "id" => symptom_id,
-             "text" => "Restore the API service"
+             "text" => "The API service is unavailable",
+             "desired_outcome" => "The API service responds to health checks"
            }
 
     schema = output_schema(wire)

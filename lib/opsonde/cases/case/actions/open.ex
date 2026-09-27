@@ -2,7 +2,16 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Accounts, Cases}
-  alias Opsonde.Cases.{AuthoritySetting, Case, CaseDispatch, CaseEvent, ResolutionRun}
+
+  alias Opsonde.Cases.{
+    AuthoritySetting,
+    Case,
+    CaseDispatch,
+    CaseEvent,
+    CaseSymptom,
+    ResolutionRun
+  }
+
   alias Opsonde.Targets
 
   @impl true
@@ -10,15 +19,29 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     arguments = input.arguments
 
     with :ok <- validate_trigger(arguments.trigger_kind, context.actor),
+         :ok <- validate_desired_outcome(arguments),
          {:ok, existing} <- existing_case(arguments) do
       if existing do
-        {:ok, existing}
+        reuse_existing(existing, arguments)
       else
         with {:ok, initial_target} <- load_initial_target(arguments.initial_target_id) do
           create_case(arguments, initial_target, context.actor)
         end
       end
     end
+  end
+
+  defp validate_desired_outcome(%{trigger_kind: :signal}), do: :ok
+
+  defp validate_desired_outcome(%{initial_context: context}) do
+    if CaseSymptom.valid_desired_outcome?(context["desired_outcome"]),
+      do: :ok,
+      else:
+        {:error,
+         Ash.Error.Changes.InvalidAttribute.exception(
+           field: :initial_context,
+           message: "Manual and audit Cases require a desired_outcome"
+         )}
   end
 
   defp create_case(arguments, initial_target, actor) do
@@ -39,7 +62,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
     case result do
       {:error, _error} = failed ->
         case existing_case(arguments) do
-          {:ok, %Case{} = existing} -> {:ok, existing}
+          {:ok, %Case{} = existing} -> reuse_existing(existing, arguments)
           _other -> failed
         end
 
@@ -50,6 +73,23 @@ defmodule Opsonde.Cases.Case.Actions.Open do
 
   defp existing_case(arguments) do
     case_by_trigger(arguments)
+  end
+
+  defp reuse_existing(%Case{trigger_kind: :signal} = existing, _arguments),
+    do: {:ok, existing}
+
+  defp reuse_existing(%Case{} = existing, arguments) do
+    if existing.title == arguments.title and existing.severity == arguments.severity and
+         existing.initial_context == arguments.initial_context and
+         existing.initial_target_id == arguments.initial_target_id do
+      {:ok, existing}
+    else
+      {:error,
+       Ash.Error.Changes.InvalidAttribute.exception(
+         field: :initial_context,
+         message: "A Case with this source_ref already has a different immutable request"
+       )}
+    end
   end
 
   defp case_by_trigger(%{trigger_kind: :signal} = arguments) do

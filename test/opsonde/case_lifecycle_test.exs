@@ -2,6 +2,7 @@ defmodule Opsonde.CaseLifecycleTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Cases.CaseSymptom
 
   @password "correct horse battery staple"
 
@@ -17,6 +18,29 @@ defmodule Opsonde.CaseLifecycleTest do
     viewer = Accounts.create_user!("case-viewer@example.com", @password, :viewer, actor: admin)
 
     %{admin: admin, operator: operator, next_operator: next_operator, viewer: viewer}
+  end
+
+  test "manual and audit opening reject an absent or blank desired outcome before persistence",
+       context do
+    for kind <- [:manual, :audit], value <- [nil, "  "] do
+      initial_context = if value, do: %{"desired_outcome" => value}, else: %{}
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Cases.open_case(
+                 kind,
+                 "test",
+                 "missing-desired-#{kind}-#{inspect(value)}",
+                 "Check target",
+                 :warning,
+                 initial_context,
+                 nil,
+                 :en,
+                 actor: context.operator
+               )
+    end
+
+    assert Cases.list_cases!(actor: context.admin) == []
+    assert Cases.list_turns!(actor: context.admin) == []
   end
 
   test "manual and Audit Cases copy one exact standing revision without requiring a Target",
@@ -64,6 +88,8 @@ defmodule Opsonde.CaseLifecycleTest do
       })
 
     reloaded = Cases.get_case!(manual.id, actor: context.viewer)
+    assert CaseSymptom.current(reloaded) == CaseSymptom.current(manual)
+    assert CaseSymptom.current(reloaded).desired_outcome == "Target responds as expected"
     assert reloaded.authority_setting_revision == 2
     assert reloaded.authority_mode == :auto
     assert reloaded.max_elapsed_seconds == 7_200
@@ -102,7 +128,7 @@ defmodule Opsonde.CaseLifecycleTest do
         "concurrent-open",
         "Concurrent open",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: context.operator
@@ -317,7 +343,7 @@ defmodule Opsonde.CaseLifecycleTest do
                "forbidden",
                "Forbidden",
                :warning,
-               %{},
+               %{"desired_outcome" => "Target responds as expected"},
                nil,
                :en,
                actor: context.viewer
@@ -391,7 +417,7 @@ defmodule Opsonde.CaseLifecycleTest do
       source_ref,
       "#{kind} Case #{source_ref}",
       :warning,
-      %{"source_ref" => source_ref},
+      %{"source_ref" => source_ref, "desired_outcome" => "Target responds as expected"},
       target_id,
       :en,
       actor: actor,

@@ -111,7 +111,7 @@ defmodule Opsonde.SignalIngressTest do
         "manual-shared-host",
         "Investigate shared host",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         target.id,
         :en,
         actor: context.admin

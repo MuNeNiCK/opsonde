@@ -421,7 +421,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "delete-ai-history-#{System.unique_integer([:positive])}",
         "Historical AI reference",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         authorize?: false

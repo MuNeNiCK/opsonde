@@ -46,7 +46,10 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         "source_ref" => "manual-entry-once",
         "title" => "Investigate guest availability",
         "severity" => "warning",
-        "initial_context" => %{"symptom" => "Guest unavailable"}
+        "initial_context" => %{
+          "observed_problem" => "Guest unavailable",
+          "desired_outcome" => "Guest responds to the health check"
+        }
       }
     }
 
@@ -54,6 +57,15 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     second = post_json("/api/v1/cases", body, context.operator_token) |> json_response(201)
     incident_id = first["data"]["id"]
     assert second["data"]["id"] == incident_id
+
+    assert first["data"]["case_symptom"]["desired_outcome"] ==
+             "Guest responds to the health check"
+
+    changed =
+      put_in(body, ["case", "initial_context", "desired_outcome"], "Guest remains unavailable")
+      |> then(&post_json("/api/v1/cases", &1, context.operator_token))
+
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(changed, 422)
 
     assert Cases.case_dispatch!(incident_id, authorize?: false).state == :collecting
 
@@ -76,6 +88,23 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
+  test "public manual Case creation requires an explicit desired outcome", context do
+    body = %{
+      "case" => %{
+        "trigger_kind" => "manual",
+        "source" => "api",
+        "source_ref" => "missing-desired-outcome",
+        "title" => "Check service",
+        "severity" => "warning",
+        "initial_context" => %{"observed_problem" => "Service stopped"}
+      }
+    }
+
+    response = post_json("/api/v1/cases", body, context.operator_token)
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(response, 400)
+    assert Cases.list_cases!(actor: context.admin) == []
+  end
+
   test "direct audit Case creation is rejected before an idle Case is stored", context do
     body = %{
       "case" => %{
@@ -84,7 +113,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         "source_ref" => "unsupported-direct-audit",
         "title" => "Inspect storage health",
         "severity" => "info",
-        "initial_context" => %{"objective" => "Inspect storage health"}
+        "initial_context" => %{"desired_outcome" => "Storage health is normal"}
       }
     }
 
@@ -102,7 +131,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         "source_ref" => "rolled-back-manual-entry",
         "title" => "Investigate a rolled back request",
         "severity" => "warning",
-        "initial_context" => %{}
+        "initial_context" => %{"desired_outcome" => "Target responds as expected"}
       }
     }
 
@@ -1047,7 +1076,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         "proposal-1",
         "Restart unhealthy service",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         setup.target.id,
         :en,
         actor: operator
@@ -1186,7 +1215,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
             "source_ref" => source_ref,
             "title" => "Investigate #{source_ref}",
             "severity" => severity,
-            "initial_context" => %{}
+            "initial_context" => %{"desired_outcome" => "Target responds as expected"}
           }
         },
         token

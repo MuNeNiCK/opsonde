@@ -160,7 +160,7 @@ defmodule OpsondeWeb.API.V1.ContractControllerTest do
         "cursor-envelope",
         "Verify API collection contracts",
         :info,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: operator

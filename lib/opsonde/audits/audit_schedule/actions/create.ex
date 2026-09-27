@@ -5,6 +5,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
   alias Opsonde.Audits
   alias Opsonde.Audits.AuditSchedule
   alias Opsonde.Audits.AuditSchedule.Scheduling
+  alias Opsonde.Cases.CaseSymptom
   alias Opsonde.Targets.{ManagementBoundary, Target}
 
   @impl true
@@ -13,7 +14,8 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
     now = DateTime.utc_now()
 
     result =
-      with :ok <- validate_scope(arguments),
+      with :ok <- validate_desired_outcome(arguments),
+           :ok <- validate_scope(arguments),
            {:ok, next_run_at} <-
              Scheduling.next_run(arguments.cron_expression, arguments.timezone, now) do
         Ash.transact([AuditSchedule, ManagementBoundary, Target], fn ->
@@ -36,6 +38,17 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
 
   defp normalize(arguments) do
     %{arguments | target_ids: arguments.target_ids |> Enum.uniq() |> Enum.sort()}
+  end
+
+  defp validate_desired_outcome(arguments) do
+    if CaseSymptom.valid_desired_outcome?(arguments.objective),
+      do: :ok,
+      else:
+        {:error,
+         Ash.Error.Changes.InvalidAttribute.exception(
+           field: :desired_outcome,
+           message: "Audit schedule requires a desired_outcome"
+         )}
   end
 
   defp validate_scope(%{target_ids: [_ | _], management_boundary_id: nil}), do: :ok

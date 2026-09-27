@@ -169,7 +169,7 @@ defmodule Opsonde.NotificationDeliveryTest do
         "notification-delivery-report",
         "Notification delivery report",
         :warning,
-        %{"summary" => "service recovered"},
+        %{"summary" => "service recovered", "desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: operator

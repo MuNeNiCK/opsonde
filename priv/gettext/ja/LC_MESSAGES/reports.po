@@ -16,6 +16,9 @@ msgstr "ケース"
 msgid "Case symptom"
 msgstr "ケースの症状"
 
+msgid "Desired outcome"
+msgstr "達成条件"
+
 msgid "Conclusion"
 msgstr "結論"
 

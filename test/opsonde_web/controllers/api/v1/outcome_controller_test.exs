@@ -75,7 +75,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "manual-report-with-automatic-off",
         "Manual report while automatic generation is off",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: context.operator
@@ -218,7 +218,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         %{
           "audit_schedule" => %{
             "name" => "hourly-storage-audit",
-            "objective" => "Inspect storage health",
+            "desired_outcome" => "Storage health is normal",
             "timezone" => "Etc/UTC",
             "cron_expression" => "0 * * * *",
             "report_language" => "en",
@@ -228,13 +228,18 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         context.admin_token
       )
 
+    assert schedule["desired_outcome"] == "Storage health is normal"
+
     schedules = get_json("/api/v1/audit-schedules", context.viewer_token)
     assert %{"data" => [%{"id" => schedule_id}]} = json_response(schedules, 200)
     assert schedule_id == schedule["id"]
     assert_operation_response(schedules)
 
     shown_schedule = get_json("/api/v1/audit-schedules/#{schedule["id"]}", context.viewer_token)
-    assert %{"data" => %{"id" => ^schedule_id}} = json_response(shown_schedule, 200)
+
+    assert %{"data" => %{"id" => ^schedule_id, "desired_outcome" => "Storage health is normal"}} =
+             json_response(shown_schedule, 200)
+
     assert_operation_response(shown_schedule)
 
     persisted = Audits.get_audit_schedule!(schedule["id"], actor: context.admin)
@@ -312,7 +317,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         %{
           "audit_schedule" => %{
             "name" => "invalid-audit",
-            "objective" => "Invalid schedule",
+            "desired_outcome" => "Storage health is normal",
             "timezone" => "invalid/timezone",
             "cron_expression" => "not cron",
             "report_language" => "en",
@@ -333,7 +338,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "outcome-report",
         "Resolved service incident",
         :warning,
-        %{"summary" => "service recovered"},
+        %{"summary" => "service recovered", "desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: context.operator
@@ -496,7 +501,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "period-api",
         "Period API Case",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         nil,
         :en,
         actor: context.operator

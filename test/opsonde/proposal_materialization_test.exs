@@ -355,7 +355,7 @@ defmodule Opsonde.ProposalMaterializationTest do
         "proposal-#{suffix}",
         "Proposal #{suffix}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         context.target.id,
         :en,
         actor: context.operator

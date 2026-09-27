@@ -340,7 +340,7 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
       source_ref,
       "Case #{source_ref}",
       :warning,
-      %{},
+      %{"desired_outcome" => "Target responds as expected"},
       nil,
       :en,
       actor: actor

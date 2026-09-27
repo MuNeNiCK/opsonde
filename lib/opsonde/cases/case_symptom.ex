@@ -5,17 +5,11 @@ defmodule Opsonde.Cases.CaseSymptom do
 
   def current(%{id: id, trigger_kind: kind, title: title, initial_context: context})
       when kind in [:manual, :audit] and is_binary(id) and is_map(context) do
-    text =
-      case kind do
-        :audit -> preferred(context["objective"], title)
-        :manual -> preferred(context["symptom"], title)
-      end
+    desired_outcome = context["desired_outcome"]
 
-    digest =
-      :crypto.hash(:sha256, :erlang.term_to_binary({id, kind, text}, [:deterministic]))
-      |> Base.encode16(case: :lower)
-
-    %{id: digest, text: text}
+    if valid_desired_outcome?(desired_outcome) do
+      build(id, kind, title, context, desired_outcome)
+    end
   end
 
   def current(%{
@@ -35,15 +29,37 @@ defmodule Opsonde.Cases.CaseSymptom do
 
   def current(_incident), do: nil
 
+  defp build(id, kind, title, context, desired_outcome) do
+    text =
+      case kind do
+        :audit -> preferred(context["objective"], title)
+        :manual -> preferred(context["observed_problem"], title)
+      end
+
+    digest =
+      :crypto.hash(
+        :sha256,
+        :erlang.term_to_binary({id, kind, text, desired_outcome}, [:deterministic])
+      )
+      |> Base.encode16(case: :lower)
+
+    %{id: digest, text: text, desired_outcome: desired_outcome}
+  end
+
   def valid?(nil), do: true
 
-  def valid?(%{id: id, text: text}) do
+  def valid?(%{id: id, text: text, desired_outcome: desired_outcome}) do
     is_binary(id) and byte_size(id) == 64 and String.match?(id, ~r/\A[0-9a-f]{64}\z/) and
       is_binary(text) and byte_size(text) <= 8_000 and String.trim(text) != "" and
-      String.length(text) <= 2_000
+      String.length(text) <= 2_000 and valid_desired_outcome?(desired_outcome)
   end
 
   def valid?(_symptom), do: false
+
+  def valid_desired_outcome?(value) when is_binary(value) and byte_size(value) <= 8_000,
+    do: String.trim(value) != "" and String.length(value) <= 2_000
+
+  def valid_desired_outcome?(_value), do: false
 
   def valid_claims?([], nil, _cited_ids, _evidence), do: true
 

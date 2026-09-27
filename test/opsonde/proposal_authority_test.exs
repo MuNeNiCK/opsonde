@@ -1712,7 +1712,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         "authority-#{suffix}",
         "Authority #{suffix}",
         :warning,
-        %{},
+        %{"desired_outcome" => "Target responds as expected"},
         initial_target.id,
         :en,
         actor: context.operator

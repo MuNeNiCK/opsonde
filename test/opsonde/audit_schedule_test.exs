@@ -49,6 +49,22 @@ defmodule Opsonde.AuditScheduleTest do
              Scheduling.next_run("@reboot", "Etc/UTC", before_fall)
   end
 
+  test "an audit schedule cannot persist an empty desired outcome", context do
+    assert {:error, %Ash.Error.Invalid{}} =
+             Audits.schedule_audit(
+               "empty-outcome-audit",
+               "  ",
+               "Etc/UTC",
+               "0 * * * *",
+               :en,
+               [context.target.id],
+               nil,
+               actor: context.admin
+             )
+
+    assert Audits.list_audit_schedules!(actor: context.admin) == []
+  end
+
   test "one due occurrence opens one ordinary Resolver Case despite duplicate wakeups", context do
     schedule = schedule!(context, "explicit-audit", :ja, [context.target.id], nil)
 
@@ -95,7 +111,7 @@ defmodule Opsonde.AuditScheduleTest do
     assert incident.authority_mode == :auto
     assert incident.max_resolver_turns == 5
     assert incident.current_owner_id == context.admin.id
-    assert incident.initial_context["objective"] == "Inspect storage health"
+    assert incident.initial_context["desired_outcome"] == "Inspect storage health"
 
     assert [turn] = Cases.list_turns!(actor: context.viewer)
     assert turn.intent["objective"] == "Inspect storage health"

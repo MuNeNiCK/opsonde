@@ -608,7 +608,11 @@ defmodule Opsonde.Providers.AITest do
     manual_request = %{
       recovered_request
       | alert_state: :not_applicable,
-        case_symptom: %{id: String.duplicate("a", 64), text: "Restore service health"},
+        case_symptom: %{
+          id: String.duplicate("a", 64),
+          text: "Service is stopped",
+          desired_outcome: "Service is running"
+        },
         evidence:
           later_request.evidence ++
             [
