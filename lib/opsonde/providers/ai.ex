@@ -60,7 +60,7 @@ defmodule Opsonde.Providers.AI do
       :current_occurred_at_us
     ]
 
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [recovery_status: nil]
     @type t :: %__MODULE__{}
   end
 

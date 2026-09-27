@@ -296,7 +296,15 @@ defmodule Opsonde.AI.ReqLLM do
         "Target observation marked recovery_eligible. Cite that Evidence. A verified " <>
         "target_verification " <>
         "proves only the expected fields for its Operation; it does not establish that every " <>
-        "condition in the Case is resolved. A proposal may be an observation or an effect; " <>
+        "condition in the Case is resolved. Each Condition's recovery_status is a current " <>
+        "machine assessment: missing_subject_proof needs a fresh observation of that exact " <>
+        "Condition's target and subject; firing remains unresolved even when another " <>
+        "Condition recovered. When a recovered Condition needs proof, investigate its own " <>
+        "target before concluding or repeatedly observing a related Target. For a still-firing " <>
+        "Condition, investigate its target and do not assign its cause to another Target from " <>
+        "timing or inventory proximity alone. A newer verified effect outcome supersedes " <>
+        "contradictory observations taken before that effect; do not repeat the verified " <>
+        "observation solely because an older fact differs. A proposal may be an observation or an effect; " <>
         "every Target request is reviewed after you return it. Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. A proposal's verification must use an observation " <>
@@ -620,8 +628,30 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp accept_object_projection(%{valid?: true, value: value}) when is_map(value), do: :ok
 
-  defp accept_object_projection(_result),
+  defp accept_object_projection(%{errors: errors}) when is_list(errors) do
+    path =
+      Enum.find_value(errors, fn
+        %{message: message} when is_binary(message) -> schema_error_path(message)
+        _error -> nil
+      end)
+
+    schema_invalid_output(path)
+  end
+
+  defp accept_object_projection(_result), do: schema_invalid_output(nil)
+
+  defp schema_error_path(message) do
+    case Regex.run(~r/instanceLocation: "#(\/[A-Za-z0-9_~.\/-]{1,200})"/, message) do
+      [_, path] -> path
+      _no_path -> nil
+    end
+  end
+
+  defp schema_invalid_output(nil),
     do: invalid_output("AI provider JSON does not match the requested schema")
+
+  defp schema_invalid_output(path),
+    do: invalid_output("AI provider JSON does not match the requested schema at #{path}")
 
   defp usage(response) do
     usage = ReqLLM.Response.usage(response)
@@ -1200,8 +1230,15 @@ defmodule Opsonde.AI.ReqLLM do
   defp normalize_req_llm_error(%ReqLLM.Error.Invalid.Parameter{}),
     do: {:error, :capability, "AI model or service options are unsupported"}
 
+  defp normalize_req_llm_error(%ReqLLM.Error.API.SchemaValidation{json_path: path})
+       when is_binary(path) and byte_size(path) <= 200 do
+    if Regex.match?(~r/^\/[A-Za-z0-9_~.\/-]+$/, path),
+      do: schema_invalid_output(path),
+      else: schema_invalid_output(nil)
+  end
+
   defp normalize_req_llm_error(%ReqLLM.Error.API.SchemaValidation{}),
-    do: invalid_output("AI provider JSON does not match the requested schema")
+    do: schema_invalid_output(nil)
 
   defp normalize_req_llm_error(%ReqLLM.Error.API.Response{}),
     do: invalid_output("AI provider did not return a structured object")

@@ -209,6 +209,15 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(condition.occurrence) and bounded_string?(condition.predicate, 500) and
       bounded_string?(condition.subject_key, 600) and is_map(condition.subject_ref) and
       condition.state in [:firing, :recovered] and
+      condition.recovery_status in [
+        nil,
+        :firing,
+        :stale_source,
+        :unmapped_target,
+        :missing_subject_proof,
+        :target_changed,
+        :healthy
+      ] and
       (is_nil(condition.target_id) or nonempty?(condition.target_id)) and
       is_integer(condition.current_occurred_at_us)
   end

@@ -829,6 +829,22 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert [_request] = requests(context.agent)
   end
 
+  test "schema rejection includes a bounded JSON path for the corrective Resolver turn",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(context.agent, {
+      :decision,
+      %{"reason" => "Check this", "intent" => %{"type" => "handoff", "required_input" => 42}}
+    })
+
+    assert {:error, :invalid_output, message, %AI.Usage{input_tokens: 7, output_tokens: 5},
+            "schema_validation"} = Adapter.resolve(state, resolver_request(), %{})
+
+    assert message =~ "AI provider JSON does not match the requested schema at /intent"
+    assert [_request] = requests(context.agent)
+  end
+
   test "buffered AI calls support the resolver queue concurrency", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{

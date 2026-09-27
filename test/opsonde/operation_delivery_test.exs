@@ -1027,6 +1027,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert request.alert_state == :recovered
     assert request.recovery_evidence_ids == []
+    assert [%AI.Condition{recovery_status: :missing_subject_proof}] = request.conditions
 
     assert Enum.any?(request.evidence, fn item ->
              item.kind == "split_lineage" and item.content["operation_id"] == operation.id and

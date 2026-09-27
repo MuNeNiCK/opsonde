@@ -111,7 +111,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp claim_invocation(turn, selection, request) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
-         true <- resolver_context_matches?(incident, request) || :context_changed do
+         true <- resolver_context_matches?(incident, request) || {:error, :context_changed} do
       Cases.claim_ai_invocation(
         :resolver,
         turn.case_id,
@@ -256,21 +256,32 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp resolver_context_current?(request) do
     case Cases.get_case(request.case_id, authorize?: false) do
       {:ok, incident} ->
-        resolver_context_matches?(incident, request)
+        resolver_context_matches?(incident, request, false)
 
       {:error, _error} ->
         false
     end
   end
 
-  defp resolver_context_matches?(incident, request) do
+  defp resolver_context_matches?(incident, request, check_assessment? \\ true) do
     incident.status == :running and not incident.cancel_requested and
       incident.selected_target_id == request.selected_target_id and
       incident.selected_target_revision == request.selected_target_revision and
       case ResolverProjection.current_conditions(incident) do
         {:ok, conditions} ->
-          conditions == request.conditions and
-            ResolverProjection.projected_alert_state(incident, conditions) == request.alert_state
+          same_conditions? =
+            conditions == Enum.map(request.conditions, &%{&1 | recovery_status: nil}) and
+              ResolverProjection.projected_alert_state(incident, conditions) ==
+                request.alert_state
+
+          if same_conditions? and check_assessment? do
+            case ResolverProjection.current_condition_context(incident) do
+              {:ok, {assessed, _proof_ids}} -> assessed == request.conditions
+              {:error, _error} -> false
+            end
+          else
+            same_conditions?
+          end
 
         {:error, _error} ->
           false

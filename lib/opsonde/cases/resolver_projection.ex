@@ -20,8 +20,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          :ok <- eligible(incident, run, turn),
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
-         {:ok, conditions} <- current_conditions(incident),
-         {:ok, recovery_ids} <- recovery_proof_ids(incident),
+         {:ok, {conditions, recovery_ids}} <- current_condition_context(incident),
          {:ok, source_context} <- source_context(incident, evidence),
          {:ok, target} <- selected_target(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
@@ -115,6 +114,12 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   def current_conditions(_incident), do: {:ok, []}
 
+  def current_condition_context(incident) do
+    with {:ok, conditions} <- current_conditions(incident) do
+      recovery_context(incident, conditions)
+    end
+  end
+
   def condition_revisions(conditions) do
     conditions
     |> Enum.map(&%{"id" => &1.id, "revision" => &1.revision})
@@ -127,22 +132,28 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp recovery_proof_ids(%{trigger_kind: :signal} = incident) do
+  defp recovery_context(%{trigger_kind: :signal} = incident, conditions) do
     case ConditionRecovery.assess_current(incident) do
       {:ok, assessments} ->
-        if ConditionRecovery.all_healthy?(assessments),
-          do: {:ok, assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq()},
-          else: {:ok, []}
+        status_by_id = Map.new(assessments, &{&1.condition_id, &1.status})
+        conditions = Enum.map(conditions, &%{&1 | recovery_status: status_by_id[&1.id]})
+
+        proof_ids =
+          if ConditionRecovery.all_healthy?(assessments),
+            do: assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq(),
+            else: []
+
+        {:ok, {conditions, proof_ids}}
 
       {:error, "Latest Target effect is not applied"} ->
-        {:ok, []}
+        {:ok, {conditions, []}}
 
       {:error, _error} = error ->
         error
     end
   end
 
-  defp recovery_proof_ids(_incident), do: {:ok, []}
+  defp recovery_context(_incident, conditions), do: {:ok, {conditions, []}}
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 
