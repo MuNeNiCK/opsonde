@@ -236,9 +236,8 @@ export function CaseDetailPage() {
           currentConditionRevisions,
     )
     .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
-  const conditionHypotheses = latestGroupTurn?.condition_groups?.filter(
-    (group) => group.assessment !== "unknown",
-  ) ?? [];
+  const conditionHypotheses =
+    latestGroupTurn?.condition_groups?.filter((group) => group.assessment !== "unknown") ?? [];
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
@@ -447,7 +446,9 @@ export function CaseDetailPage() {
                         </Badge>{" "}
                         {group.condition_ids
                           .map((id) => {
-                            const condition = detail.snapshot.conditions.find((item) => item.id === id);
+                            const condition = detail.snapshot.conditions.find(
+                              (item) => item.id === id,
+                            );
                             return typeof condition?.subject_ref.name === "string"
                               ? condition.subject_ref.name
                               : id;
@@ -812,7 +813,9 @@ function CompletedCaseSummary({
             {conditions.length > 0 && (
               <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                 {t("cases.completionSummary.monitoringState", {
-                  state: conditions.map((condition) => t(`cases.alert.${condition.state}`)).join(", "),
+                  state: conditions
+                    .map((condition) => t(`cases.alert.${condition.state}`))
+                    .join(", "),
                 })}
               </p>
             )}

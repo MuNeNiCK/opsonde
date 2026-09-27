@@ -327,7 +327,8 @@ export function CaseListPage() {
                       {incident.title}
                     </Link>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {incident.source}{incident.trigger_kind === "signal" ? "" : ` · ${incident.source_ref}`}
+                      {incident.source}
+                      {incident.trigger_kind === "signal" ? "" : ` · ${incident.source_ref}`}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -338,10 +339,16 @@ export function CaseListPage() {
                   </TableCell>
                   <TableCell>
                     {incident.trigger_kind === "signal" && incident.condition_count !== null ? (
-                      <Badge variant={(incident.firing_condition_count ?? 0) > 0 ? "destructive" : "outline"}>
+                      <Badge
+                        variant={
+                          (incident.firing_condition_count ?? 0) > 0 ? "destructive" : "outline"
+                        }
+                      >
                         {incident.firing_condition_count ?? 0} / {incident.condition_count}
                       </Badge>
-                    ) : "—"}
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -373,9 +380,7 @@ export function CaseListPage() {
               {records.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
-                    {query || status !== "all"
-                      ? t("cases.noMatchingCases")
-                      : t("cases.noCases")}
+                    {query || status !== "all" ? t("cases.noMatchingCases") : t("cases.noCases")}
                   </TableCell>
                 </TableRow>
               )}

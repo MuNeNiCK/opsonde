@@ -353,7 +353,13 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
         textField(recordValue(signalContent?.target_ref), "value") ||
         latestSignal?.source ||
         signalTitle,
-      badges: [...new Set(props.snapshot.conditions.map((condition) => translatedToken(t, "alert", condition.state)))],
+      badges: [
+        ...new Set(
+          props.snapshot.conditions.map((condition) =>
+            translatedToken(t, "alert", condition.state),
+          ),
+        ),
+      ],
       activities: [],
       active: orderedTargetIds.length === 0 && !attention,
       failed: false,
