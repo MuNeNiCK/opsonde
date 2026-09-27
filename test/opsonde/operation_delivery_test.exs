@@ -2257,6 +2257,104 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
   end
 
+  test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
+    {incident, run, proposal} =
+      authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(operation, %{
+               "unit" => "api.service",
+               "active_state" => "active"
+             })
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The service is active in a direct observation",
+                        evidence_ids: [evidence.id],
+                        desired_outcome_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => evidence.id,
+                            "fact_keys" => ["active_state"],
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
+             "review_recovery"
+
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+    selection = Providers.select_reviewer_ai!([], authorize?: false)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+
+    claim =
+      Cases.claim_ai_invocation!(
+        :reviewer,
+        incident.id,
+        current.revision,
+        run.id,
+        turn.id,
+        completed.revision,
+        nil,
+        nil,
+        selection.provider_id,
+        selection.assignment_id,
+        selection.provider_revision,
+        selection.assignment_revision,
+        selection.source,
+        Opsonde.Cases.AIInvocation.request_digest({turn.id, :simulated_interruption}),
+        1,
+        authorize?: false
+      )
+
+    assert claim.state == :claimed
+
+    assert :ok =
+             Opsonde.Cases.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _ -> flunk("interrupted review was sent again") end
+               }
+             )
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "Recovery Reviewer response is unknown"
+
+    [reviewer] =
+      Enum.filter(Cases.list_ai_invocations!(authorize?: false), fn invocation ->
+        invocation.case_id == incident.id and invocation.role == :reviewer
+      end)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_units + reviewer.reserved_units
+
+    refute Enum.any?(Cases.list_case_events!(actor: context.admin), fn event ->
+             event.case_id == incident.id and event.event_type == "case_resolved"
+           end)
+  end
+
   test "Case admission rejects a manual recovery claim for a fact absent from current Evidence",
        context do
     {incident, _run, proposal} =
