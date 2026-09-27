@@ -1363,6 +1363,15 @@ defmodule Opsonde.AI.ReqLLMTest do
            ]) ==
              [observation.id]
 
+    assert get_in(schema, [
+             "properties",
+             "condition_assessments",
+             "items",
+             "properties",
+             "evidence_ids",
+             "minItems"
+           ]) == 1
+
     assert get_in(user_payload(wire_request), [
              "conditions",
              Access.at(0),

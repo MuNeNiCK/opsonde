@@ -1385,7 +1385,12 @@ defmodule Opsonde.AI.ReqLLM do
         "evidence_ids" =>
           if(citations == [],
             do: evidence_array_schema([], 0),
-            else: %{"type" => "array", "items" => enum_schema(citations), "maxItems" => 3}
+            else: %{
+              "type" => "array",
+              "items" => enum_schema(citations),
+              "minItems" => 1,
+              "maxItems" => 3
+            }
           ),
         "reason" => bounded_string_schema(AI.resolver_reason_codepoints())
       },
