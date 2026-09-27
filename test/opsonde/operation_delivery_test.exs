@@ -1933,6 +1933,16 @@ defmodule Opsonde.OperationDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
+                   assert %{
+                            "last_rejected_recovery_review" => %{
+                              "verdict" => "rejected",
+                              "evidence_ids" => [rejected_id],
+                              "reason" => review_reason
+                            }
+                          } = Jason.decode!(request.objective)
+
+                   assert rejected_id == evidence.id
+                   assert review_reason =~ "Machine identity does not establish"
                    [condition] = request.conditions
 
                    {:ok,
@@ -1962,6 +1972,47 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Cases.list_case_events!(actor: context.admin), fn event ->
              event.case_id == incident.id and event.event_type == "recovery_review_decided"
            end) == 1
+
+    paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        stopped.id,
+        stopped.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue investigation with Reviewer feedback",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               resumed_turn.id,
+               %AI.Selection{
+                 role: :resolver,
+                 provider_id: context.resolver_provider.id,
+                 provider_revision: context.resolver_provider.revision,
+                 source: :assignment
+               },
+               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
+             )
+
+    assert get_in(Jason.decode!(request.objective), [
+             "last_rejected_recovery_review",
+             "evidence_ids"
+           ]) == [evidence.id]
   end
 
   test "a missing recovery Reviewer stops a manual Case without claiming resolution", context do

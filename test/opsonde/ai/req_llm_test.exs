@@ -878,7 +878,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert Enum.any?(Jason.decode!(wire_request.body)["messages"], fn message ->
              message["role"] == "system" and
-               String.contains?(message["content"], "do not repeat a recovery claim") and
+               String.contains?(message["content"], "Do not repeat a recovery claim") and
                String.contains?(message["content"], "direct observation")
            end)
   end

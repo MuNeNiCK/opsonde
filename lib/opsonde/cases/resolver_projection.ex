@@ -25,6 +25,7 @@ defmodule Opsonde.Cases.ResolverProjection do
            source_context(incident, Enum.uniq_by(recovery_evidence ++ evidence, & &1.id)),
          {:ok, target} <- selected_target(incident),
          {:ok, historical_evidence} <- prior_run_evidence(incident, run, target),
+         {:ok, recent_recovery_review} <- recent_recovery_review(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, invocation),
@@ -38,6 +39,7 @@ defmodule Opsonde.Cases.ResolverProjection do
              recovery_ids,
              continuity,
              historical_evidence,
+             recent_recovery_review,
              target,
              relations,
              traversable_relation_ids,
@@ -84,6 +86,21 @@ defmodule Opsonde.Cases.ResolverProjection do
           item.content["parameters"], item.content["facts"], item.content["reference"]}
        end)
        |> Enum.take(16)}
+    end
+  end
+
+  defp recent_recovery_review(incident) do
+    with {:ok, reviews} <- Cases.recovery_review_history(incident.id, authorize?: false) do
+      case Enum.max_by(reviews, & &1.inserted_at, DateTime, fn -> nil end) do
+        %{data: %{"verdict" => "rejected"} = data, inserted_at: reviewed_at} ->
+          {:ok,
+           data
+           |> Map.take(["verdict", "reason", "evidence_ids", "condition_claims"])
+           |> Map.put("reviewed_at", DateTime.to_iso8601(reviewed_at))}
+
+        _other ->
+          {:ok, nil}
+      end
     end
   end
 
@@ -475,6 +492,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          recovery_ids,
          evidence,
          historical_evidence,
+         recent_recovery_review,
          target,
          relations,
          traversable_relation_ids,
@@ -495,7 +513,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       session_id: "resolver:#{run.id}",
       case_id: incident.id,
       turn: turn.ordinal,
-      objective: objective(incident, turn),
+      objective: objective(incident, turn, recent_recovery_review),
       alert_state: projected_alert_state(incident, conditions),
       report_language: incident.report_language,
       disclosure: %AI.Disclosure{
@@ -645,12 +663,17 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   def projected_alert_state(_incident, _conditions), do: :not_applicable
 
-  defp objective(incident, turn) do
+  defp objective(incident, turn, recent_recovery_review) do
     value = %{
       "case_title" => incident.title,
       "initial_context" => incident.initial_context,
       "turn_intent" => turn.intent
     }
+
+    value =
+      if is_map(recent_recovery_review),
+        do: Map.put(value, "last_rejected_recovery_review", recent_recovery_review),
+        else: value
 
     case Jason.encode(value) do
       {:ok, encoded} -> String.slice(encoded, 0, 8_000)
