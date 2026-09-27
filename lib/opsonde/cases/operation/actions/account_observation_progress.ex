@@ -40,20 +40,22 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
 
   defp replay(operation, event) do
     with true <-
-           (event.event_type == "observation_progress" and
+           (event.event_type in ["observation_progress", "limit_exhausted"] and
               event.resolution_run_id == operation.resolution_run_id and
               event.data["operation_id"] == operation.id) ||
              {:error, "Observation progress ledger does not match the Operation"},
          {:ok, incident} <- Cases.get_case(operation.case_id, authorize?: false),
          {:ok, run} <-
            Cases.get_resolution_run(operation.resolution_run_id, authorize?: false) do
-      %BudgetResult{status: :duplicate, case: incident, run: run, value: operation}
+      status = if event.event_type == "limit_exhausted", do: :exhausted, else: :duplicate
+      %BudgetResult{status: status, case: incident, run: run, value: operation}
     end
   end
 
   defp account(operation, key) do
     with {:ok, proposal} <- Cases.get_proposal(operation.proposal_id, authorize?: false),
          {:ok, turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
+         {:ok, run} <- Cases.get_resolution_run(operation.resolution_run_id, authorize?: false),
          {:ok, history} <-
            Cases.observation_progress_history(
              operation.case_id,
@@ -80,15 +82,26 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
 
       facts_fingerprint = fingerprint(operation.result_details["facts"])
 
-      novelty? =
-        operation.status == :applied and
-          not Enum.any?(history, fn event ->
-            event.data["status"] == "applied" and
-              event.data["input_fingerprint"] == input_fingerprint and
-              event.data["facts_fingerprint"] == facts_fingerprint
-          end)
+      identical_count =
+        Enum.count(history, fn event ->
+          event.data["status"] == "applied" and
+            event.data["input_fingerprint"] == input_fingerprint and
+            event.data["facts_fingerprint"] == facts_fingerprint
+        end)
 
-      kind = if novelty?, do: :progress, else: :no_progress
+      novelty? = operation.status == :applied and identical_count == 0
+
+      kind =
+        cond do
+          operation.status == :applied and identical_count >= run.max_no_progress_turns ->
+            :repeated_observation
+
+          novelty? ->
+            :progress
+
+          true ->
+            :no_progress
+        end
 
       Budget.consume(
         case_id: operation.case_id,
@@ -103,7 +116,8 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
           "status" => to_string(operation.status),
           "outcome_category" => operation.outcome_category,
           "input_fingerprint" => input_fingerprint,
-          "facts_fingerprint" => facts_fingerprint
+          "facts_fingerprint" => facts_fingerprint,
+          "prior_identical_count" => identical_count
         },
         pending_intent: %{
           "action" => "review_observation_progress",

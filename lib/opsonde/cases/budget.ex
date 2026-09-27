@@ -197,6 +197,9 @@ defmodule Opsonde.Cases.Budget do
       run.no_progress_turns >= run.max_no_progress_turns ->
         :no_progress
 
+      kind == :repeated_observation ->
+        :repeated_observation
+
       true ->
         case limit(kind) do
           nil ->
@@ -271,4 +274,7 @@ defmodule Opsonde.Cases.Budget do
   defp limit_reason(:related_target), do: "Related Target limit exhausted"
   defp limit_reason(:ai_usage), do: "AI usage limit exhausted"
   defp limit_reason(:no_progress), do: "No-progress turn limit exhausted"
+
+  defp limit_reason(:repeated_observation),
+    do: "Repeated identical Target observation limit exhausted"
 end

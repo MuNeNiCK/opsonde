@@ -566,6 +566,42 @@ defmodule Opsonde.OperationDeliveryTest do
     assert stopped.stop_reason == "No-progress turn limit exhausted"
   end
 
+  test "interleaved new reads do not hide repeated identical observations", context do
+    {incident, run, proposal} =
+      authorized_proposal!("observation-cumulative-repeat", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(first, %{"service" => "api", "state" => "active"})
+
+    second = continue_observation!(incident, context, first.id)
+    assert :ok = deliver_observation(second, %{"service" => "api", "state" => "active"})
+
+    other = continue_observation!(incident, Map.put(context, :service, "db"), second.id)
+    assert :ok = deliver_observation(other, %{"service" => "db", "state" => "active"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    third = continue_observation!(incident, context, other.id)
+    assert :ok = deliver_observation(third, %{"service" => "api", "state" => "active"})
+
+    another = continue_observation!(incident, Map.put(context, :service, "cache"), third.id)
+    assert :ok = deliver_observation(another, %{"service" => "cache", "state" => "active"})
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    fourth = continue_observation!(incident, context, another.id)
+    assert :ok = deliver_observation(fourth, %{"service" => "api", "state" => "active"})
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "Repeated identical Target observation limit exhausted"
+
+    assert :ok =
+             OperationDelivery.run(fourth.id,
+               target_invocation: invocation(fn -> flunk("repeated observation was resent") end)
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+  end
+
   test "denied observation returns its reason to Resolver without authorizing an Operation",
        context do
     configure_mode!(context.admin, :auto)
