@@ -566,6 +566,67 @@ defmodule Opsonde.OperationDeliveryTest do
     assert stopped.stop_reason == "No-progress turn limit exhausted"
   end
 
+  test "denied observation returns its reason to Resolver without authorizing an Operation",
+       context do
+    configure_mode!(context.admin, :auto)
+
+    Targets.create_target_policy!(
+      context.target.id,
+      "deny-observation-input",
+      [:observation],
+      ["observe.service"],
+      ["service.inspect"],
+      %{"service" => %{"eq" => "api"}},
+      %{},
+      "This exact Target observation is unsupported",
+      actor: context.admin
+    )
+
+    {incident, run, proposal} =
+      authorized_proposal!("denied-observation-retry", context, request_kind: :observation)
+
+    assert proposal.status == :blocked
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    assert pending["action"] == "resolve_turn"
+    next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+    assert next_turn.intent["rejection_reason"] == "This exact Target observation is unsupported"
+    assert next_turn.intent["rejected_operation"] == "service.inspect"
+    assert Cases.operations_for_case!(incident.id, authorize?: false) == []
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+
+    assert Cases.route_proposal_authority!(proposal.id, authorize?: false).id == proposal.id
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).turn_count == 2
+
+    initial_result = Cases.get_turn!(proposal.source_turn_id, authorize?: false).result
+
+    for count <- [2, 3] do
+      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+      retry_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+      completed =
+        Cases.complete_turn!(
+          retry_turn.id,
+          retry_turn.revision,
+          initial_result,
+          :observation_pending,
+          %{"action" => "route_resolver_decision", "turn_id" => retry_turn.id},
+          "Review the Resolver decision",
+          authorize?: false
+        ).value
+
+      Cases.route_downstream_decision!(completed.id, authorize?: false)
+      retry_proposal = Cases.proposal_by_source_turn!(completed.id, authorize?: false)
+      assert retry_proposal.status == :blocked
+      assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == count
+    end
+
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "No-progress turn limit exhausted"
+    assert Cases.operations_for_case!(incident.id, authorize?: false) == []
+  end
+
   test "authorization changed after acceptance fails before Target dispatch", context do
     {_incident, _run, proposal} = authorized_proposal!("policy-before-dispatch", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)

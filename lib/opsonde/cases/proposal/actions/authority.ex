@@ -69,6 +69,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     end
   end
 
+  defp route_locked(%{status: :blocked, request_kind: :observation} = proposal, incident, run) do
+    reconsider_blocked_observation(proposal, incident, run)
+  end
+
   defp route_locked(%{status: :blocked} = proposal, incident, run) do
     require_attention(
       proposal,
@@ -108,6 +112,78 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
               :invalidated
             ],
        do: proposal
+
+  defp reconsider_blocked_observation(proposal, incident, run) do
+    reason = proposal.preflight_reason || "Target observation request was denied"
+    category = proposal.preflight_context["category"] || "denied"
+
+    case Budget.consume(
+           case_id: incident.id,
+           resolution_run_id: run.id,
+           kind: :no_progress,
+           amount: 1,
+           ledger_key: Budget.key("proposal:blocked-observation", proposal.id),
+           actor: nil,
+           event_type: "observation_proposal_blocked",
+           event_data: %{
+             "proposal_id" => proposal.id,
+             "category" => category,
+             "reason" => reason
+           },
+           pending_intent: %{"action" => "review_blocked_proposal", "proposal_id" => proposal.id},
+           required_human_input: "Review the denied Target observation and resume the Case",
+           operation: fn _case, _run -> {:ok, proposal} end,
+           duplicate: fn _case, _run -> {:ok, proposal} end
+         ) do
+      {:ok, %{status: status}} when status in [:charged, :duplicate] ->
+        start_blocked_observation_retry(proposal, incident, run, reason, category)
+
+      {:ok, %{status: :exhausted}} ->
+        proposal
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp start_blocked_observation_retry(proposal, incident, run, reason, category) do
+    intent = %{
+      "objective" => "Choose another Target observation after the previous request was denied",
+      "source" => "target_observation_denied",
+      "blocked_proposal_id" => proposal.id,
+      "rejection_category" => category,
+      "rejection_reason" => reason,
+      "rejected_capability" => proposal.capability,
+      "rejected_operation" => proposal.operation
+    }
+
+    with {:ok, started} <-
+           Cases.start_turn(
+             incident.id,
+             run.id,
+             "proposal:blocked-observation:next-turn:#{proposal.id}",
+             intent,
+             %{"action" => "continue_resolution", "blocked_proposal_id" => proposal.id},
+             "Review Resolver limits or the denied observation",
+             authorize?: false
+           ) do
+      case started do
+        %{status: status, value: %Turn{} = turn} when status in [:charged, :duplicate] ->
+          with {:ok, _case} <-
+                 update_pending(incident, %{
+                   "action" => "resolve_turn",
+                   "turn_id" => turn.id,
+                   "proposal_id" => proposal.id,
+                   "blocked_proposal_id" => proposal.id
+                 }) do
+            proposal
+          end
+
+        %{status: :exhausted} ->
+          proposal
+      end
+    end
+  end
 
   defp decide(arguments, actor) do
     with {:ok, current_actor} <- current_actor(actor),
