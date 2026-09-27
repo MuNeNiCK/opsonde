@@ -265,6 +265,47 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert Cases.list_proposals!(actor: context.admin) == []
   end
 
+  for {label, kind} <- [
+        {"no", :none},
+        {"stale", :stale},
+        {"recovered", :recovered},
+        {"fabricated", :fabricated}
+      ] do
+    test "a Signal effect with #{label} affected Condition cannot materialize", context do
+      {incident, _prior_run, _resumed_run, current, _stale, turn} =
+        resumed_signal_case!("invalid-affected-#{unquote(label)}", context)
+
+      condition =
+        incident.id
+        |> Cases.active_conditions_for_case!(authorize?: false)
+        |> Enum.map(&Signals.get_condition!(&1.condition_id, authorize?: false))
+        |> Enum.find(&(&1.state == :firing))
+
+      claims =
+        case unquote(kind) do
+          :none ->
+            []
+
+          :stale ->
+            [%{"condition_id" => condition.id, "revision" => condition.revision + 1}]
+
+          :recovered ->
+            recovered =
+              Signals.list_conditions!(actor: context.admin)
+              |> Enum.find(&(&1.state == :recovered))
+
+            [%{"condition_id" => recovered.id, "revision" => recovered.revision}]
+
+          :fabricated ->
+            [%{"condition_id" => Ash.UUID.generate(), "revision" => 1}]
+        end
+
+      completed = complete_turn!(turn, proposal_intent(current.id, context), claims: claims)
+      assert {:error, _error} = Cases.materialize_proposal(completed.id, authorize?: false)
+      assert Cases.list_proposals!(actor: context.admin) == []
+    end
+  end
+
   test "a changed Access Method records stale preflight and preserves the offered revisions",
        context do
     {_incident, run, _evidence, turn, _intent} = proposal_turn!("stale-method", context)
@@ -353,7 +394,7 @@ defmodule Opsonde.ProposalMaterializationTest do
     complete_turn!(started.value, intent)
   end
 
-  defp complete_turn!(turn, intent) do
+  defp complete_turn!(turn, intent, opts \\ []) do
     incident = Cases.get_case!(turn.case_id, authorize?: false)
 
     result = %{
@@ -371,9 +412,11 @@ defmodule Opsonde.ProposalMaterializationTest do
         {:ok, conditions} = Opsonde.Cases.ResolverProjection.current_conditions(incident)
 
         claims =
-          conditions
-          |> Enum.filter(&(&1.state == :firing))
-          |> Enum.map(&%{"condition_id" => &1.id, "revision" => &1.revision})
+          Keyword.get_lazy(opts, :claims, fn ->
+            conditions
+            |> Enum.filter(&(&1.state == :firing))
+            |> Enum.map(&%{"condition_id" => &1.id, "revision" => &1.revision})
+          end)
 
         result
         |> Map.put("condition_revisions", revisions)
