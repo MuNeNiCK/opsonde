@@ -46,6 +46,17 @@ defmodule Opsonde.Targets.Generic.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(_state, %{capability: @observation_capability} = request) do
+    case NativeShell.observation_command(request, @observation_capability) do
+      {:ok, _command} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(_state, _request),
+    do: {:error, :failed, "Generic SSH observation is unsupported"}
+
+  @impl Opsonde.Providers.Target
   def observe(state, request, invocation) do
     with {:ok, command} <- NativeShell.observation_command(request, @observation_capability),
          {:ok, result} <-

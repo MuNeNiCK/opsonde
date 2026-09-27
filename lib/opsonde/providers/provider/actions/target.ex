@@ -66,6 +66,34 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     |> normalize_capabilities(credentials)
   end
 
+  defp invoke(:preflight, adapter, state, arguments, _invocation, credentials) do
+    request = arguments.request
+
+    if valid_preflight_request?(request) do
+      result =
+        if function_exported?(adapter, :preflight, 2),
+          do: safe_call(fn -> adapter.preflight(state, request) end, credentials),
+          else: :ok
+
+      case result do
+        :ok ->
+          {:ok, %Target.RequestValidation{valid?: true}}
+
+        {:error, :failed, reason} when is_binary(reason) ->
+          {:ok,
+           %Target.RequestValidation{
+             valid?: false,
+             reason: Redactor.message(reason, credentials)
+           }}
+
+        _other ->
+          {:error, target_error(:failed, "Target preflight failed")}
+      end
+    else
+      {:error, target_error(:failed, "Invalid Target preflight request")}
+    end
+  end
+
   defp invoke(:observe, adapter, state, arguments, invocation, credentials) do
     request = arguments.request
     redaction_credentials = redaction_credentials(credentials, request)
@@ -256,6 +284,15 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       {:error, target_error(:failed, "Invalid observation request")}
     end
   end
+
+  defp valid_preflight_request?(%Target.PreflightRequest{} = request) do
+    positive_integer?(request.provider_revision) and
+      request.kind in [:observation, :verification] and
+      nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
+      bounded_map?(request.selectors) and bounded_map?(request.parameters)
+  end
+
+  defp valid_preflight_request?(_request), do: false
 
   defp validate_effect_request(%Target.EffectRequest{} = request) do
     if valid_request_base?(request) and nonempty_binary?(request.operation_id) and

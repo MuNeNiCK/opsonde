@@ -256,6 +256,17 @@ defmodule Opsonde.Targets.IOSXESSHTest do
                "cli.execute"
              ]
 
+    assert {:error, _denied} =
+             request(
+               context,
+               :observation,
+               "native.cli.observe",
+               "cli.observe",
+               %{},
+               %{"commands" => ["configure terminal"]}
+             )
+             |> Targets.clear_target_request(actor: context.operator)
+
     assert %Target.Observation{facts: %{"output" => native_output}} =
              request(
                context,

@@ -178,6 +178,21 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(%State{} = state, %{capability: @native_observation} = request) do
+    case native_observation_operation(state, request) do
+      {:ok, _operation} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(%State{} = state, request) do
+    case observation_operation(state, request) do
+      {:ok, _operation, _decoder} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation} <- native_effect_operation(state, request),

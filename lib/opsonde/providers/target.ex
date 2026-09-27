@@ -50,6 +50,18 @@ defmodule Opsonde.Providers.Target do
     @type t :: %__MODULE__{endpoint: String.t()}
   end
 
+  defmodule PreflightRequest do
+    @moduledoc false
+    @enforce_keys [:provider_revision, :kind, :capability, :operation, :selectors, :parameters]
+    defstruct @enforce_keys
+  end
+
+  defmodule RequestValidation do
+    @moduledoc false
+    @enforce_keys [:valid?]
+    defstruct @enforce_keys ++ [reason: nil]
+  end
+
   defmodule ObservationRequest do
     @moduledoc false
 
@@ -182,5 +194,8 @@ defmodule Opsonde.Providers.Target do
   @callback resource_scope(operation :: String.t(), capability :: String.t(), selectors :: map()) ::
               String.t()
 
-  @optional_callbacks resource_scope: 3
+  @callback preflight(state :: term(), PreflightRequest.t()) ::
+              :ok | {:error, :failed, String.t()}
+
+  @optional_callbacks resource_scope: 3, preflight: 2
 end

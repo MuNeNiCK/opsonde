@@ -111,6 +111,24 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(_state, %{capability: @native_observation} = request) do
+    with {:ok, method, _path, _body} <- native_request(request, "request.observe"),
+         true <- method in [:get, :head] do
+      :ok
+    else
+      false -> {:error, :failed, "RESTCONF observation must use GET or HEAD"}
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(_state, request) do
+    case IOSXE.observation_request(request) do
+      {:ok, _operation} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @native_effect} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
          {:ok, method, path, body} <- native_request(target_request, "request.execute"),

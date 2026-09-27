@@ -81,6 +81,24 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(_state, %{capability: @native_observation} = request) do
+    with {:ok, commands} <- native_commands(request, "cli.observe"),
+         true <- Enum.all?(commands, &readonly_cli?/1) do
+      :ok
+    else
+      false -> {:error, :failed, "CLI observation must use show commands"}
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(_state, request) do
+    case IOSXE.observation_request(request) do
+      {:ok, _operation} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def effect(%Transport.Config{} = state, %{capability: @native_effect} = request, invocation) do
     with {:ok, commands} <- native_commands(request, "cli.execute"),
          {:ok, output} <-
@@ -313,7 +331,7 @@ defmodule Opsonde.Targets.IOSXE.SSH do
     %Target.Operation{
       capability: @native_observation,
       operation: "cli.observe",
-      description: "Run exact non-mutating IOS XE CLI commands and return raw output",
+      description: "Run exact IOS XE show commands and return raw output",
       input_schema: native_schema(),
       output_schema: output,
       verification_schema: Map.put(output, "minProperties", 1),

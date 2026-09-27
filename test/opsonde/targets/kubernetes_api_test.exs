@@ -507,13 +507,10 @@ defmodule Opsonde.Targets.KubernetesAPITest do
           }
         )
 
-      clearance = Targets.clear_target_request!(request, actor: context.operator)
-
       assert {:error, error} =
-               Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+               Targets.clear_target_request(request, actor: context.operator)
 
-      assert %Target.Error{category: :failed, message: "Kubernetes API request is invalid"} =
-               target_error(error)
+      assert Exception.message(error) =~ "Kubernetes API request is invalid"
     end
 
     assert length(requests(context)) == request_count
@@ -649,10 +646,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         %{"limit" => 10}
       )
 
-    escaped_clearance = Targets.clear_target_request!(escaped, actor: context.operator)
-
     assert {:error, _error} =
-             Targets.dispatch_target_observation(escaped_clearance, %{}, actor: context.operator)
+             Targets.clear_target_request(escaped, actor: context.operator)
 
     assert length(requests(context)) == request_count
 

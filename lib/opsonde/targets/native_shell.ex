@@ -19,7 +19,11 @@ defmodule Opsonde.Targets.NativeShell do
       %Target.Operation{
         capability: observation_capability,
         operation: "command.observe",
-        description: "Run one exact non-mutating #{description} command and return raw output",
+        description:
+          "Read-only #{description} command. Allowed roots: " <>
+            Enum.join(@read_commands, ", ") <>
+            ". systemctl: status, show, cat, list-units, list-unit-files, " <>
+            "is-active, is-enabled, is-failed. No chaining or redirection.",
         input_schema: schema,
         output_schema: output,
         verification_schema: Map.put(output, "minProperties", 1),

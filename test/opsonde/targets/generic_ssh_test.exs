@@ -205,6 +205,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
 
     assert observation.capability == "native.ssh.observe"
     assert observation.operation == "command.observe"
+    assert observation.description =~ "Allowed roots:"
     assert tool.capability == "native.ssh.effect"
     assert tool.operation == "command.execute"
 
@@ -224,6 +225,18 @@ defmodule Opsonde.Targets.GenericSSHTest do
         ["native.ssh.observe", "native.ssh.effect"],
         actor: admin
       )
+
+    for command <- ["systemctl restart sshd.service", "uname -a; touch /tmp/unsafe"] do
+      assert {:error, denied} =
+               Targets.clear_target_request(
+                 request(target, method, :observation, :auto, command),
+                 actor: operator
+               )
+
+      assert policy_error(denied).category == :denied
+    end
+
+    assert commands(context) == []
 
     readonly_clearance =
       Targets.clear_target_request!(
@@ -353,14 +366,11 @@ defmodule Opsonde.Targets.GenericSSHTest do
     assert facts["stdout"] == %{"encoding" => "utf-8", "value" => "ran:uname -a"}
     assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
 
-    unsafe_verification =
-      Targets.clear_target_request!(
-        request(target, method, :verification, :full_access, "touch /tmp/unsafe"),
-        actor: operator
-      )
-
     assert {:error, _} =
-             Targets.dispatch_target_verification(unsafe_verification, %{}, actor: operator)
+             Targets.clear_target_request(
+               request(target, method, :verification, :full_access, "touch /tmp/unsafe"),
+               actor: operator
+             )
 
     assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
   end

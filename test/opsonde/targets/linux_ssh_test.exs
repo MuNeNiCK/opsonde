@@ -348,6 +348,22 @@ defmodule Opsonde.Targets.LinuxSSHTest do
            ]
   end
 
+  test "native observation rejects unsupported commands before clearance", context do
+    request =
+      policy_request(
+        context,
+        :observation,
+        "native.ssh.observe",
+        "command.observe",
+        %{},
+        %{"command" => "curl http://127.0.0.1:18080/metrics"}
+      )
+
+    assert {:error, error} = Targets.clear_target_request(request, actor: context.operator)
+    assert Exception.message(error) =~ "not provably non-mutating"
+    assert commands(context) == []
+  end
+
   test "native commands remain unchanged when privilege is none", context do
     configuration = Map.put(configuration(context), "privilege", "none")
     assert {:ok, state} = LinuxSSH.build(configuration, credentials())

@@ -94,6 +94,24 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(_state, %{capability: @native_observation} = request) do
+    with {:ok, body} <- native_body(request, "rpc.observe"),
+         true <- readonly_rpc?(body) do
+      :ok
+    else
+      false -> {:error, :failed, "NETCONF observation must contain get or get-config"}
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(_state, request) do
+    case IOSXE.observation_request(request) do
+      {:ok, _operation} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def effect(%SSH.Config{} = state, %{capability: @native_effect} = target_request, invocation) do
     with {:ok, body} <- native_body(target_request, "rpc.execute"),
          {:ok, reply} <-

@@ -24,7 +24,8 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
-         :ok <- evaluate(context.policies, request) do
+         :ok <- evaluate(context.policies, request),
+         :ok <- preflight(request, context.access_method) do
       {:ok, build_clearance(current_actor, request, context)}
     end
   end
@@ -38,6 +39,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
          :ok <- evaluate(context.policies, request),
+         :ok <- preflight(request, context.access_method),
          :ok <- validate_authority(request),
          :ok <- current_policy_set(context.policies, clearance.policy_revisions),
          :ok <- current_provider(context.access_method, clearance) do
@@ -115,6 +117,32 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
   defp request_kind_matches?(:verification, :observation), do: true
   defp request_kind_matches?(kind, kind), do: true
   defp request_kind_matches?(_, _), do: false
+
+  defp preflight(%{kind: kind} = request, method)
+       when kind in [:observation, :verification] and
+              request.capability not in ["observe.bmc_api", "observe.power"] do
+    input = %ProviderTarget.PreflightRequest{
+      provider_revision: method.provider_revision,
+      kind: kind,
+      capability: request.capability,
+      operation: request.operation,
+      selectors: request.selectors,
+      parameters: request.parameters
+    }
+
+    case Providers.target_preflight(method.provider_id, input, %{}, authorize?: false) do
+      {:ok, %ProviderTarget.RequestValidation{valid?: true}} ->
+        :ok
+
+      {:ok, %ProviderTarget.RequestValidation{valid?: false, reason: reason}} ->
+        {:error, policy_error(:denied, reason)}
+
+      {:error, _error} ->
+        {:error, policy_error(:stale_context, "Target observation preflight is unavailable")}
+    end
+  end
+
+  defp preflight(_request, _method), do: :ok
 
   defp evaluate(policies, request) do
     Enum.reduce_while(policies, :ok, fn policy, :ok ->

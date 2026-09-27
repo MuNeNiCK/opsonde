@@ -299,10 +299,8 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
         %{}
       )
 
-    clearance = Targets.clear_target_request!(invalid, actor: context.operator)
-
     assert {:error, _error} =
-             Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+             Targets.clear_target_request(invalid, actor: context.operator)
 
     assert length(requests(context)) == count
 

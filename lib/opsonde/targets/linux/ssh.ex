@@ -182,6 +182,21 @@ defmodule Opsonde.Targets.Linux.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def preflight(_state, %{capability: @native_observation} = request) do
+    case NativeShell.observation_command(request, @native_observation) do
+      {:ok, _command} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  def preflight(%State{} = state, request) do
+    case observation_command(state, request) do
+      {:ok, _command, _decoder} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: capability} = request, invocation)
       when capability != @native_effect do
     with {:ok, command} <- restart_command(state, request),
