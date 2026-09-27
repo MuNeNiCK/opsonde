@@ -855,6 +855,11 @@ defmodule Opsonde.AI.ReqLLM do
         get_in(variant || %{}, ["properties", "verification"])
       )
 
+    action_shape = tool_shape(intent["action"], get_in(variant || %{}, ["properties", "action"]))
+
+    verification_shape =
+      tool_shape(intent["verification"], get_in(variant || %{}, ["properties", "verification"]))
+
     Logger.warning(
       "AI object schema mismatch source=#{result.source} path=#{known_schema_path(path)} " <>
         "intent=#{intent_type} intent_allowed=#{intent_type in schema_intent_types(schema)} " <>
@@ -863,10 +868,53 @@ defmodule Opsonde.AI.ReqLLM do
         "intent_extra=#{intent_extra} root_reason=#{Map.has_key?(value, "reason")} " <>
         "condition_groups=#{group_count} error_kinds=#{error_kinds} missing_fields=#{missing_fields} " <>
         "invalid_fields=#{invalid_fields} action_fields=#{action_fields} " <>
-        "verification_fields=#{verification_fields} rejected_citation_ids=#{rejected_citation_ids} " <>
+        "verification_fields=#{verification_fields} action_shape=#{action_shape} " <>
+        "verification_shape=#{verification_shape} rejected_citation_ids=#{rejected_citation_ids} " <>
         "reason_codepoints=#{reason_codepoints} verdict=#{verdict}"
     )
   end
+
+  defp tool_shape(value, schema) when is_map(value) do
+    tool_id = Map.get(value, "tool_id")
+
+    selected =
+      schema
+      |> intent_variants()
+      |> Enum.find(&(tool_id in (get_in(&1, ["properties", "tool_id", "enum"]) || [])))
+
+    allowed = Map.get(selected || %{}, "properties", %{})
+    required = Map.get(selected || %{}, "required", [])
+
+    known =
+      ~w(tool_id selectors parameters expected_result_json operation capability target_id access_method_id provider_id)
+
+    keys =
+      value
+      |> Map.keys()
+      |> Enum.filter(&(&1 in known))
+      |> Enum.sort()
+      |> Enum.join(",")
+
+    tool_class =
+      cond do
+        is_nil(tool_id) -> "missing"
+        not is_binary(tool_id) -> "non_string"
+        is_map(selected) -> "offered"
+        true -> "unoffered"
+      end
+
+    extra =
+      if is_map(selected),
+        do: Enum.count(Map.keys(value), &(!Map.has_key?(allowed, &1))),
+        else: -1
+
+    missing = if is_map(selected), do: Enum.count(required, &(!Map.has_key?(value, &1))), else: -1
+
+    "#{tool_class}:#{keys}:extra#{extra}:missing#{missing}"
+  end
+
+  defp tool_shape(nil, _schema), do: "absent"
+  defp tool_shape(_value, _schema), do: "non_map"
 
   defp rejected_citation_ids(%{"evidence_ids" => ids}, variant) when is_list(ids) do
     allowed = get_in(variant || %{}, ["properties", "evidence_ids", "items", "enum"])

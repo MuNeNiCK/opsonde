@@ -870,6 +870,26 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert output =~ "AI object schema mismatch"
     assert output =~ "intent=handoff"
     assert output =~ "root_extra=1"
+    assert output =~ "action_shape=absent"
+    refute output =~ "test-secret"
+    refute output =~ "unexpected_private_key"
+  end
+
+  test "nested proposal diagnostics expose keys but no untrusted values", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(context.agent, {
+      :raw_text,
+      ~s({"reason":"Review the proposed action","intent":{"type":"proposal","action":{"tool_id":"test-secret","unexpected_private_key":"test-secret"},"evidence_ids":[],"affected_conditions":[]}})
+    })
+
+    output =
+      capture_log(fn ->
+        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
+                 Adapter.resolve(state, resolver_request(), %{})
+      end)
+
+    assert output =~ "action_shape=unoffered:tool_id"
     refute output =~ "test-secret"
     refute output =~ "unexpected_private_key"
   end
