@@ -3,12 +3,26 @@ defmodule Opsonde.ProviderAdapterFixture do
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
+  alias Opsonde.Targets.ResourceScope
 
   @impl true
   def type, do: "fixture-target"
 
   @impl true
   def kind, do: :target
+
+  @impl Opsonde.Providers.Target
+  def resource_scope(operation, capability, selectors)
+      when operation in ["service.restart", "service.inspect"] and
+             capability in ["effect.service", "observe.service"] and is_map(selectors) do
+    case selectors do
+      %{"unit" => unit} when map_size(selectors) == 1 -> ResourceScope.service(unit)
+      %{"service" => unit} when map_size(selectors) == 1 -> ResourceScope.service(unit)
+      _other -> "target"
+    end
+  end
+
+  def resource_scope(_operation, _capability, _selectors), do: "target"
 
   @impl true
   def build(%{"endpoint" => endpoint}, %{"token" => token})

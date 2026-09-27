@@ -1,20 +1,28 @@
 defmodule Opsonde.Targets.ResourceScope do
   @moduledoc false
 
-  @service_capabilities ["effect.service", "observe.service"]
+  alias Opsonde.Providers
+  alias Opsonde.Providers.Registry
 
-  def key(%{platform: "linux"}, capability, selectors)
-      when capability in @service_capabilities and is_map(selectors) do
-    case selectors do
-      %{"unit" => unit} when map_size(selectors) == 1 and is_binary(unit) -> service(unit)
-      %{"service" => unit} when map_size(selectors) == 1 and is_binary(unit) -> service(unit)
-      _other -> "target"
+  def key(%{provider_id: provider_id}, capability, operation, selectors)
+      when is_binary(capability) and is_binary(operation) and is_map(selectors) do
+    with {:ok, %{kind: :target, adapter_type: type}} <-
+           Providers.get_provider(provider_id, authorize?: false),
+         {:ok, adapter} <- Registry.fetch(type),
+         true <- function_exported?(adapter, :resource_scope, 3),
+         scope when is_binary(scope) and byte_size(scope) in 1..255 <-
+           adapter.resource_scope(operation, capability, selectors) do
+      scope
+    else
+      _unavailable -> "target"
     end
+  rescue
+    _error -> "target"
   end
 
-  def key(_method, _capability, _selectors), do: "target"
+  def key(_method, _capability, _operation, _selectors), do: "target"
 
-  defp service(unit) do
+  def service(unit) when is_binary(unit) do
     if unit != "" and String.trim(unit) == unit do
       name = if String.contains?(unit, "."), do: unit, else: unit <> ".service"
       "service:" <> name
@@ -22,4 +30,6 @@ defmodule Opsonde.Targets.ResourceScope do
       "target"
     end
   end
+
+  def service(_unit), do: "target"
 end

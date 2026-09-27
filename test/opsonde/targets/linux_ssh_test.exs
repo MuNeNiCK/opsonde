@@ -5,6 +5,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Linux.SSH, as: LinuxSSH
   alias Opsonde.Targets.PolicyRequest
+  alias Opsonde.Targets.ResourceScope
 
   @password "correct horse battery staple"
   @definition String.duplicate("a", 64)
@@ -104,6 +105,23 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       target: target,
       method: method
     })
+  end
+
+  test "service operations lock the exact unit while native shell effects lock the Target",
+       context do
+    assert ResourceScope.key(
+             context.method,
+             "effect.service",
+             "linux.service.restart",
+             %{"unit" => "api.service"}
+           ) == "service:api.service"
+
+    assert ResourceScope.key(
+             context.method,
+             "native.ssh.effect",
+             "native.ssh.effect",
+             %{"unit" => "api.service"}
+           ) == "target"
   end
 
   test "public capabilities and observations accept bounded unknown Linux workloads", context do

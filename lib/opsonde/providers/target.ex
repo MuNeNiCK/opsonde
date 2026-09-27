@@ -179,4 +179,8 @@ defmodule Opsonde.Providers.Target do
               {:ok, EffectResult.t()} | effect_error()
   @callback verify(state :: term(), VerificationRequest.t(), invocation()) ::
               {:ok, Verification.t()} | read_error()
+  @callback resource_scope(operation :: String.t(), capability :: String.t(), selectors :: map()) ::
+              String.t()
+
+  @optional_callbacks resource_scope: 3
 end

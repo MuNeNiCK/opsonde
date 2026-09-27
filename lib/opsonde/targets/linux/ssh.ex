@@ -7,6 +7,7 @@ defmodule Opsonde.Targets.Linux.SSH do
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.NativeShell
+  alias Opsonde.Targets.ResourceScope
 
   @identity {"observe.identity", "linux.identity.inspect"}
   @processes {"observe.processes", "linux.process.list"}
@@ -44,6 +45,18 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
+
+  @impl Opsonde.Providers.Target
+  def resource_scope(operation, capability, selectors)
+      when operation in ["linux.service.restart", "linux.service.inspect"] and
+             capability in ["effect.service", "observe.service"] and is_map(selectors) do
+    case selectors do
+      %{"unit" => unit} when map_size(selectors) == 1 -> ResourceScope.service(unit)
+      _other -> "target"
+    end
+  end
+
+  def resource_scope(_operation, _capability, _selectors), do: "target"
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) do

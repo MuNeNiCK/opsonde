@@ -171,10 +171,13 @@ defmodule Opsonde.OperationDeliveryTest do
     assert db.resource_scope == "service:db.service"
     method = Targets.get_access_method!(api.access_method_id, authorize?: false)
 
-    assert ResourceScope.key(method, "effect.service", %{"unit" => "api.service"}) ==
+    assert ResourceScope.key(method, "effect.service", "service.restart", %{
+             "unit" => "api.service"
+           }) ==
              api.resource_scope
 
-    assert ResourceScope.key(method, "effect.power", %{"outlet" => "1"}) == "target"
+    assert ResourceScope.key(method, "effect.power", "bmc.power.cycle", %{"outlet" => "1"}) ==
+             "target"
 
     assert Cases.claim_operation_dispatch!(api.id, authorize?: false).state == :claimed
     assert Cases.claim_operation_dispatch!(db.id, authorize?: false).state == :claimed

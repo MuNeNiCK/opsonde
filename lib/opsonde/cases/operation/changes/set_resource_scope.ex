@@ -7,6 +7,7 @@ defmodule Opsonde.Cases.Operation.Changes.SetResourceScope do
   @impl true
   def change(changeset, _opts, _context) do
     capability = Ash.Changeset.get_attribute(changeset, :capability)
+    operation = Ash.Changeset.get_attribute(changeset, :operation)
     selectors = Ash.Changeset.get_attribute(changeset, :selectors)
     access_method_id = Ash.Changeset.get_attribute(changeset, :access_method_id)
 
@@ -19,7 +20,7 @@ defmodule Opsonde.Cases.Operation.Changes.SetResourceScope do
     Ash.Changeset.change_attribute(
       changeset,
       :resource_scope,
-      ResourceScope.key(method, capability, selectors)
+      ResourceScope.key(method, capability, operation, selectors)
     )
   end
 end

@@ -80,10 +80,15 @@ defmodule Opsonde.Providers.Registry do
   end
 
   defp implements?(adapter, behaviour) do
-    Code.ensure_loaded?(behaviour) and
-      behaviour in behaviours(adapter) and
+    if Code.ensure_loaded?(behaviour) and behaviour in behaviours(adapter) do
+      optional = MapSet.new(behaviour.behaviour_info(:optional_callbacks))
+
       Enum.all?(behaviour.behaviour_info(:callbacks), fn {callback, arity} ->
-        function_exported?(adapter, callback, arity)
+        MapSet.member?(optional, {callback, arity}) or
+          function_exported?(adapter, callback, arity)
       end)
+    else
+      false
+    end
   end
 end

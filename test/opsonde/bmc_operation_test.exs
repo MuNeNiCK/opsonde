@@ -5,6 +5,7 @@ defmodule Opsonde.BMCOperationTest do
   alias Opsonde.Targets.{PolicyRequest, PolicyError}
   alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.BMC.SecretBindings
+  alias Opsonde.Targets.ResourceScope
 
   @password "correct horse battery staple"
   @input_schema %{
@@ -31,6 +32,13 @@ defmodule Opsonde.BMCOperationTest do
     ipmi = method!(admin, target, "bmc-ipmi", "ipmi", "ipmi://bmc.example.test:623")
 
     %{admin: admin, operator: operator, target: target, redfish: redfish, ipmi: ipmi}
+  end
+
+  test "BMC methods retain target-wide effect conflicts without a resource scope callback",
+       context do
+    for method <- [context.redfish, context.ipmi] do
+      assert ResourceScope.key(method, "effect.bmc_api", "bmc.api.invoke", %{}) == "target"
+    end
   end
 
   test "two Methods own independent standard and OEM operation definitions", context do
