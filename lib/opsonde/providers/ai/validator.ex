@@ -42,6 +42,22 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
+  def validate_request(:review_recovery, %AI.RecoveryReviewRequest{} = request) do
+    cond do
+      not valid_recovery_review_request?(request) ->
+        {:error, ai_error(:invalid_input, "Recovery Reviewer request is invalid")}
+
+      review_exhausted?(request.budget) ->
+        {:error, ai_error(:budget_exhausted, "AI budget is exhausted")}
+
+      recovery_review_size(request) > @max_review_bytes ->
+        {:error, ai_error(:disclosure_limit, "Recovery Reviewer disclosure limit was exceeded")}
+
+      true ->
+        :ok
+    end
+  end
+
   def validate_request(_operation, _request),
     do: {:error, ai_error(:invalid_input, "AI request is invalid")}
 
@@ -57,17 +73,22 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_review_request?(
-         %AI.ReviewRequest{source_evidence: source_evidence, cited_evidence: cited_evidence} =
-           request
+         %AI.ReviewRequest{
+           source_evidence: source_evidence,
+           cited_evidence: cited_evidence,
+           context_evidence: context_evidence
+         } = request
        )
-       when is_list(source_evidence) and is_list(cited_evidence) do
+       when is_list(source_evidence) and is_list(cited_evidence) and is_list(context_evidence) do
     if is_list(request.target_relations) and
-         length(source_evidence) + length(cited_evidence) + length(request.target_relations) <=
+         length(source_evidence) + length(cited_evidence) + length(context_evidence) +
+           length(request.target_relations) <=
            @max_review_items and
-         Enum.all?(source_evidence ++ cited_evidence, &valid_evidence?/1) and
+         Enum.all?(source_evidence ++ cited_evidence ++ context_evidence, &valid_evidence?/1) and
          valid_review_relations?(request) do
       source_ids = Enum.map(source_evidence, & &1.id)
       evidence_ids = Enum.map(cited_evidence, & &1.id)
+      context_ids = Enum.map(context_evidence, & &1.id)
 
       positive?(request.provider_revision) and nonempty?(request.session_id) and
         nonempty?(request.resolver_session_id) and
@@ -76,6 +97,8 @@ defmodule Opsonde.Providers.AI.Validator do
         nonempty?(request.policy_summary) and
         valid_retry_context?(request.retry_context) and
         valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
+        unique?(context_ids) and
+        MapSet.disjoint?(MapSet.new(evidence_ids), MapSet.new(context_ids)) and
         valid_review_proposal?(request.proposal, evidence_ids)
     else
       false
@@ -83,6 +106,69 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_review_request?(_request), do: false
+
+  defp valid_recovery_review_request?(
+         %AI.RecoveryReviewRequest{
+           conditions: conditions,
+           source_evidence: source_evidence,
+           cited_evidence: cited_evidence,
+           context_evidence: context_evidence,
+           conclusion: %AI.RecoveryConclusion{} = conclusion
+         } = request
+       )
+       when is_list(conditions) and is_list(source_evidence) and is_list(cited_evidence) and
+              is_list(context_evidence) do
+    claims = conclusion.condition_claims
+    source_ids = Enum.map(source_evidence, &if(is_map(&1), do: Map.get(&1, :id)))
+    cited_ids = Enum.map(cited_evidence, &if(is_map(&1), do: Map.get(&1, :id)))
+    context_ids = Enum.map(context_evidence, &if(is_map(&1), do: Map.get(&1, :id)))
+    by_id = Map.new(Enum.filter(conditions, &match?(%AI.Condition{}, &1)), &{&1.id, &1})
+
+    positive?(request.provider_revision) and nonempty?(request.session_id) and
+      nonempty?(request.resolver_session_id) and
+      request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
+      nonempty?(request.objective) and request.report_language in [:en, :ja] and
+      valid_budget?(request.budget) and valid_retry_context?(request.retry_context) and
+      length(conditions) <= 32 and
+      length(source_evidence) + length(cited_evidence) + length(context_evidence) +
+        length(conditions) <=
+        @max_review_items and
+      Enum.all?(conditions, &valid_condition?/1) and
+      Enum.all?(conditions, &(&1.state == :recovered and &1.recovery_status == :ready_for_review)) and
+      Enum.all?(source_evidence ++ cited_evidence ++ context_evidence, &valid_evidence?/1) and
+      unique?(source_ids) and unique?(cited_ids) and unique?(context_ids) and
+      MapSet.disjoint?(MapSet.new(cited_ids), MapSet.new(context_ids)) and
+      AI.valid_resolver_reason?(conclusion.reason) and
+      is_list(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
+      Enum.all?(conclusion.evidence_ids, &(&1 in cited_ids)) and
+      is_list(claims) and length(claims) == length(conditions) and
+      Enum.all?(claims, fn claim ->
+        condition = is_map(claim) && Map.get(by_id, claim["condition_id"])
+
+        (condition && claim["revision"] == condition.revision) and
+          claim["evidence_id"] == condition.recovery_evidence_id and
+          claim["evidence_id"] in cited_ids and
+          AI.valid_resolver_reason?(claim["reason"])
+      end)
+  end
+
+  defp valid_recovery_review_request?(_request), do: false
+
+  defp recovery_review_size(request) do
+    encoded = %{
+      objective: request.objective,
+      conditions: Enum.map(request.conditions, &plain_value/1),
+      source_evidence: Enum.map(request.source_evidence, &plain_value/1),
+      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
+      context_evidence: Enum.map(request.context_evidence, &plain_value/1),
+      conclusion: plain_value(request.conclusion)
+    }
+
+    case Jason.encode(encoded) do
+      {:ok, value} -> byte_size(value)
+      {:error, _error} -> :infinity
+    end
+  end
 
   defp valid_review_relations?(%AI.ReviewRequest{
          initial_target_id: initial_id,
@@ -161,6 +247,7 @@ defmodule Opsonde.Providers.AI.Validator do
          [
            request.conditions,
            request.evidence,
+           request.historical_evidence,
            request.recovery_evidence_ids,
            request.target_candidates,
            request.observation_results,
@@ -174,6 +261,7 @@ defmodule Opsonde.Providers.AI.Validator do
       valid? =
         Enum.all?(request.conditions, &valid_condition?/1) and
           Enum.all?(request.evidence, &valid_evidence?/1) and
+          Enum.all?(request.historical_evidence, &valid_evidence?/1) and
           Enum.all?(request.target_candidates, &valid_candidate?/1) and
           Enum.all?(request.observation_results, &valid_observation_result?/1) and
           Enum.all?(request.target_relations, &valid_relation?/1) and
@@ -184,12 +272,14 @@ defmodule Opsonde.Providers.AI.Validator do
       if valid? do
         condition_ids = Enum.map(request.conditions, & &1.id)
         evidence_ids = Enum.map(request.evidence, & &1.id)
+        historical_ids = Enum.map(request.historical_evidence, & &1.id)
         candidate_ids = Enum.map(request.target_candidates, & &1.id)
         result_ids = Enum.map(request.observation_results, & &1.id)
         relation_ids = Enum.map(request.target_relations, & &1.id)
         tool_ids = Enum.map(request.observation_tools ++ request.proposal_tools, & &1.id)
 
-        unique?(condition_ids) and unique?(evidence_ids ++ result_ids ++ relation_ids) and
+        unique?(condition_ids) and
+          unique?(evidence_ids ++ historical_ids ++ result_ids ++ relation_ids) and
           unique?(request.recovery_evidence_ids) and
           Enum.all?(request.recovery_evidence_ids, &(&1 in evidence_ids)) and
           unique?(candidate_ids) and
@@ -214,10 +304,11 @@ defmodule Opsonde.Providers.AI.Validator do
         :firing,
         :stale_source,
         :unmapped_target,
-        :missing_subject_proof,
+        :needs_observation,
         :target_changed,
-        :healthy
+        :ready_for_review
       ] and
+      (is_nil(condition.recovery_evidence_id) or nonempty?(condition.recovery_evidence_id)) and
       (is_nil(condition.target_id) or nonempty?(condition.target_id)) and
       is_integer(condition.current_occurred_at_us)
   end
@@ -277,6 +368,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
     length(items) <= disclosure.max_items and
       evidence_allowed?(request.evidence, disclosure) and
+      evidence_allowed?(request.historical_evidence, disclosure) and
       candidates_allowed?(request.target_candidates, disclosure) and
       results_allowed?(request.observation_results, disclosure) and
       relations_allowed?(request.target_relations, disclosure) and
@@ -331,6 +423,7 @@ defmodule Opsonde.Providers.AI.Validator do
       proposal: plain_value(request.proposal),
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
       cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
+      context_evidence: Enum.map(request.context_evidence, &plain_value/1),
       initial_target_id: request.initial_target_id,
       target_relations: Enum.map(request.target_relations, &plain_value/1),
       retry_context: request.retry_context
@@ -344,7 +437,6 @@ defmodule Opsonde.Providers.AI.Validator do
 
   def validate_decision(:resolve, %AI.ResolverDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
-         :ok <- validate_recovery_ready_intent(decision.intent, request),
          :ok <- validate_resolver_intent(decision.intent, request),
          true <- encoded_size(%{}, [decision.intent]) <= @max_output_bytes do
       :ok
@@ -366,16 +458,20 @@ defmodule Opsonde.Providers.AI.Validator do
     end
   end
 
-  def validate_decision(_operation, _decision, _request),
-    do: {:error, ai_error(:invalid_output, "AI output is invalid")}
-
-  defp validate_recovery_ready_intent(intent, request) do
-    if AI.recovery_ready?(request) and not match?(%AI.RecoveryConclusion{}, intent) do
-      {:error, ai_error(:invalid_output, "AI Resolver must conclude recovery")}
-    else
+  def validate_decision(:review_recovery, %AI.ReviewDecision{} = decision, request) do
+    with :ok <- validate_usage(decision.usage, request.budget),
+         true <- decision.verdict in [:approved, :rejected, :needs_human],
+         true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
+         true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
       :ok
+    else
+      false -> {:error, ai_error(:invalid_output, "Recovery Reviewer output is invalid")}
+      {:error, _error} = error -> error
     end
   end
+
+  def validate_decision(_operation, _decision, _request),
+    do: {:error, ai_error(:invalid_output, "AI output is invalid")}
 
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and
@@ -400,7 +496,11 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(selection.reason) and
          nonempty_list?(selection.evidence_ids) and
          unique?(selection.evidence_ids) and
-         Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) do
+         Enum.all?(selection.evidence_ids, &(&1 in evidence_ids)) and
+         Enum.any?(
+           selection.evidence_ids,
+           &(&1 in AI.target_candidate_evidence_ids(request, selection.target_id))
+         ) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI Target selection is invalid")}
@@ -462,11 +562,38 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(conclusion.reason) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) and
-         (request.conditions == [] or
-            Enum.all?(recovery_evidence_ids, &(&1 in conclusion.evidence_ids))) do
+         valid_condition_claims?(conclusion.condition_claims, request, conclusion.evidence_ids) do
       :ok
     else
       {:error, ai_error(:invalid_output, "AI recovery conclusion is invalid")}
+    end
+  end
+
+  defp validate_resolver_intent(%AI.CaseSplit{} = split, request) do
+    available = request.conditions |> Enum.map(& &1.id) |> MapSet.new()
+
+    cited =
+      (request.evidence ++ request.observation_results)
+      |> Enum.map(& &1.id)
+      |> MapSet.new()
+
+    if is_list(split.condition_ids) and is_list(split.evidence_ids) and
+         is_list(split.remaining_evidence_ids) and
+         Enum.all?(
+           split.condition_ids ++ split.evidence_ids ++ split.remaining_evidence_ids,
+           &is_binary/1
+         ) and
+         MapSet.size(available) > 1 and split.condition_ids != [] and
+         MapSet.size(MapSet.new(split.condition_ids)) < MapSet.size(available) and
+         MapSet.subset?(MapSet.new(split.condition_ids), available) and
+         unique?(split.condition_ids) and nonempty_list?(split.evidence_ids) and
+         nonempty_list?(split.remaining_evidence_ids) and unique?(split.evidence_ids) and
+         unique?(split.remaining_evidence_ids) and
+         MapSet.subset?(MapSet.new(split.evidence_ids ++ split.remaining_evidence_ids), cited) and
+         AI.valid_resolver_reason?(split.reason) do
+      :ok
+    else
+      {:error, ai_error(:invalid_output, "AI Case split request is invalid")}
     end
   end
 
@@ -479,6 +606,27 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(_intent, _request),
     do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid")}
+
+  defp valid_condition_claims?([], %{conditions: []}, _evidence_ids), do: true
+
+  defp valid_condition_claims?(claims, request, evidence_ids) when is_list(claims) do
+    expected = Map.new(request.conditions, &{&1.id, &1})
+
+    Enum.all?(claims, &is_map/1) and length(claims) == map_size(expected) and
+      MapSet.new(Enum.map(claims, & &1["condition_id"])) == MapSet.new(Map.keys(expected)) and
+      Enum.all?(claims, fn claim ->
+        condition = Map.get(expected, claim["condition_id"])
+
+        (condition && claim["revision"] == condition.revision) and
+          condition.state == :recovered and condition.recovery_status == :ready_for_review and
+          claim["evidence_id"] == condition.recovery_evidence_id and
+          claim["evidence_id"] in evidence_ids and
+          AI.valid_resolver_reason?(claim["reason"]) and
+          claim["evidence_id"] in request.recovery_evidence_ids
+      end)
+  end
+
+  defp valid_condition_claims?(_claims, _request, _evidence_ids), do: false
 
   defp traversal_destination?(relationship, selected_target_id, traversal) do
     next_target =
@@ -507,8 +655,6 @@ defmodule Opsonde.Providers.AI.Validator do
       valid_request_evidence_ids?(proposal, evidence_ids) and
       valid_review_verification?(proposal)
   end
-
-  defp valid_review_proposal?(_proposal, _evidence_ids), do: false
 
   defp review_decision_size(decision) do
     case Jason.encode(%{

@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
 
   require Ash.Query
 
-  alias Opsonde.{Cases, Targets}
+  alias Opsonde.{Cases, Signals, Targets}
   alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun}
 
   @impl true
@@ -152,6 +152,22 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
           Enum.any?(candidates, fn candidate ->
             candidate["id"] == target_id and candidate["revision"] == target_revision
           end)
+
+        %{
+          kind: "signal_event",
+          content: %{
+            "current" => true,
+            "condition_id" => condition_id,
+            "condition_revision" => condition_revision
+          }
+        } ->
+          case Signals.get_condition(condition_id, authorize?: false) do
+            {:ok, condition} ->
+              condition.revision == condition_revision and condition.target_id == target_id
+
+            _unavailable ->
+              false
+          end
 
         _other ->
           false

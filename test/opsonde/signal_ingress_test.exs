@@ -4,9 +4,10 @@ defmodule Opsonde.SignalIngressTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
-  alias Opsonde.Cases.{DecisionRouteWorker, ResolverDelivery}
+  alias Opsonde.Cases.{DecisionRouteWorker, ResolverDelivery, ResolverProjection}
   alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Repo
+  alias Opsonde.Cases.RecoveryRecheckWorker
 
   @password "correct horse battery staple"
 
@@ -116,6 +117,151 @@ defmodule Opsonde.SignalIngressTest do
     assert membership.condition_id == Enum.find(events, &(&1.event_key == "alert-a")).condition_id
     assert Enum.find(events, &(&1.event_key == "alert-a")).case_id == hd(cases).id
     assert is_nil(Enum.find(events, &(&1.event_key == "alert-b")).case_id)
+  end
+
+  test "current native Condition Evidence can select its mapped Target without a catalog search",
+       context do
+    enable_signal_automation!(context.admin)
+
+    targets =
+      for name <- ["primary-host", "related-host"], into: %{} do
+        target = Targets.create_target!(name, "host", "linux", %{}, nil, actor: context.admin)
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+
+        {name, target}
+      end
+
+    Targets.create_relationship!(
+      targets["primary-host"].id,
+      targets["related-host"].id,
+      "connected_to",
+      %{},
+      nil,
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for name <- ["primary-host", "related-host"] do
+        event("mapped-target-selection", name, :firing, at,
+          target_ref: %{kind: :hostname, value: name}
+        )
+      end
+
+    ingest!(
+      context.provider,
+      envelope("mapped-target-selection", at),
+      invocation("mapped-target-selection", events)
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    target = targets["related-host"]
+
+    [source] =
+      Cases.signal_context_evidence!(incident.id, authorize?: false)
+      |> Enum.filter(fn item ->
+        {:ok, condition} = Signals.get_condition(item.content["condition_id"], authorize?: false)
+        condition.target_id == target.id
+      end)
+
+    selected =
+      Cases.select_case_target!(
+        incident.id,
+        incident.revision,
+        run.id,
+        [source.id],
+        target.id,
+        target.revision,
+        "Inspect the mapped related Target",
+        "mapped-target-selection",
+        actor: context.admin
+      )
+
+    assert selected.selected_target_id == target.id
+
+    recovered_at = DateTime.utc_now()
+
+    ingest!(
+      context.provider,
+      envelope("mapped-target-recovered", recovered_at),
+      invocation("mapped-target-recovered", [
+        event("mapped-target-recovered", "related-host", :recovered, recovered_at,
+          target_ref: %{kind: :hostname, value: "related-host"}
+        )
+      ])
+    )
+
+    assert {:error, _stale} =
+             Cases.select_case_target(
+               selected.id,
+               selected.revision,
+               run.id,
+               [source.id],
+               target.id,
+               target.revision,
+               "Old source Evidence cannot select a Target",
+               "mapped-target-selection-stale",
+               actor: context.admin
+             )
+  end
+
+  test "a current recovery event durably starts one Resolver recheck after the first Turn",
+       context do
+    enable_signal_automation!(context.admin)
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    ingest!(
+      context.provider,
+      envelope("recheck-firing", at),
+      invocation("recheck-firing", [event("recheck-firing", "native-fault", :firing, at)])
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [first_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    Cases.complete_turn!(
+      first_turn.id,
+      first_turn.revision,
+      %{"outcome" => "test_no_decision"},
+      :none,
+      %{},
+      "Review Resolver limits",
+      authorize?: false
+    )
+
+    recovered_at = DateTime.utc_now()
+
+    ingest!(
+      context.provider,
+      envelope("recheck-recovered", recovered_at),
+      invocation("recheck-recovered", [
+        event("recheck-recovered", "native-fault", :recovered, recovered_at)
+      ])
+    )
+
+    worker = Oban.Worker.to_string(RecoveryRecheckWorker)
+
+    assert [_job] =
+             Repo.all(
+               from job in Oban.Job,
+                 where: job.worker == ^worker and job.args["case_id"] == ^incident.id
+             )
+
+    assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+    assert [recheck_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert recheck_turn.intent["source"] == "signal_recheck"
+
+    assert {:snooze, 5} =
+             RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
 
   test "same Target alerts share a provisional Case while retaining separate Conditions",
@@ -436,6 +582,146 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_turns!(actor: context.admin)) == 3
   end
 
+  test "an explicit cited Resolver split moves native Conditions through the Case action",
+       context do
+    enable_signal_automation!(context.admin)
+
+    targets =
+      for name <- ["poe-switch", "unrelated-core"], into: %{} do
+        target =
+          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+            actor: context.admin
+          )
+
+        Targets.create_external_identity!(target.id, "test-monitor", "hostname", name,
+          actor: context.admin
+        )
+
+        {name, target}
+      end
+
+    Targets.create_relationship!(
+      targets["poe-switch"].id,
+      targets["unrelated-core"].id,
+      "connected_to",
+      %{},
+      nil,
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for name <- ["poe-switch", "unrelated-core"] do
+        event("independent-faults", name, :firing, at,
+          target_ref: %{kind: :hostname, value: name},
+          attributes: %{"title" => "#{name} unreachable"}
+        )
+      end
+
+    ingest!(
+      context.provider,
+      envelope("independent-faults", at),
+      invocation("independent-faults", events)
+    )
+
+    [parent] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
+    run = Cases.active_resolution_run!(parent.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(parent)
+
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: Ecto.UUID.generate(),
+      provider_revision: 1,
+      source: :assignment
+    }
+
+    assert {:ok, request} = ResolverProjection.build(turn.id, selection)
+
+    assert MapSet.new(Enum.map(request.target_candidates, & &1.id)) ==
+             MapSet.new(
+               Map.values(targets)
+               |> Enum.map(& &1.id)
+               |> Enum.reject(&(&1 == parent.selected_target_id))
+             )
+
+    for candidate <- request.target_candidates do
+      assert AI.target_candidate_evidence_ids(request, candidate.id) != []
+    end
+
+    groups =
+      for name <- ["unrelated-core", "poe-switch"] do
+        condition =
+          Signals.list_conditions!(actor: context.admin)
+          |> Enum.find(&(&1.target_id == targets[name].id))
+
+        observation =
+          Cases.create_evidence_record!(
+            %{
+              case_id: parent.id,
+              resolution_run_id: run.id,
+              turn_id: turn.id,
+              idempotency_key: "group-observation:#{name}",
+              kind: "observation",
+              source: "target",
+              source_ref: name,
+              content: %{
+                "target_id" => targets[name].id,
+                "status" => "applied",
+                "facts" => %{"reachability" => "down"}
+              },
+              observed_at: DateTime.utc_now()
+            },
+            authorize?: false
+          )
+
+        %{
+          "condition_ids" => [condition.id],
+          "assessment" => "independent",
+          "reason" => "Independent observed failure on #{name}",
+          "evidence_ids" => [observation.id]
+        }
+      end
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => revisions,
+          "condition_groups" => groups,
+          "intent" => %{
+            "type" => "case_split",
+            "condition_ids" => hd(groups)["condition_ids"],
+            "evidence_ids" => hd(groups)["evidence_ids"],
+            "remaining_evidence_ids" => List.last(groups)["evidence_ids"],
+            "reason" => "Investigate the core fault separately"
+          }
+        },
+        :none,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+
+    cases = Cases.list_cases!(actor: context.admin)
+    assert length(cases) == 2
+    original = Enum.find(cases, &(&1.id == completed.case_id))
+    spawned = Enum.find(cases, &(&1.id != completed.case_id))
+
+    assert spawned.split_parent_id == original.id
+    assert length(Cases.active_conditions_for_case!(original.id, authorize?: false)) == 1
+    assert length(Cases.active_conditions_for_case!(spawned.id, authorize?: false)) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => completed.id}})
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+  end
+
   test "an explicit split moves one native Condition without minting budgets or replaying a stale route",
        context do
     enable_signal_automation!(context.admin)
@@ -470,11 +756,12 @@ defmodule Opsonde.SignalIngressTest do
 
     {:ok, snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
 
-    [moved] =
-      Enum.filter(
-        Signals.list_conditions!(actor: context.admin),
-        &(&1.subject_ref["name"] == "service-c.service")
-      )
+    moved_id =
+      Signals.list_signal_events!(actor: context.admin)
+      |> Enum.find(&(&1.event_key == "service-c"))
+      |> Map.fetch!(:condition_id)
+
+    moved = Signals.get_condition!(moved_id, actor: context.admin)
 
     assert {:error, _running} =
              Cases.split_case_conditions(
@@ -923,9 +1210,21 @@ defmodule Opsonde.SignalIngressTest do
     end
 
     conditions = Signals.list_conditions!(actor: context.admin)
+    events = Signals.list_signal_events!(actor: context.admin)
+
+    pod_a_id =
+      events
+      |> Enum.find(&(&1.state == :firing and &1.attributes["labels"]["pod"] == "pod-a"))
+      |> Map.fetch!(:condition_id)
+
+    pod_b_id =
+      events
+      |> Enum.find(&(&1.state == :firing and &1.attributes["labels"]["pod"] == "pod-b"))
+      |> Map.fetch!(:condition_id)
+
     assert length(conditions) == 2
-    assert Enum.find(conditions, &(&1.subject_ref["name"] == "pod-a")).state == :recovered
-    assert Enum.find(conditions, &(&1.subject_ref["name"] == "pod-b")).state == :firing
+    assert Signals.get_condition!(pod_a_id, actor: context.admin).state == :recovered
+    assert Signals.get_condition!(pod_b_id, actor: context.admin).state == :firing
     assert length(Cases.list_cases!(actor: context.admin)) == 2
   end
 

@@ -70,6 +70,17 @@ defmodule Opsonde.Cases.Evidence do
               )
     end
 
+    read :review_context do
+      argument :case_id, :uuid, allow_nil?: false
+
+      filter expr(
+               case_id == ^arg(:case_id) and
+                 kind in ["observation", "operation_outcome", "target_verification"]
+             )
+
+      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 100)
+    end
+
     read :condition_assessment_candidates do
       argument :case_id, :uuid, allow_nil?: false
       argument :after, :utc_datetime_usec, allow_nil?: false
@@ -143,6 +154,7 @@ defmodule Opsonde.Cases.Evidence do
              :projection_window,
              :signal_contexts,
              :target_continuity,
+             :review_context,
              :condition_assessment_candidates,
              :by_idempotency,
              :create_record,

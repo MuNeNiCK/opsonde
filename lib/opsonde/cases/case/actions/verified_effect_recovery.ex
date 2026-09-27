@@ -16,8 +16,8 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
   }
 
   alias Opsonde.Cases.SignalRecoveryCheckWorker
-  alias Opsonde.Cases.Case.Actions.RecoveryCompletion
-  alias Opsonde.Cases.Case.Actions.SplitConditions
+
+  @monitor_wait_seconds 30
 
   @impl true
   def run(input, _opts, _context) do
@@ -61,34 +61,22 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
 
   defp settle_or_wait(incident, run, attempt, evidence) do
     with {:ok, assessments} <- ConditionRecovery.assess_current(incident) do
-      cond do
-        ConditionRecovery.all_healthy?(assessments) ->
-          resolve(incident, run, attempt, evidence)
-
-        Enum.any?(assessments, &(&1.status == :healthy)) ->
-          wait_or_investigate(incident, run, attempt, evidence, assessments)
-
-        Enum.any?(assessments, &(&1.status == :stale_source)) ->
-          investigate(incident, run, attempt, evidence)
-
-        true ->
-          wait_or_investigate(incident, run, attempt, evidence, assessments)
+      if Enum.all?(assessments, &(&1.status in [:ready_for_review, :needs_observation])) do
+        investigate(incident, run, attempt, evidence)
+      else
+        wait_or_investigate(incident, run, attempt, evidence)
       end
     end
   end
 
-  defp wait_or_investigate(incident, run, attempt, evidence, assessments) do
+  defp wait_or_investigate(incident, run, attempt, evidence) do
     deadline =
       attempt.completed_at
-      |> DateTime.add(ConditionRecovery.monitor_wait_seconds(), :second)
+      |> DateTime.add(@monitor_wait_seconds, :second)
       |> min_datetime(run.deadline_at)
 
     if DateTime.compare(DateTime.utc_now(), deadline) in [:eq, :gt] do
-      if Enum.any?(assessments, &(&1.status == :healthy)) do
-        SplitConditions.split_recovered(incident, attempt, assessments)
-      else
-        investigate(incident, run, attempt, evidence)
-      end
+      investigate(incident, run, attempt, evidence)
     else
       case incident.pending_intent do
         %{"action" => "await_source_recovery", "verification_attempt_id" => id}
@@ -178,19 +166,6 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
           {:ok, stopped}
       end
     end
-  end
-
-  defp resolve(incident, run, attempt, evidence) do
-    RecoveryCompletion.complete(
-      incident,
-      run,
-      "verified-signal-recovery:#{attempt.id}",
-      %{
-        "reason" => "Target effect verified and all monitoring sources recovered",
-        "verification_evidence_id" => evidence.id,
-        "operation_id" => attempt.operation_id
-      }
-    )
   end
 
   defp valid_verification(incident, run, attempt, operation, evidence) do

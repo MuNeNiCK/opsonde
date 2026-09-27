@@ -232,7 +232,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         state: enum(~w(firing recovered)),
         recovery_status:
           enum(
-            ~w(healthy firing stale_source unmapped_target missing_subject_proof target_changed unknown)
+            ~w(ready_for_review firing stale_source unmapped_target needs_observation target_changed unknown)
           ),
         recovery_evidence_id: nullable_uuid(),
         first_fired_at: Schemas.timestamp(),
@@ -295,9 +295,27 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         actor_id: nullable_uuid(),
         type: string(1, 80),
         related_case_id: nullable_uuid(),
+        review_verdict: nullable_string(80),
+        review_reason: nullable_string(1_000),
+        review_source_turn_id: nullable_uuid(),
+        review_provider_id: nullable_uuid(),
+        review_evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
         inserted_at: Schemas.timestamp()
       },
-      [:id, :case_id, :resolution_run_id, :actor_id, :type, :related_case_id, :inserted_at],
+      [
+        :id,
+        :case_id,
+        :resolution_run_id,
+        :actor_id,
+        :type,
+        :related_case_id,
+        :review_verdict,
+        :review_reason,
+        :review_source_turn_id,
+        :review_provider_id,
+        :review_evidence_ids,
+        :inserted_at
+      ],
       false
     )
   end

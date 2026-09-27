@@ -69,6 +69,7 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
       case operation do
         :resolve -> adapter.resolve(state, request, invocation)
         :review -> adapter.review(state, request, invocation)
+        :review_recovery -> adapter.review_recovery(state, request, invocation)
       end
 
     normalize_adapter_result(operation, result, credentials)
@@ -83,6 +84,13 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
 
   defp normalize_adapter_result(:review, {:ok, %AI.ReviewDecision{} = decision}, _credentials),
     do: {:ok, decision}
+
+  defp normalize_adapter_result(
+         :review_recovery,
+         {:ok, %AI.ReviewDecision{} = decision},
+         _credentials
+       ),
+       do: {:ok, decision}
 
   defp normalize_adapter_result(_operation, {:error, category, message}, credentials)
        when category in @adapter_failures and is_binary(message),

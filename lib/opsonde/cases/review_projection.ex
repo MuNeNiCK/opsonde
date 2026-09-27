@@ -2,6 +2,7 @@ defmodule Opsonde.Cases.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
+  alias Opsonde.Cases.ReviewerEvidence
   alias Opsonde.Providers.AI
 
   def build(proposal_id, selection, retry_context \\ nil)
@@ -13,6 +14,8 @@ defmodule Opsonde.Cases.ReviewProjection do
          :ok <- eligible(proposal, incident, run),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
+         {:ok, context_evidence} <-
+           ReviewerEvidence.recent(incident.id, Enum.map(evidence, & &1.id)),
          {:ok, target_relations} <- target_relations(incident, proposal) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,
@@ -25,6 +28,7 @@ defmodule Opsonde.Cases.ReviewProjection do
         proposal: review_proposal(proposal),
         source_evidence: source_evidence,
         cited_evidence: evidence,
+        context_evidence: context_evidence,
         initial_target_id: incident.initial_target_id,
         target_relations: target_relations,
         retry_context: retry_context,
@@ -68,6 +72,7 @@ defmodule Opsonde.Cases.ReviewProjection do
             id: evidence.id,
             kind: evidence.kind,
             target_id: evidence_target(evidence.content, proposal.target_id),
+            observed_at_us: DateTime.to_unix(evidence.observed_at, :microsecond),
             content: evidence.content
           }
 
@@ -88,6 +93,7 @@ defmodule Opsonde.Cases.ReviewProjection do
            id: item.id,
            kind: item.kind,
            target_id: nil,
+           observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
            content: item.content
          }
        end)}

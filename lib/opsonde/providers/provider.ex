@@ -219,6 +219,20 @@ defmodule Opsonde.Providers.Provider do
       run {Opsonde.Providers.Provider.Actions.AI, operation: :review}
     end
 
+    action :ai_review_recovery, :struct do
+      constraints instance_of: Opsonde.Providers.AI.ReviewDecision
+      transaction? false
+
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.AI.RecoveryReviewRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.AI, operation: :review_recovery}
+    end
+
     action :target_observe, :struct do
       public? false
       constraints instance_of: Opsonde.Providers.Target.Observation
@@ -393,7 +407,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:ai_resolve, :ai_review]) do
+    policy action([:ai_resolve, :ai_review, :ai_review_recovery]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end

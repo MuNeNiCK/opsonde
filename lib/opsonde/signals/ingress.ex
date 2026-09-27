@@ -16,6 +16,7 @@ defmodule Opsonde.Signals.Ingress do
   }
 
   alias Opsonde.Signals.{Condition, SignalCorrelation, SignalEvent, SignalReceipt}
+  alias Opsonde.Cases.RecoveryRecheckWorker
 
   alias Opsonde.Providers.Signal
 
@@ -284,10 +285,19 @@ defmodule Opsonde.Signals.Ingress do
   defp record_case_input(incident, persisted_event, receipt, event, current?, condition) do
     with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
          {:ok, _evidence} <-
-           create_evidence(incident, run, persisted_event, receipt, event, current?, condition) do
+           create_evidence(incident, run, persisted_event, receipt, event, current?, condition),
+         {:ok, _job} <- maybe_recheck(incident, event, current?) do
       {:ok, incident}
     end
   end
+
+  defp maybe_recheck(%{status: :running} = incident, %{state: :recovered}, true) do
+    %{"case_id" => incident.id}
+    |> RecoveryRecheckWorker.new(scheduled_at: DateTime.add(DateTime.utc_now(), 2, :second))
+    |> Oban.insert()
+  end
+
+  defp maybe_recheck(_incident, _event, _current?), do: {:ok, nil}
 
   defp create_evidence(incident, run, persisted_event, receipt, event, current?, condition) do
     key = "signal-event:#{persisted_event.id}"
@@ -466,29 +476,12 @@ defmodule Opsonde.Signals.Ingress do
   defp fact(facts, key), do: Map.get(facts, key) || Map.get(facts, String.to_existing_atom(key))
 
   defp condition_subject_ref(event) do
-    labels = fact(event.attributes, "labels") || %{}
+    case fact(event.attributes, "labels") do
+      labels when is_map(labels) and map_size(labels) > 0 ->
+        digest = :crypto.hash(:sha256, :erlang.term_to_binary(labels, [:deterministic]))
+        %{"kind" => "native_labels", "digest" => Base.encode16(digest, case: :lower)}
 
-    cond do
-      is_binary(labels["deployment"]) ->
-        %{
-          "kind" => "deployment",
-          "namespace" => labels["namespace"],
-          "name" => labels["deployment"]
-        }
-
-      is_binary(labels["pod"]) ->
-        %{"kind" => "pod", "namespace" => labels["namespace"], "name" => labels["pod"]}
-
-      is_binary(labels["service"]) ->
-        %{"kind" => "service", "namespace" => labels["namespace"], "name" => labels["service"]}
-
-      is_binary(labels["interface"]) ->
-        %{"kind" => "interface", "name" => labels["interface"]}
-
-      is_binary(labels["mountpoint"]) ->
-        %{"kind" => "mountpoint", "name" => labels["mountpoint"]}
-
-      true ->
+      _other ->
         %{}
     end
   end

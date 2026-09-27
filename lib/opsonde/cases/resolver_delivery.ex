@@ -270,7 +270,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
       case ResolverProjection.current_conditions(incident) do
         {:ok, conditions} ->
           same_conditions? =
-            conditions == Enum.map(request.conditions, &%{&1 | recovery_status: nil}) and
+            conditions ==
+              Enum.map(
+                request.conditions,
+                &%{&1 | recovery_status: nil, recovery_evidence_id: nil}
+              ) and
               ResolverProjection.projected_alert_state(incident, conditions) ==
                 request.alert_state
 

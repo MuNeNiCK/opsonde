@@ -97,13 +97,13 @@ defmodule Opsonde.Targets.Linux.SSH do
          ),
          operation(
            @service_list,
-           "List installed systemd services by page to discover a unit name before inspection",
+           "Discover exact installed systemd service unit names by page. Use this before service inspection when a unit is unknown; monitoring job and instance names are not unit names. Then inspect the discovered unit to learn its live state.",
            service_list_schema(),
            service_list_output_schema()
          ),
          operation(
            @service,
-           "Inspect one systemd service and its definition",
+           "Inspect a known installed systemd service unit and its definition. Requires an exact unit name; if only monitoring labels are known, discover units with linux.service.list first.",
            unit_schema(),
            service_output_schema(),
            service_verification_schema()

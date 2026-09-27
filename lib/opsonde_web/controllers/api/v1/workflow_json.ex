@@ -147,6 +147,11 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       actor_id: event.actor_id,
       type: event.event_type,
       related_case_id: related_case_id(event),
+      review_verdict: review_value(event, "verdict"),
+      review_reason: review_value(event, "reason"),
+      review_source_turn_id: review_value(event, "source_turn_id"),
+      review_provider_id: review_value(event, "provider_id"),
+      review_evidence_ids: review_evidence_ids(event),
       inserted_at: event.inserted_at
     }
   end
@@ -158,6 +163,16 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
     do: data["parent_case_id"]
 
   defp related_case_id(_event), do: nil
+
+  defp review_value(%{event_type: "recovery_review_decided", data: data}, key),
+    do: data[key]
+
+  defp review_value(_event, _key), do: nil
+
+  defp review_evidence_ids(%{event_type: "recovery_review_decided", data: data}),
+    do: data["evidence_ids"] || []
+
+  defp review_evidence_ids(_event), do: []
 
   def turn(turn) do
     %{

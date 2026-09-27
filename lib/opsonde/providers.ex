@@ -56,6 +56,10 @@ defmodule Opsonde.Providers do
         action: :ai_review,
         args: [:provider_id, :request, :invocation]
 
+      define :ai_review_recovery,
+        action: :ai_review_recovery,
+        args: [:provider_id, :request, :invocation]
+
       define :record_provider_check,
         action: :record_check,
         args: [:expected_revision, :check_status, :check_category, :check_message]

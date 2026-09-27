@@ -1,11 +1,10 @@
 defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
-  alias Opsonde.{Cases, Providers, Signals, Targets}
+  alias Opsonde.{Cases, Signals, Targets}
   alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Providers.AI
-  alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.BMC.OperationKey
+  alias Opsonde.Targets.OperationCatalog
 
   @diagnostic_text_limit 2_000
 
@@ -21,8 +20,11 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, {conditions, recovery_ids}} <- current_condition_context(incident),
-         {:ok, source_context} <- source_context(incident, evidence),
+         {:ok, recovery_evidence} <- current_recovery_evidence(incident, recovery_ids),
+         {:ok, source_context} <-
+           source_context(incident, Enum.uniq_by(recovery_evidence ++ evidence, & &1.id)),
          {:ok, target} <- selected_target(incident),
+         {:ok, historical_evidence} <- prior_run_evidence(incident, run, target),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, invocation),
@@ -35,6 +37,7 @@ defmodule Opsonde.Cases.ResolverProjection do
              conditions,
              recovery_ids,
              continuity,
+             historical_evidence,
              target,
              relations,
              traversable_relation_ids,
@@ -47,6 +50,42 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   def build(_turn_id, _selection, _invocation),
     do: {:error, "Resolver AI selection is invalid"}
+
+  defp current_recovery_evidence(_incident, []), do: {:ok, []}
+
+  defp current_recovery_evidence(incident, ids) do
+    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, loaded} ->
+      case Cases.get_evidence(id, authorize?: false) do
+        {:ok, %{case_id: case_id, kind: kind} = item}
+        when case_id == incident.id and kind in ["observation", "target_verification"] ->
+          {:cont, {:ok, [item | loaded]}}
+
+        _unavailable ->
+          {:halt, {:error, "Current recovery Evidence is unavailable"}}
+      end
+    end)
+    |> case do
+      {:ok, loaded} -> {:ok, Enum.reverse(loaded)}
+      error -> error
+    end
+  end
+
+  defp prior_run_evidence(_incident, _run, nil), do: {:ok, []}
+
+  defp prior_run_evidence(incident, run, target) do
+    with {:ok, evidence} <- Cases.review_context_evidence(incident.id, authorize?: false) do
+      {:ok,
+       evidence
+       |> Enum.filter(fn item ->
+         item.resolution_run_id != run.id and item.content["target_id"] == target.id
+       end)
+       |> Enum.uniq_by(fn item ->
+         {item.kind, item.content["operation"], item.content["status"], item.content["selectors"],
+          item.content["parameters"], item.content["facts"], item.content["reference"]}
+       end)
+       |> Enum.take(16)}
+    end
+  end
 
   defp eligible(incident, run, turn) do
     cond do
@@ -135,11 +174,21 @@ defmodule Opsonde.Cases.ResolverProjection do
   defp recovery_context(%{trigger_kind: :signal} = incident, conditions) do
     case ConditionRecovery.assess_current(incident) do
       {:ok, assessments} ->
-        status_by_id = Map.new(assessments, &{&1.condition_id, &1.status})
-        conditions = Enum.map(conditions, &%{&1 | recovery_status: status_by_id[&1.id]})
+        by_id = Map.new(assessments, &{&1.condition_id, &1})
+
+        conditions =
+          Enum.map(conditions, fn condition ->
+            assessment = Map.fetch!(by_id, condition.id)
+
+            %{
+              condition
+              | recovery_status: assessment.status,
+                recovery_evidence_id: assessment.evidence_id
+            }
+          end)
 
         proof_ids =
-          if ConditionRecovery.all_healthy?(assessments),
+          if ConditionRecovery.ready_for_review?(assessments),
             do: assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq(),
             else: []
 
@@ -322,106 +371,36 @@ defmodule Opsonde.Cases.ResolverProjection do
     else
       with {:ok, methods} <-
              Targets.available_access_methods_for_target(target.id, authorize?: false),
-           {:ok, capabilities} <- capabilities(methods, invocation),
-           {:ok, definitions} <- bmc_definitions(methods) do
-        {:ok, build_tools(target, run, methods, capabilities, definitions)}
+           {:ok, capabilities} <- OperationCatalog.for_methods(methods, invocation) do
+        {:ok, build_tools(target, run, methods, capabilities)}
       end
     end
   end
 
-  defp bmc_definitions(methods) do
-    Enum.reduce_while(methods, {:ok, %{}}, fn method, {:ok, loaded} ->
-      if method.method in ["redfish", "ipmi"] do
-        case Targets.available_bmc_operations_for_method(method.id, authorize?: false) do
-          {:ok, definitions} -> {:cont, {:ok, Map.put(loaded, method.id, definitions)}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      else
-        {:cont, {:ok, loaded}}
-      end
-    end)
-  end
-
-  defp capabilities(methods, invocation) do
-    methods
-    |> Enum.uniq_by(&{&1.provider_id, &1.provider_revision})
-    |> Enum.reduce_while({:ok, %{}}, fn method, {:ok, loaded} ->
-      key = {method.provider_id, method.provider_revision}
-
-      case Providers.target_capabilities(
-             method.provider_id,
-             method.provider_revision,
-             invocation,
-             authorize?: false
-           ) do
-        {:ok, value} -> {:cont, {:ok, Map.put(loaded, key, value)}}
-        {:error, error} -> {:halt, {:error, error}}
-      end
-    end)
-  end
-
-  defp build_tools(target, run, methods, capabilities, definitions) do
+  defp build_tools(target, run, methods, capabilities) do
     observation? = remaining(run.max_target_requests, run.target_request_count) > 0
     proposal? = remaining(run.max_effects, run.effect_count) > 0
 
     Enum.reduce(methods, {[], []}, fn method, {observations, proposals} ->
-      vocabulary = Map.fetch!(capabilities, {method.provider_id, method.provider_revision})
-
-      advertised =
-        vocabulary.observations
-        |> Kernel.++(vocabulary.effects)
-        |> Enum.map(& &1.capability)
-        |> MapSet.new()
-
-      bmc_operations =
-        definitions
-        |> Map.get(method.id, [])
-        |> Enum.filter(&MapSet.member?(advertised, OperationKey.capability(&1.request_kind)))
-
-      available_observations =
-        Enum.reject(vocabulary.observations, &(&1.operation == "bmc.api.available")) ++
-          Enum.flat_map(bmc_operations, fn definition ->
-            if definition.request_kind == :observation,
-              do: [bmc_operation_tool(definition)],
-              else: []
-          end)
-
-      effects =
-        Enum.reject(vocabulary.effects, &(&1.operation == "bmc.api.available")) ++
-          Enum.flat_map(bmc_operations, fn definition ->
-            if definition.request_kind == :effect,
-              do: [bmc_operation_tool(definition)],
-              else: []
-          end)
+      vocabulary = Map.fetch!(capabilities, method.id)
 
       method_observations =
         if observation?,
-          do: operation_tools(:observation, target, method, available_observations),
+          do: operation_tools(:observation, target, method, vocabulary.observations),
           else: []
 
       observation_requests =
         if observation?,
-          do: operation_tools(:request_observation, target, method, available_observations),
+          do: operation_tools(:request_observation, target, method, vocabulary.observations),
           else: []
 
       effect_requests =
         if proposal?,
-          do: operation_tools(:request_effect, target, method, effects),
+          do: operation_tools(:request_effect, target, method, vocabulary.effects),
           else: []
 
       {observations ++ method_observations, proposals ++ observation_requests ++ effect_requests}
     end)
-  end
-
-  defp bmc_operation_tool(definition) do
-    %ProviderTarget.Operation{
-      capability: OperationKey.capability(definition.request_kind),
-      operation: OperationKey.format(definition),
-      description: definition.description,
-      input_schema: definition.input_schema,
-      output_schema: definition.output_schema,
-      verification_schema: definition.verification_schema
-    }
   end
 
   defp operation_tools(kind, target, method, operations) do
@@ -495,6 +474,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          conditions,
          recovery_ids,
          evidence,
+         historical_evidence,
          target,
          relations,
          traversable_relation_ids,
@@ -527,6 +507,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       budget: budget(run, turn),
       conditions: conditions,
       evidence: [],
+      historical_evidence: [],
       target_candidates: [],
       selected_target_id: target && target.id,
       selected_target_revision: target && target.revision,
@@ -541,6 +522,16 @@ defmodule Opsonde.Cases.ResolverProjection do
     {source_evidence, other_evidence} =
       Enum.split_with(evidence, &(&1.kind == "signal_event"))
 
+    manual_recovery_ids =
+      if (incident.trigger_kind in [:manual, :audit] and target) &&
+           is_struct(recovery_baseline, DateTime) do
+        other_evidence
+        |> Enum.filter(&manual_recovery_candidate?(&1, incident, run, target, recovery_baseline))
+        |> Enum.map(& &1.id)
+      else
+        []
+      end
+
     base
     |> add_items(
       :evidence,
@@ -552,6 +543,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         recovery_baseline
       )
     )
+    |> add_mapped_condition_candidates(conditions)
     |> add_candidate_group(other_evidence)
     |> add_items(:target_relations, relations)
     |> add_items(:observation_tools, observations)
@@ -570,10 +562,25 @@ defmodule Opsonde.Cases.ResolverProjection do
       )
     end)
     |> then(fn current ->
+      current_ids = MapSet.new(Enum.map(current.evidence, & &1.id))
+
+      add_items(
+        current,
+        :historical_evidence,
+        generic_evidence(
+          Enum.reject(historical_evidence, &MapSet.member?(current_ids, &1.id)),
+          current.disclosure.allowed_target_ids,
+          incident,
+          run,
+          recovery_baseline
+        )
+      )
+    end)
+    |> then(fn current ->
       %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
-    |> mark_recovery_proofs(recovery_ids)
+    |> mark_recovery_proofs(recovery_ids ++ manual_recovery_ids)
     |> then(fn current ->
       visible_ids = MapSet.new(Enum.map(current.target_relations, & &1.id))
 
@@ -585,25 +592,45 @@ defmodule Opsonde.Cases.ResolverProjection do
     end)
   end
 
+  defp add_mapped_condition_candidates(request, conditions) do
+    conditions
+    |> Enum.map(& &1.target_id)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.reduce(request, fn target_id, current ->
+      if target_id == current.selected_target_id or
+           AI.target_candidate_evidence_ids(current, target_id) == [] or
+           Enum.any?(current.target_candidates, &(&1.id == target_id)) do
+        current
+      else
+        case Targets.get_target(target_id, authorize?: false) do
+          {:ok, %{active: true} = target} ->
+            case try_update(current, fn value ->
+                   %{
+                     value
+                     | target_candidates: value.target_candidates ++ [target_candidate(target)]
+                   }
+                 end) do
+              {:ok, updated} -> updated
+              :full -> current
+            end
+
+          _unavailable ->
+            current
+        end
+      end
+    end)
+  end
+
   defp mark_recovery_proofs(request, []), do: request
 
   defp mark_recovery_proofs(request, ids) do
     visible = MapSet.new(Enum.map(request.evidence, & &1.id))
 
     if Enum.all?(ids, &MapSet.member?(visible, &1)) do
-      eligible = MapSet.new(ids)
-
       %{
         request
-        | recovery_evidence_ids: ids,
-          evidence:
-            Enum.map(request.evidence, fn evidence ->
-              if evidence.kind == "observation" and MapSet.member?(eligible, evidence.id) do
-                %{evidence | content: Map.put(evidence.content, "recovery_eligible", true)}
-              else
-                evidence
-              end
-            end)
+        | recovery_evidence_ids: ids
       }
     else
       request
@@ -775,50 +802,52 @@ defmodule Opsonde.Cases.ResolverProjection do
     end)
   end
 
-  defp recovery_evidence_content(
-         %{
-           kind: "observation",
-           observed_at: observed_at,
-           source_ref: operation_id,
-           content: %{
-             "status" => "applied",
-             "category" => "target_observed",
-             "target_id" => target_id,
-             "facts" => facts
-           }
-         } = evidence,
-         %{
-           id: case_id,
-           trigger_kind: kind,
-           selected_target_id: target_id,
-           selected_target_revision: target_revision
-         },
-         %{id: run_id},
-         %DateTime{} = baseline
-       )
-       when kind in [:manual, :audit] and is_map(facts) and map_size(facts) > 0 do
-    eligible? =
-      evidence.resolution_run_id == run_id and
-        DateTime.compare(observed_at, baseline) in [:eq, :gt] and
-        case Cases.get_operation(operation_id, authorize?: false) do
-          {:ok, operation} ->
-            operation.case_id == case_id and operation.resolution_run_id == run_id and
-              operation.target_id == target_id and operation.target_revision == target_revision and
-              operation.request_kind == :observation and operation.status == :applied and
-              match?(%DateTime{}, operation.dispatch_started_at) and
-              DateTime.compare(operation.dispatch_started_at, baseline) in [:eq, :gt]
-
-          {:error, _reason} ->
-            false
-        end
-
-    evidence
-    |> projected_evidence_content()
-    |> Map.put("recovery_eligible", eligible?)
-  end
-
   defp recovery_evidence_content(evidence, _incident, _run, _baseline),
     do: projected_evidence_content(evidence)
+
+  defp manual_recovery_candidate?(evidence, incident, run, target, baseline) do
+    DateTime.compare(evidence.observed_at, baseline) != :lt and
+      evidence.content["target_id"] == target.id and
+      case evidence do
+        %{
+          kind: "observation",
+          source_ref: operation_id,
+          content: %{"status" => "applied", "category" => "target_observed", "facts" => facts}
+        }
+        when is_map(facts) and map_size(facts) > 0 ->
+          case Cases.get_operation(operation_id, authorize?: false) do
+            {:ok, operation} ->
+              evidence.resolution_run_id == run.id and operation.case_id == incident.id and
+                operation.resolution_run_id == run.id and
+                operation.target_id == target.id and operation.target_revision == target.revision and
+                operation.request_kind == :observation and operation.status == :applied and
+                is_struct(operation.dispatch_started_at, DateTime) and
+                DateTime.compare(operation.dispatch_started_at, baseline) != :lt
+
+            _other ->
+              false
+          end
+
+        %{
+          kind: "target_verification",
+          content: %{"status" => "verified", "operation_id" => operation_id}
+        } ->
+          with {:ok, operation} <- Cases.get_operation(operation_id, authorize?: false),
+               {:ok, attempt} <-
+                 Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
+            operation.case_id == incident.id and operation.target_id == target.id and
+              operation.target_revision == target.revision and
+              operation.request_kind == :effect and operation.status == :applied and
+              attempt.status == :verified and attempt.case_id == incident.id and
+              attempt.observed_at == evidence.observed_at
+          else
+            _other -> false
+          end
+
+        _other ->
+          false
+      end
+  end
 
   defp projected_evidence_content(%{kind: kind, content: content})
        when kind in ["observation", "operation_outcome"] do
@@ -970,12 +999,13 @@ defmodule Opsonde.Cases.ResolverProjection do
         end)
       )
       |> Kernel.++(Enum.map(request.evidence, & &1.target_id))
+      |> Kernel.++(Enum.map(request.historical_evidence, & &1.target_id))
       |> Kernel.++(Enum.map(request.observation_tools ++ request.proposal_tools, & &1.target_id))
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
     evidence_kinds =
-      (Enum.map(request.evidence, & &1.kind) ++
+      (Enum.map(request.evidence ++ request.historical_evidence, & &1.kind) ++
          Enum.map(request.observation_results, & &1.kind))
       |> Enum.uniq()
 

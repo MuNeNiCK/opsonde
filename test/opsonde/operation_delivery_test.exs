@@ -15,7 +15,7 @@ defmodule Opsonde.OperationDeliveryTest do
   }
 
   alias Opsonde.Cases.CaseDispatchWorker
-  alias Opsonde.Cases.Operation.ResourceScope
+  alias Opsonde.Targets.ResourceScope
 
   alias Opsonde.Providers.{AI, Signal, Target}
   alias Opsonde.Reports.GenerationWorker
@@ -73,6 +73,20 @@ defmodule Opsonde.OperationDeliveryTest do
       Opsonde.TestAIUsage.configure!(resolver_provider.id, :resolver, 10, admin)
       |> Map.fetch!(:resolver)
 
+    reviewer_provider =
+      Providers.create_provider!(
+        "operation-reviewer",
+        :ai,
+        "fixture-ai",
+        %{"model" => "reviewer-model"},
+        %{"api_key" => "reviewer-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    Opsonde.TestAIUsage.configure!(reviewer_provider.id, :reviewer, 10, admin)
+
     configure_mode!(admin, :full_access)
 
     %{
@@ -82,7 +96,8 @@ defmodule Opsonde.OperationDeliveryTest do
       target: target,
       method: method,
       resolver_provider: resolver_provider,
-      resolver_assignment: resolver_assignment
+      resolver_assignment: resolver_assignment,
+      reviewer_provider: reviewer_provider
     }
   end
 
@@ -153,8 +168,12 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert api.resource_scope == "service:api.service"
     assert db.resource_scope == "service:db.service"
-    assert ResourceScope.key("effect.service", %{"unit" => "api.service"}) == api.resource_scope
-    assert ResourceScope.key("effect.power", %{"outlet" => "1"}) == "target"
+    method = Targets.get_access_method!(api.access_method_id, authorize?: false)
+
+    assert ResourceScope.key(method, "effect.service", %{"unit" => "api.service"}) ==
+             api.resource_scope
+
+    assert ResourceScope.key(method, "effect.power", %{"outlet" => "1"}) == "target"
 
     assert Cases.claim_operation_dispatch!(api.id, authorize?: false).state == :claimed
     assert Cases.claim_operation_dispatch!(db.id, authorize?: false).state == :claimed
@@ -798,7 +817,7 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
-  test "verified Evidence resolves once and produces one immutable Report across replay",
+  test "verified Target Evidence starts investigation without automatically resolving a Signal Case",
        context do
     enable_signal_automation!(context.admin)
 
@@ -855,23 +874,15 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert_receive {:verify, _, _}
 
-    resolved = Cases.get_case!(incident.id, authorize?: false)
-    assert [report_job] = report_jobs(resolved.id)
-    assert report_job.args["case_revision"] == resolved.revision
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert report_jobs(current.id) == []
+    assert Reports.list_reports!(actor: context.admin) == []
 
-    assert :ok = GenerationWorker.perform(report_job)
-    assert :ok = GenerationWorker.perform(report_job)
-
-    assert [report] = Reports.list_reports!(actor: context.admin)
-
-    assert resolved.status == :resolved
+    assert current.status == :running
     assert Enum.all?(Signals.list_conditions!(actor: context.admin), &(&1.state == :recovered))
-    assert length(Cases.list_turns!(actor: context.admin)) == turns_before
-    assert report.case_id == resolved.id
-    assert report.case_revision == resolved.revision
-    assert report.outcome == :resolved
-    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
-    refute Cases.get_resolution_run!(run.id, authorize?: false).active
+    assert length(Cases.list_turns!(actor: context.admin)) == turns_before + 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).active
     refute_receive {:effect, _, _}
   end
 
@@ -914,12 +925,20 @@ defmodule Opsonde.OperationDeliveryTest do
                  &1.content["state"] == "recovered")
            )
 
-    resolved = Cases.get_case!(incident.id, authorize?: false)
-    assert resolved.status == :resolved
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+
+    assert [_turn] =
+             Cases.started_turns_for_run!(
+               Cases.active_resolution_run!(current.id, authorize?: false).id,
+               authorize?: false
+             )
+
     refute_receive {:effect, _, _}
   end
 
-  test "one service verification cannot resolve another recovered service Condition", context do
+  test "two recovered Conditions stay open for Resolver assessment after one Target verification",
+       context do
     enable_signal_automation!(context.admin)
 
     {incident, run, proposal, signal_provider} =
@@ -929,7 +948,6 @@ defmodule Opsonde.OperationDeliveryTest do
         additional_subject: "db.service"
       )
 
-    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     assert :ok =
@@ -964,289 +982,11 @@ defmodule Opsonde.OperationDeliveryTest do
                  )
              )
 
-    assert Enum.all?(Signals.list_conditions!(actor: context.admin), &(&1.state == :recovered))
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 2
+    assert length(Cases.list_cases!(actor: context.admin)) == 1
     assert report_jobs(incident.id) == []
-
-    [check_job] = recovery_check_jobs(incident.id)
-
-    Repo.update_all(
-      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^attempt.id),
-      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
-    )
-
-    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
-    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
-
-    parent = Cases.get_case!(incident.id, authorize?: false)
-    assert parent.status == :resolved
-
-    assert [%{split_parent_id: parent_id} = child] =
-             Cases.list_cases!(actor: context.admin) |> Enum.reject(&(&1.id == parent.id))
-
-    assert parent_id == parent.id
-    assert child.status == :running
-    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1
-    assert length(Cases.active_conditions_for_case!(child.id, authorize?: false)) == 1
-    assert length(Cases.signal_context_evidence!(parent.id, authorize?: false)) == 1
-    assert length(Cases.signal_context_evidence!(child.id, authorize?: false)) == 1
-    assert child.recovery_baseline_at == operation.accepted_at
-
-    assert {:ok, [%{status: :missing_subject_proof}]} =
-             Opsonde.Cases.ConditionRecovery.assess_current(child)
-
-    child_run = Cases.active_resolution_run!(child.id, authorize?: false)
-    parent_run = Cases.get_resolution_run!(run.id, authorize?: false)
-
-    for field <- [
-          :max_resolver_turns,
-          :max_target_requests,
-          :max_effects,
-          :max_related_targets,
-          :max_ai_usage_units
-        ] do
-      assert Map.fetch!(parent_run, field) + Map.fetch!(child_run, field) ==
-               Map.fetch!(run, field)
-    end
-
-    assert parent_run.status == :completed
-    assert child_run.effect_count == 0
-    [reassess] = Cases.started_turns_for_run!(child_run.id, authorize?: false)
-
-    assert {:ok, request} =
-             ResolverProjection.build(
-               reassess.id,
-               %AI.Selection{
-                 role: :resolver,
-                 provider_id: context.resolver_provider.id,
-                 provider_revision: context.resolver_provider.revision,
-                 source: :assignment
-               },
-               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
-             )
-
-    assert request.alert_state == :recovered
-    assert request.recovery_evidence_ids == []
-    assert [%AI.Condition{recovery_status: :missing_subject_proof}] = request.conditions
-
-    assert Enum.any?(request.evidence, fn item ->
-             item.kind == "split_lineage" and item.content["operation_id"] == operation.id and
-               item.content["historical_context_only"] == true
-           end)
-
-    refute AI.recovery_ready?(request)
-  end
-
-  test "a late exact observation splits recovered and firing Conditions after the first wait",
-       context do
-    enable_signal_automation!(context.admin)
-
-    {incident, run, proposal, signal_provider} =
-      authorized_proposal!("late-subject-proof", context,
-        trigger_kind: :signal,
-        additional_event_key: "operation-late-subject-proof:db",
-        additional_subject: "db.service"
-      )
-
-    effect = Cases.accept_operation!(proposal.id, authorize?: false)
-
-    assert :ok =
-             OperationDelivery.run(effect.id,
-               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
-             )
-
-    recover_signal!(
-      signal_provider,
-      context,
-      incident.initial_context["signal_event_key"],
-      "late-api-recovered"
-    )
-
-    attempt = Cases.verification_attempt_by_operation!(effect.id, authorize?: false)
-
-    assert :ok =
-             VerificationDelivery.run(attempt.id,
-               target_invocation:
-                 invocation(
-                   {:ok,
-                    verified_result(%{
-                      "unit" => "unrelated.service",
-                      "active_state" => "active"
-                    })}
-                 )
-             )
-
-    [check_job] = recovery_check_jobs(incident.id)
-
-    Repo.update_all(
-      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^attempt.id),
-      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
-    )
-
-    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
-    assert Cases.get_case!(incident.id, authorize?: false).status == :running
-    assert {:ok, assessments} = Opsonde.Cases.ConditionRecovery.assess_current(incident)
-    refute Enum.any?(assessments, &(&1.status == :healthy))
-
-    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-
-    evidence =
-      Cases.evidence_by_idempotency!(
-        incident.id,
-        "verification:outcome:#{attempt.id}",
-        authorize?: false
-      )
-
-    {:ok, revisions} = Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
-
-    completed =
-      Cases.complete_turn!(
-        turn.id,
-        turn.revision,
-        %{
-          "outcome" => "decision",
-          "intent" => signal_proposal_intent(evidence.id, context, :observation),
-          "condition_revisions" => revisions,
-          "resolver" => %{
-            "provider_id" => context.resolver_provider.id,
-            "provider_revision" => context.resolver_provider.revision,
-            "assignment_id" => context.resolver_assignment.id,
-            "assignment_revision" => context.resolver_assignment.revision
-          },
-          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
-        },
-        :proposal,
-        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
-        "Review the Resolver decision",
-        authorize?: false
-      ).value
-
-    routed = Cases.route_downstream_decision!(completed.id, authorize?: false)
-
-    observation_proposal =
-      Cases.get_proposal!(routed.pending_intent["proposal_id"], authorize?: false)
-
-    authorized = Cases.route_proposal_authority!(observation_proposal.id, authorize?: false)
-    observation = Cases.accept_operation!(authorized.id, authorize?: false)
-
-    assert :ok =
-             OperationDelivery.run(observation.id,
-               target_invocation:
-                 invocation(
-                   {:ok,
-                    %Target.Observation{
-                      observed_at: DateTime.utc_now(),
-                      facts: %{"unit" => "api.service", "active_state" => "active"},
-                      evidence: []
-                    }}
-                 )
-             )
-
-    parent = Cases.get_case!(incident.id, authorize?: false)
-    assert parent.status == :resolved
-
-    assert [%{split_parent_id: parent_id} = child] =
-             Cases.list_cases!(actor: context.admin) |> Enum.reject(&(&1.id == parent.id))
-
-    assert parent_id == parent.id
-    assert child.status == :running
-    assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1
-    assert length(Cases.active_conditions_for_case!(child.id, authorize?: false)) == 1
-    assert {:ok, [%{status: :firing}]} = Opsonde.Cases.ConditionRecovery.assess_current(child)
-    assert [_, _] = Cases.list_operations!(actor: context.admin)
-
-    assert :ok =
-             OperationDelivery.run(observation.id,
-               target_invocation: invocation(fn -> flunk("terminal observation resent") end)
-             )
-
-    assert length(Cases.list_cases!(actor: context.admin)) == 2
-  end
-
-  test "a partial recovery split rolls back when current Signal Evidence is invalid", context do
-    enable_signal_automation!(context.admin)
-
-    {incident, run, proposal, signal_provider} =
-      authorized_proposal!("split-evidence-failure", context,
-        trigger_kind: :signal,
-        additional_event_key: "operation-split-evidence-failure:db",
-        additional_subject: "db.service"
-      )
-
-    operation = Cases.accept_operation!(proposal.id, authorize?: false)
-
-    assert :ok =
-             OperationDelivery.run(operation.id,
-               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
-             )
-
-    recover_signal!(
-      signal_provider,
-      context,
-      incident.initial_context["signal_event_key"],
-      "api-recovered-failure"
-    )
-
-    signal_event!(
-      signal_provider,
-      context,
-      "operation-split-evidence-failure:db",
-      "db-recovered-failure",
-      :recovered,
-      DateTime.utc_now(),
-      %{"labels" => %{"service" => "db.service", "alertname" => "ServiceUnavailable"}}
-    )
-
-    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
-
-    assert :ok =
-             VerificationDelivery.run(attempt.id,
-               target_invocation:
-                 invocation(
-                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
-                 )
-             )
-
-    [check_job] = recovery_check_jobs(incident.id)
-
-    Repo.update_all(
-      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^attempt.id),
-      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
-    )
-
-    db_condition =
-      Signals.list_conditions!(actor: context.admin)
-      |> Enum.find(&(&1.subject_ref["name"] == "db.service"))
-
-    db_evidence =
-      Cases.list_evidence!(actor: context.admin)
-      |> Enum.filter(&(&1.case_id == incident.id and &1.kind == "signal_event"))
-      |> Enum.find(
-        &(&1.content["condition_id"] == db_condition.id and &1.content["state"] == "recovered")
-      )
-
-    assert db_evidence
-
-    Repo.query!(
-      "UPDATE evidences SET content = content - 'condition_revision' WHERE id = $1::uuid",
-      [Ecto.UUID.dump!(db_evidence.id)]
-    )
-
-    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
-    before_members = Cases.active_conditions_for_case!(incident.id, authorize?: false)
-
-    for _attempt <- 1..2 do
-      assert {:error, _reason} = SignalRecoveryCheckWorker.perform(check_job)
-      assert Cases.get_case!(incident.id, authorize?: false).status == :running
-      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
-      assert Cases.active_conditions_for_case!(incident.id, authorize?: false) == before_members
-      assert length(Cases.list_cases!(actor: context.admin)) == 1
-
-      refute Enum.any?(
-               Cases.list_case_events!(actor: context.admin),
-               &(&1.event_type in ["case_conditions_split_out", "case_conditions_split_in"])
-             )
-    end
+    assert [_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
@@ -1425,8 +1165,14 @@ defmodule Opsonde.OperationDeliveryTest do
                  test_pid: self(),
                  respond: fn request ->
                    assert request.alert_state == :not_applicable
-                   assert AI.recovery_ready?(request)
                    assert AI.recovery_evidence_ids(request) == [verification_id]
+
+                   assert Enum.any?(
+                            request.historical_evidence,
+                            &(&1.kind == "operation_outcome")
+                          )
+
+                   refute Enum.any?(request.historical_evidence, &(&1.id == verification_id))
 
                    {:ok,
                     %AI.ResolverDecision{
@@ -1441,7 +1187,32 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     completed = Cases.get_turn!(resumed_turn.id, authorize?: false)
-    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    requested = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    assert requested.status == :running
+    assert requested.pending_intent["action"] == "review_recovery"
+
+    assert {:error, _reason} =
+             Opsonde.Cases.RecoveryReviewDelivery.run(completed.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:error,
+                    %AI.Error{
+                      category: :invalid_output,
+                      message: "Reviewer response does not match schema",
+                      failure_code: "schema_validation",
+                      dispatched?: true,
+                      usage: %AI.Usage{input_tokens: 5, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    approve_recovery!(completed, context, delivery_attempt: 2, max_delivery_attempts: 3)
+    resolved = Cases.get_case!(incident.id, authorize?: false)
     replayed = Cases.route_downstream_decision!(completed.id, authorize?: false)
 
     assert resolved.status == :resolved
@@ -1492,14 +1263,24 @@ defmodule Opsonde.OperationDeliveryTest do
                  test_pid: self(),
                  respond: fn request ->
                    assert request.alert_state == :recovered
-                   assert AI.recovery_ready?(request)
                    assert AI.recovery_evidence_ids(request) == [evidence.id]
+                   assert [%AI.Condition{} = condition] = request.conditions
+                   assert condition.recovery_status == :ready_for_review
+                   assert condition.recovery_evidence_id == evidence.id
 
                    {:ok,
                     %AI.ResolverDecision{
                       intent: %AI.RecoveryConclusion{
                         reason: "Native source and exact service observation are healthy",
-                        evidence_ids: [evidence.id]
+                        evidence_ids: [evidence.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => evidence.id,
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
                     }}
@@ -1509,7 +1290,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     completed = Cases.get_turn!(turn.id, authorize?: false)
 
-    resolved = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    requested = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    assert requested.status == :running
+    approve_recovery!(completed, context)
+    resolved = Cases.get_case!(incident.id, authorize?: false)
     assert resolved.status == :resolved
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
     assert Cases.get_operation!(operation.id, authorize?: false).request_kind == :observation
@@ -1547,7 +1331,6 @@ defmodule Opsonde.OperationDeliveryTest do
                  test_pid: self(),
                  respond: fn request ->
                    assert request.alert_state == :not_applicable
-                   assert AI.recovery_ready?(request)
                    assert AI.recovery_evidence_ids(request) == [evidence.id]
 
                    {:ok,
@@ -1562,10 +1345,420 @@ defmodule Opsonde.OperationDeliveryTest do
                }
              )
 
-    resolved = Cases.route_downstream_decision!(turn.id, authorize?: false)
+    requested = Cases.route_downstream_decision!(turn.id, authorize?: false)
+    assert requested.status == :running
+    approve_recovery!(turn, context)
+    resolved = Cases.get_case!(incident.id, authorize?: false)
     assert resolved.status == :resolved
     assert %DateTime{} = resolved.resolved_at
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
+  end
+
+  test "a resumed recovered Signal Case keeps a still-current prior-run observation eligible",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("resumed-recovered-observation", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      evidence: [%{"check" => "fresh after monitoring recovery"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false)
+    current_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        pending.id,
+        pending.revision,
+        current_run.id,
+        current_run.revision,
+        "pause-before-current-proof:#{incident.id}",
+        "Interrupt Resolver after fresh observation",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Continue with still-current symptom evidence",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    assert :ok =
+             ResolverDelivery.run(resumed_turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert AI.recovery_evidence_ids(request) == [evidence.id]
+                   assert Enum.any?(request.evidence, &(&1.id == evidence.id))
+                   refute Enum.any?(request.historical_evidence, &(&1.id == evidence.id))
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The native symptom cleared and the selected service is active",
+                        evidence_ids: [evidence.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => evidence.id,
+                            "reason" => "The observed service is active after source recovery"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(resumed_turn.id, authorize?: false)
+    assert Cases.route_downstream_decision!(completed.id, authorize?: false).status == :running
+    approve_recovery!(completed, context)
+    assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+  end
+
+  test "a Reviewer rejection of unrelated observation facts keeps recovered Signal Conditions open",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("unrelated-recovery-proof", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"machine_id" => "unrelated-machine", "kernel" => "6.8"},
+                      evidence: [%{"check" => "host identity only"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "Machine identity proves service recovered",
+                        evidence_ids: [evidence.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => evidence.id,
+                            "reason" => "Machine identity proves service is running"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    requested = Cases.route_downstream_decision!(completed.id, authorize?: false)
+    assert requested.status == :running
+    assert requested.pending_intent["action"] == "review_recovery"
+
+    assert :ok =
+             Opsonde.Cases.RecoveryReviewDelivery.run(completed.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert [%AI.Evidence{content: %{"facts" => facts}}] =
+                            request.cited_evidence
+
+                   assert facts["machine_id"] == "unrelated-machine"
+
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :rejected,
+                      reason: "Machine identity does not establish service availability",
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review_recovery, %{model: "reviewer-model"}, _request}
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+    assert current.pending_intent["action"] == "resolve_turn"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.event_type == "case_resolved")
+           )
+
+    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(completed.id)
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent ==
+             current.pending_intent
+
+    Cases.append_evidence!(
+      incident.id,
+      run.id,
+      nil,
+      "uncited-identity-after-rejection:#{incident.id}",
+      "observation",
+      "fixture",
+      "uncited-identity:#{incident.id}",
+      %{
+        "target_id" => context.target.id,
+        "operation" => "linux.identity.inspect",
+        "status" => "applied",
+        "facts" => %{"kernel" => "Linux"}
+      },
+      DateTime.utc_now(),
+      authorize?: false
+    )
+
+    retry_turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(retry_turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The same machine identity appears to show recovery",
+                        evidence_ids: [evidence.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => evidence.id,
+                            "reason" => "The same identity observation is cited"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    stopped = Cases.route_downstream_decision!(retry_turn.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.stop_reason == "Recovery Review rejected this unchanged evidence"
+
+    assert Enum.count(Cases.list_case_events!(actor: context.admin), fn event ->
+             event.case_id == incident.id and event.event_type == "recovery_review_decided"
+           end) == 1
+  end
+
+  test "a missing recovery Reviewer stops a manual Case without claiming resolution", context do
+    {incident, run, proposal} =
+      authorized_proposal!("missing-recovery-reviewer", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      evidence: [%{"check" => "current"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The current service is active",
+                        evidence_ids: [evidence.id]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent ==
+             %{"action" => "review_recovery", "turn_id" => turn.id}
+
+    Providers.disable_provider!(
+      context.reviewer_provider,
+      context.reviewer_provider.revision,
+      actor: context.admin
+    )
+
+    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(turn.id)
+    stopped = Cases.get_case!(incident.id, authorize?: false)
+    assert stopped.status == :needs_attention
+    assert stopped.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and &1.event_type == "case_resolved")
+           )
+  end
+
+  test "a new firing Condition invalidates a pending recovery review", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, signal_provider} =
+      authorized_proposal!("stale-recovery-review", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      evidence: [%{"check" => "before refire"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The service was active at the prior observation",
+                        evidence_ids: [evidence.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => evidence.id,
+                            "reason" => "The prior service inspection was active"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent ==
+             %{"action" => "review_recovery", "turn_id" => turn.id}
+
+    fire_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "refired-before-recovery-review",
+      DateTime.add(DateTime.utc_now(), 1, :second)
+    )
+
+    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(turn.id)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.admin),
+             &(&1.case_id == incident.id and
+                 &1.event_type in ["recovery_review_decided", "case_resolved"])
+           )
   end
 
   test "a resumed firing Case receives verified continuity without stale observations",
@@ -1733,6 +1926,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert source_id == source.id
     refute Enum.any?(request.evidence, &(&1.content["state"] == "recovered"))
+    assert Enum.any?(request.historical_evidence, &(&1.kind == "operation_outcome"))
+    refute Enum.any?(request.historical_evidence, &(&1.id == verification_id))
 
     assert get_in(source_content, ["attributes", "annotations", "description"]) ==
              "Restore the service to running"
@@ -2211,6 +2406,51 @@ defmodule Opsonde.OperationDeliveryTest do
             fragment("?->>'case_id'", job.args) == ^case_id
       )
     )
+  end
+
+  defp approve_recovery!(turn, context, delivery_opts \\ []) do
+    assert :ok =
+             Opsonde.Cases.RecoveryReviewDelivery.run(
+               turn.id,
+               delivery_opts ++
+                 [
+                   ai_invocation: %{
+                     test_pid: self(),
+                     respond: fn request ->
+                       assert request.case_id == turn.case_id
+                       assert request.conclusion.evidence_ids != []
+
+                       if delivery_opts != [],
+                         do: assert(request.retry_context["category"] == "invalid_output")
+
+                       {:ok,
+                        %AI.ReviewDecision{
+                          verdict: :approved,
+                          reason:
+                            "The cited observation directly checks the stated service state",
+                          usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                        }}
+                     end
+                   }
+                 ]
+             )
+
+    assert_receive {:review_recovery, %{model: "reviewer-model"}, _request}
+    assert Cases.get_case!(turn.case_id, authorize?: false).status == :resolved
+
+    event =
+      Cases.case_event_by_idempotency!(
+        turn.case_id,
+        Opsonde.Cases.Budget.key("recovery-review:result", turn.id),
+        authorize?: false
+      )
+
+    invocation =
+      Cases.ai_invocation_by_idempotency!(event.data["invocation_key"], authorize?: false)
+
+    assert invocation.turn_id == turn.id
+    assert invocation.status == :completed
+    assert invocation.provider_id == context.reviewer_provider.id
   end
 
   defp operation_jobs(operation_id) do

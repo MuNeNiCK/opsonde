@@ -119,6 +119,19 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
     end
   end
 
+  defp subject_context(%{role: :reviewer} = arguments, case_id, run_id)
+       when is_binary(arguments.turn_id) and is_nil(arguments.proposal_id) and
+              is_integer(arguments.expected_turn_revision) do
+    with {:ok, turn} <- lock(Turn, arguments.turn_id),
+         true <-
+           (turn.case_id == case_id and turn.resolution_run_id == run_id and
+              turn.status == :completed and turn.revision == arguments.expected_turn_revision and
+              get_in(turn.result, ["intent", "type"]) == "recovery_conclusion") ||
+             {:error, "Recovery Reviewer Turn context changed"} do
+      :ok
+    end
+  end
+
   defp subject_context(_arguments, _case_id, _run_id),
     do: {:error, "AI invocation subject is invalid"}
 
@@ -140,11 +153,20 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   defp unresolved_invocation(%{role: :resolver, turn_id: turn_id}) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(turn_id == ^turn_id and status == :dispatching)
+    |> Ash.Query.filter(turn_id == ^turn_id and role == :resolver and status == :dispatching)
     |> unresolved_invocation()
   end
 
-  defp unresolved_invocation(%{role: :reviewer, proposal_id: proposal_id}) do
+  defp unresolved_invocation(%{role: :reviewer, turn_id: turn_id, proposal_id: nil})
+       when is_binary(turn_id) do
+    AIInvocation
+    |> Ash.Query.for_read(:read)
+    |> Ash.Query.filter(turn_id == ^turn_id and role == :reviewer and status == :dispatching)
+    |> unresolved_invocation()
+  end
+
+  defp unresolved_invocation(%{role: :reviewer, proposal_id: proposal_id})
+       when is_binary(proposal_id) do
     AIInvocation
     |> Ash.Query.for_read(:read)
     |> Ash.Query.filter(proposal_id == ^proposal_id and status == :dispatching)
@@ -162,6 +184,15 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   defp idempotency_key(%{role: :reviewer, proposal_id: proposal_id, delivery_attempt: attempt})
        when is_binary(proposal_id) and is_integer(attempt),
        do: "reviewer:#{proposal_id}:attempt:#{attempt}"
+
+  defp idempotency_key(%{
+         role: :reviewer,
+         turn_id: turn_id,
+         proposal_id: nil,
+         delivery_attempt: attempt
+       })
+       when is_binary(turn_id) and is_integer(attempt),
+       do: "recovery-reviewer:#{turn_id}:attempt:#{attempt}"
 
   defp idempotency_key(arguments) do
     subject_id = arguments.turn_id || arguments.proposal_id

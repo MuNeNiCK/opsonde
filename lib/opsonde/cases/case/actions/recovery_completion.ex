@@ -53,8 +53,8 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   defp condition_completion_ready(%{trigger_kind: :signal} = incident) do
     with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
          true <-
-           ConditionRecovery.all_healthy?(assessments) ||
-             {:error, "Some Signal Conditions lack current subject recovery proof"} do
+           ConditionRecovery.ready_for_review?(assessments) ||
+             {:error, "Signal Conditions require current observations and Resolver assessment"} do
       :ok
     end
   end

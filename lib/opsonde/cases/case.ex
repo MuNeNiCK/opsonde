@@ -226,6 +226,8 @@ defmodule Opsonde.Cases.Case do
         allow_nil?: false,
         constraints: [min_length: 1, max_length: 500]
 
+      argument :source_turn_id, :uuid
+
       run Opsonde.Cases.Case.Actions.SplitConditions
     end
 
@@ -262,12 +264,10 @@ defmodule Opsonde.Cases.Case do
       run Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
     end
 
-    action :reconcile_observation_recovery, :struct do
-      constraints instance_of: __MODULE__
+    action :recheck_signal_conditions, :map do
       transaction? false
       argument :id, :uuid, allow_nil?: false
-      argument :observation_operation_id, :uuid, allow_nil?: false
-      run Opsonde.Cases.Case.Actions.ObservationRecoveryReconcile
+      run Opsonde.Cases.Case.Actions.RecheckSignalConditions
     end
 
     action :require_attention, :struct do
@@ -451,7 +451,7 @@ defmodule Opsonde.Cases.Case do
              :update_record,
              :require_attention,
              :reconcile_verified_effect,
-             :reconcile_observation_recovery,
+             :recheck_signal_conditions,
              :resume_after_target_registration,
              :route_target_discovery,
              :route_related_target,

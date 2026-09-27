@@ -218,6 +218,7 @@ defmodule Opsonde.Providers.AITest do
       | turn: 3,
         alert_state: :recovered,
         evidence: later_request.evidence ++ [verified_evidence],
+        recovery_evidence_ids: ["verification-1"],
         disclosure: %{
           later_request.disclosure
           | allowed_evidence_kinds:
@@ -237,24 +238,20 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: recovery, usage: usage()}}
              end)
 
-    assert {:error, terminal_gate_error} =
-             resolve(context, recovered_request, fn _request ->
+    assert %AI.ResolverDecision{intent: ^proposal} =
+             resolve!(context, recovered_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: proposal, usage: usage()}}
              end)
-
-    assert ai_error(terminal_gate_error).category == :invalid_output
 
     handoff = %AI.Handoff{
       reason: "A physical inspection is required",
       required_input: "Confirm the drive fault LED"
     }
 
-    assert {:error, terminal_handoff_error} =
-             resolve(context, recovered_request, fn _request ->
+    assert %AI.ResolverDecision{intent: ^handoff} =
+             resolve!(context, recovered_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
-
-    assert ai_error(terminal_handoff_error).category == :invalid_output
 
     assert %AI.ResolverDecision{intent: ^handoff} =
              resolve!(context, request, fn _request ->
@@ -263,12 +260,10 @@ defmodule Opsonde.Providers.AITest do
 
     manual_request = %{recovered_request | alert_state: :not_applicable}
 
-    assert {:error, manual_handoff_error} =
-             resolve(context, manual_request, fn _request ->
+    assert %AI.ResolverDecision{intent: ^handoff} =
+             resolve!(context, manual_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: handoff, usage: usage()}}
              end)
-
-    assert ai_error(manual_handoff_error).category == :invalid_output
 
     assert %AI.ResolverDecision{intent: ^recovery} =
              resolve!(context, manual_request, fn _request ->
@@ -291,12 +286,15 @@ defmodule Opsonde.Providers.AITest do
       content: %{
         "status" => "applied",
         "category" => "target_observed",
-        "facts" => %{"ready" => true},
-        "recovery_eligible" => true
+        "facts" => %{"ready" => true}
       }
     }
 
-    observed_request = %{recovered_request | evidence: later_request.evidence ++ [observed]}
+    observed_request = %{
+      recovered_request
+      | evidence: later_request.evidence ++ [observed],
+        recovery_evidence_ids: [observed.id]
+    }
 
     observed_recovery = %AI.RecoveryConclusion{
       reason: "The fresh Target observation confirms recovery",
@@ -308,13 +306,14 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: observed_recovery, usage: usage()}}
              end)
 
-    unmarked = %{
-      observed
-      | id: "observation-unmarked",
-        content: Map.delete(observed.content, "recovery_eligible")
+    unmarked = %{observed | id: "observation-unmarked"}
+
+    unmarked_request = %{
+      recovered_request
+      | evidence: later_request.evidence ++ [unmarked],
+        recovery_evidence_ids: []
     }
 
-    unmarked_request = %{recovered_request | evidence: later_request.evidence ++ [unmarked]}
     unmarked_recovery = %{observed_recovery | evidence_ids: [unmarked.id]}
 
     assert {:error, unmarked_error} =
@@ -364,12 +363,28 @@ defmodule Opsonde.Providers.AITest do
       facts: %{"environment" => "production"}
     }
 
-    candidate_request = %{request | turn: 2, target_candidates: [candidate]}
+    candidate_evidence = %AI.Evidence{
+      id: "candidate-evidence-1",
+      kind: "target_candidates",
+      content: %{"candidate_ids" => [candidate.id]}
+    }
+
+    candidate_request = %{
+      request
+      | turn: 2,
+        target_candidates: [candidate],
+        evidence: request.evidence ++ [candidate_evidence],
+        disclosure: %{
+          request.disclosure
+          | allowed_evidence_kinds:
+              request.disclosure.allowed_evidence_kinds ++ ["target_candidates"]
+        }
+    }
 
     selection = %AI.TargetSelection{
       target_id: candidate.id,
       target_revision: candidate.revision,
-      evidence_ids: ["evidence-1"],
+      evidence_ids: [candidate_evidence.id],
       reason: "The registered name and environment match the firing alert"
     }
 
@@ -377,6 +392,93 @@ defmodule Opsonde.Providers.AITest do
              resolve!(context, candidate_request, fn _request ->
                {:ok, %AI.ResolverDecision{intent: selection, usage: usage()}}
              end)
+
+    assert {:error, uncited_candidate_error} =
+             resolve(context, candidate_request, fn _request ->
+               {:ok,
+                %AI.ResolverDecision{
+                  intent: %{selection | evidence_ids: ["evidence-1"]},
+                  usage: usage()
+                }}
+             end)
+
+    assert ai_error(uncited_candidate_error).category == :invalid_output
+
+    wrong_candidate_evidence = %AI.Evidence{
+      id: "candidate-evidence-2",
+      kind: "target_candidates",
+      content: %{"candidate_ids" => ["target-2"]}
+    }
+
+    wrong_candidate_request = %{
+      candidate_request
+      | evidence: candidate_request.evidence ++ [wrong_candidate_evidence]
+    }
+
+    assert {:error, wrong_candidate_error} =
+             resolve(context, wrong_candidate_request, fn _request ->
+               {:ok,
+                %AI.ResolverDecision{
+                  intent: %{selection | evidence_ids: [wrong_candidate_evidence.id]},
+                  usage: usage()
+                }}
+             end)
+
+    assert ai_error(wrong_candidate_error).category == :invalid_output
+
+    condition = %AI.Condition{
+      id: "condition-1",
+      revision: 2,
+      occurrence: 1,
+      predicate: "NativeFault",
+      subject_key: "native-subject",
+      subject_ref: %{},
+      state: :firing,
+      target_id: candidate.id,
+      current_occurred_at_us: 1
+    }
+
+    signal_evidence = %AI.Evidence{
+      id: "current-signal-evidence",
+      kind: "signal_event",
+      content: %{
+        "current" => true,
+        "condition_id" => condition.id,
+        "condition_revision" => condition.revision
+      }
+    }
+
+    mapped_request = %{
+      candidate_request
+      | conditions: [condition],
+        evidence: request.evidence ++ [signal_evidence],
+        disclosure: %{
+          candidate_request.disclosure
+          | allowed_evidence_kinds:
+              candidate_request.disclosure.allowed_evidence_kinds ++ ["signal_event"]
+        }
+    }
+
+    mapped_selection = %{selection | evidence_ids: [signal_evidence.id]}
+
+    assert %AI.ResolverDecision{intent: ^mapped_selection} =
+             resolve!(context, mapped_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: mapped_selection, usage: usage()}}
+             end)
+
+    stale_signal_request = %{
+      mapped_request
+      | evidence:
+          request.evidence ++
+            [%{signal_evidence | content: %{signal_evidence.content | "condition_revision" => 1}}]
+    }
+
+    assert {:error, stale_signal_error} =
+             resolve(context, stale_signal_request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: mapped_selection, usage: usage()}}
+             end)
+
+    assert ai_error(stale_signal_error).category == :invalid_output
 
     for invalid <- [
           %{selection | target_id: "invented-target"},

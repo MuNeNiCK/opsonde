@@ -13,6 +13,7 @@ defmodule Opsonde.Cases.AIInvocation.Validations.Subject do
     case {role, turn_id, proposal_id} do
       {:resolver, turn_id, nil} when is_binary(turn_id) -> :ok
       {:reviewer, nil, proposal_id} when is_binary(proposal_id) -> :ok
+      {:reviewer, turn_id, nil} when is_binary(turn_id) -> :ok
       _invalid -> {:error, field: :role, message: "does not match the invocation subject"}
     end
   end

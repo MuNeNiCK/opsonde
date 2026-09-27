@@ -23,8 +23,6 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     VerificationAttempt
   }
 
-  alias Opsonde.Cases.Case.Actions.RecoveryCompletion
-
   @budgets [
     max_resolver_turns: :turn_count,
     max_target_requests: :target_request_count,
@@ -36,7 +34,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   @impl true
   def run(input, _opts, context) do
     args = input.arguments
-    key = split_key(args, :investigate)
+    key = split_key(args)
 
     Ash.transact(
       [
@@ -59,7 +57,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
           if prior do
             Cases.get_case(prior.data["child_case_id"], authorize?: false)
           else
-            split(parent, args, key, context.actor, :investigate)
+            split(parent, args, key, context.actor)
           end
         end
       end
@@ -71,51 +69,27 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  # Called only by the Case's verified-effect recovery action while it owns the
-  # admission lock and transaction. The same split checks and writes remain in
-  # one transaction with the terminal parent transition.
-  def split_recovered(parent, attempt, assessments) do
-    healthy = Enum.filter(assessments, &(&1.status == :healthy))
-    unresolved = Enum.reject(assessments, &(&1.status == :healthy))
-
-    with true <-
-           (healthy != [] and unresolved != []) ||
-             {:error, "Recovery split needs both healthy and unresolved Conditions"},
-         {:ok, snapshot} <- ResolverProjection.current_condition_revisions(parent),
-         args <- %{
-           id: parent.id,
-           expected_revision: parent.revision,
-           condition_ids: Enum.map(unresolved, & &1.condition_id),
-           expected_conditions: snapshot,
-           reason: "Remaining Conditions after Target verification #{attempt.id}"
-         },
-         key <- split_key(args, :complete_healthy_parent),
-         {:ok, _child} <- split(parent, args, key, nil, {:complete_healthy_parent, attempt.id}) do
-      Cases.get_case(parent.id, authorize?: false)
-    end
-  end
-
-  defp split(parent, args, key, actor, mode) do
+  defp split(parent, args, key, actor) do
     with :ok <- eligible_case(parent, args),
          {:ok, run} <- lock_active_run(parent.id),
          {:ok, dispatch} <- Cases.case_dispatch(parent.id, authorize?: false),
          true <- dispatch.state == :sent || {:error, "Case has not dispatched its first Turn"},
-         :ok <- quiescent(parent, run, mode),
+         :ok <- quiescent(parent, run),
          {:ok, members} <- Cases.active_conditions_for_case(parent.id, authorize?: false),
          :ok <- exact_members(parent, members, args),
          {:ok, moved} <- moved_members(members, args.condition_ids),
          {:ok, conditions} <- load_conditions(moved),
          {:ok, remaining_conditions} <-
            load_conditions(Enum.reject(members, &(&1.condition_id in args.condition_ids))),
-         :ok <- verified_partition(parent, conditions, remaining_conditions, mode),
+         :ok <- validate_resolver_split(parent, run, args, conditions, remaining_conditions),
          {:ok, selected_target} <- selected_target(conditions),
          {:ok, remaining_target} <- selected_target(remaining_conditions),
          {:ok, recovery_baseline} <- ConditionRecovery.baseline_for_case(parent),
-         {:ok, budgets} <- partition(run, mode),
+         {:ok, budgets} <- partition(run),
          {:ok, child} <-
            create_child(parent, run, dispatch, selected_target, recovery_baseline, budgets.child),
          {:ok, _copied} <- copy_current_signal_evidence(parent, child, conditions),
-         {:ok, _lineage} <- record_child_evidence(parent, child, moved, args, key, mode),
+         {:ok, _lineage} <- record_child_evidence(parent, child, moved, args, key),
          {:ok, updated_parent, updated_run} <-
            reallocate_parent(
              parent,
@@ -123,8 +97,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
              budgets.parent,
              conditions,
              remaining_conditions,
-             remaining_target,
-             mode
+             remaining_target
            ),
          :ok <- move_members(moved, child.id),
          :ok <-
@@ -135,14 +108,59 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
              moved,
              args,
              key,
-             actor,
-             mode
+             actor
            ),
-         :ok <- maybe_complete_parent(updated_parent, updated_run, mode),
-         :ok <- start_branches(updated_parent, updated_run, child, mode) do
+         :ok <- start_branches(updated_parent, updated_run, child) do
       Cases.get_case(child.id, authorize?: false)
     end
   end
+
+  defp validate_resolver_split(
+         parent,
+         run,
+         %{source_turn_id: source_turn_id} = args,
+         moved,
+         remaining
+       )
+       when is_binary(source_turn_id) do
+    with {:ok, %{case_id: case_id, resolution_run_id: run_id, status: :completed} = turn} <-
+           Cases.get_turn(source_turn_id, authorize?: false),
+         true <- case_id == parent.id and run_id == run.id,
+         %{"outcome" => "decision", "intent" => %{"type" => "case_split"} = intent} <-
+           turn.result,
+         true <- turn.result["condition_revisions"] == args.expected_conditions,
+         true <- intent["condition_ids"] == args.condition_ids and intent["reason"] == args.reason,
+         true <- cited_group?(intent["evidence_ids"], moved, parent.id),
+         true <- cited_group?(intent["remaining_evidence_ids"], remaining, parent.id) do
+      :ok
+    else
+      _invalid ->
+        {:error, "Resolver split lacks current observations for both investigation scopes"}
+    end
+  end
+
+  defp validate_resolver_split(_parent, _run, _args, _moved, _remaining), do: :ok
+
+  defp cited_group?(ids, conditions, case_id) when is_list(ids) and ids != [] do
+    target_ids = MapSet.new(Enum.map(conditions, & &1.target_id))
+    after_at = Enum.max_by(conditions, & &1.current_occurred_at, DateTime).current_occurred_at
+
+    Enum.any?(ids, fn id ->
+      case Cases.get_evidence(id, authorize?: false) do
+        {:ok, evidence} ->
+          evidence.case_id == case_id and
+            evidence.kind in ["observation", "target_verification"] and
+            evidence.content["status"] in ["applied", "verified"] and
+            MapSet.member?(target_ids, evidence.content["target_id"]) and
+            DateTime.compare(evidence.observed_at, after_at) != :lt
+
+        _missing ->
+          false
+      end
+    end)
+  end
+
+  defp cited_group?(_ids, _conditions, _case_id), do: false
 
   defp eligible_case(parent, args) do
     cond do
@@ -157,60 +175,29 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp quiescent(parent, run, mode) do
+  defp quiescent(parent, run) do
     with true <-
            DateTime.compare(DateTime.utc_now(), run.deadline_at) == :lt ||
              {:error, "Case deadline has elapsed"},
-         :ok <- pending_decision_quiescent(parent, mode),
+         :ok <- pending_decision_quiescent(parent),
          {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false),
          true <- started == [] || {:error, "Resolver Turn is still running"},
-         :ok <- quiescent_operations(parent.id, mode),
-         :ok <- quiescent_proposals(parent.id, mode),
+         :ok <- quiescent_operations(parent.id),
+         :ok <- quiescent_proposals(parent.id),
          :ok <- no_rows(AIInvocation, parent.id, [:dispatching]) do
       :ok
     end
   end
 
-  defp quiescent_operations(case_id, :investigate), do: no_rows(Operation, case_id, nil)
-
-  defp quiescent_operations(case_id, {:complete_healthy_parent, _attempt_id}) do
+  defp quiescent_operations(case_id) do
     with :ok <- no_rows(Operation, case_id, [:queued, :dispatching, :partial, :unknown]),
          :ok <- no_rows(VerificationAttempt, case_id, [:queued, :dispatching, :unknown]) do
       :ok
     end
   end
 
-  defp quiescent_proposals(case_id, :investigate),
+  defp quiescent_proposals(case_id),
     do: no_rows(Proposal, case_id, [:proposed, :reviewing, :awaiting_human, :authorized])
-
-  defp quiescent_proposals(case_id, {:complete_healthy_parent, _attempt_id}) do
-    with :ok <- no_rows(Proposal, case_id, [:proposed, :reviewing, :awaiting_human]),
-         {:ok, proposals} <-
-           Proposal
-           |> Ash.Query.for_read(:read)
-           |> Ash.Query.filter(case_id == ^case_id and status == :authorized)
-           |> Ash.read(authorize?: false) do
-      Enum.reduce_while(proposals, :ok, fn proposal, :ok ->
-        case Cases.operation_by_proposal(proposal.id,
-               authorize?: false,
-               not_found_error?: false
-             ) do
-          {:ok, %{status: status}} when status in [:applied, :failed] -> {:cont, :ok}
-          {:ok, _operation} -> {:halt, {:error, "Authorized Proposal has no terminal Operation"}}
-          {:error, _error} = error -> {:halt, error}
-        end
-      end)
-    end
-  end
-
-  defp pending_decision_quiescent(
-         %{pending_intent: %{"action" => action, "verification_attempt_id" => id}},
-         {:complete_healthy_parent, id}
-       )
-       when action in ["await_source_recovery", "evaluate_verification"],
-       do: :ok
-
-  defp pending_decision_quiescent(parent, _mode), do: pending_decision_quiescent(parent)
 
   defp pending_decision_quiescent(%{pending_intent: pending, id: case_id}) do
     cond do
@@ -298,30 +285,6 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp verified_partition(_parent, _moved, _remaining, :investigate), do: :ok
-
-  defp verified_partition(parent, moved, remaining, {:complete_healthy_parent, _attempt_id}) do
-    with {:ok, assessments} <- ConditionRecovery.assess_current(parent) do
-      current_healthy =
-        assessments
-        |> Enum.filter(&(&1.status == :healthy))
-        |> Enum.map(& &1.condition_id)
-        |> MapSet.new()
-
-      current_unresolved =
-        assessments
-        |> Enum.reject(&(&1.status == :healthy))
-        |> Enum.map(& &1.condition_id)
-        |> MapSet.new()
-
-      if current_healthy == MapSet.new(remaining, & &1.id) and
-           current_unresolved == MapSet.new(moved, & &1.id) and
-           MapSet.size(current_healthy) > 0 and MapSet.size(current_unresolved) > 0,
-         do: :ok,
-         else: {:error, "Condition recovery changed before split"}
-    end
-  end
-
   defp selected_target(conditions) do
     case Enum.find(conditions, & &1.target_id) do
       nil -> {:ok, nil}
@@ -337,16 +300,13 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp partition(run, mode) do
+  defp partition(run) do
     allocations =
       Enum.reduce(@budgets, %{parent: %{}, child: %{}}, fn {maximum, counter}, acc ->
         spent = Map.fetch!(run, counter)
         limit = Map.fetch!(run, maximum)
 
-        child_limit =
-          if mode == :investigate,
-            do: div(max(limit - spent, 0), 2),
-            else: max(limit - spent, 0)
+        child_limit = div(max(limit - spent, 0), 2)
 
         %{
           parent: Map.put(acc.parent, maximum, limit - child_limit),
@@ -491,9 +451,8 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp record_child_evidence(parent, child, moved, args, key, mode) do
-    with {:ok, child_run} <- Cases.active_resolution_run(child.id, authorize?: false),
-         {:ok, effect_context} <- effect_context(mode) do
+  defp record_child_evidence(parent, child, moved, args, key) do
+    with {:ok, child_run} <- Cases.active_resolution_run(child.id, authorize?: false) do
       Cases.create_evidence_record(
         %{
           case_id: child.id,
@@ -502,16 +461,13 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
           kind: "split_lineage",
           source: "case_split",
           source_ref: parent.id,
-          content:
-            Map.merge(
-              %{
-                "parent_case_id" => parent.id,
-                "condition_ids" => Enum.map(moved, & &1.condition_id),
-                "reason" => args.reason,
-                "historical_context_only" => true
-              },
-              effect_context
-            ),
+          content: %{
+            "parent_case_id" => parent.id,
+            "condition_ids" => Enum.map(moved, & &1.condition_id),
+            "reason" => args.reason,
+            "source_turn_id" => Map.get(args, :source_turn_id),
+            "historical_context_only" => true
+          },
           observed_at: DateTime.utc_now()
         },
         authorize?: false
@@ -519,26 +475,8 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp effect_context(:investigate), do: {:ok, %{}}
-
-  defp effect_context({:complete_healthy_parent, attempt_id}) do
-    with {:ok, attempt} <- Cases.get_verification_attempt(attempt_id, authorize?: false),
-         {:ok, operation} <- Cases.get_operation(attempt.operation_id, authorize?: false) do
-      {:ok,
-       %{
-         "verification_attempt_id" => attempt.id,
-         "operation_id" => operation.id,
-         "operation_status" => to_string(operation.status),
-         "target_id" => operation.target_id,
-         "capability" => operation.capability,
-         "operation" => operation.operation,
-         "selectors" => operation.selectors
-       }}
-    end
-  end
-
-  defp reallocate_parent(parent, run, limits, moved, remaining, remaining_target, mode) do
-    active? = mode != :investigate or active_capacity?(limits, run)
+  defp reallocate_parent(parent, run, limits, moved, remaining, remaining_target) do
+    active? = active_capacity?(limits, run)
 
     attrs =
       Map.merge(limits, %{
@@ -607,7 +545,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end)
   end
 
-  defp record_split(parent, run, child, moved, args, key, actor, mode) do
+  defp record_split(parent, run, child, moved, args, key, actor) do
     ids = Enum.map(moved, & &1.condition_id)
     actor_id = actor && actor.id
 
@@ -623,10 +561,9 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
                  "child_case_id" => child.id,
                  "condition_ids" => ids,
                  "reason" => args.reason,
+                 "source_turn_id" => Map.get(args, :source_turn_id),
                  "authority_mode" => to_string(parent.authority_mode),
-                 "turn_ordinal_boundary" => run.turn_count,
-                 "completed_healthy_parent" => mode != :investigate,
-                 "verification_attempt_id" => verification_attempt_id(mode)
+                 "turn_ordinal_boundary" => run.turn_count
                }
              },
              authorize?: false
@@ -644,7 +581,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
                  "parent_case_id" => parent.id,
                  "condition_ids" => ids,
                  "reason" => args.reason,
-                 "verification_attempt_id" => verification_attempt_id(mode)
+                 "source_turn_id" => Map.get(args, :source_turn_id)
                }
              },
              authorize?: false
@@ -653,37 +590,11 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp verification_attempt_id({:complete_healthy_parent, id}), do: id
-  defp verification_attempt_id(:investigate), do: nil
-
-  defp maybe_complete_parent(_parent, _run, :investigate), do: :ok
-
-  defp maybe_complete_parent(parent, run, {:complete_healthy_parent, attempt_id}) do
-    case RecoveryCompletion.complete(
-           parent,
-           run,
-           "case:split:healthy-parent:#{attempt_id}",
-           %{
-             "verification_attempt_id" => attempt_id,
-             "reason" => "All retained Conditions recovered"
-           }
-         ) do
-      {:ok, _completed} -> :ok
-      {:error, _error} = error -> error
-    end
-  end
-
-  defp start_branches(parent, parent_run, child, :investigate) do
+  defp start_branches(parent, parent_run, child) do
     with :ok <- start_branch(parent, parent_run, child.id),
          {:ok, child_run} <- Cases.active_resolution_run(child.id, authorize?: false),
          :ok <- start_branch(child, child_run, parent.id) do
       :ok
-    end
-  end
-
-  defp start_branches(parent, _parent_run, child, {:complete_healthy_parent, _attempt_id}) do
-    with {:ok, child_run} <- Cases.active_resolution_run(child.id, authorize?: false) do
-      start_branch(child, child_run, parent.id)
     end
   end
 
@@ -724,10 +635,11 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp split_key(args, mode) do
+  defp split_key(args) do
     input =
-      {mode, args.id, args.expected_revision, Enum.sort(args.condition_ids),
-       Enum.sort_by(args.expected_conditions, & &1["id"]), args.reason}
+      {args.id, args.expected_revision, Map.get(args, :source_turn_id),
+       Enum.sort(args.condition_ids), Enum.sort_by(args.expected_conditions, & &1["id"]),
+       args.reason}
 
     Budget.key("case:split", :erlang.term_to_binary(input, [:deterministic]))
   end

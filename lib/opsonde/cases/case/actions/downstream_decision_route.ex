@@ -15,6 +15,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     ConditionRecovery,
     Evidence,
     Proposal,
+    RecoveryReviewFingerprint,
     ResolutionRun,
     Turn
   }
@@ -50,19 +51,161 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp route(turn, %{"type" => "recovery_conclusion"} = intent, incident, run) do
     with :ok <- ensure_running(incident, run),
-         :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
+         {:ok, review} <- recovery_review_event(turn) do
+      case review do
+        nil ->
+          request_recovery_review(turn, intent, incident, run)
+
+        %CaseEvent{data: %{"verdict" => "approved"}} = event ->
+          complete_reviewed_recovery(turn, intent, incident, run, event)
+
+        %CaseEvent{} ->
+          incident
+      end
+    end
+  end
+
+  defp route(turn, intent, incident, run), do: route_other(turn, intent, incident, run)
+
+  defp request_recovery_review(turn, intent, incident, run) do
+    pending = %{"action" => "review_recovery", "turn_id" => turn.id}
+
+    with :ok <- available_pending_intent(incident.pending_intent, pending, turn),
+         {:ok, existing} <- existing_event(incident.id, review_request_key(turn)) do
+      if existing do
+        if incident.pending_intent == pending and
+             existing.event_type == "recovery_review_requested" and
+             existing.resolution_run_id == run.id and
+             existing.data["result_digest"] == turn.result_digest do
+          incident
+        else
+          {:error, "Recovery Review request was already used with different input"}
+        end
+      else
+        case review_retry_gate(incident, intent) do
+          :ok ->
+            persist_recovery_review_request(turn, intent, incident, run, pending)
+
+          {:blocked, reason} ->
+            Cases.require_case_attention(
+              incident.id,
+              incident.revision,
+              run.id,
+              run.revision,
+              "unchanged-recovery-review:#{turn.id}",
+              reason,
+              %{"action" => "retry_resolver"},
+              "Collect new recovery evidence before asking for another review",
+              authorize?: false
+            )
+            |> action_value()
+
+          {:error, _error} = error ->
+            error
+        end
+      end
+    end
+  end
+
+  defp review_retry_gate(incident, intent) do
+    with {:ok, fingerprint} <- RecoveryReviewFingerprint.current(incident, intent),
+         {:ok, history} <- Cases.recovery_review_history(incident.id, authorize?: false) do
+      cond do
+        length(history) >= 501 ->
+          {:blocked, "Recovery Review history exceeds the safe comparison limit"}
+
+        Enum.any?(history, fn event ->
+          event.data["verdict"] == "rejected" and
+              event.data["review_fingerprint"] == fingerprint
+        end) ->
+          {:blocked, "Recovery Review rejected this unchanged evidence"}
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp persist_recovery_review_request(turn, intent, incident, run, pending) do
+    with :ok <- available_pending_intent(incident.pending_intent, pending, turn),
+         {:ok, updated} <-
+           Cases.update_case_record(
+             incident,
+             incident.revision,
+             %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+             authorize?: false
+           ),
+         {:ok, _event} <-
+           Cases.create_case_event_record(
+             %{
+               case_id: incident.id,
+               resolution_run_id: run.id,
+               event_type: "recovery_review_requested",
+               idempotency_key: review_request_key(turn),
+               data: %{
+                 "source_turn_id" => turn.id,
+                 "result_digest" => turn.result_digest,
+                 "evidence_ids" => intent["evidence_ids"]
+               }
+             },
+             authorize?: false
+           ),
+         {:ok, _job} <-
+           %{"turn_id" => turn.id}
+           |> Opsonde.Cases.RecoveryReviewWorker.new()
+           |> Oban.insert() do
+      updated
+    end
+  end
+
+  defp complete_reviewed_recovery(turn, intent, incident, run, event) do
+    expected = %{
+      "source_turn_id" => turn.id,
+      "result_digest" => turn.result_digest,
+      "evidence_ids" => intent["evidence_ids"],
+      "condition_claims" => intent["condition_claims"]
+    }
+
+    with :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
+         true <-
+           (event.event_type == "recovery_review_decided" and
+              event.resolution_run_id == run.id and event.data["verdict"] == "approved" and
+              Map.take(event.data, Map.keys(expected)) == expected and
+              is_binary(event.data["ai_invocation_id"]) and
+              is_binary(event.data["provider_id"]) and
+              is_binary(event.data["invocation_key"])) ||
+             {:error, "Recovery Review did not approve this exact conclusion"},
+         {:ok, invocation} <-
+           Cases.ai_invocation_by_idempotency(event.data["invocation_key"],
+             authorize?: false,
+             not_found_error?: false
+           ),
+         true <-
+           ((invocation && invocation.id == event.data["ai_invocation_id"]) and
+              invocation.turn_id == turn.id and invocation.case_id == incident.id and
+              invocation.resolution_run_id == run.id and invocation.role == :reviewer and
+              invocation.status == :completed and
+              invocation.provider_id == event.data["provider_id"] and
+              invocation.assignment_id == event.data["assignment_id"] and
+              invocation.result_digest ==
+                Opsonde.Cases.AIInvocation.request_digest(event.data)) ||
+             {:error, "Recovery Reviewer invocation is unavailable"},
          {:ok, resolved} <-
            RecoveryCompletion.complete(
              incident,
              run,
              route_key(turn),
-             resolved_event_data(turn, intent)
+             Map.put(resolved_event_data(turn, intent), "recovery_review_event_id", event.id)
            ) do
       resolved
     end
   end
 
-  defp route(turn, %{"type" => "handoff"} = intent, incident, run) do
+  defp recovery_review_event(turn) do
+    existing_event(turn.case_id, review_result_key(turn))
+  end
+
+  defp route_other(turn, %{"type" => "handoff"} = intent, incident, run) do
     pending = pending_intent("provide_human_input", turn)
     key = route_key(turn)
 
@@ -89,7 +232,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp route(turn, %{"type" => "proposal"} = intent, incident, run) do
+  defp route_other(turn, %{"type" => "proposal"} = intent, incident, run) do
     with {:ok, proposal} <- Cases.materialize_proposal(turn.id, authorize?: false),
          pending <- %{
            "action" => "route_proposal",
@@ -104,7 +247,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp route(turn, intent, incident, run) do
+  defp route_other(turn, intent, incident, run) do
     pending = pending_intent("evaluate_recovery", turn)
     persist_or_replay(turn, intent, incident, run, pending)
   end
@@ -188,7 +331,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          %{
            "type" => "recovery_conclusion",
            "reason" => reason,
-           "evidence_ids" => evidence_ids
+           "evidence_ids" => evidence_ids,
+           "condition_claims" => claims
          },
          turn,
          incident,
@@ -198,7 +342,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     with :ok <- valid_reason(reason),
          :ok <- valid_recovery_state(incident),
          :ok <- valid_case_evidence(evidence_ids, incident.id),
-         :ok <- valid_fresh_verification(evidence_ids, turn, incident, run) do
+         :ok <- valid_fresh_verification(evidence_ids, claims, turn, incident, run) do
       :ok
     end
   end
@@ -234,20 +378,44 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp valid_recovery_state(_incident),
     do: {:error, "Monitoring source has not confirmed recovery"}
 
-  defp valid_fresh_verification(evidence_ids, _turn, %{trigger_kind: :signal} = incident, _run) do
+  defp valid_fresh_verification(
+         evidence_ids,
+         claims,
+         _turn,
+         %{trigger_kind: :signal} = incident,
+         _run
+       ) do
     with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
          true <-
-           ConditionRecovery.all_healthy?(assessments) ||
-             {:error, "Some Signal Conditions lack current subject recovery proof"},
-         proof_ids <- assessments |> Enum.map(& &1.evidence_id) |> Enum.uniq(),
+           ConditionRecovery.ready_for_review?(assessments) ||
+             {:error, "Signal Conditions require current observations and Resolver assessment"},
+         true <- is_list(claims) || {:error, "Recovery conclusion lacks Condition claims"},
+         expected <- Map.new(assessments, &{&1.condition_id, &1}),
          true <-
-           Enum.all?(proof_ids, &(&1 in evidence_ids)) ||
-             {:error, "Recovery conclusion omits a Condition proof"} do
+           length(claims) == map_size(expected) ||
+             {:error, "Recovery conclusion omits a Condition"},
+         true <-
+           Enum.all?(claims, fn claim ->
+             is_map(claim) and
+               case Map.get(expected, claim["condition_id"]) do
+                 nil ->
+                   false
+
+                 assessment ->
+                   assessment.revision == claim["revision"] and
+                     assessment.evidence_id == claim["evidence_id"] and
+                     claim["evidence_id"] in evidence_ids and
+                     Opsonde.Providers.AI.valid_resolver_reason?(claim["reason"])
+               end
+           end) || {:error, "Recovery conclusion cites a changed Condition"},
+         true <-
+           MapSet.new(Enum.map(claims, & &1["condition_id"])) == MapSet.new(Map.keys(expected)) ||
+             {:error, "Recovery conclusion contains duplicate Condition claims"} do
       :ok
     end
   end
 
-  defp valid_fresh_verification(evidence_ids, turn, incident, run) do
+  defp valid_fresh_verification(evidence_ids, [], turn, incident, run) do
     evidence_id = turn.intent["verification_evidence_id"]
     operation_id = turn.intent["operation_id"]
 
@@ -257,6 +425,9 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       validate_continuity_verification(evidence_ids, incident, run)
     end
   end
+
+  defp valid_fresh_verification(_evidence_ids, _claims, _turn, _incident, _run),
+    do: {:error, "Recovery conclusion has unexpected Condition claims"}
 
   defp validate_current_verification(evidence_ids, evidence_id, operation_id, incident, run) do
     if evidence_id in evidence_ids do
@@ -467,6 +638,13 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        }),
        do: :ok
 
+  defp available_pending_intent(
+         %{"action" => "review_recovery", "turn_id" => id},
+         _pending,
+         %{id: id}
+       ),
+       do: :ok
+
   defp available_pending_intent(_current, _pending, _turn),
     do: {:error, "Case already has another pending decision"}
 
@@ -501,9 +679,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          {:ok, event} <- existing_event(source_turn.case_id, route_key(source_turn)) do
       case event do
         %CaseEvent{event_type: "case_resolved", data: data} ->
-          if data == resolved_event_data(source_turn, intent),
-            do: Cases.get_case(source_turn.case_id, authorize?: false),
-            else: {:error, "Recovery conclusion was already resolved with different input"}
+          if Map.drop(data, ["recovery_review_event_id"]) ==
+               resolved_event_data(source_turn, intent) and
+               is_binary(data["recovery_review_event_id"]),
+             do: Cases.get_case(source_turn.case_id, authorize?: false),
+             else: {:error, "Recovery conclusion was already resolved with different input"}
 
         _other ->
           :continue
@@ -519,6 +699,9 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     do: %{"action" => action, "source_turn_id" => turn.id}
 
   defp route_key(turn), do: Budget.key("resolver-route:downstream", turn.id)
+
+  defp review_request_key(turn), do: Budget.key("recovery-review:requested", turn.id)
+  defp review_result_key(turn), do: Budget.key("recovery-review:result", turn.id)
 
   defp action_value({:ok, value}), do: value
   defp action_value({:error, _error} = error), do: error

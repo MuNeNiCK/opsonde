@@ -1,9 +1,9 @@
-defmodule Opsonde.Cases.Operation.ResourceScope do
+defmodule Opsonde.Targets.ResourceScope do
   @moduledoc false
 
   @service_capabilities ["effect.service", "observe.service"]
 
-  def key(capability, selectors)
+  def key(%{platform: "linux"}, capability, selectors)
       when capability in @service_capabilities and is_map(selectors) do
     case selectors do
       %{"unit" => unit} when map_size(selectors) == 1 and is_binary(unit) -> service(unit)
@@ -12,7 +12,7 @@ defmodule Opsonde.Cases.Operation.ResourceScope do
     end
   end
 
-  def key(_capability, _selectors), do: "target"
+  def key(_method, _capability, _selectors), do: "target"
 
   defp service(unit) do
     if unit != "" and String.trim(unit) == unit do

@@ -29,4 +29,10 @@ defmodule Opsonde.AIAdapterFixture do
     send(invocation.test_pid, {:review, state, request})
     invocation.respond.(request)
   end
+
+  @impl Opsonde.Providers.AI
+  def review_recovery(state, request, invocation) do
+    send(invocation.test_pid, {:review_recovery, state, request})
+    invocation.respond.(request)
+  end
 end

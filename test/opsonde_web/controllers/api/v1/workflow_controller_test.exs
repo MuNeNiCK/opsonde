@@ -143,15 +143,21 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert length(snapshot["conditions"]) == 2
     assert length(snapshot["condition_history"]) == 2
 
-    assert Enum.sort(Enum.map(snapshot["conditions"], & &1["subject_ref"]["name"])) ==
-             ["api.service", "db.service"]
+    refs = Enum.map(snapshot["conditions"], & &1["subject_ref"])
+    assert Enum.all?(refs, &(&1["kind"] == "native_labels" and is_binary(&1["digest"])))
+    assert length(Enum.uniq(refs)) == 2
 
     revisions =
       snapshot["conditions"]
       |> Enum.map(&Map.take(&1, ["id", "revision"]))
       |> Enum.sort_by(& &1["id"])
 
-    [moved] = Enum.filter(snapshot["conditions"], &(&1["subject_ref"]["name"] == "db.service"))
+    db_condition_id =
+      Signals.list_signal_events!(actor: context.admin)
+      |> Enum.find(&(&1.event_key == "db.service"))
+      |> Map.fetch!(:condition_id)
+
+    [moved] = Enum.filter(snapshot["conditions"], &(&1["id"] == db_condition_id))
 
     Cases.complete_turn!(
       turn.id,
@@ -208,8 +214,9 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     parent_snapshot = get_data!("/api/v1/cases/#{parent.id}", context.viewer_token)
     child_snapshot = get_data!("/api/v1/cases/#{child_id}", context.viewer_token)
-    assert Enum.map(parent_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["api.service"]
-    assert Enum.map(child_snapshot["conditions"], & &1["subject_ref"]["name"]) == ["db.service"]
+    assert length(parent_snapshot["conditions"]) == 1
+    assert Enum.map(child_snapshot["conditions"], & &1["id"]) == [moved["id"]]
+    assert hd(parent_snapshot["conditions"])["id"] != moved["id"]
 
     assert Enum.sort(
              Enum.map(get_data!("/api/v1/cases", context.viewer_token), & &1["condition_count"])

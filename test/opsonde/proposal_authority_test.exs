@@ -406,6 +406,25 @@ defmodule Opsonde.ProposalAuthorityTest do
         evidence: source_evidence
       )
 
+    independent_evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-context-identity",
+        "observation",
+        "target",
+        "linux-identity-current",
+        %{
+          "target_id" => initial_target.id,
+          "status" => "applied",
+          "operation" => "linux.identity.inspect",
+          "facts" => %{"machine_id" => "responsive-guest"}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
     response = %AI.ReviewDecision{
@@ -440,6 +459,8 @@ defmodule Opsonde.ProposalAuthorityTest do
 
         refute request.objective =~ proposal.reason
         assert Enum.map(request.cited_evidence, & &1.id) == proposal.evidence_ids
+        assert Enum.any?(request.context_evidence, &(&1.id == independent_evidence.id))
+        assert Enum.all?(request.context_evidence, &is_integer(&1.observed_at_us))
         {:ok, response}
       end
     }

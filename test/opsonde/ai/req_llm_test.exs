@@ -6,6 +6,8 @@ defmodule Opsonde.AI.ReqLLMTest do
   alias Opsonde.Providers
   alias Opsonde.Providers.AI
 
+  import ExUnit.CaptureLog
+
   defmodule ProviderStub do
     import Plug.Conn
 
@@ -285,7 +287,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert Enum.all?(requests, fn request ->
              String.contains?(request.body, "Recovery is a terminal intent") and
-               String.contains?(request.body, "fresh successful Target observation") and
+               String.contains?(request.body, "current observation") and
                String.contains?(request.body, "never propose an effect when") and
                String.contains?(request.body, "returned facts can directly establish") and
                String.contains?(request.body, "tool's verification_schema")
@@ -380,6 +382,57 @@ defmodule Opsonde.AI.ReqLLMTest do
     [wire] = requests(context.agent)
     assert output_schema(wire)["properties"]["condition_groups"]["maxItems"] == 32
     assert length(user_payload(wire)["conditions"]) == 2
+  end
+
+  test "Case split is a distinct Resolver intent with citations for both scopes", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    conditions =
+      Enum.map(~w(condition-a condition-b), fn id ->
+        %AI.Condition{
+          id: id,
+          revision: 1,
+          occurrence: 1,
+          predicate: "unavailable",
+          subject_key: id,
+          subject_ref: %{"name" => id},
+          state: :firing,
+          target_id: id,
+          current_occurred_at_us: 1
+        }
+      end)
+
+    evidence =
+      Enum.map(conditions, fn condition ->
+        %AI.Evidence{
+          id: "observation-#{condition.id}",
+          kind: "observation",
+          target_id: condition.target_id,
+          observed_at_us: 2,
+          content: %{"status" => "applied", "target_id" => condition.target_id}
+        }
+      end)
+
+    request = %{resolver_request() | conditions: conditions, evidence: evidence}
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Investigate both faults separately",
+        "intent" => %{
+          "type" => "case_split",
+          "condition_ids" => ["condition-a"],
+          "evidence_ids" => ["observation-condition-a"],
+          "remaining_evidence_ids" => ["observation-condition-b"]
+        }
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.CaseSplit{condition_ids: ["condition-a"]}}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire] = requests(context.agent)
+    assert "case_split" in user_payload(wire)["allowed_intents"]
   end
 
   test "ReqLLM object responses retain usage when the returned schema is invalid", context do
@@ -799,6 +852,37 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
+  test "schema rejection logs only bounded structural diagnostics", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(context.agent, {
+      :raw_text,
+      ~s({"reason":"test-secret","intent":{"type":"handoff","required_input":"test-secret"},"unexpected_private_key":"test-secret"})
+    })
+
+    output =
+      capture_log(fn ->
+        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
+                 Adapter.resolve(state, resolver_request(), %{})
+      end)
+
+    assert output =~ "AI object schema mismatch"
+    assert output =~ "intent=handoff"
+    assert output =~ "root_extra=1"
+    refute output =~ "test-secret"
+    refute output =~ "unexpected_private_key"
+  end
+
+  test "a text object with a nested schema error reports the rejected location", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    set_mode(context.agent, {:raw_text, ~s({"reason":"inspect","intent":{"type":"handoff"}})})
+
+    assert {:error, :invalid_output,
+            "AI provider JSON does not match the requested schema at /intent/required_input",
+            %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"} =
+             Adapter.resolve(state, resolver_request(), %{})
+  end
+
   test "Resolver truncated retry requests one compact complete JSON decision", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
@@ -979,6 +1063,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     request = %{
       request
       | evidence: [ordinary, verified, second_verified],
+        recovery_evidence_ids: ["verification-1", "verification-2"],
         disclosure: %{
           request.disclosure
           | allowed_evidence_kinds: ["observation", "target_verification"]
@@ -990,7 +1075,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       %{
         "type" => "recovery",
         "reason" => "Fresh verification and monitoring agree",
-        "evidence_ids" => ["verification-1", "verification-2", "verification-1"]
+        "evidence_ids" => ["verification-1", "verification-2", "verification-1"],
+        "condition_claims" => []
       }
     })
 
@@ -1002,7 +1088,8 @@ defmodule Opsonde.AI.ReqLLMTest do
             }} = Adapter.resolve(state, request, %{})
 
     verified_request = requests(context.agent) |> List.last()
-    assert user_payload(verified_request)["allowed_intents"] == ["recovery"]
+    assert "recovery" in user_payload(verified_request)["allowed_intents"]
+    assert "handoff" in user_payload(verified_request)["allowed_intents"]
 
     recovery =
       Enum.find(output_schema(verified_request)["properties"]["intent"]["anyOf"], fn variant ->
@@ -1014,7 +1101,8 @@ defmodule Opsonde.AI.ReqLLMTest do
         get_in(variant, ["properties", "type", "enum"])
       end)
 
-    assert terminal_types == [["recovery"]]
+    assert ["recovery"] in terminal_types
+    assert ["handoff"] in terminal_types
 
     assert get_in(recovery, ["properties", "evidence_ids", "items", "enum"]) == [
              "verification-1",
@@ -1028,14 +1116,14 @@ defmodule Opsonde.AI.ReqLLMTest do
       content: %{
         "status" => "applied",
         "category" => "target_observed",
-        "facts" => %{"ready" => true},
-        "recovery_eligible" => true
+        "facts" => %{"ready" => true}
       }
     }
 
     observed_request = %{
       request
       | evidence: [ordinary, observed],
+        recovery_evidence_ids: ["observation-recovered"],
         selected_target_id: "target-1",
         selected_target_revision: 1
     }
@@ -1045,7 +1133,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       %{
         "type" => "recovery",
         "reason" => "Fresh Target observation confirms recovery",
-        "evidence_ids" => ["observation-recovered"]
+        "evidence_ids" => ["observation-recovered"],
+        "condition_claims" => []
       }
     })
 
@@ -1101,6 +1190,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     [request] = requests(context.agent)
     assert request.body =~ "proposal-tool"
     assert request.body =~ "authoritative-request-value"
+    assert request.body =~ "recent_case_evidence"
+    assert request.body =~ "Check recent Case evidence for facts"
     assert request.body =~ "may be truncated"
     assert request.body =~ "validated_contract"
     assert request.body =~ "Do not infer an Access Method's capability set from cited evidence"
@@ -1571,6 +1662,15 @@ defmodule Opsonde.AI.ReqLLMTest do
           kind: "observation",
           target_id: "target-1",
           content: %{"status" => "stopped"}
+        }
+      ],
+      context_evidence: [
+        %AI.Evidence{
+          id: "independent-responsive-guest",
+          kind: "observation",
+          target_id: "target-1",
+          observed_at_us: 1_000_000,
+          content: %{"facts" => %{"machine_id" => "responsive-guest"}}
         }
       ],
       budget: budget()

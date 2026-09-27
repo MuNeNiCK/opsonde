@@ -62,6 +62,17 @@ defmodule Opsonde.Cases do
         action: :split_conditions,
         args: [:id, :expected_revision, :condition_ids, :expected_conditions, :reason]
 
+      define :split_case_from_resolver,
+        action: :split_conditions,
+        args: [
+          :id,
+          :expected_revision,
+          :condition_ids,
+          :expected_conditions,
+          :reason,
+          :source_turn_id
+        ]
+
       define :claim_case, action: :claim, args: [:id, :expected_revision]
       define :handoff_case, action: :handoff, args: [:id, :expected_revision, :owner_id]
 
@@ -77,9 +88,9 @@ defmodule Opsonde.Cases do
         action: :reconcile_verified_effect,
         args: [:id, :verification_attempt_id]
 
-      define :reconcile_observation_recovery,
-        action: :reconcile_observation_recovery,
-        args: [:id, :observation_operation_id]
+      define :recheck_signal_conditions,
+        action: :recheck_signal_conditions,
+        args: [:id]
 
       define :require_case_attention,
         action: :require_attention,
@@ -199,6 +210,10 @@ defmodule Opsonde.Cases do
         action: :target_history,
         args: [:case_id, :resolution_run_id]
 
+      define :recovery_review_history,
+        action: :recovery_review_history,
+        args: [:case_id]
+
       define :create_case_event_record, action: :create_record
     end
 
@@ -256,6 +271,10 @@ defmodule Opsonde.Cases do
 
       define :target_continuity_evidence,
         action: :target_continuity,
+        args: [:case_id]
+
+      define :review_context_evidence,
+        action: :review_context,
         args: [:case_id]
 
       define :condition_assessment_evidence,

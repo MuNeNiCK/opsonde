@@ -4,14 +4,10 @@ defmodule Opsonde.Cases.ConditionRecovery do
   alias Opsonde.{Cases, Signals, Targets}
 
   @max_evidence 256
-  @monitor_wait_seconds 30
 
-  def monitor_wait_seconds, do: @monitor_wait_seconds
-
+  # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident) do
-    with {:ok, baseline} <- baseline_for_case(incident) do
-      assess(incident, baseline)
-    end
+    with {:ok, baseline} <- baseline_for_case(incident), do: assess(incident, baseline)
   end
 
   def baseline_for_case(incident) do
@@ -26,10 +22,8 @@ defmodule Opsonde.Cases.ConditionRecovery do
         [] ->
           {:ok, inherited}
 
-        [%{status: :applied, accepted_at: %DateTime{} = accepted_at} | _] ->
-          if DateTime.compare(accepted_at, inherited) == :gt,
-            do: {:ok, accepted_at},
-            else: {:ok, inherited}
+        [%{status: :applied, accepted_at: %DateTime{} = at} | _] ->
+          {:ok, if(DateTime.compare(at, inherited) == :gt, do: at, else: inherited)}
 
         _other ->
           {:error, "Latest Target effect is not applied"}
@@ -37,9 +31,6 @@ defmodule Opsonde.Cases.ConditionRecovery do
     end
   end
 
-  # The caller holds the Case admission lock and a Case row lock before using
-  # this result for a terminal transition. Remote observations happen earlier;
-  # this module only evaluates persisted facts against current Conditions.
   def assess(incident, after_at) do
     with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- memberships != [] || {:error, "Signal Case has no active Conditions"},
@@ -63,11 +54,19 @@ defmodule Opsonde.Cases.ConditionRecovery do
     end
   end
 
-  def all_healthy?(assessments) when is_list(assessments) and assessments != [] do
-    Enum.all?(assessments, &(&1.status == :healthy))
+  def ready_for_review?(assessments) when is_list(assessments) and assessments != [] do
+    Enum.all?(assessments, &(&1.status == :ready_for_review))
   end
 
-  def all_healthy?(_assessments), do: false
+  def ready_for_review?(_assessments), do: false
+
+  def current_evidence?(evidence, condition, baseline, target_revision)
+      when is_struct(baseline, DateTime) do
+    DateTime.compare(evidence.observed_at, baseline) != :lt and
+      DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt and
+      evidence.content["target_id"] == condition.target_id and
+      valid_operation_evidence?(evidence, condition, target_revision)
+  end
 
   defp assess_condition(condition, evidence, after_at) do
     cond do
@@ -82,16 +81,11 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
       true ->
         case Targets.get_target(condition.target_id, authorize?: false) do
-          {:ok, %{active: true, revision: target_revision}} ->
-            matching =
-              Enum.find(evidence, fn item ->
-                DateTime.compare(item.observed_at, condition.current_occurred_at) != :lt and
-                  evidence_proves?(item, condition, target_revision)
-              end)
-
-            if matching,
-              do: result(condition, :healthy, matching.id),
-              else: result(condition, :missing_subject_proof)
+          {:ok, %{active: true, revision: revision}} ->
+            case Enum.find(evidence, &current_evidence?(&1, condition, after_at, revision)) do
+              nil -> result(condition, :needs_observation)
+              item -> result(condition, :ready_for_review, item.id)
+            end
 
           _other ->
             result(condition, :target_changed)
@@ -108,91 +102,48 @@ defmodule Opsonde.Cases.ConditionRecovery do
     }
   end
 
-  defp evidence_proves?(
+  defp valid_operation_evidence?(
          %{kind: "observation", content: content} = evidence,
          condition,
-         target_revision
+         revision
        ) do
     with true <- content["status"] == "applied" and content["category"] == "target_observed",
          true <- content["target_id"] == condition.target_id,
          {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
          true <- operation.request_kind == :observation and operation.status == :applied,
-         true <- operation.target_id == condition.target_id,
-         true <- operation.target_revision == target_revision,
-         true <- operation.case_id == evidence.case_id,
-         true <- operation.id == evidence.source_ref,
+         true <- operation.case_id == evidence.case_id and operation.id == evidence.source_ref,
+         true <-
+           operation.target_id == condition.target_id and operation.target_revision == revision,
          true <- operation.capability == content["capability"],
          true <- operation.operation == content["operation"],
          true <- operation.selectors == content["selectors"] do
-      proves?(condition, operation, content["facts"])
+      true
     else
       _other -> false
     end
   end
 
-  defp evidence_proves?(
+  defp valid_operation_evidence?(
          %{kind: "target_verification", content: content} = evidence,
          condition,
-         target_revision
+         revision
        ) do
     with true <- content["status"] == "verified" and content["target_id"] == condition.target_id,
          {:ok, operation} <- Cases.get_operation(content["operation_id"], authorize?: false),
          true <- operation.request_kind == :effect and operation.status == :applied,
-         true <- operation.target_id == condition.target_id,
-         true <- operation.target_revision == target_revision,
-         true <- operation.case_id == evidence.case_id,
+         true <-
+           operation.case_id == evidence.case_id and operation.target_id == condition.target_id,
+         true <- operation.target_revision == revision,
          {:ok, attempt} <-
            Cases.verification_attempt_by_operation(operation.id, authorize?: false),
          true <- attempt.status == :verified and attempt.target_id == condition.target_id,
-         true <- attempt.target_revision == target_revision,
-         true <- attempt.observed_at == evidence.observed_at do
-      proves?(condition, attempt, content["facts"])
+         true <-
+           attempt.target_revision == revision and attempt.observed_at == evidence.observed_at do
+      true
     else
       _other -> false
     end
   end
 
-  defp evidence_proves?(_evidence, _condition, _target_revision), do: false
-
-  defp proves?(%{subject_ref: %{"kind" => "service", "name" => name}} = condition, source, facts)
-       when is_binary(name) and is_map(facts) do
-    condition.predicate in ["ServiceUnavailable", "LinuxServiceUnavailable"] and
-      source.capability in ["observe.service", "effect.service"] and
-      source.operation in ["linux.service.inspect", "linux.service.restart"] and
-      source.selectors == %{"unit" => name} and
-      facts["unit"] == name and facts["active_state"] == "active"
-  end
-
-  defp proves?(
-         %{subject_ref: %{"kind" => "deployment", "name" => name, "namespace" => namespace}} =
-           condition,
-         source,
-         facts
-       )
-       when is_binary(name) and is_binary(namespace) and is_map(facts) do
-    condition.predicate in ["DeploymentUnavailable", "KubeDeploymentReplicasMismatch"] and
-      source.capability == "observe.workload" and
-      source.operation == "kubernetes.deployment.inspect" and
-      source.selectors == %{"name" => name} and
-      facts["name"] == name and facts["namespace"] == namespace and
-      is_integer(facts["replicas"]) and facts["replicas"] >= 0 and
-      is_integer(facts["ready_replicas"]) and
-      is_integer(facts["available_replicas"]) and
-      facts["ready_replicas"] >= facts["replicas"] and
-      facts["available_replicas"] >= facts["replicas"] and
-      is_integer(facts["generation"]) and
-      is_integer(facts["observed_generation"]) and
-      facts["observed_generation"] >= facts["generation"]
-  end
-
-  defp proves?(%{subject_ref: subject, predicate: "LinuxGuestUnavailable"}, source, facts)
-       when map_size(subject) == 0 and is_map(facts) do
-    source.capability == "observe.identity" and
-      source.operation == "linux.identity.inspect" and
-      source.selectors == %{} and
-      is_binary(facts["machine_id"]) and byte_size(facts["machine_id"]) > 0 and
-      is_binary(facts["kernel"]) and byte_size(facts["kernel"]) > 0
-  end
-
-  defp proves?(_condition, _source, _facts), do: false
+  defp valid_operation_evidence?(_evidence, _condition, _revision), do: false
 end

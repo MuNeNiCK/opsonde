@@ -40,9 +40,17 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
           else
             with {:ok, type} <- decision_type(turn) do
               case current_conditions?(incident, turn) do
-                {:ok, true} -> dispatch(type, turn.id)
-                {:ok, false} -> supersede_stale_route(turn)
-                {:error, _error} = error -> error
+                {:ok, true} when type == "case_split" ->
+                  route_case_split(incident, turn)
+
+                {:ok, true} ->
+                  dispatch(type, turn.id)
+
+                {:ok, false} ->
+                  supersede_stale_route(turn)
+
+                {:error, _error} = error ->
+                  error
               end
             end
           end
@@ -85,6 +93,25 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
   end
 
   defp current_conditions?(_incident, _turn), do: {:ok, true}
+
+  defp route_case_split(%{trigger_kind: :signal} = incident, turn) do
+    intent = turn.result["intent"]
+
+    with {:ok, _child} <-
+           Cases.split_case_from_resolver(
+             incident.id,
+             incident.revision,
+             intent["condition_ids"],
+             turn.result["condition_revisions"],
+             intent["reason"],
+             turn.id,
+             authorize?: false
+           ) do
+      {:ok, :split}
+    end
+  end
+
+  defp route_case_split(_incident, _turn), do: {:error, "Only Signal Cases can be split"}
 
   defp supersede_stale_route(turn) do
     intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}
@@ -160,6 +187,7 @@ defmodule Opsonde.Cases.DecisionRouteWorker do
               "target_selection",
               "target_traversal",
               "proposal",
+              "case_split",
               "recovery_conclusion",
               "handoff"
             ],

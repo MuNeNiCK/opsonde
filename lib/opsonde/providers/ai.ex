@@ -60,25 +60,28 @@ defmodule Opsonde.Providers.AI do
       :current_occurred_at_us
     ]
 
-    defstruct @enforce_keys ++ [recovery_status: nil]
+    defstruct @enforce_keys ++ [recovery_status: nil, recovery_evidence_id: nil]
     @type t :: %__MODULE__{}
   end
 
-  def recovery_evidence_ids(request) do
-    if request.conditions != [] do
-      request.recovery_evidence_ids
-    else
-      request.evidence
-      |> Enum.filter(&verified_target_evidence?(&1, request.selected_target_id))
-      |> Enum.map(& &1.id)
-    end
+  def recovery_evidence_ids(request), do: request.recovery_evidence_ids
+
+  def target_candidate_evidence_ids(request, target_id) do
+    request.evidence
+    |> Enum.filter(fn evidence ->
+      (evidence.kind == "target_candidates" and is_map(evidence.content) and
+         is_list(evidence.content["candidate_ids"]) and
+         target_id in evidence.content["candidate_ids"]) or
+        (evidence.kind == "signal_event" and is_map(evidence.content) and
+           evidence.content["current"] == true and
+           Enum.any?(request.conditions, fn condition ->
+             condition.id == evidence.content["condition_id"] and
+               condition.revision == evidence.content["condition_revision"] and
+               condition.target_id == target_id
+           end))
+    end)
+    |> Enum.map(& &1.id)
   end
-
-  def recovery_ready?(%{alert_state: state} = request)
-      when state in [:recovered, :not_applicable],
-      do: recovery_evidence_ids(request) != []
-
-  def recovery_ready?(_request), do: false
 
   def available_proposal_tools(request) do
     Enum.filter(request.proposal_tools, &proposal_requirements_available?(&1, request))
@@ -174,45 +177,6 @@ defmodule Opsonde.Providers.AI do
        do: newer > older
 
   defp later_evidence?(_newer, _older), do: false
-
-  defp verified_target_evidence?(
-         %Evidence{
-           kind: "target_verification",
-           target_id: target_id,
-           content: %{"status" => "verified"}
-         },
-         target_id
-       )
-       when is_binary(target_id),
-       do: true
-
-  defp verified_target_evidence?(
-         %Evidence{
-           kind: "target_verification",
-           target_id: nil,
-           content: %{"status" => "verified"}
-         },
-         nil
-       ),
-       do: true
-
-  defp verified_target_evidence?(
-         %Evidence{
-           kind: "observation",
-           target_id: target_id,
-           content: %{
-             "status" => "applied",
-             "category" => "target_observed",
-             "facts" => facts,
-             "recovery_eligible" => true
-           }
-         },
-         target_id
-       )
-       when is_binary(target_id) and is_map(facts) and map_size(facts) > 0,
-       do: true
-
-  defp verified_target_evidence?(_evidence, _target_id), do: false
 
   defmodule TargetCandidate do
     @moduledoc false
@@ -342,6 +306,13 @@ defmodule Opsonde.Providers.AI do
   defmodule RecoveryConclusion do
     @moduledoc false
     @enforce_keys [:reason, :evidence_ids]
+    defstruct @enforce_keys ++ [condition_claims: []]
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule CaseSplit do
+    @moduledoc false
+    @enforce_keys [:condition_ids, :evidence_ids, :remaining_evidence_ids, :reason]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end
@@ -463,6 +434,7 @@ defmodule Opsonde.Providers.AI do
                   retry_context: nil,
                   traversable_relation_ids: [],
                   conditions: [],
+                  historical_evidence: [],
                   recovery_evidence_ids: []
                 ]
 
@@ -486,7 +458,14 @@ defmodule Opsonde.Providers.AI do
       :budget
     ]
 
-    defstruct @enforce_keys ++ [initial_target_id: nil, target_relations: [], retry_context: nil]
+    defstruct @enforce_keys ++
+                [
+                  initial_target_id: nil,
+                  target_relations: [],
+                  context_evidence: [],
+                  retry_context: nil
+                ]
+
     @type t :: %__MODULE__{}
   end
 
@@ -494,6 +473,27 @@ defmodule Opsonde.Providers.AI do
     @moduledoc false
     @enforce_keys [:verdict, :reason, :usage]
     defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule RecoveryReviewRequest do
+    @moduledoc false
+
+    @enforce_keys [
+      :provider_revision,
+      :session_id,
+      :resolver_session_id,
+      :case_id,
+      :objective,
+      :report_language,
+      :conditions,
+      :source_evidence,
+      :cited_evidence,
+      :conclusion,
+      :budget
+    ]
+
+    defstruct @enforce_keys ++ [context_evidence: [], retry_context: nil]
     @type t :: %__MODULE__{}
   end
 
@@ -517,6 +517,7 @@ defmodule Opsonde.Providers.AI do
   def resolver_disclosure_items(%ResolverRequest{} = request) do
     request.conditions ++
       request.evidence ++
+      request.historical_evidence ++
       request.target_candidates ++
       request.observation_results ++
       request.target_relations ++ request.observation_tools ++ request.proposal_tools
@@ -566,5 +567,8 @@ defmodule Opsonde.Providers.AI do
   @callback resolve(state :: term(), ResolverRequest.t(), invocation()) ::
               {:ok, ResolverDecision.t()} | adapter_error() | metered_adapter_error()
   @callback review(state :: term(), ReviewRequest.t(), invocation()) ::
+              {:ok, ReviewDecision.t()} | adapter_error() | metered_adapter_error()
+
+  @callback review_recovery(state :: term(), RecoveryReviewRequest.t(), invocation()) ::
               {:ok, ReviewDecision.t()} | adapter_error() | metered_adapter_error()
 end

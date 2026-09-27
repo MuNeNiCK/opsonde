@@ -55,6 +55,12 @@ defmodule Opsonde.Cases.CaseEvent do
       prepare build(sort: [inserted_at: :asc, id: :asc])
     end
 
+    read :recovery_review_history do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id) and event_type == "recovery_review_decided")
+      prepare build(sort: [inserted_at: :desc, id: :desc], limit: 501)
+    end
+
     create :create_record do
       accept [
         :case_id,
@@ -70,7 +76,7 @@ defmodule Opsonde.Cases.CaseEvent do
   end
 
   policies do
-    policy action([:by_idempotency, :target_history, :create_record]) do
+    policy action([:by_idempotency, :target_history, :recovery_review_history, :create_record]) do
       forbid_if always()
     end
 
