@@ -7,7 +7,8 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.IOSXE
 
-  @native "native.restconf"
+  @native_observation "native.restconf.observe"
+  @native_effect "native.restconf.effect"
 
   @configuration_keys ~w(ca_certificate connect_timeout_ms request_timeout_ms max_body_bytes)
   @credential_keys ~w(username password)
@@ -86,7 +87,7 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: @native} = target_request, invocation) do
+  def observe(%State{} = state, %{capability: @native_observation} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
          {:ok, method, path, body} <- native_request(target_request, "request.observe"),
          true <- method in [:get, :head],
@@ -110,7 +111,7 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, %{capability: @native} = target_request, invocation) do
+  def effect(%State{} = state, %{capability: @native_effect} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
          {:ok, method, path, body} <- native_request(target_request, "request.execute"),
          true <- method in [:post, :put, :patch, :delete],
@@ -133,7 +134,7 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, %{capability: @native} = target_request, invocation) do
+  def verify(%State{} = state, %{capability: @native_observation} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
          {:ok, method, path, body} <- native_request(target_request, "request.observe"),
          true <- method in [:get, :head],
@@ -398,9 +399,12 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   defp matches(observed, _expected, field), do: {:stale, observed, field}
 
   defp native_request(request, operation) do
+    expected_capability =
+      if(operation == "request.observe", do: @native_observation, else: @native_effect)
+
     case request do
       %{
-        capability: @native,
+        capability: ^expected_capability,
         operation: ^operation,
         selectors: selectors,
         parameters: %{"method" => method, "path" => path} = parameters
@@ -430,7 +434,7 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
     output = native_output_schema()
 
     %Target.Operation{
-      capability: @native,
+      capability: @native_observation,
       operation: "request.observe",
       description: "Send one exact non-mutating RESTCONF request and return its response",
       input_schema: native_schema(["get", "head"]),
@@ -442,7 +446,7 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
 
   defp native_effect do
     %Target.Operation{
-      capability: @native,
+      capability: @native_effect,
       operation: "request.execute",
       description: "Send one exact mutating RESTCONF request after authority review",
       input_schema: native_schema(["post", "put", "patch", "delete"]),

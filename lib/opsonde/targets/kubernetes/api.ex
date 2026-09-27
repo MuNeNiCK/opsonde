@@ -9,7 +9,8 @@ defmodule Opsonde.Targets.Kubernetes.API do
   @configuration_keys ~w(namespace request_timeout_ms)
   @credential_keys ~w(kubeconfig)
   @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
-  @native "native.kubernetes_api"
+  @native_observation "native.kubernetes_api.observe"
+  @native_effect "native.kubernetes_api.effect"
   @native_observation_query_keys %{
     "continue" => :continue,
     "fieldSelector" => :fieldSelector,
@@ -151,7 +152,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: @native} = request, invocation) do
+  def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation} <- native_observation_operation(state, request),
          {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
@@ -177,7 +178,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, %{capability: @native} = request, invocation) do
+  def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation} <- native_effect_operation(state, request),
          result <- run(state, operation, cancelled?(invocation), :effect) do
@@ -198,7 +199,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, %{capability: @native} = request, invocation) do
+  def verify(%State{} = state, %{capability: @native_observation} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
          {:ok, operation} <- native_observation_operation(state, request),
          {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
@@ -364,9 +365,12 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   defp native_request(request, operation) do
+    expected_capability =
+      if(operation == "request.observe", do: @native_observation, else: @native_effect)
+
     case request do
       %{
-        capability: @native,
+        capability: ^expected_capability,
         operation: ^operation,
         selectors: selectors,
         parameters:
@@ -405,7 +409,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
     }
 
     observation = %Target.Operation{
-      capability: @native,
+      capability: @native_observation,
       operation: "request.observe",
       description: "Run one exact Kubernetes get or list request",
       input_schema: native_schema(["get", "list"], @native_observation_query_keys),
@@ -415,7 +419,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
     }
 
     effect = %Target.Operation{
-      capability: @native,
+      capability: @native_effect,
       operation: "request.execute",
       description:
         "Run one exact Kubernetes create, update, patch, or delete request after review",

@@ -5,7 +5,7 @@ defmodule Opsonde.Targets.NativeShellTest do
 
   test "readonly classification accepts observations and rejects mutation or shell composition" do
     assert NativeShell.readonly?("uname -a")
-    assert NativeShell.readonly?("journalctl -u sshd.service --since today")
+    assert NativeShell.readonly?("systemctl status sshd.service")
     assert NativeShell.readonly?("ps aux | grep beam.smp")
 
     refute NativeShell.readonly?("systemctl restart sshd.service")
@@ -17,6 +17,9 @@ defmodule Opsonde.Targets.NativeShellTest do
     refute NativeShell.readonly?("dmesg -n 1")
     refute NativeShell.readonly?("ethtool -E eth0 magic 0x1234 offset 0 value 1")
     refute NativeShell.readonly?("ip -batch /tmp/commands")
+    refute NativeShell.readonly?("journalctl --setup-keys")
+    refute NativeShell.readonly?("rg --pre 'touch /tmp/unsafe' pattern .")
+    refute NativeShell.readonly?("ss -K dst 192.0.2.1")
     refute NativeShell.readonly?("cat /etc/os-release > /tmp/os-release")
     refute NativeShell.readonly?("sh -c 'uname -a'")
   end

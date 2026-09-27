@@ -8,7 +8,8 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   alias Opsonde.Targets.IOSXE
   alias Opsonde.Transports.SSH, as: Transport
 
-  @native "native.cli"
+  @native_observation "native.cli.observe"
+  @native_effect "native.cli.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-ssh"
@@ -45,7 +46,11 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+  def observe(
+        %Transport.Config{} = state,
+        %{capability: @native_observation} = request,
+        invocation
+      ) do
     with {:ok, commands} <- native_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &readonly_cli?/1),
          {:ok, output} <-
@@ -76,7 +81,7 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+  def effect(%Transport.Config{} = state, %{capability: @native_effect} = request, invocation) do
     with {:ok, commands} <- native_commands(request, "cli.execute"),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)),
@@ -101,7 +106,11 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%Transport.Config{} = state, %{capability: @native} = request, invocation) do
+  def verify(
+        %Transport.Config{} = state,
+        %{capability: @native_observation} = request,
+        invocation
+      ) do
     with {:ok, commands} <- native_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &readonly_cli?/1),
          {:ok, output} <-
@@ -268,9 +277,12 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   end
 
   defp native_commands(request, operation) do
+    expected_capability =
+      if(operation == "cli.observe", do: @native_observation, else: @native_effect)
+
     case request do
       %{
-        capability: @native,
+        capability: ^expected_capability,
         operation: ^operation,
         selectors: selectors,
         parameters: %{"commands" => commands}
@@ -299,7 +311,7 @@ defmodule Opsonde.Targets.IOSXE.SSH do
     }
 
     %Target.Operation{
-      capability: @native,
+      capability: @native_observation,
       operation: "cli.observe",
       description: "Run exact non-mutating IOS XE CLI commands and return raw output",
       input_schema: native_schema(),
@@ -311,7 +323,7 @@ defmodule Opsonde.Targets.IOSXE.SSH do
 
   defp native_effect do
     %Target.Operation{
-      capability: @native,
+      capability: @native_effect,
       operation: "cli.execute",
       description: "Run exact IOS XE CLI commands after authority review",
       input_schema: native_schema(),

@@ -3,6 +3,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
+  alias Opsonde.Targets.NativeShell
   alias Opsonde.Targets.{PolicyError, PolicyRequest}
   alias Opsonde.Transports.SSH, as: Transport
 
@@ -65,6 +66,23 @@ defmodule Opsonde.Targets.GenericSSHTest do
   setup context do
     Agent.update(context.commands, fn _commands -> [] end)
     :ok
+  end
+
+  test "native observation rejects command families with effect flags" do
+    for command <- [
+          "rg --pre 'sh -c touch /tmp/unsafe' pattern .",
+          "ethtool eth0 -s eth0 speed 100",
+          "find /tmp -exec touch /tmp/unsafe \\;",
+          "ip netns exec namespace touch /tmp/unsafe",
+          "journalctl --rotate",
+          "dmesg --read-clear",
+          "ss -K dst 192.0.2.1"
+        ] do
+      refute NativeShell.readonly?(command)
+    end
+
+    assert NativeShell.readonly?("systemctl list-unit-files --type=service --no-pager")
+    assert NativeShell.readonly?("uname -a")
   end
 
   test "transport supports pinned password and in-memory public-key authentication", context do
@@ -185,9 +203,9 @@ defmodule Opsonde.Targets.GenericSSHTest do
     assert %Target.Capabilities{observations: [observation], effects: [tool]} =
              Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
 
-    assert observation.capability == "native.ssh"
+    assert observation.capability == "native.ssh.observe"
     assert observation.operation == "command.observe"
-    assert tool.capability == "native.ssh"
+    assert tool.capability == "native.ssh.effect"
     assert tool.operation == "command.execute"
 
     target =
@@ -203,7 +221,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
         context.endpoint,
         provider.revision,
         100,
-        ["native.ssh"],
+        ["native.ssh.observe", "native.ssh.effect"],
         actor: admin
       )
 
@@ -237,6 +255,39 @@ defmodule Opsonde.Targets.GenericSSHTest do
 
     assert commands(context) == ["uname -a"]
 
+    method =
+      Targets.update_access_method!(
+        method,
+        method.revision,
+        %{capabilities: ["native.ssh.observe"]},
+        actor: admin
+      )
+
+    assert {:error, _} =
+             Targets.clear_target_request(
+               request(target, method, :effect, :full_access, "never-ungranted"),
+               actor: operator
+             )
+
+    observation_clearance =
+      Targets.clear_target_request!(
+        request(target, method, :observation, :readonly, "uname -a"),
+        actor: operator
+      )
+
+    assert %Target.Observation{} =
+             Targets.dispatch_target_observation!(observation_clearance, %{}, actor: operator)
+
+    assert commands(context) == ["uname -a", "uname -a"]
+
+    method =
+      Targets.update_access_method!(
+        method,
+        method.revision,
+        %{capabilities: ["native.ssh.observe", "native.ssh.effect"]},
+        actor: admin
+      )
+
     stale_clearance =
       Targets.clear_target_request!(
         request(target, method, :effect, :full_access, "never-stale"),
@@ -252,13 +303,13 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert policy_error(stale_error).category == :stale_context
-    assert commands(context) == ["uname -a"]
+    assert commands(context) == ["uname -a", "uname -a"]
 
     Targets.create_target_policy!(
       target.id,
       "blocked-command",
       [:effect],
-      ["native.ssh"],
+      ["native.ssh.effect"],
       ["command.execute"],
       %{},
       %{"command" => %{"eq" => "never-policy"}},
@@ -273,7 +324,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert policy_error(denied_error).category == :denied
-    assert commands(context) == ["uname -a"]
+    assert commands(context) == ["uname -a", "uname -a"]
 
     effect_clearance =
       Targets.clear_target_request!(
@@ -288,19 +339,30 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
 
     assert details["stdout"] == %{"encoding" => "utf-8", "value" => "ran:apply"}
-    assert commands(context) == ["uname -a", "apply"]
+    assert commands(context) == ["uname -a", "uname -a", "apply"]
 
     verification_clearance =
       Targets.clear_target_request!(
-        request(target, method, :verification, :full_access, "verify"),
+        request(target, method, :verification, :full_access, "uname -a"),
         actor: operator
       )
 
     assert %Target.Verification{status: :unknown, facts: facts} =
              Targets.dispatch_target_verification!(verification_clearance, %{}, actor: operator)
 
-    assert facts["stdout"] == %{"encoding" => "utf-8", "value" => "ran:verify"}
-    assert commands(context) == ["uname -a", "apply", "verify"]
+    assert facts["stdout"] == %{"encoding" => "utf-8", "value" => "ran:uname -a"}
+    assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
+
+    unsafe_verification =
+      Targets.clear_target_request!(
+        request(target, method, :verification, :full_access, "touch /tmp/unsafe"),
+        actor: operator
+      )
+
+    assert {:error, _} =
+             Targets.dispatch_target_verification(unsafe_verification, %{}, actor: operator)
+
+    assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
   end
 
   defp configuration(context, overrides \\ %{}) do
@@ -336,7 +398,11 @@ defmodule Opsonde.Targets.GenericSSHTest do
       target_revision: target.revision,
       access_method_id: method.id,
       access_method_revision: method.revision,
-      capability: "native.ssh",
+      capability:
+        if(kind in [:observation, :verification],
+          do: "native.ssh.observe",
+          else: "native.ssh.effect"
+        ),
       operation:
         if(kind in [:observation, :verification], do: "command.observe", else: "command.execute"),
       selectors: %{},

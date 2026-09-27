@@ -14,7 +14,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     "observe.service",
     "observe.journal",
     "effect.service",
-    "native.ssh"
+    "native.ssh.observe",
+    "native.ssh.effect"
   ]
 
   setup_all do
@@ -117,6 +118,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert Enum.map(observations, & &1.operation) == [
              "linux.identity.inspect",
              "linux.process.list",
+             "linux.service.list",
              "linux.service.inspect",
              "linux.journal.read",
              "command.observe"
@@ -160,7 +162,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert %Target.Observation{facts: %{"exit_status" => 0} = native_facts} =
              observe!(
                context,
-               "native.ssh",
+               "native.ssh.observe",
                "command.observe",
                %{},
                %{"command" => "uname -a"}
@@ -185,6 +187,26 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     processes = observe!(context, "observe.processes", "linux.process.list", %{}, %{"limit" => 2})
     assert_schema_accepts!(tools["linux.process.list"].output_schema, processes.facts)
     assert Enum.map(processes.facts["processes"], & &1["command"]) == ["beam.smp", "sshd"]
+
+    services =
+      observe!(context, "observe.service", "linux.service.list", %{}, %{"limit" => 2})
+
+    assert_schema_accepts!(tools["linux.service.list"].output_schema, services.facts)
+
+    assert services.facts == %{
+             "services" => [
+               %{"unit" => "cron.service", "unit_file_state" => "enabled"},
+               %{"unit" => "opsonde-metrics.service", "unit_file_state" => "enabled"}
+             ],
+             "offset" => 0,
+             "next_offset" => 2,
+             "has_more" => true
+           }
+
+    assert_schema_rejects!(tools["linux.service.list"].input_schema, %{
+      "selectors" => %{},
+      "parameters" => %{"limit" => 201}
+    })
 
     unit = "discovered@42.service"
 
@@ -269,7 +291,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       policy_request(
         context,
         :effect,
-        "native.ssh",
+        "native.ssh.effect",
         "command.execute",
         %{},
         %{"command" => "systemctl restart opsonde-validation.service"}
@@ -287,7 +309,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       policy_request(
         context,
         :verification,
-        "native.ssh",
+        "native.ssh.observe",
         "command.observe",
         %{},
         %{"command" => "uname -a"},
@@ -313,7 +335,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert {:ok, state} = LinuxSSH.build(configuration, credentials())
 
     request = %{
-      capability: "native.ssh",
+      capability: "native.ssh.observe",
       operation: "command.observe",
       selectors: %{},
       parameters: %{"command" => "uname -a"},
@@ -437,6 +459,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
         String.starts_with?(command, "ps -eo") ->
           {:ok, "101 1 S beam.smp\n202 1 S sshd\n"}
+
+        String.contains?(command, "systemctl list-unit-files") ->
+          {:ok,
+           "cron.service enabled enabled\n" <>
+             "opsonde-metrics.service enabled enabled\n" <>
+             "sshd.service enabled enabled\n"}
 
         String.contains?(command, "journalctl") ->
           {:ok, "entry one\nentry two\n"}

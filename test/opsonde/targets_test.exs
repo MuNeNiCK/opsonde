@@ -376,7 +376,7 @@ defmodule Opsonde.TargetsTest do
             {physical.id, "ssh", endpoint, ["observe.power"]},
             {physical.id, method, "#{endpoint}/other", ["observe.power"]},
             {physical.id, method, endpoint, ["effect.power"]},
-            {physical.id, method, endpoint, ["observe.power", "native.ssh"]}
+            {physical.id, method, endpoint, ["observe.power", "native.ssh.observe"]}
           ] do
         assert {:error, error} =
                  create.(target_id, candidate_method, candidate_endpoint, capabilities)

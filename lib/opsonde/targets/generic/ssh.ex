@@ -8,7 +8,8 @@ defmodule Opsonde.Targets.Generic.SSH do
   alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.NativeShell
 
-  @capability "native.ssh"
+  @observation_capability "native.ssh.observe"
+  @effect_capability "native.ssh.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "generic-ssh"
@@ -34,7 +35,8 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
-    {observation, effect} = NativeShell.operations(@capability, "SSH")
+    {observation, effect} =
+      NativeShell.operations(@observation_capability, @effect_capability, "SSH")
 
     {:ok,
      %Target.Capabilities{
@@ -45,7 +47,7 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def observe(state, request, invocation) do
-    with {:ok, command} <- NativeShell.observation_command(request, @capability),
+    with {:ok, command} <- NativeShell.observation_command(request, @observation_capability),
          {:ok, result} <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       {:ok,
@@ -58,7 +60,7 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def effect(state, request, invocation) do
-    with {:ok, command} <- NativeShell.effect_command(request, @capability),
+    with {:ok, command} <- NativeShell.effect_command(request, @effect_capability),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       effect_result(result)
@@ -67,7 +69,8 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def verify(state, request, invocation) do
-    with {:ok, command} <- NativeShell.command(request, @capability, "command.observe"),
+    with {:ok, command} <-
+           NativeShell.observation_command(request, @observation_capability),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       verification_result(result)

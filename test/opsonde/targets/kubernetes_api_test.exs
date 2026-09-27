@@ -14,7 +14,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     "observe.logs",
     "observe.events",
     "effect.workload",
-    "native.kubernetes_api"
+    "native.kubernetes_api.observe",
+    "native.kubernetes_api.effect"
   ]
 
   defmodule KubernetesStub do
@@ -455,7 +456,13 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert_schema_accepts!(deployment_tool.output_schema, deployment.facts)
 
     native =
-      observe!(context, "native.kubernetes_api", "request.observe", %{}, native_parameters)
+      observe!(
+        context,
+        "native.kubernetes_api.observe",
+        "request.observe",
+        %{},
+        native_parameters
+      )
 
     assert %{"response" => %{"metadata" => %{"name" => "pod-one"}}} = native.facts
 
@@ -488,7 +495,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         policy_request(
           context,
           :observation,
-          "native.kubernetes_api",
+          "native.kubernetes_api.observe",
           "request.observe",
           %{},
           %{

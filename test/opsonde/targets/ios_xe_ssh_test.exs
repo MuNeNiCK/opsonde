@@ -6,7 +6,13 @@ defmodule Opsonde.Targets.IOSXESSHTest do
   alias Opsonde.Targets.PolicyRequest
 
   @password "correct horse battery staple"
-  @capabilities ["observe.system", "observe.interface", "effect.interface", "native.cli"]
+  @capabilities [
+    "observe.system",
+    "observe.interface",
+    "effect.interface",
+    "native.cli.observe",
+    "native.cli.effect"
+  ]
 
   defmodule CLI do
     @behaviour :ssh_server_channel
@@ -254,7 +260,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              request(
                context,
                :observation,
-               "native.cli",
+               "native.cli.observe",
                "cli.observe",
                %{},
                %{"commands" => ["show version"]}

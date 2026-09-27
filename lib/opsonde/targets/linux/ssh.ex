@@ -11,11 +11,15 @@ defmodule Opsonde.Targets.Linux.SSH do
   @identity {"observe.identity", "linux.identity.inspect"}
   @processes {"observe.processes", "linux.process.list"}
   @service {"observe.service", "linux.service.inspect"}
+  @service_list {"observe.service", "linux.service.list"}
   @journal {"observe.journal", "linux.journal.read"}
   @restart {"effect.service", "linux.service.restart"}
-  @native "native.ssh"
+  @native_observation "native.ssh.observe"
+  @native_effect "native.ssh.effect"
   @unit_pattern ~r/^[A-Za-z0-9_.@:-]+\.service$/
   @digest_pattern ~r/^[a-f0-9]{64}$/
+  @service_state_pattern ~r/^[a-z0-9_-]{1,64}$/
+  @max_service_page 200
   @service_fields %{
     "Id" => "unit",
     "LoadState" => "load_state",
@@ -70,7 +74,8 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
-    {native_observation, native_effect} = NativeShell.operations(@native, "Linux shell")
+    {native_observation, native_effect} =
+      NativeShell.operations(@native_observation, @native_effect, "Linux shell")
 
     native_observation = describe_privilege(native_observation, state)
     native_effect = describe_privilege(native_effect, state)
@@ -89,6 +94,12 @@ defmodule Opsonde.Targets.Linux.SSH do
            "List a bounded set of Linux processes",
            process_schema(),
            processes_output_schema()
+         ),
+         operation(
+           @service_list,
+           "List installed systemd services by page to discover a unit name before inspection",
+           service_list_schema(),
+           service_list_output_schema()
          ),
          operation(
            @service,
@@ -128,7 +139,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native do
+      when capability != @native_observation do
     with {:ok, command, decoder} <- observation_command(state, request),
          {:ok, result} <- execute(state, request, command, invocation),
          {:ok, facts} <- decode_observation(decoder, result) do
@@ -143,8 +154,8 @@ defmodule Opsonde.Targets.Linux.SSH do
     end
   end
 
-  def observe(%State{} = state, %{capability: @native} = request, invocation) do
-    with {:ok, command} <- NativeShell.observation_command(request, @native),
+  def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
+    with {:ok, command} <- NativeShell.observation_command(request, @native_observation),
          {:ok, result} <- execute(state, request, native_command(state, command), invocation) do
       {:ok,
        %Target.Observation{
@@ -159,7 +170,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native do
+      when capability != @native_effect do
     with {:ok, command} <- restart_command(state, request),
          result <- execute_raw(state, request, command, invocation) do
       effect_result(result)
@@ -168,8 +179,8 @@ defmodule Opsonde.Targets.Linux.SSH do
     end
   end
 
-  def effect(%State{} = state, %{capability: @native} = request, invocation) do
-    with {:ok, command} <- NativeShell.effect_command(request, @native) do
+  def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
+    with {:ok, command} <- NativeShell.effect_command(request, @native_effect) do
       state
       |> execute_raw(request, native_command(state, command), invocation)
       |> effect_result()
@@ -180,7 +191,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native do
+      when capability != @native_observation do
     with {:ok, command, :service} <- observation_command(state, request),
          {:ok, expected} <- verification_expected(request.expected),
          {:ok, result} <- execute(state, request, command, invocation),
@@ -205,8 +216,9 @@ defmodule Opsonde.Targets.Linux.SSH do
     end
   end
 
-  def verify(%State{} = state, %{capability: @native} = request, invocation) do
-    with {:ok, command} <- NativeShell.command(request, @native, "command.observe"),
+  def verify(%State{} = state, %{capability: @native_observation} = request, invocation) do
+    with {:ok, command} <-
+           NativeShell.observation_command(request, @native_observation),
          {:ok, result} <- execute(state, request, native_command(state, command), invocation),
          facts <- NativeShell.facts(result) do
       {:ok,
@@ -246,6 +258,16 @@ defmodule Opsonde.Targets.Linux.SSH do
           do: {:ok, service_command(unit), :service},
           else: invalid_request()
 
+      {capability, operation, selectors, parameters}
+      when {capability, operation} == @service_list and selectors == %{} ->
+        case service_page(parameters) do
+          {:ok, offset, limit} ->
+            {:ok, service_list_command(offset, limit), {:service_list, offset, limit}}
+
+          error ->
+            error
+        end
+
       {capability, operation, %{"unit" => unit}, %{"lines" => lines}}
       when {capability, operation} == @journal and is_integer(lines) and lines in 1..200 ->
         if valid_unit?(unit),
@@ -279,6 +301,30 @@ defmodule Opsonde.Targets.Linux.SSH do
       "-- #{quoted} || exit $?; " <>
       "printf 'DefinitionSHA256='; printf '%s' \"$definition\" | sha256sum | cut -d' ' -f1"
   end
+
+  defp service_list_command(offset, limit) do
+    first = offset + 1
+    last = offset + limit + 1
+
+    "units=\"$(systemctl list-unit-files --type=service --no-legend --no-pager --plain)\" || exit $?; " <>
+      "printf '%s\\n' \"$units\" | sed -n '#{first},#{last}p'"
+  end
+
+  defp service_page(parameters) when is_map(parameters) do
+    if Map.keys(parameters) -- ["offset", "limit"] == [] do
+      offset = Map.get(parameters, "offset", 0)
+      limit = Map.get(parameters, "limit", @max_service_page)
+
+      if is_integer(offset) and offset in 0..10_000 and is_integer(limit) and
+           limit in 1..@max_service_page,
+         do: {:ok, offset, limit},
+         else: invalid_request()
+    else
+      invalid_request()
+    end
+  end
+
+  defp service_page(_parameters), do: invalid_request()
 
   defp journal_command(state, unit, lines) do
     command =
@@ -369,6 +415,44 @@ defmodule Opsonde.Targets.Linux.SSH do
       {:ok, facts}
     else
       {:error, :failed, "Linux service response is invalid"}
+    end
+  end
+
+  defp decode_observation({:service_list, offset, limit}, result) do
+    lines = String.split(result.stdout, "\n", trim: true)
+
+    if length(lines) > limit + 1 do
+      {:error, :failed, "Linux service list exceeded the requested page bound"}
+    else
+      lines
+      |> Enum.take(limit)
+      |> Enum.reduce_while({:ok, []}, fn line, {:ok, services} ->
+        case String.split(line, ~r/\s+/, trim: true) do
+          [unit, state | _rest]
+          when is_binary(unit) and is_binary(state) ->
+            if valid_unit?(unit) and Regex.match?(@service_state_pattern, state),
+              do: {:cont, {:ok, [%{"unit" => unit, "unit_file_state" => state} | services]}},
+              else: {:halt, {:error, :failed, "Linux service list response is invalid"}}
+
+          _line ->
+            {:halt, {:error, :failed, "Linux service list response is invalid"}}
+        end
+      end)
+      |> case do
+        {:ok, services} ->
+          services = Enum.reverse(services)
+
+          {:ok,
+           %{
+             "services" => services,
+             "offset" => offset,
+             "next_offset" => offset + length(services),
+             "has_more" => length(lines) > limit
+           }}
+
+        error ->
+          error
+      end
     end
   end
 
@@ -471,6 +555,26 @@ defmodule Opsonde.Targets.Linux.SSH do
     |> facts_schema()
   end
 
+  defp service_list_output_schema do
+    facts_schema(%{
+      "services" => %{
+        "type" => "array",
+        "maxItems" => @max_service_page,
+        "items" =>
+          object_schema(
+            %{
+              "unit" => unit_property(),
+              "unit_file_state" => fact_string(64, 1)
+            },
+            ["unit", "unit_file_state"]
+          )
+      },
+      "offset" => %{"type" => "integer", "minimum" => 0},
+      "next_offset" => %{"type" => "integer", "minimum" => 0},
+      "has_more" => %{"type" => "boolean"}
+    })
+  end
+
   defp service_verification_schema do
     %{
       "type" => "object",
@@ -520,6 +624,18 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   defp unit_schema do
     request_schema(%{"unit" => unit_property()}, ["unit"], %{}, [])
+  end
+
+  defp service_list_schema do
+    request_schema(
+      %{},
+      [],
+      %{
+        "offset" => %{"type" => "integer", "minimum" => 0, "maximum" => 10_000},
+        "limit" => %{"type" => "integer", "minimum" => 1, "maximum" => @max_service_page}
+      },
+      []
+    )
   end
 
   defp journal_schema do

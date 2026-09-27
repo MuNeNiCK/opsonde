@@ -4,20 +4,20 @@ defmodule Opsonde.Targets.NativeShell do
   alias Opsonde.Providers.Target
 
   @read_commands ~w(
-    cat cut date df dmesg du ethtool file find free getent grep head hostname
-    id iostat ip journalctl ls lscpu lsblk lsof mpstat pgrep pidof printenv ps pwd
-    readlink realpath rg ss stat systemctl tail top uname uptime vmstat wc who whoami
+    cat cut df du file free getent grep head hostname id iostat ls lscpu lsblk
+    lsof mpstat pgrep pidof ps pwd readlink realpath stat systemctl tail top
+    uname uptime vmstat wc who whoami
   )
 
   @forbidden_tokens [";", "&&", "||", ">", "<", "`", "$(", "\n", "\r"]
 
-  def operations(capability, description) do
+  def operations(observation_capability, effect_capability, description) do
     schema = command_schema()
     output = output_schema()
 
     {
       %Target.Operation{
-        capability: capability,
+        capability: observation_capability,
         operation: "command.observe",
         description: "Run one exact non-mutating #{description} command and return raw output",
         input_schema: schema,
@@ -26,7 +26,7 @@ defmodule Opsonde.Targets.NativeShell do
         native?: true
       },
       %Target.Operation{
-        capability: capability,
+        capability: effect_capability,
         operation: "command.execute",
         description: "Run one exact #{description} command after authority review",
         input_schema: schema,
@@ -135,63 +135,7 @@ defmodule Opsonde.Targets.NativeShell do
     end
   end
 
-  defp readonly_arguments?("date", arguments), do: excludes?(arguments, ["-s", "--set"])
-
-  defp readonly_arguments?("dmesg", arguments),
-    do:
-      excludes?(arguments, [
-        "-c",
-        "-C",
-        "--clear",
-        "-n",
-        "--console-level",
-        "--console-on",
-        "--console-off"
-      ])
-
-  defp readonly_arguments?("find", arguments),
-    do:
-      excludes?(arguments, [
-        "-delete",
-        "-exec",
-        "-execdir",
-        "-ok",
-        "-okdir",
-        "-fprint",
-        "-fprintf",
-        "-fls"
-      ])
-
   defp readonly_arguments?("hostname", _arguments), do: false
-
-  defp readonly_arguments?("ip", arguments),
-    do:
-      excludes?(arguments, [
-        " add ",
-        " del ",
-        " delete ",
-        " set ",
-        " replace ",
-        " flush ",
-        " -batch ",
-        " batch ",
-        " exec "
-      ])
-
-  defp readonly_arguments?("ethtool", arguments),
-    do: not String.starts_with?(String.trim(arguments), "-")
-
-  defp readonly_arguments?("journalctl", arguments),
-    do:
-      excludes?(arguments, [
-        "--vacuum-size",
-        "--vacuum-time",
-        "--vacuum-files",
-        "--rotate",
-        "--flush",
-        "--sync",
-        "--relinquish-var"
-      ])
 
   defp readonly_arguments?("systemctl", arguments) do
     command =
@@ -204,11 +148,6 @@ defmodule Opsonde.Targets.NativeShell do
   end
 
   defp readonly_arguments?(_command, _arguments), do: true
-
-  defp excludes?(arguments, tokens) do
-    padded = " " <> arguments <> " "
-    not Enum.any?(tokens, &String.contains?(padded, &1))
-  end
 
   defp encode(value) do
     if String.valid?(value),

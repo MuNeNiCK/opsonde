@@ -13,7 +13,8 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
   @native_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
-  @native "native.netconf"
+  @native_observation "native.netconf.observe"
+  @native_effect "native.netconf.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-netconf"
@@ -56,7 +57,11 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+  def observe(
+        %SSH.Config{} = state,
+        %{capability: @native_observation} = target_request,
+        invocation
+      ) do
     with {:ok, body} <- native_body(target_request, "rpc.observe"),
          true <- readonly_rpc?(body),
          {:ok, reply} <-
@@ -89,7 +94,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+  def effect(%SSH.Config{} = state, %{capability: @native_effect} = target_request, invocation) do
     with {:ok, body} <- native_body(target_request, "rpc.execute"),
          {:ok, reply} <-
            native_rpc(
@@ -118,7 +123,11 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%SSH.Config{} = state, %{capability: @native} = target_request, invocation) do
+  def verify(
+        %SSH.Config{} = state,
+        %{capability: @native_observation} = target_request,
+        invocation
+      ) do
     with {:ok, body} <- native_body(target_request, "rpc.observe"),
          true <- readonly_rpc?(body),
          {:ok, reply} <-
@@ -239,9 +248,12 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   end
 
   defp native_body(request, operation) do
+    expected_capability =
+      if(operation == "rpc.observe", do: @native_observation, else: @native_effect)
+
     case request do
       %{
-        capability: @native,
+        capability: ^expected_capability,
         operation: ^operation,
         selectors: selectors,
         parameters: %{"body" => body}
@@ -267,7 +279,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
     output = native_output_schema()
 
     %Target.Operation{
-      capability: @native,
+      capability: @native_observation,
       operation: "rpc.observe",
       description: "Send one exact non-mutating NETCONF RPC body and return the raw reply",
       input_schema: native_schema(),
@@ -279,7 +291,7 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
 
   defp native_effect do
     %Target.Operation{
-      capability: @native,
+      capability: @native_effect,
       operation: "rpc.execute",
       description: "Send one exact NETCONF RPC body after authority review",
       input_schema: native_schema(),
