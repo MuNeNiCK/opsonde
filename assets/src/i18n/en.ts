@@ -293,10 +293,23 @@ const en = {
     },
     cases: {
       title: "Cases",
-      caseSymptom: "Original Case symptom",
-      symptomReviewStatus: {
-        supported: "Supported",
-        unsupported: "Unsupported",
+      createManual: "Create Case",
+      createManualDescription:
+        "Choose an investigation target and an observable outcome to verify.",
+      manualRequest: "Original request",
+      manualTitle: "Title",
+      desiredOutcome: "Desired outcome",
+      desiredOutcomeHelp:
+        "AI compares observations with this criterion to decide whether it is met.",
+      desiredOutcomeRequired: "Enter a desired outcome.",
+      observedProblem: "Original context",
+      observedProblemOptional: "Current situation (optional)",
+      initialTarget: "Target (optional)",
+      findTarget: "No target selected",
+      manualSeverity: "Severity",
+      desiredOutcomeReviewStatus: {
+        supported: "Outcome confirmed",
+        unsupported: "Outcome not confirmed",
         unknown: "Unclear",
       },
       conditionsTitle: "Current conditions",

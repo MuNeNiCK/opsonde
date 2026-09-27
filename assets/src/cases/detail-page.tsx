@@ -426,9 +426,16 @@ export function CaseDetailPage() {
 
       {incident.case_symptom && (
         <Card>
-          <CardContent className="space-y-2 p-5">
-            <h2 className="text-lg font-semibold">{t("cases.caseSymptom")}</h2>
-            <p className="text-sm">{incident.case_symptom.text}</p>
+          <CardContent className="space-y-4 p-5">
+            <h2 className="text-lg font-semibold">{t("cases.manualRequest")}</h2>
+            <div>
+              <p className="text-xs text-muted-foreground">{t("cases.desiredOutcome")}</p>
+              <p className="text-sm font-medium">{incident.case_symptom.desired_outcome}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t("cases.observedProblem")}</p>
+              <p className="text-sm">{incident.case_symptom.text}</p>
+            </div>
             <p className="font-mono text-xs text-muted-foreground">{incident.case_symptom.id}</p>
           </CardContent>
         </Card>
@@ -453,9 +460,12 @@ export function CaseDetailPage() {
                       <div className="mt-2 space-y-1 text-sm">
                         <Badge variant="outline">
                           {t(
-                            `cases.symptomReviewStatus.${event.review_desired_outcome_assessment.status}`,
+                            `cases.desiredOutcomeReviewStatus.${event.review_desired_outcome_assessment.status}`,
                           )}
                         </Badge>
+                        <p className="font-medium">
+                          {event.review_desired_outcome_assessment.desired_outcome}
+                        </p>
                         <p>{event.review_desired_outcome_assessment.reason}</p>
                         <p className="text-xs text-muted-foreground">
                           {t("cases.recoveryReviewEvidence")}:{" "}

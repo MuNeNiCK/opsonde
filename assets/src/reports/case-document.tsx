@@ -17,10 +17,12 @@ const copy = {
     source: "検知元",
     severity: "重要度",
     condition: "監視された事象",
-    caseSymptom: "ケースの症状",
-    symptomSupported: "復旧を確認",
-    symptomUnsupported: "復旧を確認できず",
-    symptomUnknown: "復旧は未確認",
+    caseSymptom: "受付時の要求",
+    desiredOutcome: "達成条件",
+    observedProblem: "受付内容",
+    symptomSupported: "達成を確認",
+    symptomUnsupported: "達成を確認できず",
+    symptomUnknown: "達成は未確認",
     actions: "実施した操作",
     verification: "対象操作の検証",
     cited: "判断に引用した証拠",
@@ -70,10 +72,12 @@ const copy = {
     source: "Source",
     severity: "Severity",
     condition: "Monitored conditions",
-    caseSymptom: "Case symptom",
-    symptomSupported: "Recovery confirmed",
-    symptomUnsupported: "Recovery not confirmed",
-    symptomUnknown: "Recovery unknown",
+    caseSymptom: "Original Case request",
+    desiredOutcome: "Desired outcome",
+    observedProblem: "Original context",
+    symptomSupported: "Outcome confirmed",
+    symptomUnsupported: "Outcome not confirmed",
+    symptomUnknown: "Outcome unconfirmed",
     actions: "Actions taken",
     verification: "Target operation checks",
     cited: "Evidence cited by Resolver",
@@ -198,7 +202,9 @@ export function CaseReportDocument({ report }: { report: Report }) {
           {document.case_symptom ? (
             <div className="report-observation">
               <div className="report-list-head">
-                <strong>{document.case_symptom.text}</strong>
+                <strong>
+                  {c.desiredOutcome}: {document.case_symptom.desired_outcome}
+                </strong>
                 <span>
                   {document.case_symptom.status === "supported"
                     ? c.symptomSupported
@@ -207,6 +213,9 @@ export function CaseReportDocument({ report }: { report: Report }) {
                       : c.symptomUnknown}
                 </span>
               </div>
+              <p>
+                {c.observedProblem}: {document.case_symptom.text}
+              </p>
               <small className="block">
                 {c.record} · {document.case_symptom.id}
               </small>

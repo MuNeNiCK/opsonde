@@ -14,6 +14,9 @@ const CaseListPage = lazy(() =>
 const CaseDetailPage = lazy(() =>
   import("@/cases/detail-page").then((module) => ({ default: module.CaseDetailPage })),
 );
+const CaseCreatePage = lazy(() =>
+  import("@/cases/create-page").then((module) => ({ default: module.CaseCreatePage })),
+);
 const SignalDiagnosticsPage = lazy(() =>
   import("@/cases/signal-diagnostics-page").then((module) => ({
     default: module.SignalDiagnosticsPage,
@@ -211,6 +214,7 @@ function AppRoutes() {
           <Route index element={<HomeRoute />} />
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="cases" element={<CaseListPage />} />
+          <Route path="cases/new" element={<CaseCreatePage />} />
           <Route path="cases/signals" element={<SignalDiagnosticsPage />} />
           <Route path="cases/:caseId" element={<CaseDetailPage />} />
           <Route path="targets" element={<TargetPage />} />

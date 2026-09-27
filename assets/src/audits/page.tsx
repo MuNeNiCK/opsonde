@@ -269,7 +269,9 @@ export function AuditPage() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <CardTitle>{schedule.name}</CardTitle>
-                    <CardDescription>{schedule.desired_outcome}</CardDescription>
+                    <CardDescription>
+                      {t("audits.desiredOutcome")}: {schedule.desired_outcome}
+                    </CardDescription>
                   </div>
                   <Badge variant={schedule.active ? "default" : "outline"}>
                     {t(schedule.active ? "audits.active" : "audits.inactive")}

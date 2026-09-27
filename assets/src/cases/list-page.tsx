@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, CircleAlert, Clock3, RefreshCw, Search } from "lucide-react";
+import { Activity, CircleAlert, Clock3, Plus, RefreshCw, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData } from "@/api/client";
@@ -180,6 +180,14 @@ export function CaseListPage() {
           <p className="mt-1 text-sm text-muted-foreground">{t("cases.description")}</p>
         </div>
         <div className="flex items-center gap-3 text-sm text-muted-foreground" aria-live="polite">
+          {(account?.role === "admin" || account?.role === "operator") && (
+            <Button asChild size="sm">
+              <Link to="/cases/new">
+                <Plus />
+                {t("cases.createManual")}
+              </Link>
+            </Button>
+          )}
           {refreshing ? (
             <Spinner />
           ) : error ? (
