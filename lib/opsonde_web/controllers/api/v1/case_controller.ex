@@ -204,7 +204,7 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def create(conn, %{"case" => input}) do
-    with true <- input["trigger_kind"] in ["manual", "audit"] || {:error, :bad_request},
+    with true <- input["trigger_kind"] == "manual" || {:error, :bad_request},
          {:ok, incident} <-
            Cases.open_case(
              input["trigger_kind"],

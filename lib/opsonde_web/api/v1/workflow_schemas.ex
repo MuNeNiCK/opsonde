@@ -134,7 +134,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     wrapped(
       :case,
       %{
-        trigger_kind: enum(~w(manual audit)),
+        trigger_kind: enum(~w(manual)),
         source: string(1, 120),
         source_ref: string(1, 500),
         title: string(1, 200),

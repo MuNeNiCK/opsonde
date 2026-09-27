@@ -76,6 +76,24 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
+  test "direct audit Case creation is rejected before an idle Case is stored", context do
+    body = %{
+      "case" => %{
+        "trigger_kind" => "audit",
+        "source" => "api",
+        "source_ref" => "unsupported-direct-audit",
+        "title" => "Inspect storage health",
+        "severity" => "info",
+        "initial_context" => %{"objective" => "Inspect storage health"}
+      }
+    }
+
+    response = post_json("/api/v1/cases", body, context.operator_token)
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(response, 422)
+    assert Cases.list_cases!(actor: context.admin) == []
+    assert Cases.list_turns!(actor: context.admin) == []
+  end
+
   test "manual Case and its dispatch job roll back together before a safe retry", context do
     body = %{
       "case" => %{

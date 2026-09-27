@@ -2015,8 +2015,7 @@
               },
               "trigger_kind": {
                 "enum": [
-                  "manual",
-                  "audit"
+                  "manual"
                 ],
                 "type": "string"
               }

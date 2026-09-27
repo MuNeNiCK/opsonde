@@ -1969,7 +1969,7 @@ export interface components {
                 source_ref: string;
                 title: string;
                 /** @enum {string} */
-                trigger_kind: "manual" | "audit";
+                trigger_kind: "manual";
             };
         };
         CreateTargetRequest: {
