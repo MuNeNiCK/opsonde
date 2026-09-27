@@ -489,14 +489,14 @@ defmodule Opsonde.OperationDeliveryTest do
     assert evidence.content["details"] == failed.result_details
 
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    assert run.no_progress_turns == 1
+    assert run.no_progress_turns == 0
 
     assert :ok =
              OperationDelivery.run(operation.id,
                target_invocation: invocation(fn -> flunk("failed observation was resent") end)
              )
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
   end
 
   test "only a new observation result resets the no-progress budget", context do
@@ -531,7 +531,8 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
   end
 
-  test "failed observations stop before another paid Resolver turn", context do
+  test "novel failed probes remain available but repeated input stops before another paid Turn",
+       context do
     {incident, run, proposal} =
       authorized_proposal!("observation-no-progress", context, request_kind: :observation)
 
@@ -542,21 +543,39 @@ defmodule Opsonde.OperationDeliveryTest do
                target_invocation: invocation({:error, :failed, "Target read failed"})
              )
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
 
-    second = continue_observation!(incident, context, first.id)
+    different = continue_observation!(incident, Map.put(context, :service, "db"), first.id)
+
+    assert :ok =
+             OperationDelivery.run(different.id,
+               target_invocation: invocation({:error, :failed, "Different Target read failed"})
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+
+    second = continue_observation!(incident, context, different.id)
 
     assert :ok =
              OperationDelivery.run(second.id,
                target_invocation: invocation({:error, :failed, "Target read failed"})
              )
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 2
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
 
     third = continue_observation!(incident, context, second.id)
 
     assert :ok =
              OperationDelivery.run(third.id,
+               target_invocation: invocation({:error, :failed, "Target read still failed"})
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 2
+
+    fourth = continue_observation!(incident, context, third.id)
+
+    assert :ok =
+             OperationDelivery.run(fourth.id,
                target_invocation: invocation({:error, :failed, "Target read still failed"})
              )
 

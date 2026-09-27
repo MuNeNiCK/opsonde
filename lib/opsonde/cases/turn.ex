@@ -112,6 +112,7 @@ defmodule Opsonde.Cases.Turn do
             :hypothesis,
             :proposal,
             :observation_pending,
+            :delivery_retry,
             :source_change,
             :human_input,
             :none
@@ -189,6 +190,7 @@ defmodule Opsonde.Cases.Turn do
                     :hypothesis,
                     :proposal,
                     :observation_pending,
+                    :delivery_retry,
                     :source_change,
                     :human_input,
                     :none

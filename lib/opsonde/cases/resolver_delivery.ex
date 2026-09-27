@@ -754,7 +754,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
                  "rejection_code" => rejection_code,
                  "message" => String.slice(message, 0, 1_000)
                },
-               :none,
+               :delivery_retry,
                intent,
                "Review Resolver limits or continue the Case manually",
                authorize?: false

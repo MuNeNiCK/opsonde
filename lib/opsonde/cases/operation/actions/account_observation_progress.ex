@@ -89,6 +89,11 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
             event.data["facts_fingerprint"] == facts_fingerprint
         end)
 
+      same_input_count =
+        Enum.count(history, fn event ->
+          event.data["input_fingerprint"] == input_fingerprint
+        end)
+
       novelty? = operation.status == :applied and identical_count == 0
 
       kind =
@@ -98,6 +103,9 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
 
           novelty? ->
             :progress
+
+          operation.status == :failed and same_input_count == 0 ->
+            :pending_result
 
           true ->
             :no_progress
@@ -117,7 +125,8 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
           "outcome_category" => operation.outcome_category,
           "input_fingerprint" => input_fingerprint,
           "facts_fingerprint" => facts_fingerprint,
-          "prior_identical_count" => identical_count
+          "prior_identical_count" => identical_count,
+          "prior_same_input_count" => same_input_count
         },
         pending_intent: %{
           "action" => "review_observation_progress",

@@ -259,6 +259,11 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert successor.intent["rejection_code"] == "schema_validation"
     assert successor.intent["rejection_path"] == "/intent/type"
 
+    assert Cases.get_turn!(turn.id, authorize?: false).progress_kind == :delivery_retry
+
+    assert Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false).no_progress_turns ==
+             0
+
     assert Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false).ai_usage_units ==
              12
 

@@ -36,7 +36,7 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
     kind =
       case arguments.progress_kind do
         kind when kind in [:none, :hypothesis] -> :no_progress
-        :observation_pending -> :pending_result
+        kind when kind in [:observation_pending, :delivery_retry] -> :pending_result
         _other -> :progress
       end
 
