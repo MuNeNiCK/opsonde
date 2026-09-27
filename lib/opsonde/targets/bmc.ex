@@ -101,6 +101,7 @@ defmodule Opsonde.Targets.BMC do
 
     %Target.Observation{
       facts: facts,
+      state_facts: %{"power_state" => power_state},
       observed_at: DateTime.utc_now(),
       evidence: [%{"source" => source, "facts" => facts}]
     }

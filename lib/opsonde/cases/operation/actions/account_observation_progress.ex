@@ -80,13 +80,25 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
           turn.result["condition_revisions"]
         })
 
-      facts_fingerprint = fingerprint(operation.result_details["facts"])
+      scope_fingerprint =
+        fingerprint({
+          operation.target_id,
+          operation.target_revision,
+          operation.capability,
+          operation.operation,
+          operation.selectors,
+          operation.parameters,
+          turn.result["condition_revisions"]
+        })
+
+      state_fingerprint =
+        fingerprint(operation.result_details["state_facts"] || operation.result_details["facts"])
 
       identical_count =
         Enum.count(history, fn event ->
           event.data["status"] == "applied" and
-            event.data["input_fingerprint"] == input_fingerprint and
-            event.data["facts_fingerprint"] == facts_fingerprint
+            event.data["scope_fingerprint"] == scope_fingerprint and
+            event.data["state_fingerprint"] == state_fingerprint
         end)
 
       same_input_count =
@@ -124,7 +136,8 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
           "status" => to_string(operation.status),
           "outcome_category" => operation.outcome_category,
           "input_fingerprint" => input_fingerprint,
-          "facts_fingerprint" => facts_fingerprint,
+          "scope_fingerprint" => scope_fingerprint,
+          "state_fingerprint" => state_fingerprint,
           "prior_identical_count" => identical_count,
           "prior_same_input_count" => same_input_count
         },

@@ -222,14 +222,29 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
          credentials
        )
        when is_map(facts) and is_list(evidence) do
+    result = %{"facts" => facts, "evidence" => evidence}
+
+    result =
+      if value.state_facts, do: Map.put(result, "state_facts", value.state_facts), else: result
+
     if bounded_map?(facts) and bounded_list?(evidence) and
-         bounded_map?(%{"facts" => facts, "evidence" => evidence}),
+         valid_state_facts?(value.state_facts, facts) and
+         bounded_map?(result),
        do: {:ok, Redactor.value(value, credentials)},
        else: {:error, target_error(:failed, "Invalid observation result")}
   end
 
   defp normalize_observation(result, credentials),
     do: normalize_error(result, @read_failures, "Invalid observation result", credentials)
+
+  defp valid_state_facts?(nil, _facts), do: true
+
+  defp valid_state_facts?(state_facts, facts) when is_map(state_facts) do
+    map_size(state_facts) > 0 and bounded_map?(state_facts) and
+      Map.take(facts, Map.keys(state_facts)) == state_facts
+  end
+
+  defp valid_state_facts?(_state_facts, _facts), do: false
 
   defp normalize_effect({:ok, %Target.EffectResult{status: status} = value}, credentials)
        when status in @effect_statuses and is_map(value.details) do

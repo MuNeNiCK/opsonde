@@ -93,15 +93,21 @@ defmodule Opsonde.Cases.OperationDelivery do
   end
 
   defp normalize(%ProviderTarget.Observation{} = result) do
+    details = %{
+      "facts" => result.facts,
+      "evidence" => result.evidence,
+      "observed_at" => DateTime.to_iso8601(result.observed_at)
+    }
+
     %{
       status: :applied,
       category: "target_observed",
       reference: nil,
-      details: %{
-        "facts" => result.facts,
-        "evidence" => result.evidence,
-        "observed_at" => DateTime.to_iso8601(result.observed_at)
-      }
+      details:
+        if(result.state_facts,
+          do: Map.put(details, "state_facts", result.state_facts),
+          else: details
+        )
     }
   end
 

@@ -704,6 +704,85 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
   end
 
+  test "the same Target state across Access Methods does not reset progress", context do
+    alternate =
+      Targets.create_access_method!(
+        context.target.id,
+        context.provider.id,
+        "operation-alternate-ssh",
+        "linux",
+        "ssh",
+        "ssh://operation-linux-alternate",
+        context.provider.revision,
+        9,
+        ["observe.service"],
+        actor: context.admin
+      )
+
+    alternate_context = %{context | method: alternate}
+
+    {incident, run, proposal} =
+      authorized_proposal!("observation-cross-method", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(
+               first,
+               %{"system_id" => "method-a", "state" => "active"},
+               %{"state" => "active"}
+             )
+
+    second = continue_observation!(incident, alternate_context, first.id)
+
+    assert :ok =
+             deliver_observation(
+               second,
+               %{"system_id" => "method-b", "state" => "active"},
+               %{"state" => "active"}
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
+
+    assert Cases.get_operation!(second.id, authorize?: false).result_details["facts"][
+             "system_id"
+           ] == "method-b"
+
+    third = continue_observation!(incident, context, second.id)
+
+    assert :ok =
+             deliver_observation(
+               third,
+               %{"system_id" => "method-a", "state" => "active"},
+               %{"state" => "active"}
+             )
+
+    fourth = continue_observation!(incident, alternate_context, third.id)
+
+    assert :ok =
+             deliver_observation(
+               fourth,
+               %{"system_id" => "method-b", "state" => "active"},
+               %{"state" => "active"}
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).stop_reason ==
+             "Repeated identical Target observation limit exhausted"
+
+    progress_events =
+      Enum.count(Cases.list_case_events!(actor: context.admin), fn event ->
+        event.case_id == incident.id and
+          event.event_type in ["observation_progress", "limit_exhausted"]
+      end)
+
+    assert Cases.account_observation_progress!(fourth.id, authorize?: false).status == :exhausted
+
+    assert Enum.count(Cases.list_case_events!(actor: context.admin), fn event ->
+             event.case_id == incident.id and
+               event.event_type in ["observation_progress", "limit_exhausted"]
+           end) == progress_events
+  end
+
   test "denied observation returns its reason to Resolver without authorizing an Operation",
        context do
     configure_mode!(context.admin, :auto)
@@ -3065,12 +3144,16 @@ defmodule Opsonde.OperationDeliveryTest do
     Cases.proposal_by_source_turn!(completed.id, authorize?: false)
   end
 
-  defp deliver_observation(operation, facts) do
+  defp deliver_observation(operation, facts, state_facts \\ nil) do
     OperationDelivery.run(operation.id,
       target_invocation:
         invocation({
           :ok,
-          %Target.Observation{facts: facts, observed_at: DateTime.utc_now()}
+          %Target.Observation{
+            facts: facts,
+            state_facts: state_facts,
+            observed_at: DateTime.utc_now()
+          }
         })
     )
   end

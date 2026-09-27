@@ -94,7 +94,7 @@ defmodule Opsonde.Providers.Target do
   defmodule Observation do
     @moduledoc false
     @enforce_keys [:facts, :observed_at]
-    defstruct @enforce_keys ++ [evidence: []]
+    defstruct @enforce_keys ++ [evidence: [], state_facts: nil]
     @type t :: %__MODULE__{}
   end
 
