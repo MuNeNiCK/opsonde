@@ -149,7 +149,10 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
   defp scoped_effects(operations) do
     operations
-    |> Enum.filter(&(&1.request_kind == :effect))
+    |> Enum.filter(fn operation ->
+      operation.request_kind == :effect and
+        not (operation.status == :failed and is_nil(operation.dispatch_started_at))
+    end)
     |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
       case Cases.get_proposal(operation.proposal_id, authorize?: false) do
         {:ok, proposal} when is_list(proposal.affected_conditions) ->

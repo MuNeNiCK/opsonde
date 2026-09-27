@@ -1129,6 +1129,105 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  test "a second effect rejected before send does not stale source recovery", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, signal_provider} =
+      authorized_proposal!("second-effect-recovery", context, trigger_kind: :signal)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    first_attempt = Cases.verification_attempt_by_operation!(first.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(first_attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "await_source_recovery"
+
+    Repo.update_all(
+      from(item in Opsonde.Cases.VerificationAttempt, where: item.id == ^first_attempt.id),
+      set: [completed_at: DateTime.add(DateTime.utc_now(), -31, :second)]
+    )
+
+    [check_job] = recovery_check_jobs(incident.id)
+    assert :ok = SignalRecoveryCheckWorker.perform(check_job)
+
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+    source = hd(Cases.signal_context_evidence!(incident.id, authorize?: false))
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        %{
+          "outcome" => "decision",
+          "condition_revisions" => revisions,
+          "intent" =>
+            signal_proposal_intent(source.id, context, :effect)
+            |> Map.put(
+              "affected_conditions",
+              Enum.map(revisions, fn %{"id" => id, "revision" => revision} ->
+                %{"condition_id" => id, "revision" => revision}
+              end)
+            ),
+          "resolver" => %{
+            "provider_id" => context.resolver_provider.id,
+            "provider_revision" => context.resolver_provider.revision,
+            "assignment_id" => context.resolver_assignment.id,
+            "assignment_revision" => context.resolver_assignment.revision
+          },
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        },
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    Cases.route_downstream_decision!(completed.id, authorize?: false)
+    second_proposal = Cases.materialize_proposal!(completed.id, authorize?: false)
+    second_proposal = Cases.route_proposal_authority!(second_proposal.id, authorize?: false)
+    second = Cases.accept_operation!(second_proposal.id, authorize?: false)
+
+    recover_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "recovery-before-second-send",
+      DateTime.add(second.accepted_at, -1, :microsecond)
+    )
+
+    assert {:error, "Relevant Target effect is not complete"} =
+             ConditionRecovery.assess_current(incident)
+
+    assert :ok =
+             OperationDelivery.run(second.id,
+               target_invocation: invocation(fn -> flunk("stale effect was sent") end)
+             )
+
+    rejected = Cases.get_operation!(second.id, authorize?: false)
+    assert rejected.status == :failed
+    assert rejected.dispatch_started_at == nil
+    refute_receive {:effect, _, _}
+
+    assert {:ok, [%{status: :needs_observation}]} =
+             ConditionRecovery.assess_current(incident)
+  end
+
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
        context do
     enable_signal_automation!(context.admin)
