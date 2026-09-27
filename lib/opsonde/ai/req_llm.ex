@@ -360,6 +360,7 @@ defmodule Opsonde.AI.ReqLLM do
       "cited_evidence" => plain(request.cited_evidence),
       "case_initial_target_id" => request.initial_target_id,
       "registered_target_relations" => plain(request.target_relations),
+      "retry_context" => request.retry_context,
       "budget" => plain(request.budget)
     }
 
@@ -378,7 +379,9 @@ defmodule Opsonde.AI.ReqLLM do
         "exact proposal is justified by the supplied evidence, permitted by the policy summary, " <>
         "proportional to the unresolved condition, and acceptably safe. Use needs_human only " <>
         "when a concrete ambiguity in the supplied evidence or policy prevents a decision, and " <>
-        "identify that ambiguity. " <>
+        "identify that ambiguity. If retry_context says invalid_output, a previous metered " <>
+        "response failed format or schema validation; reconsider the evidence and return one complete " <>
+        "object matching the supplied schema. " <>
         "Write the human-facing reason in the report_language supplied in the user payload. " <>
         "Return approved, rejected, or needs_human with a concise reason of at most 1000 characters.",
       Jason.encode!(payload)

@@ -569,6 +569,24 @@ defmodule Opsonde.AI.ReqLLMTest do
              host.id
   end
 
+  test "Reviewer receives a bounded schema correction after a paid invalid response", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    request = %{
+      review_request()
+      | retry_context: %{
+          "category" => "invalid_output",
+          "rejection_code" => "schema_validation"
+        }
+    }
+
+    set_mode(context.agent, {:decision, %{"verdict" => "rejected", "reason" => "No proof"}})
+    assert {:ok, %AI.ReviewDecision{verdict: :rejected}} = Adapter.review(state, request, %{})
+
+    assert reviewer_payload(hd(requests(context.agent)))["retry_context"] ==
+             request.retry_context
+  end
+
   test "eligible Target traversal removes avoidable handoff from the Resolver contract",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})

@@ -4,7 +4,9 @@ defmodule Opsonde.Cases.ReviewProjection do
   alias Opsonde.{Cases, Targets}
   alias Opsonde.Providers.AI
 
-  def build(proposal_id, %AI.Selection{role: :reviewer} = selection) do
+  def build(proposal_id, selection, retry_context \\ nil)
+
+  def build(proposal_id, %AI.Selection{role: :reviewer} = selection, retry_context) do
     with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false),
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
@@ -25,6 +27,7 @@ defmodule Opsonde.Cases.ReviewProjection do
         cited_evidence: evidence,
         initial_target_id: incident.initial_target_id,
         target_relations: target_relations,
+        retry_context: retry_context,
         budget: budget(run)
       }
 
@@ -35,7 +38,8 @@ defmodule Opsonde.Cases.ReviewProjection do
     end
   end
 
-  def build(_proposal_id, _selection), do: {:error, "Reviewer AI selection is invalid"}
+  def build(_proposal_id, _selection, _retry_context),
+    do: {:error, "Reviewer AI selection is invalid"}
 
   defp eligible(proposal, incident, run) do
     cond do

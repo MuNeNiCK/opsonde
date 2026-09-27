@@ -486,7 +486,7 @@ defmodule Opsonde.Providers.AI do
       :budget
     ]
 
-    defstruct @enforce_keys ++ [initial_target_id: nil, target_relations: []]
+    defstruct @enforce_keys ++ [initial_target_id: nil, target_relations: [], retry_context: nil]
     @type t :: %__MODULE__{}
   end
 

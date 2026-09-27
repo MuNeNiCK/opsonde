@@ -74,6 +74,7 @@ defmodule Opsonde.Providers.AI.Validator do
         request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
         nonempty?(request.objective) and request.report_language in [:en, :ja] and
         nonempty?(request.policy_summary) and
+        valid_retry_context?(request.retry_context) and
         valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
         valid_review_proposal?(request.proposal, evidence_ids)
     else
@@ -322,7 +323,8 @@ defmodule Opsonde.Providers.AI.Validator do
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
       cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
       initial_target_id: request.initial_target_id,
-      target_relations: Enum.map(request.target_relations, &plain_value/1)
+      target_relations: Enum.map(request.target_relations, &plain_value/1),
+      retry_context: request.retry_context
     }
 
     case Jason.encode(encoded) do

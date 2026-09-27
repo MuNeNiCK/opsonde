@@ -955,7 +955,8 @@ defmodule Opsonde.ProposalAuthorityTest do
              Cases.list_ai_invocations!(authorize?: false)
   end
 
-  test "Reviewer invalid output fails over once and preserves usage across a replay", context do
+  test "Reviewer invalid output corrects once on the assigned Provider and preserves usage",
+       context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("review-invalid-alternate", context)
     backup = ai_provider!(context.admin, "authority-reviewer-backup", "backup-reviewer-model")
@@ -966,7 +967,9 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     invalid = %{
       test_pid: self(),
-      respond: fn _request ->
+      respond: fn request ->
+        assert request.retry_context == nil
+
         {:error, :invalid_output, "AI provider output is not valid JSON",
          %AI.Usage{input_tokens: 11, output_tokens: 7}}
       end
@@ -995,7 +998,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     response = %AI.ReviewDecision{
       verdict: :approved,
-      reason: "The alternate Reviewer accepted the cited Target evidence",
+      reason: "The assigned Reviewer accepted the cited Target evidence",
       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
     }
 
@@ -1005,11 +1008,18 @@ defmodule Opsonde.ProposalAuthorityTest do
                max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),
-                 respond: fn _request -> {:ok, response} end
+                 respond: fn request ->
+                   assert request.retry_context == %{
+                            "category" => "invalid_output",
+                            "rejection_code" => "invalid_output"
+                          }
+
+                   {:ok, response}
+                 end
                }
              )
 
-    assert_receive {:review, %{model: "backup-reviewer-model"}, _request}
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 23
@@ -1023,11 +1033,13 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert first.provider_id == context.reviewer_provider.id
     assert %{status: :completed, input_tokens: 3, output_tokens: 2} = second
-    assert second.provider_id == backup.id
+    assert second.provider_id == context.reviewer_provider.id
+    refute second.provider_id == backup.id
     refute_receive {:effect, _, _}
   end
 
-  test "Reviewer schema contract failure stops after one call without an alternate AI", context do
+  test "Reviewer repeated schema rejection stops after two paid calls without an alternate AI",
+       context do
     configure_mode!(:auto, context.admin)
     {_incident, run, proposal} = proposal!("review-schema-no-fallback", context)
 
@@ -1056,17 +1068,98 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert message =~ "invalid_output on attempt 1 of 3"
     assert_receive {:review, %{model: "reviewer-model"}, _request}
 
-    assert :ok =
+    assert {:error, second_message} =
              ReviewDelivery.run(reviewing.id,
                delivery_attempt: 2,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.retry_context == %{
+                            "category" => "invalid_output",
+                            "rejection_code" => "invalid_output"
+                          }
+
+                   {:error, :invalid_output,
+                    "AI provider JSON still does not match the requested schema",
+                    %AI.Usage{input_tokens: 7, output_tokens: 5}}
+                 end
+               }
+             )
+
+    assert second_message =~ "invalid_output on attempt 2 of 3"
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 3,
                max_delivery_attempts: 3,
                ai_invocation: %{respond: fn _ -> flunk("no alternate called AI") end}
              )
 
     refute_receive {:review, _, _}
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+
+    assert Cases.get_case!(proposal.case_id, authorize?: false).stop_reason =~
+             "Reviewer output remained invalid"
+
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 24
+  end
+
+  test "Reviewer uses another assigned Provider after two metered invalid responses", context do
+    configure_mode!(:auto, context.admin)
+    {_incident, run, proposal} = proposal!("review-invalid-third", context)
+    backup = ai_provider!(context.admin, "authority-reviewer-third", "backup-reviewer-model")
+    Opsonde.TestAIUsage.configure!(backup.id, :reviewer, 20, context.admin)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    for attempt <- 1..2 do
+      assert {:error, _message} =
+               ReviewDelivery.run(reviewing.id,
+                 delivery_attempt: attempt,
+                 max_delivery_attempts: 3,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     if attempt == 2,
+                       do: assert(request.retry_context["category"] == "invalid_output")
+
+                     {:error, :invalid_output, "Review response schema is invalid",
+                      %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"}
+                   end
+                 }
+               )
+
+      assert_receive {:review, %{model: "reviewer-model"}, _request}
+    end
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 3,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.retry_context["rejection_code"] == "schema_validation"
+
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :rejected,
+                      reason: "The alternate Reviewer rejected the proposal",
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "backup-reviewer-model"}, _request}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 29
+
+    invocations = Cases.list_ai_invocations!(authorize?: false)
+    assert Enum.count(invocations, &(&1.provider_id == context.reviewer_provider.id)) == 2
+    assert Enum.count(invocations, &(&1.provider_id == backup.id)) == 1
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :rejected
   end
 
   test "an interrupted Reviewer dispatch retries without a human approval request",

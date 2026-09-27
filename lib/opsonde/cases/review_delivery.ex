@@ -32,17 +32,31 @@ defmodule Opsonde.Cases.ReviewDelivery do
   end
 
   defp select_and_deliver(proposal, opts) do
-    with {:ok, excluded} <- failed_reviewer_provider_ids(proposal),
-         {:ok, selection} <- assigned_selection(proposal, assignment_generation(opts), excluded) do
-      deliver(proposal, selection, opts)
+    with {:ok, failures} <- invalid_review_attempts(proposal) do
+      excluded =
+        failures
+        |> Enum.group_by(& &1.provider_id)
+        |> Enum.filter(fn {_provider_id, attempts} -> length(attempts) >= 2 end)
+        |> Enum.map(&elem(&1, 0))
+
+      case assigned_selection(proposal, assignment_generation(opts), excluded) do
+        {:ok, selection} ->
+          deliver(proposal, selection, retry_context(failures), opts)
+
+        {:error, error} when length(failures) >= 2 ->
+          stop_after_invalid_if_no_alternate(proposal, error, excluded, opts)
+
+        {:error, error} ->
+          persist_failure(proposal, error, nil, opts)
+      end
     else
       {:error, error} -> persist_failure(proposal, error, nil, opts)
     end
   end
 
-  defp deliver(proposal, selection, opts) do
+  defp deliver(proposal, selection, retry_context, opts) do
     with {:ok, current} <- current_selection(selection),
-         {:ok, request} <- ReviewProjection.build(proposal.id, current),
+         {:ok, request} <- ReviewProjection.build(proposal.id, current, retry_context),
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, claim} <-
            claim_invocation(proposal, incident, current, request, delivery_attempt(opts)) do
@@ -187,7 +201,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
     end
   end
 
-  defp failed_reviewer_provider_ids(proposal) do
+  defp invalid_review_attempts(proposal) do
     case Cases.list_ai_invocations(
            query: [
              filter: [
@@ -200,10 +214,39 @@ defmodule Opsonde.Cases.ReviewDelivery do
            authorize?: false
          ) do
       {:ok, invocations} ->
-        {:ok, invocations |> Enum.map(& &1.provider_id) |> Enum.uniq()}
+        {:ok, invocations}
 
       {:error, _error} ->
         {:error, ai_error(:unavailable, "Reviewer failure history is unavailable")}
+    end
+  end
+
+  defp retry_context([]), do: nil
+
+  defp retry_context(failures) do
+    failure = Enum.find(failures, &(&1.failure_code == "schema_validation")) || hd(failures)
+
+    %{
+      "category" => "invalid_output",
+      "rejection_code" => failure.failure_code || "invalid_output"
+    }
+  end
+
+  defp stop_after_invalid_if_no_alternate(proposal, error, excluded, opts) do
+    case Providers.eligible_ai_usage_role_assignments(:reviewer, authorize?: false) do
+      {:ok, assignments} ->
+        if Enum.any?(assignments, &(&1.provider_id not in excluded)) do
+          persist_failure(proposal, error, nil, opts)
+        else
+          stop_delivery(
+            proposal,
+            "invalid_output",
+            "Reviewer output remained invalid after two metered attempts"
+          )
+        end
+
+      {:error, _error} ->
+        persist_failure(proposal, error, nil, opts)
     end
   end
 
