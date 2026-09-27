@@ -13,8 +13,8 @@ msgstr "実施した操作"
 msgid "Case"
 msgstr "ケース"
 
-msgid "Case symptom"
-msgstr "ケースの症状"
+msgid "Original Case request"
+msgstr "受付時の要求"
 
 msgid "Desired outcome"
 msgstr "達成条件"
@@ -58,14 +58,14 @@ msgstr "解決試行"
 msgid "Resolved"
 msgstr "解決済み"
 
-msgid "Recovery confirmed"
-msgstr "復旧を確認"
+msgid "Outcome confirmed"
+msgstr "達成を確認"
 
-msgid "Recovery not confirmed"
-msgstr "復旧を確認できず"
+msgid "Outcome not confirmed"
+msgstr "達成を確認できず"
 
-msgid "Recovery unknown"
-msgstr "復旧は未確認"
+msgid "Outcome unconfirmed"
+msgstr "達成は未確認"
 
 msgid "Target verification"
 msgstr "対象操作の検証"
@@ -75,6 +75,9 @@ msgstr "判断に引用した証拠"
 
 msgid "Recovery reviews"
 msgstr "復旧判断の審査"
+
+msgid "Desired outcome review"
+msgstr "達成条件の審査"
 
 msgid "Source"
 msgstr "発生元"

@@ -632,8 +632,8 @@ defmodule Opsonde.CaseReportTest do
     assert document["case_symptom"]["status"] == "unsupported"
     assert document["case_symptom"]["claim_evidence"] == []
     assert document["conclusion"] == nil
-    assert document["text"] =~ "Recovery not confirmed"
-    refute document["text"] =~ "Recovery confirmed"
+    assert document["text"] =~ "Outcome not confirmed"
+    refute document["text"] =~ "Outcome confirmed"
   end
 
   defp open!(source_ref, actor) do

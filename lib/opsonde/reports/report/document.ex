@@ -334,11 +334,11 @@ defmodule Opsonde.Reports.Report.Document do
 
   defp symptom_section(%{"case_symptom" => %{} = symptom}, unknown) do
     [
-      dgettext("reports", "Case symptom"),
+      dgettext("reports", "Original Case request"),
       "• #{symptom["text"]} [#{symptom_status_label(symptom["status"])}] (#{symptom["id"]})",
       "  #{dgettext("reports", "Desired outcome")}: #{symptom["desired_outcome"]}",
       if(symptom["review_reason"],
-        do: "  #{dgettext("reports", "Recovery reviews")}: #{symptom["review_reason"]}",
+        do: "  #{dgettext("reports", "Desired outcome review")}: #{symptom["review_reason"]}",
         else: nil
       ),
       entries(
@@ -392,9 +392,9 @@ defmodule Opsonde.Reports.Report.Document do
   defp status_label("not_verified"), do: dgettext("reports", "Not verified")
   defp status_label(value), do: value
 
-  defp symptom_status_label("supported"), do: dgettext("reports", "Recovery confirmed")
-  defp symptom_status_label("unsupported"), do: dgettext("reports", "Recovery not confirmed")
-  defp symptom_status_label(_status), do: dgettext("reports", "Recovery unknown")
+  defp symptom_status_label("supported"), do: dgettext("reports", "Outcome confirmed")
+  defp symptom_status_label("unsupported"), do: dgettext("reports", "Outcome not confirmed")
+  defp symptom_status_label(_status), do: dgettext("reports", "Outcome unconfirmed")
 
   defp action_name(item) do
     parameters = map(item["parameters"])
