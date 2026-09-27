@@ -191,7 +191,7 @@ defmodule Opsonde.AI.ReqLLM do
       "case_id" => request.case_id,
       "objective" => request.objective,
       "report_language" => to_string(request.report_language),
-      "conditions" => plain(request.conditions),
+      "conditions" => Enum.map(request.conditions, &review_condition/1),
       "native_source_evidence" => plain(request.source_evidence),
       "cited_target_evidence" => plain(request.cited_evidence),
       "recent_case_evidence" => plain(request.context_evidence),
@@ -211,7 +211,7 @@ defmodule Opsonde.AI.ReqLLM do
         "A recovered monitoring state establishes only what the source reported. " <>
         "Read the source attributes to identify what was actually monitored; do not expand " <>
         "a broad alert title into an unobserved host-wide failure. A recovered source event " <>
-        "is evidence that its measured symptom cleared. Weigh that reading with the cited " <>
+        "reports that its measured symptom cleared. Weigh that reading with the cited " <>
         "Target facts and their chronology; do not demand another measurement of the same " <>
         "endpoint when the native source itself measures that endpoint. " <>
         "Observation " <>
@@ -363,9 +363,13 @@ defmodule Opsonde.AI.ReqLLM do
         "it does not judge its meaning. If facts still show a fault, continue investigation. " <>
         "After a monitoring recovery, you may include condition_assessments while choosing " <>
         "another observation or handoff. For each Condition say recovered, still_failing, " <>
-        "or unknown and cite only relevant visible Evidence. These assessments are advisory " <>
-        "and do not close the Case. Omit condition_assessments for the recovery intent; " <>
-        "its condition_claims are independently reviewed. " <>
+        "or unknown and cite only that Condition's recovery_evidence_ids. If it has no " <>
+        "recovery_evidence_ids, its status is unknown and evidence_ids is empty; request " <>
+        "a new observation before judging whether that symptom still exists. These " <>
+        "assessments are advisory " <>
+        "and do not close the Case. If you include them with a recovery intent, each " <>
+        "status must be recovered and each citation must be current; the intent's " <>
+        "condition_claims are independently reviewed. " <>
         "If turn_intent.source is recovery_review_rejected, read its review_reason. Also read " <>
         "last_rejected_recovery_review when present, including after an operator resume. Do not " <>
         "repeat a recovery claim with unchanged cited evidence. Choose a new observation " <>
@@ -386,8 +390,10 @@ defmodule Opsonde.AI.ReqLLM do
         "expected_result_json. Do not add explanatory keys inside action or verification. " <>
         "Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
-        "condition is already resolved. For a Signal Case, put the exact ID and revision of " <>
-        "each still-firing Condition addressed by an effect in affected_conditions. " <>
+        "condition is already resolved. A recovered monitoring Condition may still have a " <>
+        "failing Target symptom; propose an effect for it only when a current direct " <>
+        "observation proves that symptom persists. For a Signal Case, put the exact ID and " <>
+        "revision of each Condition addressed by an effect in affected_conditions. " <>
         "For an effect, take evidence_ids only from effect_evidence_ids in the user payload; " <>
         "these are current Target observations. A signal_event identifies a Condition but " <>
         "cannot be cited as evidence for an effect. " <>
@@ -475,7 +481,7 @@ defmodule Opsonde.AI.ReqLLM do
         "target_revision_current" => true
       },
       "proposal" => plain(request.proposal),
-      "current_conditions" => plain(request.conditions),
+      "current_conditions" => Enum.map(request.conditions, &review_condition/1),
       "source_evidence" => plain(request.source_evidence),
       "cited_evidence" => plain(request.cited_evidence),
       "recent_case_evidence" => plain(request.context_evidence),
@@ -507,6 +513,12 @@ defmodule Opsonde.AI.ReqLLM do
         "proportional to its explicitly affected current Conditions, and acceptably safe. " <>
         "The initial Case title is historical context, not the only fault in this Case. " <>
         "A recovered Condition does not negate a different still-firing Condition. " <>
+        "A recovered monitoring event also does not negate a fresh direct observation " <>
+        "showing that the same Target symptom still fails; review an effect on such a " <>
+        "Condition against its cited observation and the exact proposed action. " <>
+        "The current_target_observation_ids identify observations available for assessment. " <>
+        "They do not " <>
+        "assert that those observations show recovery; read their actual facts. " <>
         "The affected Condition claim identifies scope but is not evidence of causation; " <>
         "judge whether the cited observation supports this exact effect on the proposed Target. " <>
         "Use needs_human only " <>
@@ -525,6 +537,16 @@ defmodule Opsonde.AI.ReqLLM do
       ReqLLM.Context.system(system),
       ReqLLM.Context.user(user)
     ])
+  end
+
+  defp review_condition(condition) do
+    condition
+    |> plain()
+    |> Map.delete("state")
+    |> Map.delete("recovery_status")
+    |> Map.delete("recovery_evidence_ids")
+    |> Map.put("monitor_state", to_string(condition.state))
+    |> Map.put("current_target_observation_ids", condition.recovery_evidence_ids)
   end
 
   defp resolver_output(%{"reason" => reason, "intent" => intent} = value, request)
@@ -690,9 +712,8 @@ defmodule Opsonde.AI.ReqLLM do
     do: {:ok, %{}, nil}
 
   defp request_verification(value, %{request_kind: :effect}, request) do
-    with {:ok, expected_result} <- decoded_map(value, "expected_result_json"),
-         {:ok, verification} <- verification_intent(value["verification"], request) do
-      {:ok, expected_result, verification}
+    with {:ok, verification} <- verification_intent(value["verification"], request) do
+      {:ok, verification.expected_result, verification}
     end
   end
 
@@ -1334,26 +1355,42 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp condition_assessments_schema(request) do
+    available_ids = MapSet.new(available_evidence_ids(request))
+
+    variants =
+      Enum.map(request.conditions, fn condition ->
+        condition_assessment_schema(condition, available_ids)
+      end)
+
     %{
       "type" => "array",
       "minItems" => length(request.conditions),
       "maxItems" => length(request.conditions),
-      "items" =>
-        object_schema(
-          %{
-            "condition_id" => enum_schema(Enum.map(request.conditions, & &1.id)),
-            "revision" => %{"type" => "integer", "minimum" => 1},
-            "status" => enum_schema(~w(recovered still_failing unknown)),
-            "evidence_ids" => %{
-              "type" => "array",
-              "items" => enum_schema(available_evidence_ids(request)),
-              "maxItems" => 3
-            },
-            "reason" => bounded_string_schema(AI.resolver_reason_codepoints())
-          },
-          ~w(condition_id revision status evidence_ids reason)
-        )
+      "items" => if(length(variants) == 1, do: hd(variants), else: %{"anyOf" => variants})
     }
+  end
+
+  defp condition_assessment_schema(condition, available_ids) do
+    citations =
+      Enum.filter(condition.recovery_evidence_ids, &MapSet.member?(available_ids, &1))
+
+    object_schema(
+      %{
+        "condition_id" => enum_schema([condition.id]),
+        "revision" => %{"type" => "integer", "enum" => [condition.revision]},
+        "status" =>
+          enum_schema(
+            if(citations == [], do: ["unknown"], else: ~w(recovered still_failing unknown))
+          ),
+        "evidence_ids" =>
+          if(citations == [],
+            do: evidence_array_schema([], 0),
+            else: %{"type" => "array", "items" => enum_schema(citations), "maxItems" => 3}
+          ),
+        "reason" => bounded_string_schema(AI.resolver_reason_codepoints())
+      },
+      ~w(condition_id revision status evidence_ids reason)
+    )
   end
 
   defp condition_group_schema do
@@ -1527,7 +1564,14 @@ defmodule Opsonde.AI.ReqLLM do
 
     observation_evidence_ids = available_evidence_ids(request)
     effect_evidence_ids = AI.proposal_evidence_ids(request)
-    firing_conditions = Enum.filter(request.conditions, &(&1.state == :firing))
+
+    actionable_conditions =
+      Enum.filter(request.conditions, fn condition ->
+        condition.state == :firing or
+          (condition.state == :recovered and
+             condition.recovery_status == :ready_for_review and
+             Enum.any?(condition.recovery_evidence_ids, &(&1 in effect_evidence_ids)))
+      end)
 
     observation_schema =
       if observation_variants != [] do
@@ -1540,12 +1584,11 @@ defmodule Opsonde.AI.ReqLLM do
 
     effect_schema =
       if effect_variants != [] and verification_variants != [] and effect_evidence_ids != [] and
-           (request.conditions == [] or firing_conditions != []) do
+           (request.conditions == [] or actionable_conditions != []) do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
-          "affected_conditions" => condition_claims_schema(firing_conditions, 1),
-          "expected_result_json" => json_object_string_schema(),
+          "affected_conditions" => condition_claims_schema(actionable_conditions, 1),
           "verification" => %{"anyOf" => verification_variants}
         })
       end

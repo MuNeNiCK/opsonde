@@ -171,9 +171,9 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   def current_conditions(_incident), do: {:ok, []}
 
-  def current_condition_context(incident) do
+  def current_condition_context(incident, exclude_operation_id \\ nil) do
     with {:ok, conditions} <- current_conditions(incident) do
-      recovery_context(incident, conditions)
+      recovery_context(incident, conditions, exclude_operation_id)
     end
   end
 
@@ -189,8 +189,8 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp recovery_context(%{trigger_kind: :signal} = incident, conditions) do
-    case ConditionRecovery.assess_current(incident) do
+  defp recovery_context(%{trigger_kind: :signal} = incident, conditions, exclude_operation_id) do
+    case ConditionRecovery.assess_current(incident, exclude_operation_id) do
       {:ok, assessments} ->
         by_id = Map.new(assessments, &{&1.condition_id, &1})
 
@@ -220,7 +220,8 @@ defmodule Opsonde.Cases.ResolverProjection do
     end
   end
 
-  defp recovery_context(_incident, conditions), do: {:ok, {conditions, []}}
+  defp recovery_context(_incident, conditions, _exclude_operation_id),
+    do: {:ok, {conditions, []}}
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 

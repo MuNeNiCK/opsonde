@@ -88,7 +88,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     case ConditionContext.affected_current?(
            incident,
            request_kind(intent),
-           intent["affected_conditions"]
+           intent["affected_conditions"],
+           intent["evidence_ids"],
+           intent
          ) do
       {:ok, true} -> :ok
       {:ok, false} -> {:error, "Proposal affected Conditions changed"}

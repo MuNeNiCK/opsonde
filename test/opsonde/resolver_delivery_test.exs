@@ -244,13 +244,13 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert :ok =
              invalid_output(turn, fn ->
-               {:error, :invalid_output, "AI Condition assessment is invalid",
+               {:error, :invalid_output, "AI Condition assessment is invalid: citation_scope",
                 %AI.Usage{input_tokens: 7, output_tokens: 5}}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
     completed = Cases.get_turn!(turn.id, authorize?: false)
-    assert completed.result["rejection_code"] == "condition_assessment"
+    assert completed.result["rejection_code"] == "condition_assessment_citation_scope"
     assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
 

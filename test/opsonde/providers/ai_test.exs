@@ -46,35 +46,79 @@ defmodule Opsonde.Providers.AITest do
     ]
 
     claim = %{"condition_id" => "kubernetes-condition", "revision" => 7}
-    assert AI.valid_affected_conditions?(:effect, [claim], conditions)
-    refute AI.valid_affected_conditions?(:effect, [], conditions)
-    refute AI.valid_affected_conditions?(:effect, [claim, claim], conditions)
-    refute AI.valid_affected_conditions?(:effect, [%{claim | "revision" => 6}], conditions)
+    assert AI.valid_affected_conditions?(:effect, [claim], conditions, [])
+    refute AI.valid_affected_conditions?(:effect, [], conditions, [])
+    refute AI.valid_affected_conditions?(:effect, [claim, claim], conditions, [])
+    refute AI.valid_affected_conditions?(:effect, [%{claim | "revision" => 6}], conditions, [])
 
     for id <- ["linux-condition", "foreign-condition"] do
       refute AI.valid_affected_conditions?(
                :effect,
                [%{"condition_id" => id, "revision" => 4}],
-               conditions
+               conditions,
+               []
              )
     end
 
-    assert AI.valid_affected_conditions?(:observation, [], conditions)
-    assert AI.valid_affected_conditions?(:observation, [claim], conditions)
+    assert AI.valid_affected_conditions?(:observation, [], conditions, [])
+    assert AI.valid_affected_conditions?(:observation, [claim], conditions, [])
 
     assert AI.valid_affected_conditions?(
              :observation,
              [%{"condition_id" => "linux-condition", "revision" => 4}],
-             conditions
+             conditions,
+             []
            )
 
-    refute AI.valid_affected_conditions?(:observation, [claim, claim], conditions)
-    refute AI.valid_affected_conditions?(:observation, [%{claim | "revision" => 6}], conditions)
+    refute AI.valid_affected_conditions?(:observation, [claim, claim], conditions, [])
+
+    refute AI.valid_affected_conditions?(
+             :observation,
+             [%{claim | "revision" => 6}],
+             conditions,
+             []
+           )
 
     refute AI.valid_affected_conditions?(
              :observation,
              [%{"condition_id" => "foreign", "revision" => 7}],
-             conditions
+             conditions,
+             []
+           )
+  end
+
+  test "a recovered Condition needs a currently eligible cited observation for an effect" do
+    condition = %AI.Condition{
+      id: "cron-condition",
+      revision: 2,
+      occurrence: 1,
+      predicate: "cron inactive",
+      subject_key: "cron.service",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "linux-target",
+      current_occurred_at_us: 20,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: ["cron-inspect"]
+    }
+
+    claim = %{"condition_id" => condition.id, "revision" => condition.revision}
+
+    assert AI.valid_affected_conditions?(:effect, [claim], [condition], ["cron-inspect"])
+    refute AI.valid_affected_conditions?(:effect, [claim], [condition], ["unrelated"])
+
+    refute AI.valid_affected_conditions?(
+             :effect,
+             [claim],
+             [%{condition | recovery_status: :needs_observation}],
+             ["cron-inspect"]
+           )
+
+    refute AI.valid_affected_conditions?(
+             :effect,
+             [claim],
+             [%{condition | revision: 3}],
+             ["cron-inspect"]
            )
   end
 
@@ -236,6 +280,13 @@ defmodule Opsonde.Providers.AITest do
     assert {:error, _error} =
              resolve(context, request, fn _request ->
                {:ok, %{decision | intent: recovery}}
+             end)
+
+    matching = %{claim | "status" => "recovered", "reason" => "Cited current observation"}
+
+    assert %AI.ResolverDecision{condition_assessments: [^matching]} =
+             resolve!(context, request, fn _request ->
+               {:ok, %{decision | intent: recovery, condition_assessments: [matching]}}
              end)
   end
 

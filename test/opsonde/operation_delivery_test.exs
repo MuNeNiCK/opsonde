@@ -4,6 +4,7 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
 
   alias Opsonde.Cases.{
+    ConditionContext,
     ConditionRecovery,
     OperationAcceptanceWorker,
     OperationDelivery,
@@ -2001,6 +2002,88 @@ defmodule Opsonde.OperationDeliveryTest do
              Cases.list_case_events!(actor: context.admin),
              &(&1.case_id == incident.id and &1.event_type == "case_resolved")
            )
+  end
+
+  test "a recovered Signal with a cited current failing observation admits an effect proposal",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, observation_proposal, _signal_provider} =
+      authorized_proposal!("premature-recovery-effect", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    observation = Cases.accept_operation!(observation_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(observation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "inactive"},
+                      evidence: [%{"check" => "current"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(observation.id)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+    {:ok, [condition]} = ResolverProjection.current_conditions(current)
+    claim = %{"condition_id" => condition.id, "revision" => condition.revision}
+    effect_intent = signal_proposal_intent(evidence.id, context)
+
+    assert {:ok, true} =
+             ConditionContext.affected_current?(
+               current,
+               :effect,
+               [claim],
+               [evidence.id],
+               effect_intent
+             )
+
+    assert {:ok, false} =
+             ConditionContext.affected_current?(
+               current,
+               :effect,
+               [claim],
+               ["unrelated"],
+               effect_intent
+             )
+
+    unrelated_service = Map.put(effect_intent, "selectors", %{"unit" => "other.service"})
+
+    assert {:ok, false} =
+             ConditionContext.affected_current?(
+               current,
+               :effect,
+               [claim],
+               [evidence.id],
+               unrelated_service
+             )
+
+    proposal =
+      effect_intent
+      |> Map.put("affected_conditions", [claim])
+      |> then(&complete_signal_proposal!(turn, &1, current, context))
+
+    assert proposal.request_kind == :effect
+    assert proposal.evidence_ids == [evidence.id]
+    assert proposal.affected_conditions == [claim]
+
+    effect = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(effect.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert Cases.get_operation!(effect.id, authorize?: false).status == :applied
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
   end
 
   test "a manual Case can conclude from a real current-run Target observation", context do

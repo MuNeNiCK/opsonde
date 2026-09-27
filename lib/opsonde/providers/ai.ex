@@ -324,23 +324,29 @@ defmodule Opsonde.Providers.AI do
 
   def valid_affected_conditions?(%Proposal{} = proposal, conditions),
     do:
-      valid_affected_conditions?(proposal.request_kind, proposal.affected_conditions, conditions)
+      valid_affected_conditions?(
+        proposal.request_kind,
+        proposal.affected_conditions,
+        conditions,
+        proposal.evidence_ids
+      )
 
-  def valid_affected_conditions?(:observation, claims, conditions)
+  def valid_affected_conditions?(:observation, claims, conditions, _evidence_ids)
       when is_list(claims) and is_list(conditions),
-      do: valid_condition_claims?(claims, conditions, false)
+      do: valid_condition_claims?(claims, conditions, false, [])
 
-  def valid_affected_conditions?(:effect, [], []),
+  def valid_affected_conditions?(:effect, [], [], _evidence_ids),
     do: true
 
-  def valid_affected_conditions?(:effect, claims, conditions)
-      when is_list(claims) and claims != [] and is_list(conditions) do
-    valid_condition_claims?(claims, conditions, true)
+  def valid_affected_conditions?(:effect, claims, conditions, evidence_ids)
+      when is_list(claims) and claims != [] and is_list(conditions) and
+             is_list(evidence_ids) do
+    valid_condition_claims?(claims, conditions, true, evidence_ids)
   end
 
-  def valid_affected_conditions?(_kind, _claims, _conditions), do: false
+  def valid_affected_conditions?(_kind, _claims, _conditions, _evidence_ids), do: false
 
-  defp valid_condition_claims?(claims, conditions, firing_only?) do
+  defp valid_condition_claims?(claims, conditions, effect?, evidence_ids) do
     ids = Enum.map(claims, &if(is_map(&1), do: &1["condition_id"]))
     current = Map.new(conditions, &{&1.id, &1})
 
@@ -349,8 +355,11 @@ defmodule Opsonde.Providers.AI do
         %{"condition_id" => id, "revision" => revision} = claim
         when is_binary(id) and is_integer(revision) and map_size(claim) == 2 ->
           case Map.get(current, id) do
-            %Condition{revision: ^revision, state: state} ->
-              not firing_only? or state == :firing
+            %Condition{revision: ^revision} = condition ->
+              not effect? or condition.state == :firing or
+                (condition.state == :recovered and
+                   condition.recovery_status == :ready_for_review and
+                   Enum.any?(condition.recovery_evidence_ids, &(&1 in evidence_ids)))
 
             _other ->
               false

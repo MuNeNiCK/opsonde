@@ -44,7 +44,10 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
              ConditionContext.affected_current?(
                incident,
                proposal.request_kind,
-               proposal.affected_conditions
+               proposal.affected_conditions,
+               proposal.evidence_ids,
+               proposal,
+               operation.id
              ) do
         if current? and affected_current? do
           with {:ok, conflict} <- effect_conflict(operation, proposal) do

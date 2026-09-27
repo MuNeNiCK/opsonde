@@ -12,13 +12,16 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
-         {:ok, conditions} <- ResolverProjection.current_conditions(incident),
+         {:ok, {conditions, _recovery_ids}} <-
+           ResolverProjection.current_condition_context(incident),
          {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
          {:ok, true} <-
            ConditionContext.affected_current?(
              incident,
              proposal.request_kind,
-             proposal.affected_conditions
+             proposal.affected_conditions,
+             proposal.evidence_ids,
+             proposal
            ),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),

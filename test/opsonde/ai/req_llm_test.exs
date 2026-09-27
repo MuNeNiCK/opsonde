@@ -212,7 +212,6 @@ defmodule Opsonde.AI.ReqLLMTest do
           "action" => Map.take(decision, ~w(tool_id selectors parameters)),
           "evidence_ids" => decision["evidence_ids"],
           "affected_conditions" => decision["affected_conditions"],
-          "expected_result_json" => Jason.encode!(decision["expected_result"]),
           "verification" =>
             verification
             |> Map.take(~w(tool_id selectors parameters))
@@ -961,6 +960,49 @@ defmodule Opsonde.AI.ReqLLMTest do
              "observed_power_state",
              "enum"
            ]) == ["off"]
+
+    recovered = %AI.Condition{
+      id: "power-condition",
+      revision: 2,
+      occurrence: 1,
+      predicate: "Power is off",
+      subject_key: "host-1",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 10,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: ["observed-off"]
+    }
+
+    request = %{
+      request
+      | alert_state: :recovered,
+        conditions: [recovered],
+        recovery_evidence_ids: ["observed-off"]
+    }
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    recovered_schema =
+      context.agent
+      |> requests()
+      |> List.last()
+      |> output_schema()
+      |> get_in(["properties", "intent", "anyOf"])
+      |> Enum.flat_map(&Map.get(&1, "anyOf", []))
+      |> Enum.find(&Map.has_key?(Map.get(&1, "properties", %{}), "verification"))
+
+    assert get_in(recovered_schema, [
+             "properties",
+             "affected_conditions",
+             "items",
+             "properties",
+             "condition_id",
+             "enum"
+           ]) ==
+             [recovered.id]
   end
 
   test "Resolver schema retries receive explicit bounded correction context", context do
@@ -1310,12 +1352,136 @@ defmodule Opsonde.AI.ReqLLMTest do
     schema = output_schema(wire_request)
     assert get_in(schema, ["properties", "condition_assessments", "maxItems"]) == 1
 
+    assert get_in(schema, [
+             "properties",
+             "condition_assessments",
+             "items",
+             "properties",
+             "evidence_ids",
+             "items",
+             "enum"
+           ]) ==
+             [observation.id]
+
     assert get_in(user_payload(wire_request), [
              "conditions",
              Access.at(0),
              "recovery_evidence_ids"
            ]) ==
              [observation.id]
+  end
+
+  test "each recovered Condition assessment schema exposes only its own current citations",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    conditions =
+      for number <- 1..2 do
+        %AI.Condition{
+          id: "condition-#{number}",
+          revision: number,
+          occurrence: 1,
+          predicate: "Endpoint unavailable",
+          subject_key: "endpoint-#{number}",
+          subject_ref: %{},
+          state: :recovered,
+          target_id: "target-#{number}",
+          current_occurred_at_us: 10,
+          recovery_status: :ready_for_review,
+          recovery_evidence_ids: ["current-#{number}"]
+        }
+      end
+
+    evidence =
+      for number <- 1..2 do
+        %AI.Evidence{
+          id: "current-#{number}",
+          kind: "observation",
+          target_id: "target-#{number}",
+          observed_at_us: 11,
+          content: %{"status" => "applied", "facts" => %{"endpoint_up" => false}}
+        }
+      end
+
+    request = %{
+      resolver_request()
+      | alert_state: :recovered,
+        conditions: conditions,
+        evidence: evidence,
+        recovery_evidence_ids: Enum.map(evidence, & &1.id)
+    }
+
+    set_mode(context.agent, {:decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+
+    variants =
+      get_in(output_schema(wire_request), [
+        "properties",
+        "condition_assessments",
+        "items",
+        "anyOf"
+      ])
+
+    assert Enum.map(variants, fn variant ->
+             properties = variant["properties"]
+
+             {properties["condition_id"]["enum"], properties["revision"]["enum"],
+              properties["evidence_ids"]["items"]["enum"]}
+           end) == [
+             {["condition-1"], [1], ["current-1"]},
+             {["condition-2"], [2], ["current-2"]}
+           ]
+  end
+
+  test "recovered Condition without current citations can only be assessed unknown", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    condition = %AI.Condition{
+      id: "condition-1",
+      revision: 2,
+      occurrence: 1,
+      predicate: "Endpoint unavailable",
+      subject_key: "endpoint",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 10,
+      recovery_status: :needs_observation,
+      recovery_evidence_ids: []
+    }
+
+    request = %{resolver_request() | alert_state: :recovered, conditions: [condition]}
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "status" => "unknown",
+      "evidence_ids" => [],
+      "reason" => "The endpoint has not been measured after the recovery event"
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Request a current endpoint measurement",
+        "intent" => %{"type" => "handoff", "required_input" => "Measure the endpoint"},
+        "condition_assessments" => [claim]
+      }
+    })
+
+    assert {:ok, %AI.ResolverDecision{condition_assessments: [^claim]}} =
+             Adapter.resolve(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    schema = output_schema(wire_request)
+    assessment = get_in(schema, ["properties", "condition_assessments", "items", "properties"])
+
+    assert assessment["status"]["enum"] == ["unknown"]
+    assert assessment["evidence_ids"]["maxItems"] == 0
   end
 
   test "recovery schema exposes only eligible Target recovery Evidence", context do
@@ -1517,6 +1683,49 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute request.body =~ "proposal_tools"
   end
 
+  test "Reviewer sees monitor state and current observations without a recovery verdict",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    condition = %AI.Condition{
+      id: "condition-1",
+      revision: 2,
+      occurrence: 1,
+      predicate: "service inactive",
+      subject_key: "api.service",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: "target-1",
+      current_occurred_at_us: 10,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: ["evidence-1"]
+    }
+
+    claim = %{"condition_id" => condition.id, "revision" => condition.revision}
+
+    request = %{
+      review_request()
+      | conditions: [condition],
+        proposal: %{proposal() | affected_conditions: [claim]}
+    }
+
+    set_mode(
+      context.agent,
+      {:decision, %{"verdict" => "approved", "reason" => "Measured inactive"}}
+    )
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved}} = Adapter.review(state, request, %{})
+
+    [wire_request] = requests(context.agent)
+    [visible] = reviewer_payload(wire_request)["current_conditions"]
+
+    assert visible["monitor_state"] == "recovered"
+    assert visible["current_target_observation_ids"] == ["evidence-1"]
+    refute Map.has_key?(visible, "recovery_status")
+    refute Map.has_key?(visible, "recovery_evidence_ids")
+    refute Map.has_key?(visible, "state")
+  end
+
   test "tool choices are rebound to the exact registered Target and Access Method", context do
     request = %{
       resolver_request()
@@ -1582,7 +1791,11 @@ defmodule Opsonde.AI.ReqLLMTest do
                 request_kind: :effect,
                 capability: "effect.command",
                 operation: "service.restart",
-                verification_intent: %AI.VerificationIntent{tool_id: "observe-tool"}
+                expected_result: %{"status" => "running"},
+                verification_intent: %AI.VerificationIntent{
+                  tool_id: "observe-tool",
+                  expected_result: %{"status" => "running"}
+                }
               }
             }} = Adapter.resolve(state, request, %{})
 
@@ -1596,6 +1809,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
         get_in(variant, ["properties", "type", "enum"]) == ["proposal"]
       end)
+
+    refute Map.has_key?(proposal_variant["properties"], "expected_result_json")
 
     assert get_in(proposal_variant, ["properties", "evidence_ids", "items", "enum"]) == [
              "evidence-1"
@@ -1638,7 +1853,6 @@ defmodule Opsonde.AI.ReqLLMTest do
         "action" => Map.take(decision, ~w(tool_id selectors parameters)),
         "evidence_ids" => ["source-evidence-1"],
         "affected_conditions" => [],
-        "expected_result_json" => Jason.encode!(decision["expected_result"]),
         "verification" =>
           decision["verification"]
           |> Map.take(~w(tool_id selectors parameters))
@@ -1667,7 +1881,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             "schema_validation"} =
              Adapter.resolve(state, request, %{})
 
-    malformed = %{decision | "expected_result" => "not-an-object"}
+    malformed = put_in(decision, ["verification", "expected_result"], "not-an-object")
     set_mode(context.agent, {:decision, malformed})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},

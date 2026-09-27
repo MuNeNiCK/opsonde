@@ -672,43 +672,68 @@ defmodule Opsonde.Providers.AI.Validator do
     expected = Map.new(request.conditions, &{&1.id, &1})
     visible = MapSet.new(Enum.map(request.evidence, & &1.id))
 
-    valid? =
-      request.alert_state == :recovered and
-        not match?(%AI.RecoveryConclusion{}, intent) and
-        map_size(expected) > 0 and length(assessments) == map_size(expected) and
-        MapSet.new(Enum.map(assessments, &if(is_map(&1), do: &1["condition_id"]))) ==
-          MapSet.new(Map.keys(expected)) and
-        Enum.all?(assessments, fn assessment ->
-          condition = is_map(assessment) && Map.get(expected, assessment["condition_id"])
-          ids = is_map(assessment) && assessment["evidence_ids"]
-          status = is_map(assessment) && assessment["status"]
+    issue =
+      cond do
+        request.alert_state != :recovered ->
+          :source_state
 
-          condition && map_size(assessment) == 5 &&
-            assessment["revision"] == condition.revision &&
-            AI.valid_resolver_reason?(assessment["reason"]) &&
-            is_list(ids) && length(ids) <= 3 && unique?(ids) &&
-            Enum.all?(ids, fn id ->
-              id in condition.recovery_evidence_ids and MapSet.member?(visible, id)
-            end) &&
-            case status do
-              "unknown" ->
-                true
+        map_size(expected) == 0 or length(assessments) != map_size(expected) or
+            MapSet.new(Enum.map(assessments, &if(is_map(&1), do: &1["condition_id"]))) !=
+              MapSet.new(Map.keys(expected)) ->
+          :membership
 
-              value when value in ["recovered", "still_failing"] ->
-                ids != []
+        true ->
+          Enum.find_value(assessments, fn assessment ->
+            condition = Map.fetch!(expected, assessment["condition_id"])
+            condition_assessment_issue(assessment, condition, visible)
+          end) ||
+            if(
+              match?(%AI.RecoveryConclusion{}, intent) and
+                Enum.any?(assessments, &(&1["status"] != "recovered")),
+              do: :recovery_intent_conflict,
+              else: nil
+            )
+      end
 
-              _other ->
-                false
-            end
-        end)
-
-    if valid?,
+    if is_nil(issue),
       do: :ok,
-      else: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid")}
+      else: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid: #{issue}")}
   end
 
   defp validate_condition_assessments(_decision, _request),
     do: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid")}
+
+  defp condition_assessment_issue(assessment, condition, visible) do
+    ids = assessment["evidence_ids"]
+
+    cond do
+      map_size(assessment) != 5 ->
+        :shape
+
+      assessment["revision"] != condition.revision ->
+        :revision
+
+      not AI.valid_resolver_reason?(assessment["reason"]) ->
+        :reason
+
+      not is_list(ids) or length(ids) > 3 or not unique?(ids) ->
+        :citation_shape
+
+      not Enum.all?(ids, fn id ->
+        id in condition.recovery_evidence_ids and MapSet.member?(visible, id)
+      end) ->
+        :citation_scope
+
+      assessment["status"] in ["recovered", "still_failing"] and ids == [] ->
+        :citation_missing
+
+      assessment["status"] not in ["recovered", "still_failing", "unknown"] ->
+        :status
+
+      true ->
+        nil
+    end
+  end
 
   defp traversal_destination?(relationship, selected_target_id, traversal) do
     next_target =

@@ -1070,6 +1070,10 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp invalid_output_code("AI Condition assessment is invalid"),
     do: "condition_assessment"
 
+  defp invalid_output_code("AI Condition assessment is invalid: " <> reason)
+       when reason in ~w(source_state recovery_intent_conflict membership shape revision reason citation_shape citation_scope citation_missing status),
+       do: "condition_assessment_" <> reason
+
   defp invalid_output_code("AI Resolver intent is invalid"), do: "resolver_intent"
   defp invalid_output_code(_message), do: "invalid_output"
 

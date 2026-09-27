@@ -8,10 +8,10 @@ defmodule Opsonde.Cases.ConditionRecovery do
   @max_citations_per_condition 3
 
   # Evidence availability does not decide whether the fault recovered.
-  def assess_current(incident) do
+  def assess_current(incident, exclude_operation_id \\ nil) do
     with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- memberships != [] || {:error, "Signal Case has no active Conditions"},
-         {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0),
+         {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, exclude_operation_id),
          {:ok, evidence} <-
            Cases.condition_assessment_evidence(
              incident.id,
@@ -131,36 +131,43 @@ defmodule Opsonde.Cases.ConditionRecovery do
     end
   end
 
-  defp lineage_effects(_incident, _seen, depth) when depth >= @max_lineage_depth,
-    do: {:error, "Case split lineage exceeds recovery bound"}
+  defp lineage_effects(_incident, _seen, depth, _exclude_operation_id)
+       when depth >= @max_lineage_depth,
+       do: {:error, "Case split lineage exceeds recovery bound"}
 
-  defp lineage_effects(incident, seen, depth) do
+  defp lineage_effects(incident, seen, depth, exclude_operation_id) do
     if MapSet.member?(seen, incident.id) do
       {:error, "Case split lineage contains a cycle"}
     else
       with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
            true <-
              length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
-           {:ok, effects} <- scoped_effects(operations),
+           {:ok, effects} <- scoped_effects(operations, exclude_operation_id),
            {:ok, parent_effects} <-
-             parent_effects(incident, MapSet.put(seen, incident.id), depth + 1) do
+             parent_effects(
+               incident,
+               MapSet.put(seen, incident.id),
+               depth + 1,
+               exclude_operation_id
+             ) do
         {:ok, effects ++ parent_effects}
       end
     end
   end
 
-  defp parent_effects(%{split_parent_id: nil}, _seen, _depth), do: {:ok, []}
+  defp parent_effects(%{split_parent_id: nil}, _seen, _depth, _exclude_operation_id),
+    do: {:ok, []}
 
-  defp parent_effects(%{split_parent_id: parent_id}, seen, depth) do
+  defp parent_effects(%{split_parent_id: parent_id}, seen, depth, exclude_operation_id) do
     with {:ok, parent} <- Cases.get_case(parent_id, authorize?: false) do
-      lineage_effects(parent, seen, depth)
+      lineage_effects(parent, seen, depth, exclude_operation_id)
     end
   end
 
-  defp scoped_effects(operations) do
+  defp scoped_effects(operations, exclude_operation_id) do
     operations
     |> Enum.filter(fn operation ->
-      operation.request_kind == :effect and
+      operation.id != exclude_operation_id and operation.request_kind == :effect and
         not (operation.status == :failed and is_nil(operation.dispatch_started_at))
     end)
     |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->

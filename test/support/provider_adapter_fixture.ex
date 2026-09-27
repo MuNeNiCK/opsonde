@@ -13,7 +13,12 @@ defmodule Opsonde.ProviderAdapterFixture do
 
   @impl Opsonde.Providers.Target
   def resource_scope(operation, capability, selectors)
-      when operation in ["service.restart", "service.inspect"] and
+      when operation in [
+             "service.restart",
+             "service.inspect",
+             "linux.service.restart",
+             "linux.service.inspect"
+           ] and
              capability in ["effect.service", "observe.service"] and is_map(selectors) do
     case selectors do
       %{"unit" => unit} when map_size(selectors) == 1 -> ResourceScope.service(unit)

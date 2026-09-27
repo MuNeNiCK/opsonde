@@ -85,7 +85,9 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
            ConditionContext.affected_current?(
              incident,
              proposal.request_kind,
-             proposal.affected_conditions
+             proposal.affected_conditions,
+             proposal.evidence_ids,
+             proposal
            ) do
       :ok
     else
