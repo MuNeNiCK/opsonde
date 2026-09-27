@@ -4,6 +4,7 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
 
   alias Opsonde.Cases.{
+    ConditionRecovery,
     OperationAcceptanceWorker,
     OperationDelivery,
     OperationWorker,
@@ -987,6 +988,115 @@ defmodule Opsonde.OperationDeliveryTest do
     assert length(Cases.list_cases!(actor: context.admin)) == 1
     assert report_jobs(incident.id) == []
     assert [_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+  end
+
+  test "a later effect on one Condition does not stale another recovered Condition",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal, signal_provider} =
+      authorized_proposal!("scoped-effect-recovery", context,
+        trigger_kind: :signal,
+        additional_event_key: "operation-scoped-effect-recovery:db",
+        additional_subject: "db.service",
+        affected_event_key: "operation-scoped-effect-recovery"
+      )
+
+    assert length(proposal.affected_conditions) == 1
+
+    other_key = "operation-scoped-effect-recovery:db"
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+
+    signal_event!(
+      signal_provider,
+      context,
+      other_key,
+      "delayed-db-recovery-before-effect",
+      :recovered,
+      DateTime.add(operation.accepted_at, -1, :microsecond),
+      %{"labels" => %{"service" => "db.service", "alertname" => "ServiceUnavailable"}}
+    )
+
+    other_correlation =
+      Enum.find(
+        Signals.list_signal_correlations!(actor: context.admin),
+        &(&1.event_key == other_key)
+      )
+
+    other =
+      Enum.find(
+        Signals.list_conditions!(actor: context.admin),
+        &(&1.signal_correlation_id == other_correlation.id)
+      )
+
+    assert other.state == :recovered
+
+    recover_signal!(
+      signal_provider,
+      context,
+      incident.initial_context["signal_event_key"],
+      "api-recovered-after-effect"
+    )
+
+    {:ok, assessments} = ConditionRecovery.assess_current(incident)
+    by_id = Map.new(assessments, &{&1.condition_id, &1.status})
+    assert by_id[other.id] == :needs_observation
+    assert Enum.all?(assessments, &(&1.status != :stale_source))
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(current.id, authorize?: false)
+    [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      %{
+        "outcome" => "decision",
+        "condition_revisions" => revisions,
+        "intent" => %{"type" => "handoff", "reason" => "Separate the independent service"}
+      },
+      :none,
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+      "Review the Resolver decision",
+      authorize?: false
+    )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    child =
+      Cases.split_case_conditions!(
+        current.id,
+        current.revision,
+        [other.id],
+        revisions,
+        "The other service needs its own investigation",
+        actor: context.admin
+      )
+
+    assert child.split_parent_id == incident.id
+
+    assert {:ok, [%{condition_id: condition_id, status: :needs_observation}]} =
+             ConditionRecovery.assess_current(child)
+
+    assert condition_id == other.id
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
@@ -2103,8 +2213,26 @@ defmodule Opsonde.OperationDeliveryTest do
         result = Map.put(result, "condition_revisions", revisions)
 
         if request_kind == :effect do
+          affected_event_key = Keyword.get(opts, :affected_event_key)
+
+          affected_correlation_ids =
+            Signals.list_signal_correlations!(actor: context.admin)
+            |> Enum.filter(&(&1.event_key == affected_event_key))
+            |> MapSet.new(& &1.id)
+
+          conditions_by_id =
+            Signals.list_conditions!(actor: context.admin) |> Map.new(&{&1.id, &1})
+
           claims =
-            Enum.map(revisions, fn %{"id" => id, "revision" => revision} ->
+            revisions
+            |> Enum.filter(fn %{"id" => id} ->
+              is_nil(affected_event_key) or
+                MapSet.member?(
+                  affected_correlation_ids,
+                  Map.fetch!(conditions_by_id, id).signal_correlation_id
+                )
+            end)
+            |> Enum.map(fn %{"id" => id, "revision" => revision} ->
               %{"condition_id" => id, "revision" => revision}
             end)
 

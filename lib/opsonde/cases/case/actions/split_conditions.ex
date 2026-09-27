@@ -84,7 +84,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
          :ok <- validate_resolver_split(parent, run, args, conditions, remaining_conditions),
          {:ok, selected_target} <- selected_target(conditions),
          {:ok, remaining_target} <- selected_target(remaining_conditions),
-         {:ok, recovery_baseline} <- ConditionRecovery.baseline_for_case(parent),
+         recovery_baseline <- ConditionRecovery.inherited_baseline(parent),
          {:ok, budgets} <- partition(run),
          {:ok, child} <-
            create_child(parent, run, dispatch, selected_target, recovery_baseline, budgets.child),
@@ -205,8 +205,30 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     end
   end
 
-  defp quiescent_proposals(case_id),
-    do: no_rows(Proposal, case_id, [:proposed, :reviewing, :awaiting_human, :authorized])
+  defp quiescent_proposals(case_id) do
+    with :ok <- no_rows(Proposal, case_id, [:proposed, :reviewing, :awaiting_human]),
+         {:ok, authorized} <-
+           Proposal
+           |> Ash.Query.for_read(:read)
+           |> Ash.Query.filter(case_id == ^case_id and status == :authorized)
+           |> Ash.read(authorize?: false) do
+      Enum.reduce_while(authorized, :ok, fn proposal, :ok ->
+        case Cases.operation_by_proposal(proposal.id,
+               authorize?: false,
+               not_found_error?: false
+             ) do
+          {:ok, %{status: status}} when status in [:applied, :failed] ->
+            {:cont, :ok}
+
+          {:ok, _operation} ->
+            {:halt, {:error, "Case has an unsettled Proposal or Target operation"}}
+
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
+    end
+  end
 
   defp pending_decision_quiescent(%{pending_intent: pending, id: case_id}) do
     cond do

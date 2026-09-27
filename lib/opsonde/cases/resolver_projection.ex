@@ -194,7 +194,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
         {:ok, {conditions, proof_ids}}
 
-      {:error, "Latest Target effect is not applied"} ->
+      {:error, "Relevant Target effect is not complete"} ->
         {:ok, {conditions, []}}
 
       {:error, _error} = error ->

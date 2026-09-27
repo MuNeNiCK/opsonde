@@ -4,14 +4,40 @@ defmodule Opsonde.Cases.ConditionRecovery do
   alias Opsonde.{Cases, Signals, Targets}
 
   @max_evidence 256
+  @max_lineage_depth 32
 
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident) do
-    with {:ok, baseline} <- baseline_for_case(incident), do: assess(incident, baseline)
+    with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- memberships != [] || {:error, "Signal Case has no active Conditions"},
+         {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0),
+         {:ok, evidence} <-
+           Cases.condition_assessment_evidence(
+             incident.id,
+             inherited_baseline(incident),
+             authorize?: false
+           ),
+         true <-
+           length(evidence) <= @max_evidence || {:error, "Condition evidence window is full"} do
+      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
+        with {:ok, condition} <- Signals.get_condition(membership.condition_id, authorize?: false),
+             {:ok, baseline} <- condition_baseline(incident, condition.id, effects) do
+          {:cont, {:ok, [assess_condition(condition, evidence, baseline) | collected]}}
+        else
+          {:error, _error} = error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, assessments} -> {:ok, Enum.reverse(assessments)}
+        error -> error
+      end
+    end
   end
 
+  def inherited_baseline(incident), do: incident.recovery_baseline_at || incident.inserted_at
+
   def baseline_for_case(incident) do
-    inherited = incident.recovery_baseline_at || incident.inserted_at
+    inherited = inherited_baseline(incident)
 
     with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
          true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"} do
@@ -27,29 +53,6 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
         _other ->
           {:error, "Latest Target effect is not applied"}
-      end
-    end
-  end
-
-  def assess(incident, after_at) do
-    with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
-         true <- memberships != [] || {:error, "Signal Case has no active Conditions"},
-         {:ok, evidence} <-
-           Cases.condition_assessment_evidence(incident.id, after_at, authorize?: false),
-         true <-
-           length(evidence) <= @max_evidence || {:error, "Condition evidence window is full"} do
-      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
-        case Signals.get_condition(membership.condition_id, authorize?: false) do
-          {:ok, condition} ->
-            {:cont, {:ok, [assess_condition(condition, evidence, after_at) | collected]}}
-
-          {:error, _error} = error ->
-            {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, assessments} -> {:ok, Enum.reverse(assessments)}
-        error -> error
       end
     end
   end
@@ -91,6 +94,75 @@ defmodule Opsonde.Cases.ConditionRecovery do
             result(condition, :target_changed)
         end
     end
+  end
+
+  defp condition_baseline(incident, condition_id, effects) do
+    relevant = Enum.filter(effects, fn {_operation, ids} -> condition_id in ids end)
+
+    case Enum.sort_by(
+           relevant,
+           fn {operation, _ids} ->
+             {DateTime.to_unix(operation.accepted_at, :microsecond), operation.id}
+           end,
+           :desc
+         ) do
+      [] ->
+        {:ok, inherited_baseline(incident)}
+
+      [{%{status: status, completed_at: %DateTime{} = completed_at}, _ids} | _]
+      when status in [:applied, :failed, :partial, :unknown] ->
+        inherited = inherited_baseline(incident)
+
+        {:ok,
+         if(DateTime.compare(completed_at, inherited) == :gt, do: completed_at, else: inherited)}
+
+      _other ->
+        {:error, "Relevant Target effect is not complete"}
+    end
+  end
+
+  defp lineage_effects(_incident, _seen, depth) when depth >= @max_lineage_depth,
+    do: {:error, "Case split lineage exceeds recovery bound"}
+
+  defp lineage_effects(incident, seen, depth) do
+    if MapSet.member?(seen, incident.id) do
+      {:error, "Case split lineage contains a cycle"}
+    else
+      with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+           true <-
+             length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
+           {:ok, effects} <- scoped_effects(operations),
+           {:ok, parent_effects} <-
+             parent_effects(incident, MapSet.put(seen, incident.id), depth + 1) do
+        {:ok, effects ++ parent_effects}
+      end
+    end
+  end
+
+  defp parent_effects(%{split_parent_id: nil}, _seen, _depth), do: {:ok, []}
+
+  defp parent_effects(%{split_parent_id: parent_id}, seen, depth) do
+    with {:ok, parent} <- Cases.get_case(parent_id, authorize?: false) do
+      lineage_effects(parent, seen, depth)
+    end
+  end
+
+  defp scoped_effects(operations) do
+    operations
+    |> Enum.filter(&(&1.request_kind == :effect))
+    |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
+      case Cases.get_proposal(operation.proposal_id, authorize?: false) do
+        {:ok, proposal} when is_list(proposal.affected_conditions) ->
+          ids = Enum.map(proposal.affected_conditions, & &1["condition_id"])
+          {:cont, {:ok, [{operation, ids} | effects]}}
+
+        {:error, _error} = error ->
+          {:halt, error}
+
+        _invalid ->
+          {:halt, {:error, "Effect Condition scope is unavailable"}}
+      end
+    end)
   end
 
   defp result(condition, status, evidence_id \\ nil) do
