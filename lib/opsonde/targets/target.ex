@@ -25,7 +25,7 @@ defmodule Opsonde.Targets.Target do
     read :search_index do
       argument :query, :string,
         allow_nil?: false,
-        constraints: [min_length: 1, max_length: 200]
+        constraints: [min_length: 1, max_length: Opsonde.Targets.SearchQuery.max_codepoints()]
 
       filter expr(active == true and contains(search_text, ^arg(:query)))
       prepare build(sort: [name: :asc, id: :asc])
@@ -66,7 +66,7 @@ defmodule Opsonde.Targets.Target do
 
       argument :query, :string,
         allow_nil?: false,
-        constraints: [min_length: 1, max_length: 200]
+        constraints: [min_length: 1, max_length: Opsonde.Targets.SearchQuery.max_codepoints()]
 
       argument :max_results, :integer,
         allow_nil?: false,

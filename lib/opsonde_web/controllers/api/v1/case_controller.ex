@@ -40,7 +40,11 @@ defmodule OpsondeWeb.API.V1.CaseController do
         [
           query: [
             in: :query,
-            schema: %OpenApiSpex.Schema{type: :string, minLength: 1, maxLength: 200}
+            schema: %OpenApiSpex.Schema{
+              type: :string,
+              minLength: 1,
+              maxLength: Opsonde.Targets.SearchQuery.max_codepoints()
+            }
           ],
           status: [
             in: :query,

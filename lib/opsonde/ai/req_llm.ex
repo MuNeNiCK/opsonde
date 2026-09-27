@@ -5,6 +5,7 @@ defmodule Opsonde.AI.ReqLLM do
   @behaviour Opsonde.Providers.AI
 
   alias Opsonde.Providers.AI
+  alias Opsonde.Targets.SearchQuery
 
   @non_generation_providers ~w(cohere elevenlabs typesafe)
   @service_names %{
@@ -29,7 +30,6 @@ defmodule Opsonde.AI.ReqLLM do
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
-  @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
   @resolver_intent_types ~w(target_search target_selection target_traversal proposal recovery handoff)
@@ -776,7 +776,7 @@ defmodule Opsonde.AI.ReqLLM do
        when remaining > 0,
        do:
          intent_schema("target_search", %{
-           "query" => bounded_string_schema(@search_query_codepoints)
+           "query" => bounded_string_schema(SearchQuery.max_codepoints())
          })
 
   defp target_search_schema(_request), do: nil

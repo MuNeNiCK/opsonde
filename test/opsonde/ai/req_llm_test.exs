@@ -318,10 +318,23 @@ defmodule Opsonde.AI.ReqLLMTest do
         end)
 
       if request.path != "/v1/messages" do
-        assert get_in(target_search, ["properties", "query", "maxLength"]) == 50
+        assert get_in(target_search, ["properties", "query", "maxLength"]) == 200
         assert get_in(handoff, ["properties", "required_input", "maxLength"]) == 250
       end
     end
+  end
+
+  test "Resolver accepts a Target search query within the Target catalog limit", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    query = String.duplicate("a", 120)
+
+    set_mode(
+      context.agent,
+      {:decision, %{"type" => "target_search", "reason" => "find", "query" => query}}
+    )
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.TargetSearch{query: ^query}}} =
+             Adapter.resolve(state, resolver_request(), %{})
   end
 
   test "Resolver object output carries optional bounded Condition hypotheses beside one intent",

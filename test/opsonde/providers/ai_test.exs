@@ -339,6 +339,22 @@ defmodule Opsonde.Providers.AITest do
                {:ok, %AI.ResolverDecision{intent: search, usage: usage()}}
              end)
 
+    catalog_limit = %{search | query: String.duplicate("a", 200)}
+
+    assert %AI.ResolverDecision{intent: ^catalog_limit} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: catalog_limit, usage: usage()}}
+             end)
+
+    over_catalog_limit = %{search | query: String.duplicate("a", 201)}
+
+    assert {:error, over_limit} =
+             resolve(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: over_catalog_limit, usage: usage()}}
+             end)
+
+    assert ai_error(over_limit).category == :invalid_output
+
     candidate = %AI.TargetCandidate{
       id: "target-1",
       revision: 3,

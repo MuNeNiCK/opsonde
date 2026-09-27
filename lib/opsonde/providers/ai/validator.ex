@@ -2,11 +2,11 @@ defmodule Opsonde.Providers.AI.Validator do
   @moduledoc false
 
   alias Opsonde.Providers.{AI, Target}
+  alias Opsonde.Targets.SearchQuery
 
   @max_output_bytes 65_536
   @max_review_items 100
   @max_review_bytes 65_536
-  @search_query_codepoints 50
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
 
@@ -379,7 +379,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and
-         bounded_text?(search.query, @search_query_codepoints) and
+         bounded_text?(search.query, SearchQuery.max_codepoints()) and
          AI.valid_resolver_reason?(search.reason) do
       :ok
     else
