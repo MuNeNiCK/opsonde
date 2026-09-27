@@ -4,9 +4,6 @@ defmodule Opsonde.Cases.EvidenceCitation do
   alias Opsonde.Cases
   alias Opsonde.Cases.ConditionRecovery
 
-  def valid?(%{case_id: case_id, resolution_run_id: run_id}, %{id: case_id}, %{id: run_id}),
-    do: true
-
   def valid?(
         %{
           case_id: case_id,
@@ -18,6 +15,11 @@ defmodule Opsonde.Cases.EvidenceCitation do
       ) do
     latest_source_evidence?(evidence, case_id)
   end
+
+  def valid?(%{kind: "signal_event"}, _incident, _run), do: false
+
+  def valid?(%{case_id: case_id, resolution_run_id: run_id}, %{id: case_id}, %{id: run_id}),
+    do: true
 
   def valid?(
         %{id: evidence_id, case_id: case_id, kind: "observation"},

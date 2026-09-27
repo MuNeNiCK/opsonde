@@ -1069,6 +1069,10 @@ defmodule Opsonde.SignalIngressTest do
 
     moved = Signals.get_condition!(moved_id, actor: context.admin)
 
+    moved_source =
+      Cases.signal_context_evidence!(parent.id, authorize?: false)
+      |> Enum.find(&(&1.content["condition_id"] == moved.id))
+
     assert {:error, _running} =
              Cases.split_case_conditions(
                parent.id,
@@ -1134,6 +1138,25 @@ defmodule Opsonde.SignalIngressTest do
 
     parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
     child_run = Cases.active_resolution_run!(child.id, authorize?: false)
+
+    refute Opsonde.Cases.EvidenceCitation.valid?(
+             moved_source,
+             Cases.get_case!(parent.id, authorize?: false),
+             parent_run
+           )
+
+    assert {:error, _stale} =
+             Cases.select_case_target(
+               parent.id,
+               Cases.get_case!(parent.id, authorize?: false).revision,
+               parent_run.id,
+               [moved_source.id],
+               target.id,
+               target.revision,
+               "Moved Condition cannot select a Target in its former Case",
+               "moved-condition-selection",
+               actor: context.admin
+             )
 
     for field <- [
           :max_resolver_turns,
