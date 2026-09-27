@@ -360,7 +360,12 @@ defmodule Opsonde.AI.ReqLLM do
         "A newer verified effect outcome supersedes " <>
         "contradictory observations taken before that effect; do not repeat the verified " <>
         "observation solely because an older fact differs. A proposal may be an observation or an effect; " <>
-        "every Target request is reviewed after you return it. Propose an effect only for an " <>
+        "every Target request is reviewed after you return it. In a proposal, intent.action " <>
+        "contains only tool_id, selectors, and parameters. Put reason at the response root, " <>
+        "and put evidence_ids and affected_conditions in intent, never inside action. " <>
+        "For an effect, intent.verification contains only tool_id, selectors, parameters, and " <>
+        "expected_result_json. Do not add explanatory keys inside action or verification. " <>
+        "Propose an effect only for an " <>
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. For a Signal Case, put the exact ID and revision of " <>
         "each still-firing Condition addressed by an effect in affected_conditions. " <>
@@ -736,13 +741,25 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp strict_text_object(%{source: :text, raw: raw})
        when is_binary(raw) and byte_size(raw) <= @max_output_bytes do
-    case Jason.decode(raw) do
+    complete_text_object(raw)
+  end
+
+  defp strict_text_object(_result), do: {:error, :no_plain_json_object}
+
+  defp complete_text_object(raw) when is_binary(raw) do
+    text = String.trim(raw)
+
+    candidate =
+      case Regex.run(~r/\A```(?:json)?\r?\n(\{.*\})\r?\n```\z/s, text) do
+        [_, object] -> object
+        _other -> text
+      end
+
+    case Jason.decode(candidate) do
       {:ok, %{} = object} -> {:ok, object}
       _other -> {:error, :invalid_json_object}
     end
   end
-
-  defp strict_text_object(_result), do: {:error, :no_plain_json_object}
 
   defp accept_object_projection(%{valid?: true, value: value}, _schema) when is_map(value),
     do: :ok
@@ -860,6 +877,20 @@ defmodule Opsonde.AI.ReqLLM do
     verification_shape =
       tool_shape(intent["verification"], get_in(variant || %{}, ["properties", "verification"]))
 
+    action_parameters_shape =
+      nested_tool_shape(
+        intent["action"],
+        get_in(variant || %{}, ["properties", "action"]),
+        "parameters"
+      )
+
+    action_selectors_shape =
+      nested_tool_shape(
+        intent["action"],
+        get_in(variant || %{}, ["properties", "action"]),
+        "selectors"
+      )
+
     Logger.warning(
       "AI object schema mismatch source=#{result.source} path=#{known_schema_path(path)} " <>
         "intent=#{intent_type} intent_allowed=#{intent_type in schema_intent_types(schema)} " <>
@@ -869,6 +900,7 @@ defmodule Opsonde.AI.ReqLLM do
         "condition_groups=#{group_count} error_kinds=#{error_kinds} missing_fields=#{missing_fields} " <>
         "invalid_fields=#{invalid_fields} action_fields=#{action_fields} " <>
         "verification_fields=#{verification_fields} action_shape=#{action_shape} " <>
+        "action_parameters_shape=#{action_parameters_shape} action_selectors_shape=#{action_selectors_shape} " <>
         "verification_shape=#{verification_shape} rejected_citation_ids=#{rejected_citation_ids} " <>
         "reason_codepoints=#{reason_codepoints} verdict=#{verdict}"
     )
@@ -915,6 +947,42 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp tool_shape(nil, _schema), do: "absent"
   defp tool_shape(_value, _schema), do: "non_map"
+
+  defp nested_tool_shape(%{"tool_id" => tool_id} = value, schema, field)
+       when is_binary(tool_id) do
+    selected =
+      schema
+      |> intent_variants()
+      |> Enum.find(&(tool_id in (get_in(&1, ["properties", "tool_id", "enum"]) || [])))
+
+    nested_schema = get_in(selected || %{}, ["properties", field]) || %{}
+
+    case Map.get(value, field) do
+      %{} = nested ->
+        properties = Map.get(nested_schema, "properties", %{})
+        required = Map.get(nested_schema, "required", [])
+        recognized = Enum.filter(Map.keys(nested), &Map.has_key?(properties, &1))
+        invalid = Enum.count(recognized, &(not schema_field_valid?(nested[&1], properties[&1])))
+
+        enum_mismatch =
+          Enum.count(recognized, fn key ->
+            choices = Map.get(properties[key], "enum")
+            is_list(choices) and nested[key] not in choices
+          end)
+
+        "map:known#{length(recognized)}:extra#{map_size(nested) - length(recognized)}:" <>
+          "missing#{Enum.count(required, &(!Map.has_key?(nested, &1)))}:" <>
+          "invalid#{invalid}:enum_mismatch#{enum_mismatch}"
+
+      nil ->
+        "absent"
+
+      _other ->
+        "non_map"
+    end
+  end
+
+  defp nested_tool_shape(_value, _schema, _field), do: "unavailable"
 
   defp rejected_citation_ids(%{"evidence_ids" => ids}, variant) when is_list(ids) do
     allowed = get_in(variant || %{}, ["properties", "evidence_ids", "items", "enum"])
@@ -996,6 +1064,18 @@ defmodule Opsonde.AI.ReqLLM do
 
           variant ->
             case String.split(invalid_schema_fields(intent, variant), ",", trim: true) do
+              [field] when field in ~w(action verification) ->
+                nested = intent[field]
+                nested_schema = get_in(variant, ["properties", field])
+
+                case String.split(invalid_tool_fields(nested, nested_schema), ",", trim: true) do
+                  [subfield] when subfield in ~w(selectors parameters expected_result_json) ->
+                    "/intent/" <> field <> "/" <> subfield
+
+                  _other ->
+                    "/intent/" <> field
+                end
+
               [field] ->
                 "/intent/" <> field
 
@@ -1118,7 +1198,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp diagnostic_object(%{raw: raw})
        when is_binary(raw) and byte_size(raw) <= @max_output_bytes do
-    case Jason.decode(raw) do
+    case complete_text_object(raw) do
       {:ok, %{} = value} -> value
       _other -> %{}
     end
@@ -1138,7 +1218,7 @@ defmodule Opsonde.AI.ReqLLM do
   defp raw_json_object?(%{}), do: true
 
   defp raw_json_object?(raw) when is_binary(raw) and byte_size(raw) <= @max_output_bytes do
-    match?({:ok, %{}}, Jason.decode(raw))
+    match?({:ok, %{}}, complete_text_object(raw))
   end
 
   defp raw_json_object?(_raw), do: false

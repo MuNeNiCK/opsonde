@@ -470,10 +470,10 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"status\":\"ready\"}\n```"})
-    assert {:error, :capability, _message} = Adapter.check(state, %{})
+    assert :ok = Adapter.check(state, %{})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "missing_structured_object"} =
+            "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -918,6 +918,29 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:error, :invalid_output,
             "AI provider JSON does not match the requested schema at /intent/required_input",
             %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"} =
+             Adapter.resolve(state, resolver_request(), %{})
+  end
+
+  test "a complete JSON code fence preserves the exact decision and its metered usage", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    set_mode(context.agent, {
+      :raw_text,
+      "```json\n{\"reason\":\"確認\",\"intent\":{\"type\":\"handoff\",\"required_input\":\"確認\"}}\n```"
+    })
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              intent: %AI.Handoff{required_input: "確認"},
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} = Adapter.resolve(state, resolver_request(), %{})
+
+    set_mode(context.agent, {
+      :raw_text,
+      "```json\n{\"reason\":\"確認\",\"intent\":{\"type\":\"handoff\",\"required_input\":\"確認\"},\"extra\":true}\n```"
+    })
+
+    assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
