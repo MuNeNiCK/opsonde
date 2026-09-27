@@ -685,6 +685,14 @@ defmodule Opsonde.SignalIngressTest do
         }
       end
 
+    moved_condition_id = hd(hd(groups)["condition_ids"])
+
+    current_source =
+      Cases.signal_context_evidence!(parent.id, authorize?: false)
+      |> Enum.find(&(&1.content["condition_id"] == moved_condition_id))
+
+    assert current_source.content["current"] == true
+
     completed =
       Cases.complete_turn!(
         turn.id,
@@ -696,7 +704,7 @@ defmodule Opsonde.SignalIngressTest do
           "intent" => %{
             "type" => "case_split",
             "condition_ids" => hd(groups)["condition_ids"],
-            "evidence_ids" => hd(groups)["evidence_ids"],
+            "evidence_ids" => [current_source.id],
             "remaining_evidence_ids" => List.last(groups)["evidence_ids"],
             "reason" => "Investigate the core fault separately"
           }

@@ -147,6 +147,15 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
     Enum.any?(ids, fn id ->
       case Cases.get_evidence(id, authorize?: false) do
+        {:ok, %{kind: "signal_event", content: content} = evidence} ->
+          evidence.case_id == case_id and content["current"] == true and
+            Enum.any?(conditions, fn condition ->
+              content["condition_id"] == condition.id and
+                content["condition_revision"] == condition.revision and
+                content["state"] == to_string(condition.state) and
+                DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt
+            end)
+
         {:ok, evidence} ->
           evidence.case_id == case_id and
             evidence.kind in ["observation", "target_verification"] and
