@@ -76,6 +76,34 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
+  test "manual Case and its dispatch job roll back together before a safe retry", context do
+    body = %{
+      "case" => %{
+        "trigger_kind" => "manual",
+        "source" => "api",
+        "source_ref" => "rolled-back-manual-entry",
+        "title" => "Investigate a rolled back request",
+        "severity" => "warning",
+        "initial_context" => %{}
+      }
+    }
+
+    assert {:error, :simulated_persistence_failure} =
+             Opsonde.Repo.transaction(fn ->
+               response = post_json("/api/v1/cases", body, context.operator_token)
+               assert %{"data" => %{"id" => _id}} = json_response(response, 201)
+               Opsonde.Repo.rollback(:simulated_persistence_failure)
+             end)
+
+    assert Cases.list_cases!(actor: context.admin) == []
+    assert Opsonde.Repo.all(Oban.Job) == []
+
+    accepted = post_json("/api/v1/cases", body, context.operator_token)
+    assert %{"data" => %{"id" => incident_id}} = json_response(accepted, 201)
+    assert [_dispatch] = Cases.list_cases!(actor: context.admin)
+    assert Cases.case_dispatch!(incident_id, authorize?: false).state == :collecting
+  end
+
   test "Case queue search, filters, and sorting are applied before pagination", context do
     older = open_case!(context.operator_token, "queue-older", "warning")
     newer = open_case!(context.operator_token, "queue-newer", "critical")
