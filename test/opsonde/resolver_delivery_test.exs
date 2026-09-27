@@ -238,6 +238,27 @@ defmodule Opsonde.ResolverDeliveryTest do
              1
   end
 
+  test "invalid per-Condition assessment records a distinct rejection without another paid call",
+       context do
+    {incident, run, turn} = turn!("condition-assessment-invalid", context.operator)
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI Condition assessment is invalid",
+                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+             end)
+
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.result["rejection_code"] == "condition_assessment"
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+
+    refute Enum.any?(Cases.list_turns!(authorize?: false), fn candidate ->
+             candidate.resolution_run_id == run.id and candidate.status == :started
+           end)
+  end
+
   test "one metered schema rejection gets a corrective turn on the same healthy Provider",
        context do
     {_incident, _run, turn} = turn!("schema-failover", context.operator)

@@ -1066,6 +1066,10 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp invalid_output_code("AI Proposal is invalid"), do: "proposal"
   defp invalid_output_code("AI recovery conclusion is invalid"), do: "recovery"
   defp invalid_output_code("AI handoff is invalid"), do: "handoff"
+
+  defp invalid_output_code("AI Condition assessment is invalid"),
+    do: "condition_assessment"
+
   defp invalid_output_code("AI Resolver intent is invalid"), do: "resolver_intent"
   defp invalid_output_code(_message), do: "invalid_output"
 
