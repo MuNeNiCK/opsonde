@@ -290,6 +290,73 @@ defmodule Opsonde.Providers.AITest do
              end)
   end
 
+  test "advisory assessments may cover one of several current Conditions", context do
+    conditions =
+      for index <- 1..2 do
+        %AI.Condition{
+          id: "condition-#{index}",
+          revision: index,
+          occurrence: 1,
+          predicate: "Endpoint unavailable",
+          subject_key: "endpoint-#{index}",
+          subject_ref: %{},
+          state: :recovered,
+          target_id: "target-1",
+          current_occurred_at_us: 10,
+          recovery_status: :ready_for_review,
+          recovery_evidence_ids: ["observation-#{index}"]
+        }
+      end
+
+    evidence =
+      for index <- 1..2 do
+        %AI.Evidence{
+          id: "observation-#{index}",
+          kind: "observation",
+          target_id: "target-1",
+          observed_at_us: 11,
+          content: %{"status" => "applied", "facts" => %{"endpoint_up" => false}}
+        }
+      end
+
+    request = %{
+      resolver_request(context.provider.revision)
+      | alert_state: :recovered,
+        conditions: conditions,
+        evidence: evidence,
+        recovery_evidence_ids: Enum.map(evidence, & &1.id)
+    }
+
+    partial = %{
+      "condition_id" => "condition-1",
+      "revision" => 1,
+      "status" => "still_failing",
+      "evidence_ids" => ["observation-1"],
+      "reason" => "This endpoint remains unavailable"
+    }
+
+    decision = %AI.ResolverDecision{
+      intent: %AI.Handoff{reason: "Investigate the other endpoint", required_input: "Observe it"},
+      condition_assessments: [partial],
+      usage: usage()
+    }
+
+    assert %AI.ResolverDecision{condition_assessments: [^partial]} =
+             resolve!(context, request, fn _request -> {:ok, decision} end)
+
+    for invalid_assessments <- [
+          [partial, partial],
+          [%{partial | "condition_id" => "unrelated"}],
+          [%{partial | "revision" => 99}],
+          [%{partial | "evidence_ids" => ["observation-2"]}]
+        ] do
+      assert {:error, _error} =
+               resolve(context, request, fn _request ->
+                 {:ok, %{decision | condition_assessments: invalid_assessments}}
+               end)
+    end
+  end
+
   test "Condition group hints never invent, overlap, or silently omit a Condition" do
     conditions = Enum.map(~w(a b c d), &%{id: &1})
     evidence = [%{id: "observed-switch"}]

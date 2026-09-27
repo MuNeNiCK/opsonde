@@ -404,10 +404,12 @@ defmodule Opsonde.AI.ReqLLM do
         "replace an earlier current observation of the actual symptom. " <>
         "The recovery_status field only reports whether current observations are available; " <>
         "it does not judge its meaning. If facts still show a fault, continue investigation. " <>
-        "After a monitoring recovery, you may include condition_assessments while choosing " <>
-        "another observation or handoff. For each Condition say recovered, still_failing, " <>
-        "or unknown and cite only that Condition's recovery_evidence_ids. If it has no " <>
-        "recovery_evidence_ids, its status is unknown and evidence_ids is empty; request " <>
+        "After a monitoring recovery, you may include condition_assessments for any subset " <>
+        "of Conditions while choosing another observation or handoff; an empty list is valid. " <>
+        "For each included Condition say recovered, still_failing, or unknown and cite " <>
+        "only that Condition's recovery_evidence_ids. Omitted Conditions remain unassessed. " <>
+        "If a Condition has no recovery_evidence_ids, its status is unknown and evidence_ids " <>
+        "is empty; request " <>
         "a new observation before judging whether that symptom still exists. These " <>
         "assessments are advisory " <>
         "and do not close the Case. If you include them with a recovery intent, each " <>
@@ -1413,7 +1415,7 @@ defmodule Opsonde.AI.ReqLLM do
 
     %{
       "type" => "array",
-      "minItems" => length(request.conditions),
+      "minItems" => 0,
       "maxItems" => length(request.conditions),
       "items" => if(length(variants) == 1, do: hd(variants), else: %{"anyOf" => variants})
     }

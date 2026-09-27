@@ -699,15 +699,15 @@ defmodule Opsonde.Providers.AI.Validator do
        when is_list(assessments) do
     expected = Map.new(request.conditions, &{&1.id, &1})
     visible = MapSet.new(Enum.map(request.evidence, & &1.id))
+    assessed_ids = Enum.map(assessments, &if(is_map(&1), do: &1["condition_id"]))
 
     issue =
       cond do
         request.alert_state != :recovered ->
           :source_state
 
-        map_size(expected) == 0 or length(assessments) != map_size(expected) or
-            MapSet.new(Enum.map(assessments, &if(is_map(&1), do: &1["condition_id"]))) !=
-              MapSet.new(Map.keys(expected)) ->
+        map_size(expected) == 0 or not unique?(assessed_ids) or
+            Enum.any?(assessed_ids, &(not Map.has_key?(expected, &1))) ->
           :membership
 
         true ->

@@ -1435,6 +1435,12 @@ defmodule Opsonde.AI.ReqLLMTest do
         "anyOf"
       ])
 
+    assert get_in(output_schema(wire_request), [
+             "properties",
+             "condition_assessments",
+             "minItems"
+           ]) == 0
+
     assert Enum.map(variants, fn variant ->
              properties = variant["properties"]
 
@@ -1444,6 +1450,28 @@ defmodule Opsonde.AI.ReqLLMTest do
              {["condition-1"], [1], ["current-1"]},
              {["condition-2"], [2], ["current-2"]}
            ]
+
+    partial = %{
+      "condition_id" => "condition-1",
+      "revision" => 1,
+      "status" => "still_failing",
+      "evidence_ids" => ["current-1"],
+      "reason" => "The cited endpoint is still unavailable"
+    }
+
+    for assessments <- [[], [partial]] do
+      set_mode(context.agent, {
+        :decision,
+        %{
+          "reason" => "Continue the per-Condition investigation",
+          "intent" => %{"type" => "handoff", "required_input" => "Observe the other endpoint"},
+          "condition_assessments" => assessments
+        }
+      })
+
+      assert {:ok, %AI.ResolverDecision{condition_assessments: ^assessments}} =
+               Adapter.resolve(state, request, %{})
+    end
   end
 
   test "recovered Condition without current citations can only be assessed unknown", context do
