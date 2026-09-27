@@ -162,6 +162,25 @@ defmodule Opsonde.Targets.GenericHTTPTest do
              )
   end
 
+  test "a changed Access Method invalidates an already cleared HTTP request", context do
+    clearance =
+      Targets.clear_target_request!(request(context.target, context.method),
+        actor: context.operator
+      )
+
+    Targets.update_access_method!(
+      context.method,
+      context.method.revision,
+      %{priority: 80},
+      actor: context.admin
+    )
+
+    assert {:error, _error} =
+             Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+
+    assert Agent.get(context.agent, &Enum.reverse(&1.requests)) == [{"GET", "/metrics"}]
+  end
+
   test "response preview is bounded and redirects are observed without following", context do
     Agent.update(context.agent, &%{&1 | body: String.duplicate("x", 30_000)})
 
