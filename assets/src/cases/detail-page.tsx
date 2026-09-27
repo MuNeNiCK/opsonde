@@ -142,7 +142,7 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
 
 export function CaseDetailPage() {
   const { caseId = "" } = useParams();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { account } = useAuthentication();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
@@ -251,6 +251,9 @@ export function CaseDetailPage() {
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
+  const detachedConditions = detail.snapshot.condition_history
+    .filter((membership) => membership.detached_at !== null)
+    .sort((a, b) => (b.detached_at ?? "").localeCompare(a.detached_at ?? ""));
   const latestRun = [...detail.snapshot.resolution_runs].sort(
     (a, b) => b.generation - a.generation,
   )[0];
@@ -537,6 +540,23 @@ export function CaseDetailPage() {
                 );
               })}
             </ul>
+            {detachedConditions.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">{t("cases.pastConditionsTitle")}</h3>
+                <ul className="divide-y rounded-lg border">
+                  {detachedConditions.map((membership) => (
+                    <li key={membership.id} className="space-y-1 p-3">
+                      <p className="font-mono text-xs">{membership.condition_id}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("cases.pastConditionDetachedAt")}:{" "}
+                        {membership.detached_at &&
+                          formatDate(membership.detached_at, i18n.resolvedLanguage)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {canOperate &&
               incident.status === "running" &&
               detail.snapshot.conditions.length > 1 && (

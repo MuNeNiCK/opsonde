@@ -289,6 +289,8 @@ const ja = {
     cases: {
       title: "ケース",
       conditionsTitle: "現在の障害条件",
+      pastConditionsTitle: "以前このケースにあった障害条件",
+      pastConditionDetachedAt: "分離日時",
       recoveryReviews: "復旧判断の審査",
       recoveryReviewStatus: {
         approved: "承認",

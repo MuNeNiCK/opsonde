@@ -294,6 +294,8 @@ const en = {
     cases: {
       title: "Cases",
       conditionsTitle: "Current conditions",
+      pastConditionsTitle: "Previously assigned conditions",
+      pastConditionDetachedAt: "Moved out",
       recoveryReviews: "Recovery reviews",
       recoveryReviewStatus: {
         approved: "Approved",
