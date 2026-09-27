@@ -303,6 +303,7 @@ defmodule Opsonde.SignalIngressTest do
                  where: job.worker == ^worker and job.args["case_id"] == ^incident.id
              )
 
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
     assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
     assert [recheck_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
     assert recheck_turn.intent["source"] == "signal_recheck"
@@ -311,6 +312,164 @@ defmodule Opsonde.SignalIngressTest do
              RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
 
     assert length(Cases.list_turns!(actor: context.admin)) == 2
+
+    Cases.complete_turn!(
+      recheck_turn.id,
+      recheck_turn.revision,
+      %{"outcome" => "test_no_decision"},
+      :none,
+      %{},
+      "Review Resolver limits",
+      authorize?: false
+    )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    Cases.update_case_record!(current, current.revision, %{pending_intent: %{}},
+      authorize?: false
+    )
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
+    assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
+
+    refute Cases.get_case!(incident.id, authorize?: false).pending_intent["turn_id"] ==
+             recheck_turn.id
+  end
+
+  test "twenty native recoveries coalesce into one Case-bound recheck", context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("coalesced-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(
+      target.id,
+      "test-monitor",
+      "hostname",
+      "coalesced-host",
+      actor: context.admin
+    )
+
+    firing_at = DateTime.add(DateTime.utc_now(), -10, :second)
+    target_ref = %{kind: :hostname, value: "coalesced-host"}
+
+    firing =
+      for index <- 1..20 do
+        event("coalesced-firing", "fault-#{index}", :firing, firing_at, target_ref: target_ref)
+      end
+
+    ingest!(
+      context.provider,
+      envelope("coalesced-firing", firing_at),
+      invocation("coalesced-firing", firing)
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert length(Cases.active_conditions_for_case!(incident.id, authorize?: false)) == 20
+    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [initial] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    Cases.complete_turn!(
+      initial.id,
+      initial.revision,
+      %{"outcome" => "test_no_decision"},
+      :none,
+      %{},
+      "Review Resolver limits",
+      authorize?: false
+    )
+
+    recovered_at = DateTime.utc_now()
+
+    recovered =
+      for index <- 1..20 do
+        event("coalesced-recovered", "fault-#{index}", :recovered, recovered_at,
+          target_ref: target_ref
+        )
+      end
+
+    ingest!(
+      context.provider,
+      envelope("coalesced-recovered", recovered_at),
+      invocation("coalesced-recovered", recovered)
+    )
+
+    worker = Oban.Worker.to_string(RecoveryRecheckWorker)
+
+    jobs =
+      Repo.all(
+        from job in Oban.Job,
+          where: job.worker == ^worker and job.args["case_id"] == ^incident.id
+      )
+
+    assert length(jobs) == 1
+    assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+    assert [recheck] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert recheck.intent["source"] == "signal_recheck"
+    assert length(recheck.intent["condition_revisions"]) == 20
+
+    assert {:snooze, 5} =
+             RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+
+    assert length(Cases.list_turns!(actor: context.admin)) == 2
+  end
+
+  test "rolled-back recovery receipt does not leave a recheck job or lose retry", context do
+    enable_signal_automation!(context.admin)
+    firing_at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    ingest_one!(context.provider, "rollback-recheck-firing", :firing, firing_at)
+    [incident] = Cases.list_cases!(actor: context.admin)
+    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [initial] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    Cases.complete_turn!(
+      initial.id,
+      initial.revision,
+      %{"outcome" => "test_no_decision"},
+      :none,
+      %{},
+      "Review Resolver limits",
+      authorize?: false
+    )
+
+    recovered_at = DateTime.utc_now()
+
+    recover = fn ->
+      ingest_one!(context.provider, "rollback-recheck-recovered", :recovered, recovered_at)
+    end
+
+    assert {:error, :simulated_persistence_failure} =
+             Repo.transaction(fn ->
+               recover.()
+               Repo.rollback(:simulated_persistence_failure)
+             end)
+
+    worker = Oban.Worker.to_string(RecoveryRecheckWorker)
+
+    assert Repo.all(
+             from job in Oban.Job,
+               where: job.worker == ^worker and job.args["case_id"] == ^incident.id
+           ) == []
+
+    [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :firing
+
+    recover.()
+
+    assert [_job] =
+             Repo.all(
+               from job in Oban.Job,
+                 where: job.worker == ^worker and job.args["case_id"] == ^incident.id
+             )
+
+    assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+    assert [recheck] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    assert recheck.intent["source"] == "signal_recheck"
   end
 
   test "same Target alerts share a provisional Case while retaining separate Conditions",

@@ -77,25 +77,35 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
              authorize?: false
            ) do
       case result do
-        %{status: status, value: turn} when status in [:charged, :duplicate] ->
-          with {:ok, current} <- Cases.get_case(incident.id, authorize?: false),
-               {:ok, _updated} <-
-                 Cases.update_case_record(
-                   current,
-                   current.revision,
-                   %{
-                     pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id},
-                     stop_reason: nil,
-                     required_human_input: nil
-                   },
-                   authorize?: false
-                 ) do
-            {:ok, %{status: :started}}
-          end
+        %{status: :charged, value: turn} ->
+          set_recheck_pending(incident, turn)
+
+        %{status: :duplicate, value: %{status: :started} = turn} ->
+          set_recheck_pending(incident, turn)
+
+        %{status: :duplicate} ->
+          {:ok, %{status: :skipped}}
 
         %{status: :exhausted} ->
           {:ok, %{status: :skipped}}
       end
+    end
+  end
+
+  defp set_recheck_pending(incident, turn) do
+    with {:ok, current} <- Cases.get_case(incident.id, authorize?: false),
+         {:ok, _updated} <-
+           Cases.update_case_record(
+             current,
+             current.revision,
+             %{
+               pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id},
+               stop_reason: nil,
+               required_human_input: nil
+             },
+             authorize?: false
+           ) do
+      {:ok, %{status: :started}}
     end
   end
 
