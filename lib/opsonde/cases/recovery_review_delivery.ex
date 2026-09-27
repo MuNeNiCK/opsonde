@@ -197,6 +197,7 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
       "evidence_ids" => request.conclusion.evidence_ids,
       "condition_claims" => request.conclusion.condition_claims,
       "case_symptom_claims" => request.conclusion.case_symptom_claims,
+      "symptom_assessment" => decision.symptom_assessment,
       "review_fingerprint" => RecoveryReviewFingerprint.reviewed(request),
       "verdict" => to_string(decision.verdict),
       "reason" => decision.reason,

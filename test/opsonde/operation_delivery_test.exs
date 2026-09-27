@@ -3533,11 +3533,25 @@ defmodule Opsonde.OperationDeliveryTest do
                        if delivery_opts != [],
                          do: assert(request.retry_context["category"] == "invalid_output")
 
+                       assessment =
+                         if request.case_symptom do
+                           %{
+                             "symptom_id" => request.case_symptom.id,
+                             "evidence_ids" =>
+                               request.conclusion.case_symptom_claims
+                               |> Enum.map(& &1["evidence_id"])
+                               |> Enum.uniq(),
+                             "status" => "supported",
+                             "reason" => "The claimed facts show the original symptom cleared"
+                           }
+                         end
+
                        {:ok,
                         %AI.ReviewDecision{
                           verdict: :approved,
                           reason:
                             "The cited observation directly checks the stated service state",
+                          symptom_assessment: assessment,
                           usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
                         }}
                      end

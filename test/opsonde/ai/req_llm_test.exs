@@ -1759,6 +1759,91 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute request.body =~ "proposal_tools"
   end
 
+  test "manual Recovery Reviewer must assess the original symptom and exact citations", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    symptom_id = String.duplicate("c", 64)
+
+    evidence = %AI.Evidence{
+      id: "observation-current",
+      kind: "observation",
+      target_id: "target-1",
+      content: %{"facts" => %{"service_state" => "active"}}
+    }
+
+    claim = %{
+      "symptom_id" => symptom_id,
+      "evidence_id" => evidence.id,
+      "fact_keys" => ["service_state"],
+      "reason" => "The service is active"
+    }
+
+    request = %AI.RecoveryReviewRequest{
+      provider_revision: 1,
+      session_id: "reviewer:turn-1",
+      resolver_session_id: "resolver:run-1",
+      case_id: "case-1",
+      objective: "Restore the API service",
+      report_language: :en,
+      conditions: [],
+      case_symptom: %{id: symptom_id, text: "Restore the API service"},
+      source_evidence: [],
+      cited_evidence: [evidence],
+      conclusion: %AI.RecoveryConclusion{
+        reason: "The service is active",
+        evidence_ids: [evidence.id],
+        case_symptom_claims: [claim]
+      },
+      budget: budget()
+    }
+
+    assessment = %{
+      "symptom_id" => symptom_id,
+      "evidence_ids" => [evidence.id],
+      "status" => "supported",
+      "reason" => "The observed service state addresses the original symptom"
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "verdict" => "approved",
+        "reason" => "The current service observation supports recovery",
+        "symptom_assessment" => assessment
+      }
+    })
+
+    assert {:ok, %AI.ReviewDecision{symptom_assessment: ^assessment} = decision} =
+             Adapter.review_recovery(state, request, %{})
+
+    assert :ok = AI.Validator.validate_decision(:review_recovery, decision, request)
+    [wire] = requests(context.agent)
+
+    assert reviewer_payload(wire)["case_symptom"] == %{
+             "id" => symptom_id,
+             "text" => "Restore the API service"
+           }
+
+    schema = output_schema(wire)
+    assert "symptom_assessment" in schema["required"]
+
+    assert get_in(schema, ["properties", "symptom_assessment", "properties", "symptom_id", "enum"]) ==
+             [symptom_id]
+
+    assert {:error, _error} =
+             AI.Validator.validate_decision(
+               :review_recovery,
+               %{decision | symptom_assessment: %{assessment | "status" => "unsupported"}},
+               request
+             )
+
+    assert {:error, _error} =
+             AI.Validator.validate_decision(
+               :review_recovery,
+               %{decision | symptom_assessment: %{assessment | "evidence_ids" => ["other"]}},
+               request
+             )
+  end
+
   test "Reviewer sees monitor state and current observations without a recovery verdict",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})

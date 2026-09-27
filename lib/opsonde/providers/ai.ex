@@ -541,7 +541,7 @@ defmodule Opsonde.Providers.AI do
   defmodule ReviewDecision do
     @moduledoc false
     @enforce_keys [:verdict, :reason, :usage]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [symptom_assessment: nil]
     @type t :: %__MODULE__{}
   end
 

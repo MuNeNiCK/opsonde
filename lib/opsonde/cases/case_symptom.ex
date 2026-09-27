@@ -58,6 +58,30 @@ defmodule Opsonde.Cases.CaseSymptom do
 
   def valid_claims?(_claims, _symptom, _cited_ids, _evidence), do: false
 
+  def valid_assessment?(nil, nil, [], _verdict), do: true
+
+  def valid_assessment?(assessment, %{id: symptom_id}, claims, verdict)
+      when is_map(assessment) and is_list(claims) do
+    expected_ids = claims |> Enum.map(& &1["evidence_id"]) |> Enum.uniq() |> Enum.sort()
+    received_ids = assessment["evidence_ids"]
+
+    Enum.sort(Map.keys(assessment)) == ~w(evidence_ids reason status symptom_id) and
+      assessment["symptom_id"] == symptom_id and expected_ids != [] and
+      is_list(received_ids) and Enum.all?(received_ids, &is_binary/1) and
+      Enum.sort(received_ids) == expected_ids and
+      assessment["status"] == assessment_status(verdict) and
+      is_binary(assessment["reason"]) and byte_size(assessment["reason"]) <= 4_000 and
+      String.trim(assessment["reason"]) != "" and
+      String.length(assessment["reason"]) <= 1_000
+  end
+
+  def valid_assessment?(_assessment, _symptom, _claims, _verdict), do: false
+
+  defp assessment_status(:approved), do: "supported"
+  defp assessment_status(:rejected), do: "unsupported"
+  defp assessment_status(:needs_human), do: "unknown"
+  defp assessment_status(_verdict), do: nil
+
   defp preferred(value, fallback)
        when is_binary(value) and byte_size(value) <= 8_000 do
     if String.trim(value) != "" and String.length(value) <= 2_000,

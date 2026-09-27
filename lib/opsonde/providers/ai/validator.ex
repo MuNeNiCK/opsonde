@@ -484,6 +484,13 @@ defmodule Opsonde.Providers.AI.Validator do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
          true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
+         true <-
+           CaseSymptom.valid_assessment?(
+             decision.symptom_assessment,
+             request.case_symptom,
+             request.conclusion.case_symptom_claims,
+             decision.verdict
+           ),
          true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
       :ok
     else

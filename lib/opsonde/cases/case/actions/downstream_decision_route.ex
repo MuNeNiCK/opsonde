@@ -177,6 +177,13 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               is_binary(event.data["provider_id"]) and
               is_binary(event.data["invocation_key"])) ||
              {:error, "Recovery Review did not approve this exact conclusion"},
+         true <-
+           CaseSymptom.valid_assessment?(
+             event.data["symptom_assessment"],
+             CaseSymptom.current(incident),
+             intent["case_symptom_claims"],
+             :approved
+           ) || {:error, "Recovery Review did not assess this Case symptom"},
          {:ok, invocation} <-
            Cases.ai_invocation_by_idempotency(event.data["invocation_key"],
              authorize?: false,

@@ -153,17 +153,27 @@ defmodule Opsonde.AI.ReqLLM do
 
   @impl Opsonde.Providers.AI
   def review(state, %AI.ReviewRequest{} = request, invocation) do
-    review_with_context(state, reviewer_context(request), request.budget, invocation)
+    review_with_context(
+      state,
+      reviewer_context(request),
+      request.budget,
+      invocation,
+      reviewer_schema()
+    )
   end
 
   @impl Opsonde.Providers.AI
   def review_recovery(state, %AI.RecoveryReviewRequest{} = request, invocation) do
-    review_with_context(state, recovery_reviewer_context(request), request.budget, invocation)
+    review_with_context(
+      state,
+      recovery_reviewer_context(request),
+      request.budget,
+      invocation,
+      recovery_reviewer_schema(request)
+    )
   end
 
-  defp review_with_context(state, messages, budget, invocation) do
-    schema = reviewer_schema()
-
+  defp review_with_context(state, messages, budget, invocation, schema) do
     with {:ok, response} <-
            invoke(
              state,
@@ -174,11 +184,18 @@ defmodule Opsonde.AI.ReqLLM do
            ),
          result <-
            decode_decision(response, schema, fn value ->
-             with {:ok, verdict} <- verdict(value), do: {:ok, {verdict, value["reason"]}}
+             with {:ok, verdict} <- verdict(value),
+                  do: {:ok, {verdict, value["reason"], value["symptom_assessment"]}}
            end) do
       case result do
-        {:ok, {verdict, reason}, usage} ->
-          {:ok, %AI.ReviewDecision{verdict: verdict, reason: reason, usage: usage}}
+        {:ok, {verdict, reason, assessment}, usage} ->
+          {:ok,
+           %AI.ReviewDecision{
+             verdict: verdict,
+             reason: reason,
+             symptom_assessment: assessment,
+             usage: usage
+           }}
 
         error ->
           error
@@ -207,7 +224,11 @@ defmodule Opsonde.AI.ReqLLM do
         "case_symptom.text with each case_symptom_claim, look up its exact cited fact_keys " <>
         "and actual values in cited_target_evidence, and reject claims supported only by " <>
         "unrelated identity or healthy components. The claim's symptom_id identifies the " <>
-        "original Case objective; it does not itself prove recovery. " <>
+        "original Case objective; it does not itself prove recovery. Return a structured " <>
+        "symptom_assessment over every claimed Evidence ID. Use status supported only when " <>
+        "the actual cited values substantiate the original symptom's recovery, unsupported " <>
+        "when they do not, and unknown when a concrete external fact is missing. Match " <>
+        "approved to supported, rejected to unsupported, and needs_human to unknown. " <>
         "Compare the native symptom, the claimed effect, and the observation's actual facts. " <>
         "Review recent Case evidence, including prior ResolutionRuns and effect chronology, " <>
         "even when the Resolver did not cite it. A post-effect failure may be caused by the " <>
@@ -1835,6 +1856,38 @@ defmodule Opsonde.AI.ReqLLM do
         "reason" => bounded_string_schema(@reviewer_reason_codepoints)
       },
       ~w(verdict reason)
+    )
+  end
+
+  defp recovery_reviewer_schema(%{case_symptom: nil}), do: reviewer_schema()
+
+  defp recovery_reviewer_schema(request) do
+    claim_ids =
+      request.conclusion.case_symptom_claims
+      |> Enum.map(& &1["evidence_id"])
+      |> Enum.uniq()
+
+    object_schema(
+      %{
+        "verdict" => enum_schema(~w(approved rejected needs_human)),
+        "reason" => bounded_string_schema(@reviewer_reason_codepoints),
+        "symptom_assessment" =>
+          object_schema(
+            %{
+              "symptom_id" => enum_schema([request.case_symptom.id]),
+              "evidence_ids" => %{
+                "type" => "array",
+                "minItems" => length(claim_ids),
+                "maxItems" => length(claim_ids),
+                "items" => enum_schema(claim_ids)
+              },
+              "status" => enum_schema(~w(supported unsupported unknown)),
+              "reason" => bounded_string_schema(@reviewer_reason_codepoints)
+            },
+            ~w(symptom_id evidence_ids status reason)
+          )
+      },
+      ~w(verdict reason symptom_assessment)
     )
   end
 
