@@ -340,6 +340,107 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
   end
 
+  test "Resolver selects one of 22 mapped Targets by offered ref and carries its native citation",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    candidates =
+      for index <- 1..22 do
+        %AI.TargetCandidate{
+          id: "target-#{index}",
+          revision: 1,
+          name: "node-#{index}",
+          kind: "network_device",
+          platform: "generic",
+          facts: %{}
+        }
+      end
+
+    conditions =
+      for index <- 1..22 do
+        %AI.Condition{
+          id: "condition-#{index}",
+          revision: 1,
+          occurrence: 1,
+          predicate: "unavailable",
+          subject_key: "node-#{index}",
+          subject_ref: %{"name" => "node-#{index}"},
+          state: :firing,
+          target_id: "target-#{index}",
+          current_occurred_at_us: 1
+        }
+      end
+
+    evidence =
+      for index <- 1..22 do
+        %AI.Evidence{
+          id: "source-#{index}",
+          kind: "signal_event",
+          target_id: "target-#{index}",
+          content: %{
+            "current" => true,
+            "condition_id" => "condition-#{index}",
+            "condition_revision" => 1
+          }
+        }
+      end
+
+    request = %{
+      resolver_request()
+      | conditions: conditions,
+        evidence: evidence,
+        target_candidates: candidates
+    }
+
+    set_mode(context.agent, {
+      :decision,
+      %{
+        "reason" => "Investigate the independently signaled core node",
+        "intent" => %{"type" => "target_selection", "candidate_ref" => "candidate-22"},
+        "condition_groups" => [
+          %{
+            "condition_ids" => Enum.map(1..22, &"condition-#{&1}"),
+            "assessment" => "unknown",
+            "reason" => "The source events do not establish a common cause",
+            "evidence_ids" => Enum.map(1..22, &"source-#{&1}")
+          }
+        ]
+      }
+    })
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              condition_groups: [group],
+              intent: %AI.TargetSelection{
+                target_id: "target-22",
+                target_revision: 1,
+                evidence_ids: ["source-22"]
+              }
+            }} = Adapter.resolve(state, request, %{})
+
+    assert length(group["evidence_ids"]) == 22
+    assert [^group] = AI.normalize_condition_groups([group], conditions, evidence)
+
+    [wire] = requests(context.agent)
+    payload = user_payload(wire)
+    assert length(payload["target_candidates"]) == 22
+
+    assert Enum.find(payload["target_candidates"], &(&1["candidate_ref"] == "candidate-22"))[
+             "supporting_evidence_ids"
+           ] == ["source-22"]
+
+    selection_schema =
+      Enum.find(output_schema(wire)["properties"]["intent"]["anyOf"], fn variant ->
+        get_in(variant, ["properties", "type", "enum"]) == ["target_selection"]
+      end)
+
+    assert get_in(selection_schema, ["properties", "candidate_ref", "enum"]) ==
+             Enum.map(1..22, &"candidate-#{&1}")
+
+    refute Map.has_key?(selection_schema["properties"], "target_id")
+    refute Map.has_key?(selection_schema["properties"], "evidence_ids")
+  end
+
   test "Resolver object output carries optional bounded Condition hypotheses beside one intent",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})

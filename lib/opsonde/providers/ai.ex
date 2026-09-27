@@ -430,7 +430,7 @@ defmodule Opsonde.Providers.AI do
 
     if ids != [] and length(ids) <= 32 and length(ids) == MapSet.size(id_set) and
          MapSet.subset?(id_set, available) and MapSet.disjoint?(id_set, assigned) and
-         length(evidence_ids) <= 16 and length(evidence_ids) == MapSet.size(evidence_set) and
+         length(evidence_ids) <= 32 and length(evidence_ids) == MapSet.size(evidence_set) and
          MapSet.subset?(evidence_set, cited) and valid_resolver_reason?(reason) and
          (assessment == "unknown" or evidence_ids != []) do
       {:ok,

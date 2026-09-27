@@ -330,11 +330,7 @@ defmodule Opsonde.AI.ReqLLM do
       "recovery_evidence_ids" => request.recovery_evidence_ids,
       "evidence" => plain(request.evidence),
       "historical_evidence" => plain(request.historical_evidence),
-      "target_candidates" => plain(request.target_candidates),
-      "target_selection_evidence_ids" =>
-        Map.new(request.target_candidates, fn target ->
-          {target.id, AI.target_candidate_evidence_ids(request, target.id)}
-        end),
+      "target_candidates" => target_selection_choices(request),
       "selected_target_id" => request.selected_target_id,
       "selected_target_revision" => request.selected_target_revision,
       "observation_results" => plain(request.observation_results),
@@ -401,9 +397,9 @@ defmodule Opsonde.AI.ReqLLM do
         "names and effect chronology, but never cite it as current recovery proof; obtain " <>
         "a fresh observation of the actual symptom after the latest effect. " <>
         "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
-        "For target_selection, take evidence_ids only from the " <>
-        "target_selection_evidence_ids entry for the selected target_id. " <>
-        "Do not cite an event for a different Target. " <>
+        "For target_selection, return the candidate_ref from exactly one supplied " <>
+        "target_candidates entry. Choose it using that entry's Target facts and " <>
+        "supporting_evidence_ids; explain why the evidence supports investigating that Target. " <>
         "When condition_groups is offered, describe tentative related, independent, or unknown " <>
         "Condition groups using only supplied Condition IDs and Evidence IDs. Groups must not " <>
         "overlap. Graph proximity and timing alone mean unknown; cite observations when asserting " <>
@@ -527,10 +523,15 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp intent(%{"type" => "target_selection"} = value, request) do
-    with {:ok, target_id} <- string(value, "target_id"),
-         %AI.TargetCandidate{} = target <-
-           Enum.find(request.target_candidates, &(&1.id == target_id)),
-         {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
+    with {:ok, candidate_ref} <- string(value, "candidate_ref"),
+         {%AI.TargetCandidate{} = target, evidence_ids}
+         when is_list(evidence_ids) and evidence_ids != [] <-
+           Enum.find_value(target_selection_choices(request), fn choice ->
+             if choice["candidate_ref"] == candidate_ref do
+               target = Enum.find(request.target_candidates, &(&1.id == choice["id"]))
+               {target, choice["supporting_evidence_ids"]}
+             end
+           end),
          {:ok, reason} <- string(value, "reason") do
       {:ok,
        %AI.TargetSelection{
@@ -834,7 +835,7 @@ defmodule Opsonde.AI.ReqLLM do
     intent = if is_map(value["intent"]), do: value["intent"], else: %{}
 
     known_intent_keys =
-      ~w(type action evidence_ids affected_conditions target_id relationship_id query required_input condition_claims verification expected_result_json)
+      ~w(type action evidence_ids affected_conditions candidate_ref target_id relationship_id query required_input condition_claims verification expected_result_json)
 
     intent_type =
       if intent["type"] in @resolver_intent_types,
@@ -1308,7 +1309,7 @@ defmodule Opsonde.AI.ReqLLM do
             },
             "assessment" => enum_schema(["related", "independent", "unknown"]),
             "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
-            "evidence_ids" => %{"type" => "array", "items" => string_schema(), "maxItems" => 16}
+            "evidence_ids" => %{"type" => "array", "items" => string_schema(), "maxItems" => 32}
           },
           ~w(condition_ids assessment reason evidence_ids)
         )
@@ -1362,19 +1363,32 @@ defmodule Opsonde.AI.ReqLLM do
   defp target_search_schema(_request), do: nil
 
   defp target_selection_schema(request) do
-    target_ids = Enum.map(request.target_candidates, & &1.id)
+    refs = Enum.map(target_selection_choices(request), & &1["candidate_ref"])
 
-    evidence_ids =
-      target_ids
-      |> Enum.flat_map(&AI.target_candidate_evidence_ids(request, &1))
-      |> Enum.uniq()
-
-    if target_ids != [] and evidence_ids != [] do
+    if refs != [] do
       intent_schema("target_selection", %{
-        "target_id" => enum_schema(target_ids),
-        "evidence_ids" => identifier_array_schema(evidence_ids)
+        "candidate_ref" => enum_schema(refs)
       })
     end
+  end
+
+  defp target_selection_choices(request) do
+    request.target_candidates
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {target, index} ->
+      case AI.target_candidate_evidence_ids(request, target.id) do
+        [] ->
+          []
+
+        evidence_ids ->
+          [
+            target
+            |> plain()
+            |> Map.put("candidate_ref", "candidate-#{index}")
+            |> Map.put("supporting_evidence_ids", evidence_ids)
+          ]
+      end
+    end)
   end
 
   defp target_traversal_schema(%{budget: %{remaining_related_targets: remaining}} = request)
