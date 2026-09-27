@@ -1099,6 +1099,36 @@ defmodule Opsonde.OperationDeliveryTest do
     assert condition_id == other.id
   end
 
+  for terminal_status <- [:failed, :partial, :unknown] do
+    @tag terminal_status: terminal_status
+    test "a terminal #{terminal_status} effect needs post-outcome Target evidence", context do
+      enable_signal_automation!(context.admin)
+      status = context.terminal_status
+
+      {incident, _run, proposal, signal_provider} =
+        authorized_proposal!("terminal-recovery-#{status}", context, trigger_kind: :signal)
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation({:ok, %Target.EffectResult{status: status}})
+               )
+
+      assert_receive {:effect, _, _}
+
+      recover_signal!(
+        signal_provider,
+        context,
+        incident.initial_context["signal_event_key"],
+        "post-#{status}-recovery"
+      )
+
+      assert {:ok, [%{status: :needs_observation}]} =
+               ConditionRecovery.assess_current(incident)
+    end
+  end
+
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",
        context do
     enable_signal_automation!(context.admin)
