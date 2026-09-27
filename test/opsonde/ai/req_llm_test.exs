@@ -849,7 +849,8 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.any?(body["messages"], fn message ->
              message["role"] == "system" and
                String.contains?(message["content"], "previous response was rejected") and
-               String.contains?(message["content"], "Copy enum values exactly")
+               String.contains?(message["content"], "Copy enum values exactly") and
+               String.contains?(message["content"], "at most 250 Unicode codepoints")
            end)
   end
 

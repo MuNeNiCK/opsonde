@@ -413,7 +413,8 @@ defmodule Opsonde.AI.ReqLLM do
         "Choose handoff only when no offered intent can make safe progress and a required value " <>
         "is absent from the supplied input. Write the " <>
         "human-facing reason and required_input fields in the report_language supplied in " <>
-        "the user payload. Keep reason concise and at most #{AI.resolver_reason_codepoints()} Unicode codepoints. Return exactly " <>
+        "the user payload. Keep the root reason to at most 250 Unicode codepoints; " <>
+        "the hard schema limit is #{AI.resolver_reason_codepoints()}. Return exactly " <>
         "one intent allowed by the supplied output schema. For expected_result_json fields, " <>
         "encode one JSON object as a string. Use only identifiers and evidence IDs supplied " <>
         "in the user payload. allowed_intents is the authoritative list of intent types in the " <>
