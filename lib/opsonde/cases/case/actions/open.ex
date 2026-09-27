@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Accounts, Cases}
-  alias Opsonde.Cases.{AuthoritySetting, Case, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.{AuthoritySetting, Case, CaseDispatch, CaseEvent, ResolutionRun}
   alias Opsonde.Targets
 
   @impl true
@@ -23,14 +23,15 @@ defmodule Opsonde.Cases.Case.Actions.Open do
 
   defp create_case(arguments, initial_target, actor) do
     result =
-      Ash.transact([AuthoritySetting, Case, ResolutionRun, CaseEvent], fn ->
+      Ash.transact([AuthoritySetting, Case, CaseDispatch, ResolutionRun, CaseEvent], fn ->
         with {:ok, setting} <- locked_current_setting(),
              {:ok, report_language} <- report_language(arguments, setting, actor),
              now <- DateTime.utc_now(),
              {:ok, incident} <-
                create_case_record(arguments, initial_target, setting, actor, report_language),
              {:ok, run} <- create_run(incident, setting, now),
-             {:ok, _event} <- create_opened_event(incident, run, actor, arguments) do
+             {:ok, _event} <- create_opened_event(incident, run, actor, arguments),
+             :ok <- dispatch_manual_case(arguments, incident, now) do
           incident
         end
       end)
@@ -170,6 +171,28 @@ defmodule Opsonde.Cases.Case.Actions.Open do
       authorize?: false
     )
   end
+
+  defp dispatch_manual_case(%{trigger_kind: :manual}, incident, now) do
+    with {:ok, _dispatch} <-
+           Cases.create_case_dispatch_record(
+             %{
+               case_id: incident.id,
+               state: :collecting,
+               first_received_at: now,
+               due_at: now,
+               anchor_target_id: incident.initial_target_id
+             },
+             authorize?: false
+           ),
+         {:ok, _job} <-
+           %{"case_id" => incident.id}
+           |> Opsonde.Cases.CaseDispatchWorker.new(scheduled_at: now)
+           |> Oban.insert() do
+      :ok
+    end
+  end
+
+  defp dispatch_manual_case(_arguments, _incident, _now), do: :ok
 
   defp validate_trigger(:signal, actor) when not is_nil(actor),
     do: {:error, "Signal Cases must be opened by native Condition admission"}

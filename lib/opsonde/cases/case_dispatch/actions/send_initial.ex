@@ -39,29 +39,47 @@ defmodule Opsonde.Cases.CaseDispatch.Actions.SendInitial do
     else
       with {:ok, incident} <- Cases.get_case(dispatch.case_id, authorize?: false),
            true <- incident.status == :running || {:error, "Case is not running"},
-           {:ok, members} <-
-             Cases.active_conditions_for_case(incident.id, authorize?: false),
-           true <- members != [] || {:error, "Case has no active Conditions"},
            {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
-           {:ok, started} <-
-             Cases.start_turn(
-               incident.id,
-               run.id,
-               "signal-initial:#{incident.id}:#{run.generation}",
-               %{"objective" => "Investigate all active Signal conditions"},
-               %{"action" => "continue"},
-               "Review Resolver limits",
-               authorize?: false
-             ),
-           true <-
-             started.status in [:charged, :duplicate, :exhausted] ||
-               {:error, "Initial Resolver Turn was not accepted"},
+           :ok <- initial_turn(incident, run),
            {:ok, _dispatch} <-
              Cases.record_case_dispatch_state(dispatch, dispatch.revision, %{state: :sent},
                authorize?: false
              ) do
         {:ok, %{status: :sent}}
       end
+    end
+  end
+
+  defp initial_turn(%{trigger_kind: :signal} = incident, run) do
+    with {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- members != [] || {:error, "Case has no active Conditions"} do
+      start_turn(incident, run, "signal-initial", "Investigate all active Signal conditions")
+    end
+  end
+
+  defp initial_turn(%{trigger_kind: :manual} = incident, run) do
+    if run.turn_count > 0 do
+      :ok
+    else
+      start_turn(incident, run, "manual-initial", incident.title)
+    end
+  end
+
+  defp initial_turn(_incident, _run), do: {:error, "Case trigger cannot be dispatched"}
+
+  defp start_turn(incident, run, prefix, objective) do
+    case Cases.start_turn(
+           incident.id,
+           run.id,
+           "#{prefix}:#{incident.id}:#{run.generation}",
+           %{"objective" => objective},
+           %{"action" => "continue"},
+           "Review Resolver limits",
+           authorize?: false
+         ) do
+      {:ok, %{status: status}} when status in [:charged, :duplicate, :exhausted] -> :ok
+      {:error, _error} = error -> error
+      _other -> {:error, "Initial Resolver Turn was not accepted"}
     end
   end
 end

@@ -6,6 +6,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
   alias Opsonde.Cases.ReviewDelivery
+  alias Opsonde.Cases.CaseDispatchWorker
   alias Opsonde.Providers.{AI, Signal}
 
   @password "correct horse battery staple"
@@ -35,6 +36,44 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       operator_token: token!(operator.email),
       viewer_token: token!(viewer.email)
     }
+  end
+
+  test "public manual Case creation durably dispatches one investigation", context do
+    body = %{
+      "case" => %{
+        "trigger_kind" => "manual",
+        "source" => "api",
+        "source_ref" => "manual-entry-once",
+        "title" => "Investigate guest availability",
+        "severity" => "warning",
+        "initial_context" => %{"symptom" => "Guest unavailable"}
+      }
+    }
+
+    first = post_json("/api/v1/cases", body, context.operator_token) |> json_response(201)
+    second = post_json("/api/v1/cases", body, context.operator_token) |> json_response(201)
+    incident_id = first["data"]["id"]
+    assert second["data"]["id"] == incident_id
+
+    assert Cases.case_dispatch!(incident_id, authorize?: false).state == :collecting
+
+    assert [_job] =
+             Opsonde.Repo.all(Oban.Job)
+             |> Enum.filter(
+               &(&1.worker == "Opsonde.Cases.CaseDispatchWorker" and
+                   &1.args["case_id"] == incident_id)
+             )
+
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident_id}})
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident_id}})
+
+    run = Cases.active_resolution_run!(incident_id, authorize?: false)
+    assert run.turn_count == 1
+    assert Cases.case_dispatch!(incident_id, authorize?: false).state == :sent
+
+    assert [%{"status" => "started", "ordinal" => 1}] =
+             get_data!("/api/v1/cases/#{incident_id}/turns", context.viewer_token)
+             |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
   test "Case queue search, filters, and sorting are applied before pagination", context do

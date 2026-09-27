@@ -259,6 +259,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
              {:ok, anchor} <- Targets.get_target(dispatch.anchor_target_id, authorize?: false),
              true <- anchor.management_boundary_id == target.management_boundary_id,
              {:ok, incident} <- Cases.get_case(dispatch.case_id, authorize?: false),
+             true <- incident.trigger_kind == :signal,
              true <- admits_new_condition?(incident),
              {:ok, members} <-
                Cases.active_conditions_for_case(incident.id, authorize?: false),
