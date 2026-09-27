@@ -961,11 +961,12 @@ const en = {
       chooseProviderType: "Choose an infrastructure connection",
       chooseProviderDescription:
         "Select a platform or generic access method, then enter only the settings it needs.",
-      choiceLinux: "Manage a Linux host through an authorized SSH connection.",
+      choiceLinux: "Manage a Linux host through SSH or observe an HTTP endpoint.",
       choicePhysicalHost: "Manage a physical host through its Redfish or IPMI BMC connection.",
       choiceCisco: "Manage Cisco IOS XE using SSH/CLI, NETCONF, or RESTCONF.",
       choiceKubernetes: "Manage a Kubernetes cluster through its API and kubeconfig.",
-      choiceGeneric: "Register an SSH path for infrastructure without a dedicated adapter.",
+      choiceGeneric:
+        "Register an SSH or HTTP observation path for infrastructure without a dedicated adapter.",
       choiceNetBox: "Use NetBox as an optional external inventory source.",
       netBoxDescription: "Use NetBox as an optional inventory source.",
       secretDescription: "Credentials are write-only and are never displayed again.",

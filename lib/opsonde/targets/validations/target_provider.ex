@@ -19,7 +19,9 @@ defmodule Opsonde.Targets.Validations.TargetProvider do
            authorize?: false
          ) do
       {:ok, provider} ->
-        AccessBinding.validate(changeset, provider)
+        with :ok <- AccessBinding.validate(changeset, provider) do
+          validate_http(changeset, provider)
+        end
 
       {:error, _error} ->
         {:error,
@@ -27,4 +29,22 @@ defmodule Opsonde.Targets.Validations.TargetProvider do
          message: "must reference an enabled target Provider at the specified revision"}
     end
   end
+
+  defp validate_http(changeset, %{adapter_type: "generic-http"} = provider) do
+    endpoint = Ash.Changeset.get_attribute(changeset, :endpoint)
+    capabilities = Ash.Changeset.get_attribute(changeset, :capabilities)
+
+    if Ash.Changeset.get_attribute(changeset, :method) == "http_get" and
+         endpoint == provider.configuration["endpoint"] and
+         capabilities == ["observe.http"] do
+      :ok
+    else
+      {:error,
+       field: :endpoint,
+       message:
+         "HTTP Access Method must use its checked Provider endpoint and observe.http capability"}
+    end
+  end
+
+  defp validate_http(_changeset, _provider), do: :ok
 end

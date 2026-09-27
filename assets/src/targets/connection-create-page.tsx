@@ -24,7 +24,7 @@ const presentations = {
   },
   "cisco-ios-xe": { icon: Network, title: "Cisco IOS XE", description: "targets.choiceCisco" },
   kubernetes: { icon: Boxes, title: "Kubernetes", description: "targets.choiceKubernetes" },
-  generic: { icon: Cable, title: "Generic SSH", description: "targets.choiceGeneric" },
+  generic: { icon: Cable, title: "Generic access", description: "targets.choiceGeneric" },
   netbox: { icon: Database, title: "NetBox", description: "targets.choiceNetBox" },
 } as const;
 
@@ -172,7 +172,7 @@ function TargetConnectionForm({
 
   async function createTarget(
     form: FormData,
-    family: "ssh" | "restconf" | "kubernetes" | "bmc-redfish" | "bmc-ipmi",
+    family: "ssh" | "http" | "restconf" | "kubernetes" | "bmc-redfish" | "bmc-ipmi",
   ) {
     const endpoint = value(form, "endpoint");
     let configuration: Record<string, unknown>;
@@ -191,6 +191,11 @@ function TargetConnectionForm({
         form,
         authMethod === "password" ? "password" : "private_key",
       );
+    } else if (family === "http") {
+      configuration = { endpoint };
+      if (value(form, "ca_certificate"))
+        configuration.ca_certificate = value(form, "ca_certificate");
+      credentials = value(form, "token") ? { bearer_token: value(form, "token") } : {};
     } else if (family === "restconf") {
       configuration = { ca_certificate: value(form, "ca_certificate") };
       credentials = { username: value(form, "username"), password: value(form, "password") };
@@ -272,11 +277,13 @@ function TargetConnectionForm({
                 label={t("targets.endpoint")}
                 name="endpoint"
                 placeholder={
-                  adapter?.family === "restconf" || adapter?.family === "bmc-redfish"
-                    ? "https://bmc.example.com:443"
-                    : adapter?.family === "bmc-ipmi"
-                      ? "ipmi://bmc.example.com:623"
-                      : "ssh://host:22"
+                  adapter?.family === "http"
+                    ? "https://service.example.com/health"
+                    : adapter?.family === "restconf" || adapter?.family === "bmc-redfish"
+                      ? "https://bmc.example.com:443"
+                      : adapter?.family === "bmc-ipmi"
+                        ? "ipmi://bmc.example.com:623"
+                        : "ssh://host:22"
                 }
                 required
               />
@@ -288,6 +295,7 @@ function TargetConnectionForm({
                 />
               )}
               {adapter?.family === "restconf" && <RESTCONFFields />}
+              {adapter?.family === "http" && <HTTPFields />}
               {adapter?.family === "bmc-redfish" && <RedfishFields />}
               {adapter?.family === "bmc-ipmi" && <IPMIFields />}
               {adapter?.family === "kubernetes" && <KubernetesFields />}
@@ -381,6 +389,16 @@ function RESTCONFFields() {
         required
       />
       <Area label={t("targets.caCertificate")} name="ca_certificate" required />
+    </>
+  );
+}
+
+function HTTPFields() {
+  const { t } = useTranslation();
+  return (
+    <>
+      <Field label={t("targets.token")} name="token" type="password" autoComplete="off" />
+      <Area label={t("targets.caCertificate")} name="ca_certificate" />
     </>
   );
 }

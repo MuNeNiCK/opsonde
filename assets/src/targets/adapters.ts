@@ -49,6 +49,13 @@ export const targetAdapterOptions = [
     method: "ssh",
     family: "ssh",
   },
+  {
+    type: "generic-http",
+    label: "HTTP GET",
+    platform: "generic",
+    method: "http_get",
+    family: "http",
+  },
 ] as const;
 
 export function targetAdapter(type: string) {
@@ -57,13 +64,13 @@ export function targetAdapter(type: string) {
 
 export const targetProviderChoices = [
   { id: "physical-host", adapterTypes: ["bmc-redfish", "bmc-ipmi"] },
-  { id: "linux", adapterTypes: ["linux-ssh"] },
+  { id: "linux", adapterTypes: ["linux-ssh", "generic-http"] },
   {
     id: "cisco-ios-xe",
     adapterTypes: ["ios-xe-ssh", "ios-xe-netconf", "ios-xe-restconf"],
   },
   { id: "kubernetes", adapterTypes: ["kubernetes-api"] },
-  { id: "generic", adapterTypes: ["generic-ssh"] },
+  { id: "generic", adapterTypes: ["generic-ssh", "generic-http"] },
   { id: "netbox", adapterTypes: ["netbox-api"] },
 ] as const;
 

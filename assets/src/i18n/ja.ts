@@ -940,11 +940,11 @@ const ja = {
       chooseProviderType: "インフラ接続を選択",
       chooseProviderDescription:
         "Platformまたは汎用の接続方式を選択し、必要な設定だけを入力します。",
-      choiceLinux: "許可したSSH接続を通じてLinuxホストを管理します。",
+      choiceLinux: "SSH接続でLinuxホストを管理するか、HTTPエンドポイントを観測します。",
       choicePhysicalHost: "物理ホストのBMCへRedfishまたはIPMIで接続します。",
       choiceCisco: "SSH/CLI、NETCONF、RESTCONFから選択してCisco IOS XEを管理します。",
       choiceKubernetes: "APIとkubeconfigを通じてKubernetesクラスタを管理します。",
-      choiceGeneric: "専用Adapterがないインフラ向けにSSH接続を登録します。",
+      choiceGeneric: "専用Adapterがないインフラ向けにSSH接続またはHTTP観測を登録します。",
       choiceNetBox: "任意の外部台帳ソースとしてNetBoxを利用します。",
       netBoxDescription: "任意の台帳ソースとしてNetBoxを利用します。",
       secretDescription: "認証情報は書き込み専用で、再表示されません。",

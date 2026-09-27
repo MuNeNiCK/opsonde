@@ -44,6 +44,7 @@ export function TargetDetailActions({
   );
   const selectedProvider = enabledProviders.find((provider) => provider.id === selectedProviderId);
   const selectedIsBMC = selectedProvider?.adapter_type.startsWith("bmc-") ?? false;
+  const selectedIsHTTP = selectedProvider?.adapter_type === "generic-http";
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -200,10 +201,16 @@ export function TargetDetailActions({
             <Field
               label={t("targets.endpoint")}
               name="endpoint"
-              placeholder={selectedIsBMC ? "" : "ssh://host:22"}
+              placeholder={
+                selectedIsHTTP
+                  ? "https://service.example.com/health"
+                  : selectedIsBMC
+                    ? ""
+                    : "ssh://host:22"
+              }
               value={accessEndpoint}
               onChange={(event) => setAccessEndpoint(event.target.value)}
-              readOnly={selectedIsBMC}
+              readOnly={selectedIsBMC || selectedIsHTTP}
               required
             />
             {selectedIsBMC && (

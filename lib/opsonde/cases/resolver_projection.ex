@@ -435,7 +435,7 @@ defmodule Opsonde.Cases.ResolverProjection do
         provider_revision: method.provider_revision,
         capability: operation.capability,
         operation: operation.operation,
-        description: operation.description,
+        description: "Access Method #{method.name}: " <> operation.description,
         input_schema: operation.input_schema
       }
 

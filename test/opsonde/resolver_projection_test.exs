@@ -151,7 +151,7 @@ defmodule Opsonde.ResolverProjectionTest do
     assert observation.provider_revision == context.provider.revision
     assert observation.capability == "observe.system"
     assert observation.operation == "system.inspect"
-    assert observation.description == "Inspect using [REDACTED]"
+    assert observation.description == "Access Method primary-ssh: Inspect using [REDACTED]"
 
     assert [%AI.ProposalTool{} = observation_request, %AI.ProposalTool{} = proposal] =
              request.proposal_tools
