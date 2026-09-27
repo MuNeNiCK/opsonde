@@ -392,7 +392,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         resolution_run_id: Schemas.uuid(),
         actor_id: Schemas.uuid(),
         decision: enum(~w(approved rejected)),
-        source: enum(~w(human readonly full_access reviewer)),
+        source: enum(~w(human readonly auto_observation full_access reviewer)),
         proposal_revision: positive_integer(),
         case_generation: positive_integer(),
         reason: string(1, 1_000),

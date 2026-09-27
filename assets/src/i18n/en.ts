@@ -658,7 +658,14 @@ const en = {
         allow: "Allowed",
         deny: "Denied",
       },
-      decisionSource: { human: "Operator", reviewer: "Reviewer", policy: "Policy" },
+      decisionSource: {
+        human: "Operator",
+        reviewer: "Reviewer",
+        readonly: "Read only policy",
+        auto_observation: "Auto observation policy",
+        full_access: "Full access policy",
+        policy: "Policy",
+      },
       evidenceKind: {
         signal_event: "Monitoring event",
         observation: "Target observation",

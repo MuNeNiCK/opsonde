@@ -3101,7 +3101,7 @@ export interface components {
             /** Format: uuid */
             resolution_run_id: string;
             /** @enum {string} */
-            source: "human" | "readonly" | "full_access" | "reviewer";
+            source: "human" | "readonly" | "auto_observation" | "full_access" | "reviewer";
         };
         CanonicalSignalWebhookPayload: {
             event_key: string;

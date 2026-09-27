@@ -6327,6 +6327,7 @@
             "enum": [
               "human",
               "readonly",
+              "auto_observation",
               "full_access",
               "reviewer"
             ],

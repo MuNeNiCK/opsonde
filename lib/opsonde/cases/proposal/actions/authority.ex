@@ -85,7 +85,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
       case proposal.authority_mode do
         :readonly -> route_readonly(proposal, incident, run)
         :ask -> await_human(proposal, incident)
-        :auto -> await_reviewer(proposal, incident)
+        :auto -> route_auto(proposal, incident, run)
         :full_access -> authorize_full_access(proposal, incident, run)
       end
     end
@@ -228,7 +228,15 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp route_readonly(%{request_kind: :effect} = proposal, incident, run),
     do: recommend(proposal, incident, run)
 
-  defp route_readonly(%{request_kind: :observation} = proposal, incident, run) do
+  defp route_readonly(%{request_kind: :observation} = proposal, incident, run),
+    do: authorize_observation(proposal, incident, run, :readonly)
+
+  defp route_auto(%{request_kind: :observation} = proposal, incident, run),
+    do: authorize_observation(proposal, incident, run, :auto_observation)
+
+  defp route_auto(proposal, incident, _run), do: await_reviewer(proposal, incident)
+
+  defp authorize_observation(proposal, incident, run, source) do
     with {:ok, actor} <- current_owner(incident),
          {:ok, clearance} <- revalidate(proposal, actor),
          {:ok, approval} <-
@@ -236,8 +244,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              proposal,
              actor,
              :approved,
-             :readonly,
-             "Readonly mode authorized the exact observation request",
+             source,
+             "Target policy authorized the exact observation request",
              clearance
            ),
          {:ok, authorized} <- transition(proposal, :authorized),

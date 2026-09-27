@@ -148,6 +148,50 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
   end
 
+  test "Auto routes a cleared observation without Reviewer or human approval", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("auto-observation", context, :observation)
+
+    assert {:ok, authorized} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert {:ok, replayed} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert authorized.status == :authorized
+    assert replayed.id == authorized.id
+
+    assert [approval] = Cases.list_approvals!(actor: context.admin)
+    assert approval.source == :auto_observation
+    assert approval.decision == :approved
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert review_jobs(proposal.id) == 0
+    assert acceptance_jobs(proposal.id) == 1
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.request_kind == :observation
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    refute_receive {:review, _, _}
+    refute_receive {:effect, _, _}
+  end
+
+  test "Auto refuses an observation when the exact Access Method changes", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("auto-observation-stale", context, :observation)
+
+    Targets.update_access_method!(
+      context.method,
+      context.method.revision,
+      %{priority: context.method.priority + 1},
+      actor: context.admin
+    )
+
+    assert {:ok, invalidated} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert invalidated.status == :invalidated
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    refute_receive {:observe, _, _}
+  end
+
   test "multilingual Proposal reason uses the Resolver codepoint limit through routing",
        context do
     reason = String.duplicate("界", 116) <> String.duplicate("a", 196)
@@ -541,7 +585,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     )
 
     {incident, _run, proposal} =
-      proposal!("linked-target", Map.put(context, :initial_target, guest), :observation)
+      proposal!("linked-target", Map.put(context, :initial_target, guest), :effect)
 
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
@@ -678,7 +722,14 @@ defmodule Opsonde.ProposalAuthorityTest do
         %{
           "outcome" => "decision",
           "condition_revisions" => condition_revisions,
-          "intent" => proposal_intent(prior_evidence.id, context, :observation),
+          "intent" =>
+            proposal_intent(prior_evidence.id, context, :effect)
+            |> Map.put(
+              "affected_conditions",
+              Enum.map(condition_revisions, fn %{"id" => id, "revision" => revision} ->
+                %{"condition_id" => id, "revision" => revision}
+              end)
+            ),
           "resolver" => %{
             "provider_id" => context.resolver_provider.id,
             "provider_revision" => context.resolver_provider.revision,

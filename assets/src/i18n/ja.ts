@@ -641,7 +641,14 @@ const ja = {
         allow: "許可",
         deny: "拒否",
       },
-      decisionSource: { human: "運用者", reviewer: "Reviewer", policy: "Policy" },
+      decisionSource: {
+        human: "運用者",
+        reviewer: "Reviewer",
+        readonly: "読み取り専用ポリシー",
+        auto_observation: "自動観測ポリシー",
+        full_access: "フルアクセスポリシー",
+        policy: "Policy",
+      },
       evidenceKind: {
         signal_event: "監視イベント",
         observation: "Target観測",
