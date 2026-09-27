@@ -478,7 +478,8 @@ defmodule Opsonde.OperationDeliveryTest do
     assert failed.status == :failed
 
     assert failed.result_details == %{
-             "message" => "service observation failed without a stack trace"
+             "message" => "service observation failed without a stack trace",
+             "provider_category" => "failed"
            }
 
     evidence = operation_evidence_record(operation.id)
@@ -487,6 +488,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert evidence.content["operation"] == "service.inspect"
     assert evidence.content["selectors"] == %{"service" => "api"}
     assert evidence.content["details"] == failed.result_details
+    assert evidence.content["access_method_revision"] == context.method.revision
 
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
     assert run.no_progress_turns == 0
@@ -497,6 +499,28 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
+  end
+
+  test "observation continuation carries the relationship used to enter its Target", context do
+    relationship_id = Ecto.UUID.generate()
+
+    {incident, _run, proposal} =
+      authorized_proposal!("observation-relationship", context,
+        request_kind: :observation,
+        turn_intent: %{
+          "objective" => "Inspect the related Target",
+          "source" => "target_relationship",
+          "relationship_id" => relationship_id
+        }
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(operation, %{"service" => "api", "state" => "active"})
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    continued = Cases.get_turn!(pending["turn_id"], authorize?: false)
+    assert continued.intent["source"] == "observation"
+    assert continued.intent["prior_relationship_id"] == relationship_id
   end
 
   test "only a new observation result resets the no-progress budget", context do
@@ -543,6 +567,10 @@ defmodule Opsonde.OperationDeliveryTest do
                target_invocation: invocation({:error, :failed, "Target read failed"})
              )
 
+    failed = Cases.get_operation!(first.id, authorize?: false)
+    assert failed.result_details["provider_category"] == "failed"
+    assert failed.access_method_revision == context.method.revision
+
     assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 0
 
     different = continue_observation!(incident, Map.put(context, :service, "db"), first.id)
@@ -583,6 +611,60 @@ defmodule Opsonde.OperationDeliveryTest do
     stopped = Cases.get_case!(incident.id, authorize?: false)
     assert stopped.status == :needs_attention
     assert stopped.stop_reason == "No-progress turn limit exhausted"
+  end
+
+  test "repeated transport failures with one Access Method remove its tools from the next AI request",
+       context do
+    {incident, run, proposal} =
+      authorized_proposal!("method-unreachable", context, request_kind: :observation)
+
+    first = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(first.id,
+               target_invocation: invocation({:error, :retryable, "endpoint unavailable"})
+             )
+
+    second = continue_observation!(incident, Map.put(context, :service, "db"), first.id)
+
+    assert :ok =
+             OperationDelivery.run(second.id,
+               target_invocation: invocation({:error, :timeout, "endpoint timed out"})
+             )
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    capabilities = %Target.Capabilities{
+      observations: [
+        %Target.Operation{
+          capability: "observe.service",
+          operation: "service.inspect",
+          description: "Inspect a service",
+          input_schema: %{"type" => "object"}
+        }
+      ],
+      effects: []
+    }
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               next_turn.id,
+               %AI.Selection{
+                 role: :resolver,
+                 provider_id: context.resolver_provider.id,
+                 provider_revision: context.resolver_provider.revision,
+                 source: :assignment
+               },
+               invocation({:ok, capabilities})
+             )
+
+    assert request.observation_tools == []
+    assert request.proposal_tools == []
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :running
+
+    assert Cases.get_operation!(first.id, authorize?: false).result_details["provider_category"] ==
+             "retryable"
   end
 
   test "interleaved new reads do not hide repeated identical observations", context do
@@ -2808,7 +2890,7 @@ defmodule Opsonde.OperationDeliveryTest do
           incident.id,
           run.id,
           "operation-turn-#{suffix}",
-          %{"objective" => "Restore the service"},
+          Keyword.get(opts, :turn_intent, %{"objective" => "Restore the service"}),
           %{"action" => "continue"},
           "Review Resolver limits",
           authorize?: false

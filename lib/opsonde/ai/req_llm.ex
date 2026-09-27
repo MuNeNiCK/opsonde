@@ -336,6 +336,7 @@ defmodule Opsonde.AI.ReqLLM do
       "observation_results" => plain(request.observation_results),
       "target_relations" => plain(request.target_relations),
       "traversable_relation_ids" => request.traversable_relation_ids,
+      "traversal_options" => traversal_options(request),
       "observation_tools" => plain(request.observation_tools),
       "proposal_tools" => plain(request.proposal_tools),
       "effect_evidence_ids" => AI.proposal_evidence_ids(request)
@@ -411,7 +412,11 @@ defmodule Opsonde.AI.ReqLLM do
         "resolver_split_rejected, keep the Conditions in one Case until new direct " <>
         "Target observations support both sides. " <>
         "Registered Target relations are inventory context; only IDs listed in " <>
-        "traversable_relation_ids are available for Target traversal. " <>
+        "traversal_options are available for Target traversal. Each option names the exact " <>
+        "next Target reached by its relationship_id; check that destination before choosing " <>
+        "a relationship. After a direct observation on the selected Target, judge whether " <>
+        "its current facts justify an offered request or effect before leaving it. If the " <>
+        "facts are insufficient, gather a different observation or hand off with the gap. " <>
         "When a current-Target observation can identify the failing dependency, observe it before " <>
         "traversal unless supplied Evidence already identifies the exact downstream resource. " <>
         "After a failed observation or one with no relevant facts, do not repeat the same operation " <>
@@ -1391,6 +1396,35 @@ defmodule Opsonde.AI.ReqLLM do
             |> Map.put("candidate_ref", "candidate-#{index}")
             |> Map.put("supporting_evidence_ids", evidence_ids)
           ]
+      end
+    end)
+  end
+
+  defp traversal_options(request) do
+    request.target_relations
+    |> Enum.filter(&(&1.id in request.traversable_relation_ids))
+    |> Enum.flat_map(fn relation ->
+      case traversal_target(relation, request.selected_target_id) do
+        {:ok, next_target} ->
+          direction =
+            if relation.source_target.id == request.selected_target_id,
+              do: "source_to_destination",
+              else: "destination_to_source"
+
+          [
+            %{
+              "relationship_id" => relation.id,
+              "relationship_kind" => relation.kind,
+              "direction" => direction,
+              "next_target_id" => next_target.id,
+              "next_target_name" => next_target.name,
+              "next_target_kind" => next_target.kind,
+              "next_target_platform" => next_target.platform
+            }
+          ]
+
+        _invalid ->
+          []
       end
     end)
   end

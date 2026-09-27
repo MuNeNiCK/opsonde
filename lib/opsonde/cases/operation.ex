@@ -43,6 +43,26 @@ defmodule Opsonde.Cases.Operation do
       prepare build(sort: [updated_at: :desc, id: :desc], limit: 100)
     end
 
+    read :recent_method_observations do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+      argument :target_id, :uuid, allow_nil?: false
+      argument :access_method_id, :uuid, allow_nil?: false
+      argument :access_method_revision, :integer, allow_nil?: false
+
+      filter expr(
+               case_id == ^arg(:case_id) and
+                 resolution_run_id == ^arg(:resolution_run_id) and
+                 target_id == ^arg(:target_id) and
+                 access_method_id == ^arg(:access_method_id) and
+                 access_method_revision == ^arg(:access_method_revision) and
+                 request_kind == :observation and
+                 status in [:applied, :failed]
+             )
+
+      prepare build(sort: [completed_at: :desc, id: :desc], limit: 4)
+    end
+
     read :by_proposal do
       get? true
       argument :proposal_id, :uuid, allow_nil?: false

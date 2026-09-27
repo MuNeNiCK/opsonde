@@ -110,7 +110,9 @@ defmodule Opsonde.Cases.OperationDelivery do
       status: :failed,
       category: "observation_failed",
       reference: nil,
-      details: %{"message" => observation_failure_message(error)}
+      details:
+        %{"message" => observation_failure_message(error)}
+        |> maybe_put_provider_category(observation_failure_category(error))
     }
   rescue
     _error ->
@@ -124,6 +126,20 @@ defmodule Opsonde.Cases.OperationDelivery do
   end
 
   defp observation_failure_message(error), do: Exception.message(error)
+
+  defp observation_failure_category(%ProviderTarget.Error{category: category}),
+    do: category
+
+  defp observation_failure_category(%{errors: errors}) when is_list(errors),
+    do: Enum.find_value(errors, &observation_failure_category/1)
+
+  defp observation_failure_category(_error), do: nil
+
+  defp maybe_put_provider_category(details, category)
+       when category in [:retryable, :timeout, :failed, :cancelled],
+       do: Map.put(details, "provider_category", Atom.to_string(category))
+
+  defp maybe_put_provider_category(details, _category), do: details
 
   defp target_error_message(%ProviderTarget.Error{message: message}), do: message
 
@@ -236,24 +252,36 @@ defmodule Opsonde.Cases.OperationDelivery do
          evidence,
          incident
        ) do
-    with :ok <- available_pending(incident.pending_intent, operation) do
-      with {:ok, result} <-
-             Cases.start_turn(
-               operation.case_id,
-               operation.resolution_run_id,
-               "operation:observation:next-turn:#{operation.id}",
-               %{
-                 "objective" => "Continue resolution with the reviewed Target observation",
-                 "source" => "observation",
-                 "source_turn_id" => proposal.source_turn_id,
-                 "evidence_id" => evidence.id
-               },
-               %{"action" => "continue_resolution", "operation_id" => operation.id},
-               "Review Resolver limits or continue the Case manually",
-               authorize?: false
-             ) do
-        set_observation_pending(operation, proposal, evidence, incident, result)
-      end
+    with :ok <- available_pending(incident.pending_intent, operation),
+         {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
+         {:ok, result} <-
+           Cases.start_turn(
+             operation.case_id,
+             operation.resolution_run_id,
+             "operation:observation:next-turn:#{operation.id}",
+             observation_turn_intent(source_turn, evidence),
+             %{"action" => "continue_resolution", "operation_id" => operation.id},
+             "Review Resolver limits or continue the Case manually",
+             authorize?: false
+           ) do
+      set_observation_pending(operation, proposal, evidence, incident, result)
+    end
+  end
+
+  defp observation_turn_intent(source_turn, evidence) do
+    intent = %{
+      "objective" => "Continue resolution with the reviewed Target observation",
+      "source" => "observation",
+      "source_turn_id" => source_turn.id,
+      "evidence_id" => evidence.id
+    }
+
+    case source_turn.intent do
+      %{"source" => "target_relationship", "relationship_id" => relationship_id} ->
+        Map.put(intent, "prior_relationship_id", relationship_id)
+
+      _other ->
+        intent
     end
   end
 
@@ -321,7 +349,8 @@ defmodule Opsonde.Cases.OperationDelivery do
       "facts" => operation.result_details["facts"] || %{},
       "tool_id" => proposal.tool_id,
       "target_id" => operation.target_id,
-      "access_method_id" => operation.access_method_id
+      "access_method_id" => operation.access_method_id,
+      "access_method_revision" => operation.access_method_revision
     }
   end
 

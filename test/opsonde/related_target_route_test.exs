@@ -144,7 +144,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert Cases.get_resolution_run!(cycle_run.id, authorize?: false).related_target_count == 1
 
     assert evidence_for_source_turn!(cycle_source.id, context.admin).content["message"] ==
-             "Observe the selected Target before reversing the same relationship"
+             "Reassess the selected Target before returning through the same relationship"
 
     assert {:ok, rejected_request} = projection(rejected_turn, context)
     assert adjacent_target_ids(rejected_request, context.vm.id) == MapSet.new([context.bmc.id])
@@ -161,6 +161,35 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     assert adjacent_target_ids(observed_request, context.vm.id) ==
              MapSet.new([context.linux.id, context.bmc.id])
+
+    {observed_case, observed_run, observed_evidence, observed_after_traversal} =
+      case_with_evidence!(
+        "cycle-after-entered-observation",
+        context,
+        context.vm,
+        %{"source" => "observation", "prior_relationship_id" => context.runs_on.id}
+      )
+
+    assert {:ok, observed_after_traversal_request} =
+             projection(observed_after_traversal, context)
+
+    assert adjacent_target_ids(observed_after_traversal_request, context.vm.id) ==
+             MapSet.new([context.bmc.id])
+
+    reverse_source =
+      complete_traversal!(
+        observed_after_traversal,
+        context.runs_on,
+        context.linux,
+        observed_evidence
+      )
+
+    assert %{status: :started} = route_traversal!(reverse_source)
+
+    assert Cases.get_case!(observed_case.id, authorize?: false).selected_target_id ==
+             context.vm.id
+
+    assert Cases.get_resolution_run!(observed_run.id, authorize?: false).related_target_count == 0
 
     configure_limits!(context.admin, 1)
     {incident, run, evidence, first_turn} = case_with_evidence!("bounded", context)

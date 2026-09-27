@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   alias Opsonde.{Cases, Signals, Targets}
   alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.TraversalBoundary
   alias Opsonde.Providers.AI
   alias Opsonde.Targets.OperationCatalog
 
@@ -28,7 +29,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, recent_recovery_review} <- recent_recovery_review(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
-         {:ok, tools} <- tools(target, run, invocation),
+         {:ok, tools} <- tools(target, run, invocation, incident, conditions, continuity),
          request <-
            request(
              selection,
@@ -311,7 +312,7 @@ defmodule Opsonde.Cases.ResolverProjection do
            Targets.adjacent_relationships_for_traversal(target.id, authorize?: false),
          {:ok, projected} <-
            relationships
-           |> Enum.reject(&immediate_reverse?(&1, turn))
+           |> Enum.reject(&TraversalBoundary.immediate_reverse?(&1.id, turn.intent))
            |> Enum.reduce_while({:ok, []}, fn relationship, {:ok, projected} ->
              case relation(relationship, target) do
                {:ok, value} -> {:cont, {:ok, [value | projected]}}
@@ -325,12 +326,6 @@ defmodule Opsonde.Cases.ResolverProjection do
        {Enum.map(projected, &elem(&1, 0)), for({relation, true} <- projected, do: relation.id)}}
     end
   end
-
-  defp immediate_reverse?(relationship, %{intent: %{"source" => "target_relationship"} = intent}) do
-    relationship.id == intent["relationship_id"]
-  end
-
-  defp immediate_reverse?(_relationship, _turn), do: false
 
   defp relation(relationship, target) do
     next_target_id =
@@ -379,19 +374,79 @@ defmodule Opsonde.Cases.ResolverProjection do
     }
   end
 
-  defp tools(nil, _run, _invocation), do: {:ok, {[], []}}
+  defp tools(nil, _run, _invocation, _incident, _conditions, _evidence),
+    do: {:ok, {[], []}}
 
-  defp tools(target, run, invocation) do
+  defp tools(target, run, invocation, incident, conditions, evidence) do
     if remaining(run.max_target_requests, run.target_request_count) == 0 and
          remaining(run.max_effects, run.effect_count) == 0 do
       {:ok, {[], []}}
     else
       with {:ok, methods} <-
              Targets.available_access_methods_for_target(target.id, authorize?: false),
+           {:ok, methods} <-
+             available_methods(methods, incident, run, target, conditions, evidence),
            {:ok, capabilities} <- OperationCatalog.for_methods(methods, invocation) do
         {:ok, build_tools(target, run, methods, capabilities)}
       end
     end
+  end
+
+  defp available_methods(methods, incident, run, target, conditions, evidence) do
+    refreshed_at = source_refresh_at(evidence, run, target, conditions)
+
+    Enum.reduce_while(methods, {:ok, []}, fn method, {:ok, available} ->
+      case Cases.recent_method_observations(
+             incident.id,
+             run.id,
+             target.id,
+             method.id,
+             method.revision,
+             authorize?: false
+           ) do
+        {:ok, recent} ->
+          if repeated_transport_failure?(recent, refreshed_at),
+            do: {:cont, {:ok, available}},
+            else: {:cont, {:ok, [method | available]}}
+
+        {:error, _reason} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, available} -> {:ok, Enum.reverse(available)}
+      error -> error
+    end
+  end
+
+  defp repeated_transport_failure?(recent, refreshed_at) do
+    recent
+    |> Enum.take_while(fn operation ->
+      operation.status == :failed and
+        is_struct(operation.completed_at, DateTime) and
+        (is_nil(refreshed_at) or DateTime.compare(operation.completed_at, refreshed_at) == :gt)
+    end)
+    |> Enum.count(&(&1.result_details["provider_category"] in ["retryable", "timeout"]))
+    |> Kernel.>=(2)
+  end
+
+  defp source_refresh_at(evidence, run, target, conditions) do
+    condition_ids =
+      conditions
+      |> Enum.filter(&(&1.target_id == target.id))
+      |> Enum.map(& &1.id)
+      |> MapSet.new()
+
+    evidence
+    |> Enum.filter(fn item ->
+      item.resolution_run_id == run.id and
+        ((match?(%{"status" => "applied"}, item.content) and
+            item.kind == "operation_outcome") or
+           (item.kind == "signal_event" and
+              MapSet.member?(condition_ids, item.content["condition_id"])))
+    end)
+    |> Enum.map(& &1.observed_at)
+    |> Enum.max(DateTime, fn -> nil end)
   end
 
   defp build_tools(target, run, methods, capabilities) do

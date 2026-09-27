@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
 
   alias Opsonde.{Accounts, Cases, Targets}
   alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun, Turn}
+  alias Opsonde.Cases.TraversalBoundary
 
   defmodule Error do
     use Splode.Error, class: :invalid, fields: [:category, :message]
@@ -103,17 +104,15 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   defp running_context(_incident, _run),
     do: traversal_failure(:stale_context, "Case resolution is not running")
 
-  defp no_immediate_reverse(
-         %{intent: %{"source" => "target_relationship", "relationship_id" => relationship_id}},
-         %{"relationship_id" => relationship_id}
-       ),
-       do:
-         traversal_failure(
-           :stale_context,
-           "Observe the selected Target before reversing the same relationship"
-         )
-
-  defp no_immediate_reverse(_turn, _intent), do: :ok
+  defp no_immediate_reverse(turn, %{"relationship_id" => relationship_id}) do
+    if TraversalBoundary.immediate_reverse?(relationship_id, turn.intent),
+      do:
+        traversal_failure(
+          :stale_context,
+          "Reassess the selected Target before returning through the same relationship"
+        ),
+      else: :ok
+  end
 
   defp cited_evidence(ids, incident, run) when is_list(ids) and ids != [] do
     if length(ids) == MapSet.size(MapSet.new(ids)) do

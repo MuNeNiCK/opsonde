@@ -360,6 +360,17 @@ defmodule Opsonde.Cases do
       define :list_operations, action: :read
       define :get_operation, action: :read, get_by: [:id]
       define :operations_for_case, action: :for_case, args: [:case_id]
+
+      define :recent_method_observations,
+        action: :recent_method_observations,
+        args: [
+          :case_id,
+          :resolution_run_id,
+          :target_id,
+          :access_method_id,
+          :access_method_revision
+        ]
+
       define :operation_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_operation_record, action: :create_record
       define :mark_operation_dispatching, action: :mark_dispatching, args: [:expected_revision]

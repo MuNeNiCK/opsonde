@@ -854,6 +854,19 @@ defmodule Opsonde.AI.ReqLLMTest do
     payload = user_payload(provider_request)
 
     assert "target_traversal" in payload["allowed_intents"]
+
+    assert payload["traversal_options"] == [
+             %{
+               "relationship_id" => "relationship-1",
+               "relationship_kind" => "hosted_by",
+               "direction" => "source_to_destination",
+               "next_target_id" => "target-2",
+               "next_target_name" => "host",
+               "next_target_kind" => "host",
+               "next_target_platform" => "linux"
+             }
+           ]
+
     refute "handoff" in payload["allowed_intents"]
 
     refute Enum.any?(variants, fn variant ->
@@ -870,6 +883,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     unavailable_payload = user_payload(unavailable_request)
     assert length(unavailable_payload["target_relations"]) == 1
     assert unavailable_payload["traversable_relation_ids"] == []
+    assert unavailable_payload["traversal_options"] == []
     refute "target_traversal" in unavailable_payload["allowed_intents"]
   end
 
