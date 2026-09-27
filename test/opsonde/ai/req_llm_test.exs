@@ -406,7 +406,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:error, :capability, _message} = Adapter.check(state, %{})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "missing_structured_object"} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -500,13 +500,13 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:raw_text, ~s({"reason":)})
 
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "missing_structured_object"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, ~s(["not an object"])})
 
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "missing_structured_object"} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text_length, Jason.encode!(valid)})

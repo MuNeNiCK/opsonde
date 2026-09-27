@@ -718,16 +718,16 @@ defmodule Opsonde.Cases.ResolverDelivery do
          message,
          rejection_code
        ) do
-    if retryable_invalid_decision_failure?(turn, rejection_code),
+    if retryable_invalid_decision_failure?(turn, rejection_code, error),
       do: persist_retryable_failure(turn, invocation, error, category, message, rejection_code),
       else: persist_attention_failure(turn, invocation, error, category, message, rejection_code)
   end
 
-  defp retryable_invalid_decision_failure?(turn, rejection_code)
-       when rejection_code == "schema_validation",
-       do: turn.intent["rejection_code"] != rejection_code
-
-  defp retryable_invalid_decision_failure?(_turn, _code), do: false
+  defp retryable_invalid_decision_failure?(turn, rejection_code, error) do
+    rejection_code in ["schema_validation", "missing_structured_object", "json_decode"] and
+      turn.intent["source"] != "resolver_delivery_failure" and
+      match?(%AI.Usage{}, error_usage(error))
+  end
 
   defp persist_retryable_failure(turn, invocation, error, category, message, rejection_code) do
     intent = %{"action" => "continue_resolution", "source_turn_id" => turn.id}

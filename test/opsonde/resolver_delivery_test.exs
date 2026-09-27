@@ -323,6 +323,35 @@ defmodule Opsonde.ResolverDeliveryTest do
            end)
   end
 
+  test "one metered missing object receives a corrective turn, then stops if still missing",
+       context do
+    {incident, run, turn} = turn!("missing-object-correction", context.operator)
+
+    assert :ok =
+             invalid_output(turn, fn ->
+               {:error, :invalid_output, "AI provider did not return a structured object",
+                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+             end)
+
+    assert_receive {:resolve, %{api_key: @api_key}, _request}
+
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
+
+    assert successor.intent["rejection_code"] == "missing_structured_object"
+
+    assert :ok =
+             invalid_output(successor, fn ->
+               {:error, :invalid_output, "AI provider JSON does not match the requested schema",
+                %AI.Usage{input_tokens: 4, output_tokens: 3}}
+             end)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 19
+    refute Enum.any?(Cases.list_turns!(authorize?: false), &(&1.status == :started))
+  end
+
   test "a truncated reply stops before another call at the same output limit",
        context do
     {incident, run, turn} = turn!("truncated-limit", context.operator)

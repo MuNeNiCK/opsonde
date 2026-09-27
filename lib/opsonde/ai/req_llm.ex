@@ -342,7 +342,10 @@ defmodule Opsonde.AI.ReqLLM do
         "before any intent was accepted. When its rejection_code is schema_validation, check " <>
         "the next response against the current output schema. If rejection_path is present, " <>
         "correct that field. Copy enum values exactly, include every required field, and add " <>
-        "no field that the schema does not allow. " <>
+        "no field that the schema does not allow. When rejection_code is " <>
+        "missing_structured_object, the previous response contained no complete JSON object; " <>
+        "return exactly one complete object that matches the output schema, without prose or " <>
+        "code fences. " <>
         "When rejection_code is truncated, the previous response reached the output token " <>
         "limit before a complete JSON object was returned. Keep the same evidence and safety " <>
         "requirements, but return one compact complete JSON object immediately: use a short " <>
@@ -628,7 +631,19 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp accept_object_projection(%{valid?: true, value: value}) when is_map(value), do: :ok
 
+  defp accept_object_projection(%{value: nil, raw: raw, errors: errors}) do
+    if raw_json_object?(raw),
+      do: schema_error_output(errors),
+      else: invalid_output("AI provider did not return a structured object")
+  end
+
   defp accept_object_projection(%{errors: errors}) when is_list(errors) do
+    schema_error_output(errors)
+  end
+
+  defp accept_object_projection(_result), do: schema_invalid_output(nil)
+
+  defp schema_error_output(errors) when is_list(errors) do
     path =
       Enum.find_value(errors, fn
         %{message: message} when is_binary(message) -> schema_error_path(message)
@@ -638,7 +653,15 @@ defmodule Opsonde.AI.ReqLLM do
     schema_invalid_output(path)
   end
 
-  defp accept_object_projection(_result), do: schema_invalid_output(nil)
+  defp schema_error_output(_errors), do: schema_invalid_output(nil)
+
+  defp raw_json_object?(%{}), do: true
+
+  defp raw_json_object?(raw) when is_binary(raw) and byte_size(raw) <= @max_output_bytes do
+    match?({:ok, %{}}, Jason.decode(raw))
+  end
+
+  defp raw_json_object?(_raw), do: false
 
   defp schema_error_path(message) do
     case Regex.run(~r/instanceLocation: "#(\/[A-Za-z0-9_~.\/-]{1,200})"/, message) do
@@ -1321,6 +1344,10 @@ defmodule Opsonde.AI.ReqLLM do
   defp finish_reason(_response), do: nil
 
   defp failure_code("AI provider JSON was truncated"), do: "truncated"
+
+  defp failure_code("AI provider did not return a structured object"),
+    do: "missing_structured_object"
+
   defp failure_code("AI provider JSON text is too large"), do: "json_text_too_large"
   defp failure_code("AI provider output required repair"), do: "repair_required"
   defp failure_code("AI provider did not return token usage"), do: "usage_missing"
