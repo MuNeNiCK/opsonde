@@ -874,6 +874,23 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute output =~ "unexpected_private_key"
   end
 
+  test "missing object logs its shape without response text", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    set_mode(context.agent, {:raw_text, "test-secret"})
+
+    output =
+      capture_log(fn ->
+        assert {:error, :invalid_output, "AI provider did not return a structured object",
+                %AI.Usage{}, "missing_structured_object"} =
+                 Adapter.resolve(state, resolver_request(), %{})
+      end)
+
+    assert output =~ "AI object missing"
+    assert output =~ "raw_kind=text"
+    assert output =~ "bytes=11"
+    refute output =~ "test-secret"
+  end
+
   test "a text object with a nested schema error reports the rejected location", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
     set_mode(context.agent, {:raw_text, ~s({"reason":"inspect","intent":{"type":"handoff"}})})
@@ -1285,6 +1302,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     [provider_request] = requests(context.agent)
     assert String.contains?(provider_request.body, "output_schema")
     assert String.contains?(provider_request.body, "verification_schema")
+    assert user_payload(provider_request)["effect_evidence_ids"] == ["evidence-1"]
     schema = output_schema(provider_request)
 
     proposal_variant =
@@ -1325,6 +1343,30 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute Enum.any?(verification_schemas, fn variant ->
              get_in(variant, ["properties", "tool_id", "enum"]) == ["proposal-tool"]
            end)
+
+    invalid_citation = %{
+      "reason" => "Restore availability",
+      "intent" => %{
+        "type" => "proposal",
+        "action" => Map.take(decision, ~w(tool_id selectors parameters)),
+        "evidence_ids" => ["source-evidence-1"],
+        "affected_conditions" => [],
+        "expected_result_json" => Jason.encode!(decision["expected_result"]),
+        "verification" =>
+          decision["verification"]
+          |> Map.take(~w(tool_id selectors parameters))
+          |> Map.put(
+            "expected_result_json",
+            Jason.encode!(decision["verification"]["expected_result"])
+          )
+      }
+    }
+
+    set_mode(context.agent, {:raw_text, Jason.encode!(invalid_citation)})
+
+    assert {:error, :invalid_output,
+            "AI provider JSON does not match the requested schema at /intent/evidence_ids",
+            %AI.Usage{}, "schema_validation"} = Adapter.resolve(state, request, %{})
 
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
 

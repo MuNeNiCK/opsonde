@@ -329,13 +329,18 @@ defmodule Opsonde.AI.ReqLLM do
       "evidence" => plain(request.evidence),
       "historical_evidence" => plain(request.historical_evidence),
       "target_candidates" => plain(request.target_candidates),
+      "target_selection_evidence_ids" =>
+        Map.new(request.target_candidates, fn target ->
+          {target.id, AI.target_candidate_evidence_ids(request, target.id)}
+        end),
       "selected_target_id" => request.selected_target_id,
       "selected_target_revision" => request.selected_target_revision,
       "observation_results" => plain(request.observation_results),
       "target_relations" => plain(request.target_relations),
       "traversable_relation_ids" => request.traversable_relation_ids,
       "observation_tools" => plain(request.observation_tools),
-      "proposal_tools" => plain(request.proposal_tools)
+      "proposal_tools" => plain(request.proposal_tools),
+      "effect_evidence_ids" => AI.proposal_evidence_ids(request)
     }
 
     context(
@@ -357,6 +362,9 @@ defmodule Opsonde.AI.ReqLLM do
         "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
         "condition is already resolved. For a Signal Case, put the exact ID and revision of " <>
         "each still-firing Condition addressed by an effect in affected_conditions. " <>
+        "For an effect, take evidence_ids only from effect_evidence_ids in the user payload; " <>
+        "these are current Target observations. A signal_event identifies a Condition but " <>
+        "cannot be cited as evidence for an effect. " <>
         "Observation requests leave that list empty. A proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
@@ -374,9 +382,9 @@ defmodule Opsonde.AI.ReqLLM do
         "names and effect chronology, but never cite it as current recovery proof; obtain " <>
         "a fresh observation of the actual symptom after the latest effect. " <>
         "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
-        "For target_selection, cite either target_candidates Evidence whose candidate_ids " <>
-        "contain the selected Target ID or the current signal_event Evidence for a Condition " <>
-        "mapped to that Target. Other observations do not authorize selection. " <>
+        "For target_selection, take evidence_ids only from the " <>
+        "target_selection_evidence_ids entry for the selected target_id. " <>
+        "Do not cite an event for a different Target. " <>
         "When condition_groups is offered, describe tentative related, independent, or unknown " <>
         "Condition groups using only supplied Condition IDs and Evidence IDs. Groups must not " <>
         "overlap. Graph proximity and timing alone mean unknown; cite observations when asserting " <>
@@ -734,9 +742,12 @@ defmodule Opsonde.AI.ReqLLM do
     do: :ok
 
   defp accept_object_projection(%{value: nil, raw: raw, errors: errors} = result, schema) do
-    if raw_json_object?(raw),
-      do: schema_error_output(errors, result, schema),
-      else: invalid_output("AI provider did not return a structured object")
+    if raw_json_object?(raw) do
+      schema_error_output(errors, result, schema)
+    else
+      log_missing_object_shape(result)
+      invalid_output("AI provider did not return a structured object")
+    end
   end
 
   defp accept_object_projection(%{errors: errors} = result, schema) when is_list(errors) do
@@ -745,6 +756,32 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp accept_object_projection(result, schema),
     do: schema_error_output([], result, schema)
+
+  defp log_missing_object_shape(%{raw: raw, source: source, errors: errors}) do
+    {raw_kind, bytes, json_start, fence_start} =
+      case raw do
+        value when is_binary(value) ->
+          if String.valid?(value) do
+            trimmed = String.trim_leading(value)
+
+            {"text", byte_size(value), String.starts_with?(trimmed, "{"),
+             String.starts_with?(trimmed, "```")}
+          else
+            {"text", byte_size(value), false, false}
+          end
+
+        value when is_map(value) ->
+          {"map", encoded_size(value), false, false}
+
+        _value ->
+          {"other", 0, false, false}
+      end
+
+    Logger.warning(
+      "AI object missing source=#{source} raw_kind=#{raw_kind} bytes=#{bytes} " <>
+        "json_start=#{json_start} fence_start=#{fence_start} errors=#{length(errors)}"
+    )
+  end
 
   defp schema_error_output(errors, result, schema) when is_list(errors) do
     errors = diagnostic_schema_errors(errors, result, schema)
@@ -765,7 +802,7 @@ defmodule Opsonde.AI.ReqLLM do
     intent = if is_map(value["intent"]), do: value["intent"], else: %{}
 
     known_intent_keys =
-      ~w(type action evidence_ids target_id relationship_id query required_input condition_claims verification expected_result_json)
+      ~w(type action evidence_ids affected_conditions target_id relationship_id query required_input condition_claims verification expected_result_json)
 
     intent_type =
       if intent["type"] in @resolver_intent_types,
@@ -858,7 +895,7 @@ defmodule Opsonde.AI.ReqLLM do
     |> Map.keys()
     |> Enum.filter(fn key ->
       Map.has_key?(properties, key) and
-        key in ~w(type action verification evidence_ids expected_result_json required_input target_id relationship_id query tool_id selectors parameters) and
+        key in ~w(type action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors parameters) and
         not schema_field_valid?(value[key], properties[key])
     end)
     |> Enum.sort()
@@ -885,10 +922,15 @@ defmodule Opsonde.AI.ReqLLM do
   defp diagnostic_schema_errors(errors, _result, _schema), do: errors
 
   defp diagnostic_schema_path(result, schema, errors) do
-    intent = diagnostic_object(result)["intent"]
+    value = diagnostic_object(result)
+    intent = value["intent"]
     type = if is_map(intent), do: intent["type"]
 
     cond do
+      Map.has_key?(Map.get(schema, "properties", %{}), "reason") and
+          not Map.has_key?(value, "reason") ->
+        "/reason"
+
       is_binary(type) and type in @resolver_intent_types and
           type not in schema_intent_types(schema) ->
         "/intent/type"
@@ -899,7 +941,13 @@ defmodule Opsonde.AI.ReqLLM do
             first_schema_error_path(errors)
 
           variant ->
-            selected_intent_error_path(intent, variant) || first_schema_error_path(errors)
+            case String.split(invalid_schema_fields(intent, variant), ",", trim: true) do
+              [field] ->
+                "/intent/" <> field
+
+              _other ->
+                selected_intent_error_path(intent, variant) || first_schema_error_path(errors)
+            end
         end
 
       true ->
@@ -943,7 +991,7 @@ defmodule Opsonde.AI.ReqLLM do
 
         case Regex.run(~r/property '([A-Za-z_]+)' is required/, message) do
           [_, field]
-          when field in ~w(reason intent type action evidence_ids verification expected_result_json condition_claims required_input tool_id selectors parameters) ->
+          when field in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_claims required_input tool_id selectors parameters) ->
             "/intent/" <> field
 
           _other ->
@@ -1004,7 +1052,7 @@ defmodule Opsonde.AI.ReqLLM do
         []
     end)
     |> Enum.filter(
-      &(&1 in ~w(reason intent type action evidence_ids verification expected_result_json condition_groups condition_ids assessment revision evidence_id tool_id selectors parameters required_input))
+      &(&1 in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_groups condition_ids assessment revision evidence_id tool_id selectors parameters required_input))
     )
     |> Enum.uniq()
     |> Enum.sort()
