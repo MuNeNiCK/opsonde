@@ -183,7 +183,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
 
   defp active_subject_case(case_id) do
     with {:ok, incident} <- Cases.get_case(case_id, authorize?: false),
-         true <- incident.status in [:running, :needs_attention],
+         true <- admits_new_condition?(incident),
          true <- incident.trigger_kind == :signal,
          {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- length(members) < @max_conditions do
@@ -214,8 +214,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
            ),
          %CaseConditionMembership{} <- membership,
          {:ok, incident} <- Cases.get_case(membership.case_id, authorize?: false),
-         true <-
-           incident.status in [:running, :needs_attention] and incident.trigger_kind == :signal,
+         true <- admits_new_condition?(incident) and incident.trigger_kind == :signal,
          {:ok, members} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
          true <- length(members) < @max_conditions do
       {:ok, incident}
@@ -260,7 +259,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
              {:ok, anchor} <- Targets.get_target(dispatch.anchor_target_id, authorize?: false),
              true <- anchor.management_boundary_id == target.management_boundary_id,
              {:ok, incident} <- Cases.get_case(dispatch.case_id, authorize?: false),
-             true <- incident.status in [:running, :needs_attention],
+             true <- admits_new_condition?(incident),
              {:ok, members} <-
                Cases.active_conditions_for_case(incident.id, authorize?: false),
              true <- length(members) < @max_conditions,
@@ -277,6 +276,16 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
       {:error, _error} = error -> error
     end
   end
+
+  defp admits_new_condition?(%{status: :running}), do: true
+
+  defp admits_new_condition?(%{
+         status: :needs_attention,
+         pending_intent: %{"action" => "start_resolution"}
+       }),
+       do: true
+
+  defp admits_new_condition?(_incident), do: false
 
   defp member_conditions(members) do
     members

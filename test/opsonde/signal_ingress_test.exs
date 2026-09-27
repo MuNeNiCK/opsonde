@@ -1465,6 +1465,48 @@ defmodule Opsonde.SignalIngressTest do
     assert Cases.list_turns!(actor: context.admin) == []
   end
 
+  test "a new recurrence after a stopped investigation starts a separate autonomous Case",
+       context do
+    enable_signal_automation!(context.admin)
+    base = DateTime.add(DateTime.utc_now(), -30, :second)
+    ingest_one!(context.provider, "stopped-first", :firing, base)
+
+    [old_case] = Cases.list_cases!(actor: context.admin)
+    assert :ok = dispatch_initial!(old_case)
+    old_run = Cases.active_resolution_run!(old_case.id, authorize?: false)
+    old_case = Cases.get_case!(old_case.id, authorize?: false)
+
+    Cases.require_case_attention!(
+      old_case.id,
+      old_case.revision,
+      old_run.id,
+      old_run.revision,
+      "stopped-investigation",
+      "Resolver requires attention",
+      %{"action" => "retry_resolver"},
+      "Resume the Case",
+      authorize?: false
+    )
+
+    ingest_one!(context.provider, "stopped-recovered", :recovered, DateTime.add(base, 10))
+    ingest_one!(context.provider, "stopped-refiring", :firing, DateTime.add(base, 20))
+
+    assert [first, second] =
+             Cases.list_cases!(actor: context.admin)
+             |> Enum.sort_by(& &1.inserted_at, DateTime)
+
+    assert first.id == old_case.id
+    assert first.status == :needs_attention
+    assert second.status == :running
+    assert length(Cases.active_conditions_for_case!(first.id, authorize?: false)) == 1
+    assert length(Cases.active_conditions_for_case!(second.id, authorize?: false)) == 1
+    assert :ok = dispatch_initial!(second)
+    assert Enum.count(Cases.list_turns!(actor: context.admin), &(&1.case_id == second.id)) == 1
+
+    ingest_one!(context.provider, "stopped-refiring-duplicate", :firing, DateTime.add(base, 20))
+    assert length(Cases.list_cases!(actor: context.admin)) == 2
+  end
+
   test "a later source event is retained after the Case is terminal", context do
     enable_signal_automation!(context.admin)
     occurred_at = DateTime.utc_now()
