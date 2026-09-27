@@ -2,6 +2,7 @@ defmodule Opsonde.Cases.EvidenceCitation do
   @moduledoc false
 
   alias Opsonde.Cases
+  alias Opsonde.Cases.ConditionRecovery
 
   def valid?(%{case_id: case_id, resolution_run_id: run_id}, %{id: case_id}, %{id: run_id}),
     do: true
@@ -16,6 +17,22 @@ defmodule Opsonde.Cases.EvidenceCitation do
         _run
       ) do
     latest_source_evidence?(evidence, case_id)
+  end
+
+  def valid?(
+        %{id: evidence_id, case_id: case_id, kind: "observation"},
+        %{id: case_id, trigger_kind: :signal} = incident,
+        _run
+      ) do
+    case ConditionRecovery.assess_current(incident) do
+      {:ok, assessments} ->
+        Enum.any?(assessments, fn assessment ->
+          assessment.status == :ready_for_review and assessment.evidence_id == evidence_id
+        end)
+
+      {:error, _error} ->
+        false
+    end
   end
 
   def valid?(

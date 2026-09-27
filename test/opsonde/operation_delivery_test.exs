@@ -1768,6 +1768,12 @@ defmodule Opsonde.OperationDeliveryTest do
       Cases.list_turns!(actor: context.admin)
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
+    assert Opsonde.Cases.EvidenceCitation.valid?(
+             evidence,
+             Cases.get_case!(incident.id, authorize?: false),
+             resumed_run
+           )
+
     assert :ok =
              ResolverDelivery.run(resumed_turn.id,
                target_invocation:
@@ -1804,6 +1810,81 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.route_downstream_decision!(completed.id, authorize?: false).status == :running
     approve_recovery!(completed, context)
     assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+  end
+
+  test "a resumed Signal Case can cite current prior-run observation to request a fresh observation",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("resumed-observation-citation", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      evidence: [%{"check" => "current source symptom"}]
+                    }}
+                 )
+             )
+
+    evidence = operation_evidence_record(operation.id)
+    current = Cases.get_case!(incident.id, authorize?: false)
+    current_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        current.id,
+        current.revision,
+        current_run.id,
+        current_run.revision,
+        "pause-before-new-observation:#{incident.id}",
+        "Continue direct observation after resume",
+        %{"action" => "retry_resolver"},
+        "Resume the Case",
+        authorize?: false
+      )
+
+    paused_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed_run =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused_run.id,
+        paused_run.revision,
+        paused_run.authority_mode,
+        paused_run.max_elapsed_seconds,
+        paused_run.max_resolver_turns,
+        paused_run.max_target_requests,
+        paused_run.max_effects,
+        paused_run.max_related_targets,
+        paused_run.max_ai_usage_units,
+        paused_run.max_no_progress_turns,
+        "Request a fresh symptom observation",
+        actor: context.operator
+      )
+
+    resumed_turn =
+      Cases.list_turns!(actor: context.admin)
+      |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
+
+    intent = signal_proposal_intent(evidence.id, context, :observation)
+    routed = complete_signal_proposal!(resumed_turn, intent, incident, context)
+
+    assert routed.evidence_ids == [evidence.id]
+    assert routed.resolution_run_id == resumed_run.id
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
   end
 
   test "a Reviewer rejection of unrelated observation facts keeps recovered Signal Conditions open",
