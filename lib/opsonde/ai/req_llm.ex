@@ -185,7 +185,7 @@ defmodule Opsonde.AI.ReqLLM do
          result <-
            decode_decision(response, schema, fn value ->
              with {:ok, verdict} <- verdict(value),
-                  do: {:ok, {verdict, value["reason"], value["symptom_assessment"]}}
+                  do: {:ok, {verdict, value["reason"], value["desired_outcome_assessment"]}}
            end) do
       case result do
         {:ok, {verdict, reason, assessment}, usage} ->
@@ -193,7 +193,7 @@ defmodule Opsonde.AI.ReqLLM do
            %AI.ReviewDecision{
              verdict: verdict,
              reason: reason,
-             symptom_assessment: assessment,
+             desired_outcome_assessment: assessment,
              usage: usage
            }}
 
@@ -220,16 +220,21 @@ defmodule Opsonde.AI.ReqLLM do
     context(
       "You are an independent Opsonde recovery Reviewer. Decide whether the exact cited Target " <>
         "facts substantiate each Condition's claimed recovery and the overall conclusion. " <>
-        "For a manual or scheduled audit Case, there are no monitoring Conditions: compare " <>
-        "case_symptom.text with each case_symptom_claim, look up its exact cited fact_keys " <>
-        "and actual values in cited_target_evidence, and reject claims supported only by " <>
-        "unrelated identity or healthy components. The claim's symptom_id identifies the " <>
-        "original Case objective; it does not itself prove recovery. Return a structured " <>
-        "symptom_assessment over every claimed Evidence ID. Use status supported only when " <>
-        "the actual cited values substantiate the original symptom's recovery, unsupported " <>
-        "when they do not, and unknown when a concrete external fact is missing. Match " <>
+        "For a manual or scheduled audit Case, there are no monitoring Conditions. " <>
+        "case_symptom.text describes the reported problem or Case title; it is not the " <>
+        "success criterion. The immutable case_symptom.desired_outcome is the state to " <>
+        "establish. Compare each desired_outcome_claim with that exact desired_outcome, " <>
+        "its cited fact_keys and actual values in cited_target_evidence. Reject claims " <>
+        "supported only by absence of the reported problem, unrelated identity or healthy " <>
+        "components. Facts that contradict desired_outcome cannot establish success. " <>
+        "The claim's symptom_id binds the criterion but does not prove it. Return a " <>
+        "desired_outcome_assessment that copies the exact desired_outcome and covers every " <>
+        "claimed Evidence ID. Use status supported only when the cited actual values " <>
+        "affirmatively satisfy desired_outcome, unsupported when they contradict it, and " <>
+        "unknown when a concrete external fact is missing. Match " <>
         "approved to supported, rejected to unsupported, and needs_human to unknown. " <>
-        "Compare the native symptom, the claimed effect, and the observation's actual facts. " <>
+        "For a Signal Case, compare the native symptom, the claimed effect, and the " <>
+        "observation's actual facts. " <>
         "Review recent Case evidence, including prior ResolutionRuns and effect chronology, " <>
         "even when the Resolver did not cite it. A post-effect failure may be caused by the " <>
         "effect. An Evidence item with details_compacted retains its canonical facts but omits " <>
@@ -244,7 +249,8 @@ defmodule Opsonde.AI.ReqLLM do
         "Observation " <>
         "status applied establishes only that data collection succeeded. A matching Target ID, " <>
         "timestamp, capability name, or identity value alone does not show that an unrelated " <>
-        "symptom cleared. Reject a conclusion when cited facts do not bear on every symptom, " <>
+        "symptom cleared or a manual/audit desired_outcome is satisfied. Reject a conclusion " <>
+        "when cited facts do not bear on every Condition or the desired_outcome, " <>
         "even if all structural checks passed. Approve only when the specific evidence supports " <>
         "every claim; do not invent missing readings or infer causality from inventory links. " <>
         "Use needs_human only when a concrete missing external fact prevents a decision. " <>
@@ -381,14 +387,18 @@ defmodule Opsonde.AI.ReqLLM do
         "output schema: Target search or selection, Target request, Target traversal, " <>
         "proposal, recovery, or handoff. Never execute a tool. Never invent an identifier. " <>
         "Recovery is a terminal intent. Choose it only when the supplied Evidence supports " <>
-        "that the Case objective and every attached Condition have recovered. A recovered " <>
+        "that every attached Signal Condition recovered or, for a manual/audit Case, that " <>
+        "case_symptom.desired_outcome is satisfied. A recovered " <>
         "monitoring event or a verified Target operation alone does not prove this. For each " <>
-        "manual or scheduled audit Case, case_symptom is the original operator symptom. " <>
-        "A recovery intent must include case_symptom_claims citing current eligible Target " <>
-        "Evidence and the exact fact_keys whose values show that symptom cleared; the " <>
-        "symptom_id must match case_symptom.id. An unrelated fact, successful data collection, " <>
+        "manual or scheduled audit Case, case_symptom.text describes the reported problem " <>
+        "or Case title; case_symptom.desired_outcome is the immutable success criterion. " <>
+        "A recovery intent must include desired_outcome_claims citing current eligible " <>
+        "Target Evidence and the exact fact_keys whose actual values affirmatively satisfy " <>
+        "desired_outcome. The symptom_id must match case_symptom.id. Do not treat absence " <>
+        "of the reported problem as success when it does not establish desired_outcome. " <>
+        "A fact contradicting desired_outcome, an unrelated fact, successful data collection, " <>
         "or completed effect does not show recovery. " <>
-        "Condition, choose a relevant citation from its recovery_evidence_ids that is also " <>
+        "For each Condition, choose a relevant citation from its recovery_evidence_ids that is also " <>
         "listed in top-level recovery_evidence_ids, and explain " <>
         "what that Evidence's facts establish. A newer unrelated observation does not " <>
         "replace an earlier current observation of the actual symptom. " <>
@@ -406,7 +416,7 @@ defmodule Opsonde.AI.ReqLLM do
         "If turn_intent.source is recovery_review_rejected, read its review_reason. Also read " <>
         "last_rejected_recovery_review when present, including after an operator resume. Do not " <>
         "repeat a recovery claim with unchanged cited evidence. Choose a new observation " <>
-        "that measures the exact rejected symptom, or hand off if no suitable observation " <>
+        "that measures the exact rejected Condition or desired_outcome, or hand off if no suitable observation " <>
         "can be made. A successful inventory or discovery request is not proof that a " <>
         "particular monitored service or endpoint recovered. When a recovered Condition " <>
         "has recovery_status needs_observation, prioritize a direct observation of that " <>
@@ -421,9 +431,9 @@ defmodule Opsonde.AI.ReqLLM do
         "and put evidence_ids and affected_conditions in intent, never inside action. " <>
         "For an effect, intent.verification contains only tool_id, selectors, parameters, and " <>
         "expected_result_json. Do not add explanatory keys inside action or verification. " <>
-        "Propose an effect only for an " <>
-        "unresolved condition shown by supplied Evidence; never propose an effect when the " <>
-        "condition is already resolved. A recovered monitoring Condition may still have a " <>
+        "Propose an effect only for an unresolved Condition or a manual/audit desired_outcome " <>
+        "shown unmet by current Target Evidence. Do not propose an effect when the desired " <>
+        "outcome is already met or no current fault is observed. A recovered monitoring Condition may still have a " <>
         "failing Target symptom; propose an effect for it only when a current direct " <>
         "observation proves that symptom persists. For a Signal Case, put the exact ID and " <>
         "revision of each Condition addressed by an effect in affected_conditions. " <>
@@ -687,13 +697,13 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
          claims when is_list(claims) <- Map.get(value, "condition_claims", []),
          symptom_claims when is_list(symptom_claims) <-
-           Map.get(value, "case_symptom_claims", []) do
+           Map.get(value, "desired_outcome_claims", []) do
       {:ok,
        %AI.RecoveryConclusion{
          reason: reason,
          evidence_ids: evidence_ids,
          condition_claims: claims,
-         case_symptom_claims: symptom_claims
+         desired_outcome_claims: symptom_claims
        }}
     else
       _invalid -> invalid_output()
@@ -1687,7 +1697,7 @@ defmodule Opsonde.AI.ReqLLM do
             }
           end
 
-        symptom_claims = case_symptom_claims_schema(request, evidence_ids)
+        symptom_claims = desired_outcome_claims_schema(request, evidence_ids)
 
         if request.case_symptom && is_nil(symptom_claims) do
           nil
@@ -1699,7 +1709,7 @@ defmodule Opsonde.AI.ReqLLM do
 
           properties =
             if symptom_claims,
-              do: Map.put(properties, "case_symptom_claims", symptom_claims),
+              do: Map.put(properties, "desired_outcome_claims", symptom_claims),
               else: properties
 
           intent_schema("recovery", properties)
@@ -1709,9 +1719,9 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp recovery_schema(_request), do: nil
 
-  defp case_symptom_claims_schema(%{case_symptom: nil}, _evidence_ids), do: nil
+  defp desired_outcome_claims_schema(%{case_symptom: nil}, _evidence_ids), do: nil
 
-  defp case_symptom_claims_schema(request, evidence_ids) do
+  defp desired_outcome_claims_schema(request, evidence_ids) do
     variants =
       request.evidence
       |> Enum.filter(fn evidence ->
@@ -1863,7 +1873,7 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp recovery_reviewer_schema(request) do
     claim_ids =
-      request.conclusion.case_symptom_claims
+      request.conclusion.desired_outcome_claims
       |> Enum.map(& &1["evidence_id"])
       |> Enum.uniq()
 
@@ -1871,10 +1881,11 @@ defmodule Opsonde.AI.ReqLLM do
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
         "reason" => bounded_string_schema(@reviewer_reason_codepoints),
-        "symptom_assessment" =>
+        "desired_outcome_assessment" =>
           object_schema(
             %{
               "symptom_id" => enum_schema([request.case_symptom.id]),
+              "desired_outcome" => enum_schema([request.case_symptom.desired_outcome]),
               "evidence_ids" => %{
                 "type" => "array",
                 "minItems" => length(claim_ids),
@@ -1884,10 +1895,10 @@ defmodule Opsonde.AI.ReqLLM do
               "status" => enum_schema(~w(supported unsupported unknown)),
               "reason" => bounded_string_schema(@reviewer_reason_codepoints)
             },
-            ~w(symptom_id evidence_ids status reason)
+            ~w(symptom_id desired_outcome evidence_ids status reason)
           )
       },
-      ~w(verdict reason symptom_assessment)
+      ~w(verdict reason desired_outcome_assessment)
     )
   end
 

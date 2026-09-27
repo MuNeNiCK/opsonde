@@ -288,7 +288,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.all?(requests, fn request ->
              String.contains?(request.body, "Recovery is a terminal intent") and
                String.contains?(request.body, "current observation") and
-               String.contains?(request.body, "never propose an effect when") and
+               String.contains?(request.body, "Do not propose an effect when") and
                String.contains?(request.body, "returned facts can directly establish") and
                String.contains?(request.body, "tool's verification_schema")
            end)
@@ -1668,7 +1668,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => "The API service is active",
         "evidence_ids" => [observed.id],
         "condition_claims" => [],
-        "case_symptom_claims" => [
+        "desired_outcome_claims" => [
           %{
             "symptom_id" => symptom_id,
             "evidence_id" => observed.id,
@@ -1682,7 +1682,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert {:ok, %AI.ResolverDecision{intent: %AI.RecoveryConclusion{} = conclusion}} =
              Adapter.resolve(state, request, %{})
 
-    assert [%{"symptom_id" => ^symptom_id}] = conclusion.case_symptom_claims
+    assert [%{"symptom_id" => ^symptom_id}] = conclusion.desired_outcome_claims
     [wire_request] = requests(context.agent)
 
     assert user_payload(wire_request)["case_symptom"] == %{
@@ -1697,7 +1697,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       |> get_in(["properties", "intent", "anyOf"])
       |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["recovery"]))
 
-    claim = get_in(recovery, ["properties", "case_symptom_claims"])
+    claim = get_in(recovery, ["properties", "desired_outcome_claims"])
     assert claim["minItems"] == 1
     assert get_in(claim, ["items", "properties", "symptom_id", "enum"]) == [symptom_id]
 
@@ -1800,16 +1800,17 @@ defmodule Opsonde.AI.ReqLLMTest do
       conclusion: %AI.RecoveryConclusion{
         reason: "The service is active",
         evidence_ids: [evidence.id],
-        case_symptom_claims: [claim]
+        desired_outcome_claims: [claim]
       },
       budget: budget()
     }
 
     assessment = %{
       "symptom_id" => symptom_id,
+      "desired_outcome" => "The API service responds to health checks",
       "evidence_ids" => [evidence.id],
       "status" => "supported",
-      "reason" => "The observed service state addresses the original symptom"
+      "reason" => "The observed service state satisfies the desired outcome"
     }
 
     set_mode(context.agent, {
@@ -1817,11 +1818,11 @@ defmodule Opsonde.AI.ReqLLMTest do
       %{
         "verdict" => "approved",
         "reason" => "The current service observation supports recovery",
-        "symptom_assessment" => assessment
+        "desired_outcome_assessment" => assessment
       }
     })
 
-    assert {:ok, %AI.ReviewDecision{symptom_assessment: ^assessment} = decision} =
+    assert {:ok, %AI.ReviewDecision{desired_outcome_assessment: ^assessment} = decision} =
              Adapter.review_recovery(state, request, %{})
 
     assert :ok = AI.Validator.validate_decision(:review_recovery, decision, request)
@@ -1834,22 +1835,56 @@ defmodule Opsonde.AI.ReqLLMTest do
            }
 
     schema = output_schema(wire)
-    assert "symptom_assessment" in schema["required"]
+    assert "desired_outcome_assessment" in schema["required"]
 
-    assert get_in(schema, ["properties", "symptom_assessment", "properties", "symptom_id", "enum"]) ==
+    assert get_in(schema, [
+             "properties",
+             "desired_outcome_assessment",
+             "properties",
+             "symptom_id",
+             "enum"
+           ]) ==
              [symptom_id]
+
+    assert get_in(schema, [
+             "properties",
+             "desired_outcome_assessment",
+             "properties",
+             "desired_outcome",
+             "enum"
+           ]) ==
+             ["The API service responds to health checks"]
 
     assert {:error, _error} =
              AI.Validator.validate_decision(
                :review_recovery,
-               %{decision | symptom_assessment: %{assessment | "status" => "unsupported"}},
+               %{
+                 decision
+                 | desired_outcome_assessment: %{assessment | "status" => "unsupported"}
+               },
                request
              )
 
     assert {:error, _error} =
              AI.Validator.validate_decision(
                :review_recovery,
-               %{decision | symptom_assessment: %{assessment | "evidence_ids" => ["other"]}},
+               %{
+                 decision
+                 | desired_outcome_assessment: %{assessment | "evidence_ids" => ["other"]}
+               },
+               request
+             )
+
+    assert {:error, _error} =
+             AI.Validator.validate_decision(
+               :review_recovery,
+               %{
+                 decision
+                 | desired_outcome_assessment: %{
+                     assessment
+                     | "desired_outcome" => "The API service is unavailable"
+                   }
+               },
                request
              )
   end

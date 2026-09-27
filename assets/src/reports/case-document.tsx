@@ -359,15 +359,15 @@ export function CaseReportDocument({ report }: { report: Report }) {
                     <small className="block">
                       {c.record} · {review.id} · {c.evidence} · {review.evidence_ids.join(", ")}
                     </small>
-                    {review.symptom_assessment && (
+                    {review.desired_outcome_assessment && (
                       <small className="block">
-                        {review.symptom_assessment.status === "supported"
+                        {review.desired_outcome_assessment.status === "supported"
                           ? c.symptomSupported
-                          : review.symptom_assessment.status === "unsupported"
+                          : review.desired_outcome_assessment.status === "unsupported"
                             ? c.symptomUnsupported
                             : c.symptomUnknown}
                         {" · "}
-                        {review.symptom_assessment.reason}
+                        {review.desired_outcome_assessment.reason}
                       </small>
                     )}
                   </li>

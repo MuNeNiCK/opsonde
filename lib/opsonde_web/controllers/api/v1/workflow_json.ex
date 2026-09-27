@@ -154,7 +154,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       review_source_turn_id: review_value(event, "source_turn_id"),
       review_provider_id: review_value(event, "provider_id"),
       review_evidence_ids: review_evidence_ids(event),
-      review_symptom_assessment: review_value(event, "symptom_assessment"),
+      review_desired_outcome_assessment: review_value(event, "desired_outcome_assessment"),
       inserted_at: event.inserted_at
     }
   end

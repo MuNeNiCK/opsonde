@@ -1821,7 +1821,7 @@ defmodule Opsonde.OperationDeliveryTest do
                       intent: %AI.RecoveryConclusion{
                         reason: "The prior verified Target state remains current after resume",
                         evidence_ids: [verification_id],
-                        case_symptom_claims: [
+                        desired_outcome_claims: [
                           %{
                             "symptom_id" => request.case_symptom.id,
                             "evidence_id" => verification_id,
@@ -2151,7 +2151,7 @@ defmodule Opsonde.OperationDeliveryTest do
                       intent: %AI.RecoveryConclusion{
                         reason: "The requested service is active after direct inspection",
                         evidence_ids: [evidence.id],
-                        case_symptom_claims: [
+                        desired_outcome_claims: [
                           %{
                             "symptom_id" => request.case_symptom.id,
                             "evidence_id" => evidence.id,
@@ -2212,7 +2212,7 @@ defmodule Opsonde.OperationDeliveryTest do
             "reason" => "The service is active",
             "evidence_ids" => [evidence.id],
             "condition_claims" => [],
-            "case_symptom_claims" => [
+            "desired_outcome_claims" => [
               %{
                 "symptom_id" => Opsonde.Cases.CaseSymptom.current(current).id,
                 "evidence_id" => evidence.id,
@@ -2663,7 +2663,7 @@ defmodule Opsonde.OperationDeliveryTest do
                       intent: %AI.RecoveryConclusion{
                         reason: "The current service is active",
                         evidence_ids: [evidence.id],
-                        case_symptom_claims: [
+                        desired_outcome_claims: [
                           %{
                             "symptom_id" => request.case_symptom.id,
                             "evidence_id" => evidence.id,
@@ -3556,12 +3556,13 @@ defmodule Opsonde.OperationDeliveryTest do
                          if request.case_symptom do
                            %{
                              "symptom_id" => request.case_symptom.id,
+                             "desired_outcome" => request.case_symptom.desired_outcome,
                              "evidence_ids" =>
-                               request.conclusion.case_symptom_claims
+                               request.conclusion.desired_outcome_claims
                                |> Enum.map(& &1["evidence_id"])
                                |> Enum.uniq(),
                              "status" => "supported",
-                             "reason" => "The claimed facts show the original symptom cleared"
+                             "reason" => "The claimed facts satisfy the desired outcome"
                            }
                          end
 
@@ -3570,7 +3571,7 @@ defmodule Opsonde.OperationDeliveryTest do
                           verdict: :approved,
                           reason:
                             "The cited observation directly checks the stated service state",
-                          symptom_assessment: assessment,
+                          desired_outcome_assessment: assessment,
                           usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
                         }}
                      end

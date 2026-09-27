@@ -32,32 +32,15 @@
             "nullable": true,
             "type": "string"
           },
-          "review_evidence_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "review_provider_id": {
-            "format": "uuid",
-            "nullable": true,
-            "type": "string"
-          },
-          "review_reason": {
-            "maxLength": 1000,
-            "nullable": true,
-            "type": "string"
-          },
-          "review_source_turn_id": {
-            "format": "uuid",
-            "nullable": true,
-            "type": "string"
-          },
-          "review_symptom_assessment": {
+          "review_desired_outcome_assessment": {
             "additionalProperties": false,
             "nullable": true,
             "properties": {
+              "desired_outcome": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
               "evidence_ids": {
                 "items": {
                   "format": "uuid",
@@ -86,11 +69,34 @@
             },
             "required": [
               "symptom_id",
+              "desired_outcome",
               "status",
               "evidence_ids",
               "reason"
             ],
             "type": "object"
+          },
+          "review_evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "review_provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "review_reason": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string"
+          },
+          "review_source_turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
           },
           "review_verdict": {
             "maxLength": 80,
@@ -115,7 +121,7 @@
           "review_source_turn_id",
           "review_provider_id",
           "review_evidence_ids",
-          "review_symptom_assessment",
+          "review_desired_outcome_assessment",
           "inserted_at"
         ],
         "type": "object"
@@ -4020,38 +4026,15 @@
             "items": {
               "additionalProperties": false,
               "properties": {
-                "evidence_ids": {
-                  "items": {
-                    "format": "uuid",
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "inserted_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "provider_id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "reason": {
-                  "maxLength": 1000,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "source_turn_id": {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                "symptom_assessment": {
+                "desired_outcome_assessment": {
                   "additionalProperties": false,
                   "nullable": true,
                   "properties": {
+                    "desired_outcome": {
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    },
                     "evidence_ids": {
                       "items": {
                         "format": "uuid",
@@ -4080,11 +4063,40 @@
                   },
                   "required": [
                     "symptom_id",
+                    "desired_outcome",
                     "status",
                     "evidence_ids",
                     "reason"
                   ],
                   "type": "object"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "inserted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "provider_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "reason": {
+                  "maxLength": 1000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_turn_id": {
+                  "format": "uuid",
+                  "type": "string"
                 },
                 "verdict": {
                   "enum": [
@@ -4101,7 +4113,7 @@
                 "verdict",
                 "reason",
                 "evidence_ids",
-                "symptom_assessment",
+                "desired_outcome_assessment",
                 "provider_id",
                 "inserted_at"
               ],

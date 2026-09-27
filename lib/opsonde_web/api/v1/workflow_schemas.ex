@@ -309,7 +309,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         review_source_turn_id: nullable_uuid(),
         review_provider_id: nullable_uuid(),
         review_evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
-        review_symptom_assessment: Schemas.symptom_assessment(true),
+        review_desired_outcome_assessment: Schemas.desired_outcome_assessment(true),
         inserted_at: Schemas.timestamp()
       },
       [
@@ -324,7 +324,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         :review_source_turn_id,
         :review_provider_id,
         :review_evidence_ids,
-        :review_symptom_assessment,
+        :review_desired_outcome_assessment,
         :inserted_at
       ],
       false

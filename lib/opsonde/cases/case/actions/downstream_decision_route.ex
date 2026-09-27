@@ -165,7 +165,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       "result_digest" => turn.result_digest,
       "evidence_ids" => intent["evidence_ids"],
       "condition_claims" => intent["condition_claims"],
-      "case_symptom_claims" => intent["case_symptom_claims"]
+      "desired_outcome_claims" => intent["desired_outcome_claims"]
     }
 
     with :ok <- available_pending_intent(incident.pending_intent, %{}, turn),
@@ -179,11 +179,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
              {:error, "Recovery Review did not approve this exact conclusion"},
          true <-
            CaseSymptom.valid_assessment?(
-             event.data["symptom_assessment"],
+             event.data["desired_outcome_assessment"],
              CaseSymptom.current(incident),
-             intent["case_symptom_claims"],
+             intent["desired_outcome_claims"],
              :approved
-           ) || {:error, "Recovery Review did not assess this Case symptom"},
+           ) || {:error, "Recovery Review did not assess this desired outcome"},
          {:ok, invocation} <-
            Cases.ai_invocation_by_idempotency(event.data["invocation_key"],
              authorize?: false,
@@ -342,7 +342,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            "reason" => reason,
            "evidence_ids" => evidence_ids,
            "condition_claims" => claims,
-           "case_symptom_claims" => symptom_claims
+           "desired_outcome_claims" => symptom_claims
          },
          turn,
          incident,
@@ -353,7 +353,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          :ok <- valid_recovery_state(incident),
          :ok <- valid_case_evidence(evidence_ids, incident.id),
          :ok <- valid_fresh_verification(evidence_ids, claims, turn, incident, run),
-         :ok <- valid_case_symptom_claims(symptom_claims, evidence_ids, incident, run) do
+         :ok <- valid_desired_outcome_claims(symptom_claims, evidence_ids, incident, run) do
       :ok
     end
   end
@@ -375,9 +375,9 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp validate_intent(_intent, _turn, _incident, _run),
     do: {:error, "Downstream Resolver decision is malformed"}
 
-  defp valid_case_symptom_claims([], _evidence_ids, %{trigger_kind: :signal}, _run), do: :ok
+  defp valid_desired_outcome_claims([], _evidence_ids, %{trigger_kind: :signal}, _run), do: :ok
 
-  defp valid_case_symptom_claims(claims, evidence_ids, incident, run)
+  defp valid_desired_outcome_claims(claims, evidence_ids, incident, run)
        when incident.trigger_kind in [:manual, :audit] and is_list(claims) do
     cited =
       claims
@@ -399,8 +399,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     end
   end
 
-  defp valid_case_symptom_claims(_claims, _evidence_ids, _incident, _run),
-    do: {:error, "Recovery conclusion has unexpected Case symptom claims"}
+  defp valid_desired_outcome_claims(_claims, _evidence_ids, _incident, _run),
+    do: {:error, "Recovery conclusion has unexpected desired outcome claims"}
 
   defp fetch_claim_evidence(ids, case_id) do
     Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, items} ->

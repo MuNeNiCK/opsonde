@@ -13,7 +13,7 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
        digest(
          cited_ids,
          intent["condition_claims"],
-         intent["case_symptom_claims"],
+         intent["desired_outcome_claims"],
          CaseSymptom.current(incident),
          source
        )}
@@ -24,7 +24,7 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
     digest(
       request.conclusion.evidence_ids,
       request.conclusion.condition_claims,
-      request.conclusion.case_symptom_claims,
+      request.conclusion.desired_outcome_claims,
       request.case_symptom,
       request.source_evidence
     )
@@ -43,7 +43,7 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
         |> Enum.map(&Map.take(&1, ["condition_id", "revision", "evidence_id"]))
         |> Enum.sort_by(& &1["condition_id"]),
       case_symptom_id: case_symptom && case_symptom.id,
-      case_symptom_claims: Enum.sort_by(symptom_claims, &{&1["evidence_id"], &1["fact_keys"]}),
+      desired_outcome_claims: Enum.sort_by(symptom_claims, &{&1["evidence_id"], &1["fact_keys"]}),
       source_ids: source |> Enum.map(& &1.id) |> Enum.sort()
     })
   end

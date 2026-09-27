@@ -152,7 +152,7 @@ defmodule Opsonde.Providers.AI.Validator do
       is_list(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
       Enum.all?(conclusion.evidence_ids, &(&1 in cited_ids)) and
       CaseSymptom.valid_claims?(
-        conclusion.case_symptom_claims,
+        conclusion.desired_outcome_claims,
         request.case_symptom,
         conclusion.evidence_ids,
         cited_evidence
@@ -486,9 +486,9 @@ defmodule Opsonde.Providers.AI.Validator do
          true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
          true <-
            CaseSymptom.valid_assessment?(
-             decision.symptom_assessment,
+             decision.desired_outcome_assessment,
              request.case_symptom,
-             request.conclusion.case_symptom_claims,
+             request.conclusion.desired_outcome_claims,
              decision.verdict
            ),
          true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
@@ -594,7 +594,7 @@ defmodule Opsonde.Providers.AI.Validator do
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) and
          valid_condition_claims?(conclusion.condition_claims, request, conclusion.evidence_ids) and
          CaseSymptom.valid_claims?(
-           conclusion.case_symptom_claims,
+           conclusion.desired_outcome_claims,
            request.case_symptom,
            conclusion.evidence_ids,
            request.evidence

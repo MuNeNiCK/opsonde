@@ -1450,19 +1450,20 @@ export interface components {
             related_case_id: string | null;
             /** Format: uuid */
             resolution_run_id: string | null;
-            review_evidence_ids: string[];
-            /** Format: uuid */
-            review_provider_id: string | null;
-            review_reason: string | null;
-            /** Format: uuid */
-            review_source_turn_id: string | null;
-            review_symptom_assessment: {
+            review_desired_outcome_assessment: {
+                desired_outcome: string;
                 evidence_ids: string[];
                 reason: string;
                 /** @enum {string} */
                 status: "supported" | "unsupported" | "unknown";
                 symptom_id: string;
             } | null;
+            review_evidence_ids: string[];
+            /** Format: uuid */
+            review_provider_id: string | null;
+            review_reason: string | null;
+            /** Format: uuid */
+            review_source_turn_id: string | null;
             review_verdict: string | null;
             type: string;
         };
@@ -2494,6 +2495,14 @@ export interface components {
             opened_at: string;
             outcome: string;
             recovery_reviews: {
+                desired_outcome_assessment: {
+                    desired_outcome: string;
+                    evidence_ids: string[];
+                    reason: string;
+                    /** @enum {string} */
+                    status: "supported" | "unsupported" | "unknown";
+                    symptom_id: string;
+                } | null;
                 evidence_ids: string[];
                 /** Format: uuid */
                 id: string;
@@ -2504,13 +2513,6 @@ export interface components {
                 reason: string;
                 /** Format: uuid */
                 source_turn_id: string;
-                symptom_assessment: {
-                    evidence_ids: string[];
-                    reason: string;
-                    /** @enum {string} */
-                    status: "supported" | "unsupported" | "unknown";
-                    symptom_id: string;
-                } | null;
                 /** @enum {string} */
                 verdict: "approved" | "rejected" | "needs_human";
             }[];

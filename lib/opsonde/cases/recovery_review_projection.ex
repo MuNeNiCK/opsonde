@@ -37,7 +37,7 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
           reason: intent["reason"],
           evidence_ids: intent["evidence_ids"],
           condition_claims: Map.get(intent, "condition_claims", []),
-          case_symptom_claims: Map.get(intent, "case_symptom_claims", [])
+          desired_outcome_claims: Map.get(intent, "desired_outcome_claims", [])
         },
         retry_context: retry_context,
         budget: budget(run)

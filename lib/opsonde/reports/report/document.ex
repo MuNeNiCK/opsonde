@@ -44,7 +44,7 @@ defmodule Opsonde.Reports.Report.Document do
       "cited_evidence" => presented_cited_evidence(cited, evidence, case_symptom),
       "conclusion" => conclusion && nonblank(conclusion["reason"]),
       "conclusion_turn_id" => conclusion_turn && conclusion_turn["id"],
-      "recovery_reviews" => Enum.map(recovery_reviews, &Map.delete(&1, "case_symptom_claims")),
+      "recovery_reviews" => Enum.map(recovery_reviews, &Map.delete(&1, "desired_outcome_claims")),
       "stop_reason" => nonblank(get_in(content, ["unresolved", "stop_reason"])),
       "required_human_input" => nonblank(get_in(content, ["unresolved", "required_human_input"])),
       "case_id" => report.case_id,
@@ -78,7 +78,7 @@ defmodule Opsonde.Reports.Report.Document do
         nil
 
       %{id: symptom_id, text: symptom_text, desired_outcome: desired_outcome} ->
-        claims = conclusion |> map() |> Map.get("case_symptom_claims") |> list()
+        claims = conclusion |> map() |> Map.get("desired_outcome_claims") |> list()
 
         review =
           if conclusion_turn do
@@ -89,10 +89,10 @@ defmodule Opsonde.Reports.Report.Document do
 
         accepted? =
           not is_nil(review) and review["source_turn_id"] == conclusion_turn["id"] and
-            review["verdict"] == "approved" and review["case_symptom_claims"] == claims and
+            review["verdict"] == "approved" and review["desired_outcome_claims"] == claims and
             CaseSymptom.valid_assessment?(
-              review["symptom_assessment"],
-              %{id: symptom_id},
+              review["desired_outcome_assessment"],
+              %{id: symptom_id, desired_outcome: desired_outcome},
               claims,
               :approved
             ) and length(citations) == length(claims)
@@ -102,7 +102,9 @@ defmodule Opsonde.Reports.Report.Document do
             review
           else
             reviews
-            |> Enum.filter(&(get_in(&1, ["symptom_assessment", "symptom_id"]) == symptom_id))
+            |> Enum.filter(
+              &(get_in(&1, ["desired_outcome_assessment", "symptom_id"]) == symptom_id)
+            )
             |> List.last()
           end
 
@@ -141,7 +143,7 @@ defmodule Opsonde.Reports.Report.Document do
     end)
   end
 
-  defp assessment_status(%{"symptom_assessment" => %{"status" => status}})
+  defp assessment_status(%{"desired_outcome_assessment" => %{"status" => status}})
        when status in ["unsupported", "unknown"],
        do: status
 

@@ -303,11 +303,11 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
           verdict: enum(~w(approved rejected needs_human)),
           reason: string(1, 1_000),
           evidence_ids: %Schema{type: :array, items: Schemas.uuid()},
-          symptom_assessment: Schemas.symptom_assessment(true),
+          desired_outcome_assessment: Schemas.desired_outcome_assessment(true),
           provider_id: Schemas.uuid(),
           inserted_at: Schemas.timestamp()
         },
-        ~w(id source_turn_id verdict reason evidence_ids symptom_assessment provider_id inserted_at)a,
+        ~w(id source_turn_id verdict reason evidence_ids desired_outcome_assessment provider_id inserted_at)a,
         false
       )
 

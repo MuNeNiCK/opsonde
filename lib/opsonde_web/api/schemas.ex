@@ -38,17 +38,18 @@ defmodule OpsondeWeb.API.Schemas do
     }
   end
 
-  def symptom_assessment(nullable? \\ false) do
+  def desired_outcome_assessment(nullable? \\ false) do
     %Schema{
       type: :object,
       nullable: nullable?,
       properties: %{
         symptom_id: %Schema{type: :string, minLength: 64, maxLength: 64},
+        desired_outcome: %Schema{type: :string, minLength: 1, maxLength: 2_000},
         status: %Schema{type: :string, enum: ~w(supported unsupported unknown)},
         evidence_ids: %Schema{type: :array, items: uuid()},
         reason: %Schema{type: :string, minLength: 1, maxLength: 1_000}
       },
-      required: [:symptom_id, :status, :evidence_ids, :reason],
+      required: [:symptom_id, :desired_outcome, :status, :evidence_ids, :reason],
       additionalProperties: false
     }
   end

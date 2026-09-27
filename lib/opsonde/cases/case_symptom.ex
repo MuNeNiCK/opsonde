@@ -91,13 +91,20 @@ defmodule Opsonde.Cases.CaseSymptom do
 
   def valid_assessment?(nil, nil, [], _verdict), do: true
 
-  def valid_assessment?(assessment, %{id: symptom_id}, claims, verdict)
+  def valid_assessment?(
+        assessment,
+        %{id: symptom_id, desired_outcome: desired_outcome},
+        claims,
+        verdict
+      )
       when is_map(assessment) and is_list(claims) do
     expected_ids = claims |> Enum.map(& &1["evidence_id"]) |> Enum.uniq() |> Enum.sort()
     received_ids = assessment["evidence_ids"]
 
-    Enum.sort(Map.keys(assessment)) == ~w(evidence_ids reason status symptom_id) and
+    Enum.sort(Map.keys(assessment)) ==
+      ~w(desired_outcome evidence_ids reason status symptom_id) and
       assessment["symptom_id"] == symptom_id and expected_ids != [] and
+      assessment["desired_outcome"] == desired_outcome and
       is_list(received_ids) and Enum.all?(received_ids, &is_binary/1) and
       Enum.sort(received_ids) == expected_ids and
       assessment["status"] == assessment_status(verdict) and

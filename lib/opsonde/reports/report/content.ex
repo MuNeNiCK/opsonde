@@ -265,8 +265,8 @@ defmodule Opsonde.Reports.Report.Content do
         "verdict" => event.data["verdict"],
         "reason" => event.data["reason"],
         "evidence_ids" => event.data["evidence_ids"],
-        "case_symptom_claims" => event.data["case_symptom_claims"],
-        "symptom_assessment" => event.data["symptom_assessment"],
+        "desired_outcome_claims" => event.data["desired_outcome_claims"],
+        "desired_outcome_assessment" => event.data["desired_outcome_assessment"],
         "provider_id" => event.data["provider_id"],
         "inserted_at" => event.inserted_at
       }

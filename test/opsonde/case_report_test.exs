@@ -474,6 +474,7 @@ defmodule Opsonde.CaseReportTest do
 
     assessment = %{
       "symptom_id" => symptom.id,
+      "desired_outcome" => "Power rail is healthy",
       "status" => "supported",
       "evidence_ids" => [evidence_id],
       "reason" => "The observed rail state supports recovery"
@@ -505,7 +506,7 @@ defmodule Opsonde.CaseReportTest do
               "type" => "recovery_conclusion",
               "reason" => "Power rail recovered",
               "evidence_ids" => [evidence_id],
-              "case_symptom_claims" => [claim]
+              "desired_outcome_claims" => [claim]
             }
           }
         ],
@@ -516,8 +517,8 @@ defmodule Opsonde.CaseReportTest do
             "verdict" => "approved",
             "reason" => "Observed rail is healthy",
             "evidence_ids" => [evidence_id],
-            "case_symptom_claims" => [claim],
-            "symptom_assessment" => assessment
+            "desired_outcome_claims" => [claim],
+            "desired_outcome_assessment" => assessment
           }
         ],
         "raw_evidence" => [
@@ -560,8 +561,11 @@ defmodule Opsonde.CaseReportTest do
     assert document["text"] =~ "vendor_power_rail=healthy"
     refute document["text"] =~ "unrelated_fan"
     refute document["text"] =~ unrelated_id
-    assert document["recovery_reviews"] |> hd() |> Map.fetch!("symptom_assessment") == assessment
-    refute Map.has_key?(hd(document["recovery_reviews"]), "case_symptom_claims")
+
+    assert document["recovery_reviews"] |> hd() |> Map.fetch!("desired_outcome_assessment") ==
+             assessment
+
+    refute Map.has_key?(hd(document["recovery_reviews"]), "desired_outcome_claims")
 
     without_acceptance =
       %{report | content: Map.put(report.content, "resolution_review_event_id", nil)}
@@ -607,11 +611,12 @@ defmodule Opsonde.CaseReportTest do
             "verdict" => "rejected",
             "reason" => "Temperature observation does not cover the alarm",
             "evidence_ids" => [evidence_id],
-            "case_symptom_claims" => [
+            "desired_outcome_claims" => [
               %{"symptom_id" => symptom.id, "evidence_id" => evidence_id}
             ],
-            "symptom_assessment" => %{
+            "desired_outcome_assessment" => %{
               "symptom_id" => symptom.id,
+              "desired_outcome" => objective,
               "status" => "unsupported",
               "evidence_ids" => [evidence_id],
               "reason" => "Alarm status was not observed"

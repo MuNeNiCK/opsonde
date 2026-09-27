@@ -373,7 +373,7 @@ defmodule Opsonde.Providers.AI do
   defmodule RecoveryConclusion do
     @moduledoc false
     @enforce_keys [:reason, :evidence_ids]
-    defstruct @enforce_keys ++ [condition_claims: [], case_symptom_claims: []]
+    defstruct @enforce_keys ++ [condition_claims: [], desired_outcome_claims: []]
     @type t :: %__MODULE__{}
   end
 
@@ -541,7 +541,7 @@ defmodule Opsonde.Providers.AI do
   defmodule ReviewDecision do
     @moduledoc false
     @enforce_keys [:verdict, :reason, :usage]
-    defstruct @enforce_keys ++ [symptom_assessment: nil]
+    defstruct @enforce_keys ++ [desired_outcome_assessment: nil]
     @type t :: %__MODULE__{}
   end
 

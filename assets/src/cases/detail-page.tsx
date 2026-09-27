@@ -449,15 +449,17 @@ export function CaseDetailPage() {
                       {t(`cases.recoveryReviewStatus.${event.review_verdict}`)}
                     </Badge>
                     <p className="mt-2 text-sm">{event.review_reason}</p>
-                    {event.review_symptom_assessment && (
+                    {event.review_desired_outcome_assessment && (
                       <div className="mt-2 space-y-1 text-sm">
                         <Badge variant="outline">
-                          {t(`cases.symptomReviewStatus.${event.review_symptom_assessment.status}`)}
+                          {t(
+                            `cases.symptomReviewStatus.${event.review_desired_outcome_assessment.status}`,
+                          )}
                         </Badge>
-                        <p>{event.review_symptom_assessment.reason}</p>
+                        <p>{event.review_desired_outcome_assessment.reason}</p>
                         <p className="text-xs text-muted-foreground">
                           {t("cases.recoveryReviewEvidence")}:{" "}
-                          {event.review_symptom_assessment.evidence_ids.join(", ")}
+                          {event.review_desired_outcome_assessment.evidence_ids.join(", ")}
                         </p>
                       </div>
                     )}

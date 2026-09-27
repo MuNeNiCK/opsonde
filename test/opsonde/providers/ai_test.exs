@@ -630,7 +630,7 @@ defmodule Opsonde.Providers.AITest do
 
     manual_recovery = %{
       recovery
-      | case_symptom_claims: [
+      | desired_outcome_claims: [
           %{
             "symptom_id" => manual_request.case_symptom.id,
             "evidence_id" => "verification-1",
@@ -646,20 +646,20 @@ defmodule Opsonde.Providers.AITest do
              end)
 
     for invalid <- [
-          %{manual_recovery | case_symptom_claims: []},
+          %{manual_recovery | desired_outcome_claims: []},
           %{
             manual_recovery
-            | case_symptom_claims: [
+            | desired_outcome_claims: [
                 %{
-                  hd(manual_recovery.case_symptom_claims)
+                  hd(manual_recovery.desired_outcome_claims)
                   | "symptom_id" => String.duplicate("b", 64)
                 }
               ]
           },
           %{
             manual_recovery
-            | case_symptom_claims: [
-                %{hd(manual_recovery.case_symptom_claims) | "fact_keys" => ["unobserved"]}
+            | desired_outcome_claims: [
+                %{hd(manual_recovery.desired_outcome_claims) | "fact_keys" => ["unobserved"]}
               ]
           }
         ] do
