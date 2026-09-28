@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.OperationClaim do
+defmodule Opsonde.Cases.Operation.Claim do
   @moduledoc false
 
   @enforce_keys [:state, :operation]

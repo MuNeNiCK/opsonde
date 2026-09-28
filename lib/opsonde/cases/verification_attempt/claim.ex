@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.VerificationClaim do
+defmodule Opsonde.Cases.VerificationAttempt.Claim do
   @moduledoc false
 
   @enforce_keys [:state, :attempt]

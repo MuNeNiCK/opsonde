@@ -72,7 +72,7 @@ defmodule Opsonde.Cases.AIInvocation do
     end
 
     action :claim, :struct do
-      constraints instance_of: Opsonde.Cases.AIInvocationClaim
+      constraints instance_of: Opsonde.Cases.AIInvocation.Claim
       transaction? false
       argument :role, :atom, allow_nil?: false, constraints: [one_of: [:resolver, :reviewer]]
       argument :case_id, :uuid, allow_nil?: false

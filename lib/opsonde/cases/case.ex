@@ -480,7 +480,7 @@ defmodule Opsonde.Cases.Case do
     end
 
     action :search_targets, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :id, :uuid, allow_nil?: false
       argument :resolution_run_id, :uuid, allow_nil?: false
@@ -533,14 +533,14 @@ defmodule Opsonde.Cases.Case do
     end
 
     action :route_target_discovery, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :turn_id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.TargetDiscoveryRoute
     end
 
     action :route_related_target, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :turn_id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.RelatedTargetRoute

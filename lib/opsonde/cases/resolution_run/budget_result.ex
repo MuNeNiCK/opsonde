@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.BudgetResult do
+defmodule Opsonde.Cases.ResolutionRun.BudgetResult do
   @type t :: %__MODULE__{
           status: :charged | :duplicate | :exhausted,
           case: struct() | map(),

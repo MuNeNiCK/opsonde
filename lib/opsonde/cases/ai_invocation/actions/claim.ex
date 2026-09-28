@@ -8,12 +8,13 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    AIInvocationClaim,
     Case,
     Proposal,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
 
   @impl true
   def run(input, _opts, _context) do

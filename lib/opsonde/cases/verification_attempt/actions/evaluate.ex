@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Evaluate do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{BudgetResult, Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   @terminal [:verified, :not_verified, :unknown]
 

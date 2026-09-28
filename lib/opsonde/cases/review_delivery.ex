@@ -7,7 +7,6 @@ defmodule Opsonde.Cases.ReviewDelivery do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    AIInvocationClaim,
     Budget,
     Case,
     CaseAdmissionLock,
@@ -18,6 +17,9 @@ defmodule Opsonde.Cases.ReviewDelivery do
     ReviewDecision,
     ReviewProjection
   }
+
+  alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.AI
 
@@ -470,7 +472,7 @@ defmodule Opsonde.Cases.ReviewDelivery do
   defp charge_usage(proposal, 0, _idempotency_key, _metadata) do
     with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false) do
-      {:ok, %Cases.BudgetResult{status: :charged, case: incident, run: run, value: run}}
+      {:ok, %BudgetResult{status: :charged, case: incident, run: run, value: run}}
     end
   end
 

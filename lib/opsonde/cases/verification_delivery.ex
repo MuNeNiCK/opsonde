@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.VerificationDelivery do
   @moduledoc false
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{VerificationAttempt, VerificationClaim}
+  alias Opsonde.Cases.VerificationAttempt
+  alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 

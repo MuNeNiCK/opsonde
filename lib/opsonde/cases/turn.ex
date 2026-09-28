@@ -78,7 +78,7 @@ defmodule Opsonde.Cases.Turn do
     end
 
     action :start, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :case_id, :uuid, allow_nil?: false
       argument :resolution_run_id, :uuid, allow_nil?: false
@@ -98,7 +98,7 @@ defmodule Opsonde.Cases.Turn do
     end
 
     action :complete, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :id, :uuid, allow_nil?: false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]

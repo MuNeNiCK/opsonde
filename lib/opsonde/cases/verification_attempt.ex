@@ -124,7 +124,7 @@ defmodule Opsonde.Cases.VerificationAttempt do
     end
 
     action :claim_dispatch, :struct do
-      constraints instance_of: Opsonde.Cases.VerificationClaim
+      constraints instance_of: Opsonde.Cases.VerificationAttempt.Claim
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch

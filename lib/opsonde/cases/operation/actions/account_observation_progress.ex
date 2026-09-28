@@ -5,12 +5,13 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
 
   alias Opsonde.Cases.{
     Budget,
-    BudgetResult,
     CaseAdmissionLock,
     CaseEvent,
     Operation,
     ResolutionRun
   }
+
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   @terminal [:applied, :failed, :partial, :unknown]
   @history_limit 1_001

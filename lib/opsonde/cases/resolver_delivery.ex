@@ -7,7 +7,6 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    AIInvocationClaim,
     Budget,
     Case,
     CaseAdmissionLock,
@@ -17,6 +16,9 @@ defmodule Opsonde.Cases.ResolverDelivery do
     ResolverProjection,
     Turn
   }
+
+  alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.AI
 
@@ -410,7 +412,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
   defp charge_usage(turn, 0, _idempotency_key) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
-      {:ok, %Cases.BudgetResult{status: :charged, case: incident, run: run, value: run}}
+      {:ok, %BudgetResult{status: :charged, case: incident, run: run, value: run}}
     end
   end
 

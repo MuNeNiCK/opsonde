@@ -23,7 +23,7 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
       {:ok,
-       %Opsonde.Cases.BudgetResult{
+       %Opsonde.Cases.ResolutionRun.BudgetResult{
          status: :duplicate,
          case: incident,
          run: run,

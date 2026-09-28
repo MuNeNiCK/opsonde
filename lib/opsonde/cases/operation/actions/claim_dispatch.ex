@@ -13,11 +13,12 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     ConditionContext,
     Evidence,
     Operation,
-    OperationClaim,
     Proposal,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.Operation.Claim, as: OperationClaim
 
   @terminal [:applied, :failed, :partial, :unknown]
 

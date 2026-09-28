@@ -3,7 +3,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, ResolutionRun, VerificationAttempt, VerificationClaim}
+  alias Opsonde.Cases.{Case, ResolutionRun, VerificationAttempt}
+  alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
 
   @terminal [:verified, :not_verified, :unknown]
 

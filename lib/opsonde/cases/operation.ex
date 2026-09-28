@@ -146,14 +146,14 @@ defmodule Opsonde.Cases.Operation do
     end
 
     action :claim_dispatch, :struct do
-      constraints instance_of: Opsonde.Cases.OperationClaim
+      constraints instance_of: Opsonde.Cases.Operation.Claim
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Operation.Actions.ClaimDispatch
     end
 
     action :account_observation_progress, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Operation.Actions.AccountObservationProgress

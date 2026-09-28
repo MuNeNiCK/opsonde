@@ -5,7 +5,6 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    AIInvocationClaim,
     Budget,
     Case,
     CaseAdmissionLock,
@@ -14,6 +13,9 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.AI
 
@@ -228,7 +230,7 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
                  authorize?: false
                ) do
           cond do
-            match?(%Cases.BudgetResult{status: :exhausted}, charged) ->
+            match?(%BudgetResult{status: :exhausted}, charged) ->
               {:outcome, :budget_exhausted}
 
             not current?(turn) or match?({:error, _}, current_selection(selection)) ->

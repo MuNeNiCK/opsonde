@@ -4,14 +4,15 @@ defmodule Opsonde.Cases.OperationDelivery do
   alias Opsonde.{Accounts, Cases, Targets}
 
   alias Opsonde.Cases.{
-    BudgetResult,
     Case,
     CaseEvent,
     Operation,
-    OperationClaim,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.Operation.Claim, as: OperationClaim
+  alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}

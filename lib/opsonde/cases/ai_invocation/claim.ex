@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.AIInvocationClaim do
+defmodule Opsonde.Cases.AIInvocation.Claim do
   @moduledoc false
 
   @enforce_keys [:state, :invocation]

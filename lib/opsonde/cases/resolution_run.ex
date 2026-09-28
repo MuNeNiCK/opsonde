@@ -110,7 +110,7 @@ defmodule Opsonde.Cases.ResolutionRun do
     end
 
     action :charge, :struct do
-      constraints instance_of: Opsonde.Cases.BudgetResult
+      constraints instance_of: Opsonde.Cases.ResolutionRun.BudgetResult
       transaction? false
 
       argument :case_id, :uuid, allow_nil?: false
