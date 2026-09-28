@@ -1,4 +1,4 @@
-defmodule Opsonde.Accounts.OIDCProvider do
+defmodule Opsonde.Accounts.OIDC.Provider do
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Accounts,
@@ -63,18 +63,18 @@ defmodule Opsonde.Accounts.OIDCProvider do
       argument :id_token_alg, :string, allow_nil?: false, default: "RS256"
       argument :enabled, :boolean, allow_nil?: false, default: true
 
-      run Opsonde.Accounts.OIDCProvider.Configure
+      run Opsonde.Accounts.OIDC.Provider.Configure
     end
 
     action :available, :boolean do
-      run Opsonde.Accounts.OIDCProvider.Available
+      run Opsonde.Accounts.OIDC.Provider.Available
     end
 
     action :begin_authorization, :map do
       argument :request_id, :uuid
       argument :start_token, :string, sensitive?: true
       argument :provider_revision, :integer, constraints: [min: 1]
-      run Opsonde.Accounts.OIDCProvider.Actions.Authorization
+      run Opsonde.Accounts.OIDC.Provider.Actions.Authorization
     end
 
     action :complete_authorization, :map do
@@ -82,7 +82,7 @@ defmodule Opsonde.Accounts.OIDCProvider do
       argument :browser_binding, :string, allow_nil?: false, sensitive?: true
       argument :provider_revision, :integer, allow_nil?: false, constraints: [min: 1]
       argument :request_id, :uuid
-      run Opsonde.Accounts.OIDCProvider.Actions.Authorization
+      run Opsonde.Accounts.OIDC.Provider.Actions.Authorization
     end
   end
 

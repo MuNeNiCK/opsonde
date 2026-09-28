@@ -1,4 +1,4 @@
-defmodule Opsonde.Accounts.OIDCRequest do
+defmodule Opsonde.Accounts.OIDC.Request do
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Accounts,
@@ -56,7 +56,7 @@ defmodule Opsonde.Accounts.OIDCRequest do
       argument :browser_binding_digest, :binary, sensitive?: true
 
       validate Opsonde.Validations.CurrentRevision
-      validate {Opsonde.Accounts.OIDCRequest.State, phase: :start}
+      validate {Opsonde.Accounts.OIDC.Request.State, phase: :start}
       change set_attribute(:browser_binding_digest, arg(:browser_binding_digest))
       change atomic_update(:started_at, expr(now()))
       change optimistic_lock(:revision)
@@ -75,7 +75,7 @@ defmodule Opsonde.Accounts.OIDCRequest do
       argument :code_digest, :binary, sensitive?: true
 
       validate Opsonde.Validations.CurrentRevision
-      validate {Opsonde.Accounts.OIDCRequest.State, phase: :complete}
+      validate {Opsonde.Accounts.OIDC.Request.State, phase: :complete}
       change set_attribute(:user_id, arg(:user_id))
       change set_attribute(:code_digest, arg(:code_digest))
       change atomic_update(:completed_at, expr(now()))
@@ -95,39 +95,39 @@ defmodule Opsonde.Accounts.OIDCRequest do
       argument :verifier, :string, allow_nil?: false, sensitive?: true
 
       validate Opsonde.Validations.CurrentRevision
-      validate {Opsonde.Accounts.OIDCRequest.State, phase: :consume}
+      validate {Opsonde.Accounts.OIDC.Request.State, phase: :consume}
       change atomic_update(:consumed_at, expr(now()))
       change optimistic_lock(:revision)
     end
 
     action :request_link, :map do
-      run Opsonde.Accounts.OIDCRequest.Actions.Flow
+      run Opsonde.Accounts.OIDC.Request.Actions.Flow
     end
 
     action :request_cli_login, :map do
       argument :redirect_uri, :string, allow_nil?: false
       argument :code_challenge, :string, allow_nil?: false, sensitive?: true
-      run Opsonde.Accounts.OIDCRequest.Actions.Flow
+      run Opsonde.Accounts.OIDC.Request.Actions.Flow
     end
 
     action :approve_cli_login, :map do
       argument :id, :uuid, allow_nil?: false
       argument :start_token, :string, allow_nil?: false, sensitive?: true
-      run Opsonde.Accounts.OIDCRequest.Actions.Flow
+      run Opsonde.Accounts.OIDC.Request.Actions.Flow
     end
 
     action :deny_cli_login, :struct do
       constraints instance_of: __MODULE__
       argument :id, :uuid, allow_nil?: false
       argument :start_token, :string, allow_nil?: false, sensitive?: true
-      run Opsonde.Accounts.OIDCRequest.Actions.Flow
+      run Opsonde.Accounts.OIDC.Request.Actions.Flow
     end
 
     action :exchange_cli_login, :map do
       argument :id, :uuid, allow_nil?: false
       argument :code, :string, allow_nil?: false, sensitive?: true
       argument :verifier, :string, allow_nil?: false, sensitive?: true
-      run Opsonde.Accounts.OIDCRequest.Actions.Flow
+      run Opsonde.Accounts.OIDC.Request.Actions.Flow
     end
   end
 

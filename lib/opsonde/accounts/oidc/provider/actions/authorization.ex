@@ -1,11 +1,13 @@
-defmodule Opsonde.Accounts.OIDCProvider.Actions.Authorization do
+defmodule Opsonde.Accounts.OIDC.Provider.Actions.Authorization do
   use Ash.Resource.Actions.Implementation
 
   require Ash.Query
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.OIDC
-  alias Opsonde.Accounts.{OIDCProvider, OIDCRequest, User, UserIdentity}
+  alias Opsonde.Accounts.{User, UserIdentity}
+  alias Opsonde.Accounts.OIDC.Client
+  alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
 
   @strategy "oidc"
 
@@ -14,7 +16,7 @@ defmodule Opsonde.Accounts.OIDCProvider.Actions.Authorization do
     with {:ok, provider} <- current_provider(arguments.provider_revision),
          :ok <- validate_link_request(arguments.request_id, arguments.start_token),
          browser_binding <- OIDCRequest.random_secret(),
-         {:ok, started} <- OIDC.start(provider, browser_binding),
+         {:ok, started} <- Client.start(provider, browser_binding),
          {:ok, request_id} <-
            begin_link_request(arguments.request_id, arguments.start_token, browser_binding) do
       {:ok,
@@ -30,7 +32,8 @@ defmodule Opsonde.Accounts.OIDCProvider.Actions.Authorization do
 
   def run(%{action: %{name: :complete_authorization}, arguments: arguments}, _opts, _context) do
     with {:ok, provider} <- current_provider(arguments.provider_revision),
-         {:ok, completed} <- OIDC.callback(provider, arguments.params, arguments.browser_binding),
+         {:ok, completed} <-
+           Client.callback(provider, arguments.params, arguments.browser_binding),
          {:ok, subject} <- subject(completed.id_token_claims),
          {:ok, user, linked?} <-
            resolve_user(subject, arguments.request_id, arguments.browser_binding),

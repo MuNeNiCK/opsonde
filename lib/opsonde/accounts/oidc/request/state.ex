@@ -1,8 +1,8 @@
-defmodule Opsonde.Accounts.OIDCRequest.State do
+defmodule Opsonde.Accounts.OIDC.Request.State do
   use Ash.Resource.Validation
 
   alias Ash.Changeset
-  alias Opsonde.Accounts.OIDCRequest
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
 
   @impl true
   def validate(changeset, options, _context) do

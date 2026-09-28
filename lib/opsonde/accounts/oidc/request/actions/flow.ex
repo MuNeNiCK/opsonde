@@ -1,10 +1,10 @@
-defmodule Opsonde.Accounts.OIDCRequest.Actions.Flow do
+defmodule Opsonde.Accounts.OIDC.Request.Actions.Flow do
   use Ash.Resource.Actions.Implementation
 
   require Ash.Query
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.OIDCRequest
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
   alias Opsonde.Accounts.User
 
   @request_lifetime_seconds 600

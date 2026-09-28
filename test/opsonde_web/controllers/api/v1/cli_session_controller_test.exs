@@ -3,7 +3,7 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
 
   import OpenApiSpex.TestAssertions
 
-  alias Opsonde.Accounts.OIDCRequest
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
 
   @password "correct horse battery staple"
 

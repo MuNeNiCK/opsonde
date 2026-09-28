@@ -2,7 +2,7 @@ defmodule OpsondeWeb.OIDCController do
   use OpsondeWeb, :controller
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.OIDCRequest
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
   alias OpsondeWeb.API.V1.AccountJSON
 
   @binding_key :opsonde_oidc_browser_binding

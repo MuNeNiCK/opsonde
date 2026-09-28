@@ -1,4 +1,4 @@
-defmodule Opsonde.Accounts.OIDC do
+defmodule Opsonde.Accounts.OIDC.Client do
   @moduledoc false
 
   alias AttestoClient.AuthorizationCode

@@ -20,7 +20,7 @@ defmodule Opsonde.Accounts do
     resource Opsonde.Accounts.Token
     resource Opsonde.Accounts.UserIdentity
 
-    resource Opsonde.Accounts.OIDCProvider do
+    resource Opsonde.Accounts.OIDC.Provider do
       define :configure_oidc, action: :configure
       define :current_oidc_provider, action: :current
       define :oidc_available?, action: :available
@@ -34,7 +34,7 @@ defmodule Opsonde.Accounts do
         args: [:params, :browser_binding, :provider_revision, :request_id]
     end
 
-    resource Opsonde.Accounts.OIDCRequest do
+    resource Opsonde.Accounts.OIDC.Request do
       define :request_oidc_link, action: :request_link
 
       define :request_cli_login,

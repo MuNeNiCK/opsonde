@@ -2,7 +2,9 @@ defmodule Opsonde.OIDCTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.{OIDCProvider, OIDCRequest, User, UserIdentity}
+  alias Opsonde.Accounts.{User, UserIdentity}
+  alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
+  alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
 
   @issuer "https://identity.example.test/realms/opsonde"
   @stub __MODULE__.Provider
@@ -10,8 +12,11 @@ defmodule Opsonde.OIDCTest do
 
   setup do
     Req.Test.set_req_test_to_shared()
-    previous = Application.get_env(:opsonde, Opsonde.Accounts.OIDC)
-    Application.put_env(:opsonde, Opsonde.Accounts.OIDC, req_options: [plug: {Req.Test, @stub}])
+    previous = Application.get_env(:opsonde, Opsonde.Accounts.OIDC.Client)
+
+    Application.put_env(:opsonde, Opsonde.Accounts.OIDC.Client,
+      req_options: [plug: {Req.Test, @stub}]
+    )
 
     key =
       {:rsa, 2048}
@@ -45,8 +50,8 @@ defmodule Opsonde.OIDCTest do
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:opsonde, Opsonde.Accounts.OIDC, previous),
-        else: Application.delete_env(:opsonde, Opsonde.Accounts.OIDC)
+        do: Application.put_env(:opsonde, Opsonde.Accounts.OIDC.Client, previous),
+        else: Application.delete_env(:opsonde, Opsonde.Accounts.OIDC.Client)
 
       Req.Test.set_req_test_to_private()
     end)

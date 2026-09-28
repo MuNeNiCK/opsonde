@@ -1,7 +1,7 @@
-defmodule Opsonde.Accounts.OIDCProvider.Available do
+defmodule Opsonde.Accounts.OIDC.Provider.Available do
   use Ash.Resource.Actions.Implementation
 
-  alias Opsonde.Accounts.OIDCProvider
+  alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
 
   @impl true
   def run(_input, _opts, _context) do

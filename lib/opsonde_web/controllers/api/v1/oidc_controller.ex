@@ -4,7 +4,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
   action_fallback OpsondeWeb.API.FallbackController
 
   alias Opsonde.Accounts
-  alias Opsonde.Accounts.OIDCProvider
+  alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
   alias OpsondeWeb.API.Response
   alias OpsondeWeb.API.V1.AccountSchemas
 

@@ -1,7 +1,8 @@
-defmodule Opsonde.Accounts.OIDCProvider.Configure do
+defmodule Opsonde.Accounts.OIDC.Provider.Configure do
   use Ash.Resource.Actions.Implementation
 
-  alias Opsonde.Accounts.{OIDCProvider, UserIdentity}
+  alias Opsonde.Accounts.UserIdentity
+  alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
 
   @impl true
   def run(input, _options, context) do

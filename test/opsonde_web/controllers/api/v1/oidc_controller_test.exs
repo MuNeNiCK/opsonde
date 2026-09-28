@@ -12,8 +12,11 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
 
   setup do
     Req.Test.set_req_test_to_shared()
-    previous = Application.get_env(:opsonde, Opsonde.Accounts.OIDC)
-    Application.put_env(:opsonde, Opsonde.Accounts.OIDC, req_options: [plug: {Req.Test, @stub}])
+    previous = Application.get_env(:opsonde, Opsonde.Accounts.OIDC.Client)
+
+    Application.put_env(:opsonde, Opsonde.Accounts.OIDC.Client,
+      req_options: [plug: {Req.Test, @stub}]
+    )
 
     key =
       {:rsa, 2048}
@@ -47,8 +50,8 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:opsonde, Opsonde.Accounts.OIDC, previous),
-        else: Application.delete_env(:opsonde, Opsonde.Accounts.OIDC)
+        do: Application.put_env(:opsonde, Opsonde.Accounts.OIDC.Client, previous),
+        else: Application.delete_env(:opsonde, Opsonde.Accounts.OIDC.Client)
 
       Req.Test.set_req_test_to_private()
     end)
