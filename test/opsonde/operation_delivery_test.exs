@@ -1466,7 +1466,7 @@ defmodule Opsonde.OperationDeliveryTest do
       enable_signal_automation!(context.admin)
       status = context.terminal_status
 
-      {incident, _run, proposal, signal_provider} =
+      {incident, run, proposal, signal_provider} =
         authorized_proposal!("terminal-recovery-#{status}", context, trigger_kind: :signal)
 
       operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -1477,6 +1477,11 @@ defmodule Opsonde.OperationDeliveryTest do
                )
 
       assert_receive {:effect, _, _}
+
+      {:ok, [condition]} = ResolverProjection.current_conditions(incident)
+
+      assert {:ok, nil} =
+               ConditionRecovery.applied_effect_refresh_at(incident, run.id, [condition.id])
 
       recover_signal!(
         signal_provider,
