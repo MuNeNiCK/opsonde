@@ -10,6 +10,15 @@ defmodule Opsonde.Targets.IOSXE do
   @interface_pattern ~r/^[A-Za-z][A-Za-z0-9._\/-]{0,127}$/
   @verification_fields ~w(name description enabled admin_status oper_status input_errors output_errors)
 
+  def access_method_profile(method, native_observation, native_effect) do
+    %Target.AccessMethodProfile{
+      platform: "cisco_ios_xe",
+      method: method,
+      target_platform: "cisco_ios_xe",
+      capabilities: Target.capability_names(capabilities()) ++ [native_observation, native_effect]
+    }
+  end
+
   def capabilities do
     %Target.Capabilities{
       observations: [

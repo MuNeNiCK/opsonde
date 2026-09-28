@@ -11,6 +11,21 @@ defmodule Opsonde.Targets.BMC do
     "bmc.power.reset" => "on"
   }
 
+  def access_method_profile(method) when method in ["redfish", "ipmi"] do
+    %Target.AccessMethodProfile{
+      platform: "bare_metal",
+      method: method,
+      target_platform: "bare_metal",
+      target_kind: "physical_host",
+      configuration_endpoint?: true,
+      required_capabilities: ["observe.power"],
+      capabilities:
+        Enum.uniq(
+          Target.capability_names(capabilities()) ++ Target.capability_names(api_capabilities())
+        )
+    }
+  end
+
   def capabilities do
     observation = %Target.Operation{
       capability: elem(@inspect, 0),

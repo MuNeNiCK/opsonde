@@ -50,6 +50,28 @@ defmodule Opsonde.Providers.Target do
     @type t :: %__MODULE__{endpoint: String.t()}
   end
 
+  defmodule AccessMethodProfile do
+    @moduledoc false
+    @enforce_keys [:platform, :method, :capabilities]
+    defstruct @enforce_keys ++
+                [
+                  target_platform: nil,
+                  target_kind: nil,
+                  configuration_endpoint?: false,
+                  required_capabilities: []
+                ]
+
+    @type t :: %__MODULE__{
+            platform: String.t(),
+            method: String.t(),
+            capabilities: [String.t()],
+            target_platform: String.t() | nil,
+            target_kind: String.t() | nil,
+            configuration_endpoint?: boolean(),
+            required_capabilities: [String.t()]
+          }
+  end
+
   defmodule PreflightRequest do
     @moduledoc false
     @enforce_keys [:provider_revision, :kind, :capability, :operation, :selectors, :parameters]
@@ -194,8 +216,16 @@ defmodule Opsonde.Providers.Target do
   @callback resource_scope(operation :: String.t(), capability :: String.t(), selectors :: map()) ::
               String.t()
 
+  @callback access_method_profile() :: AccessMethodProfile.t() | :unrestricted
+
   @callback preflight(state :: term(), PreflightRequest.t()) ::
               :ok | {:error, :failed, String.t()}
 
   @optional_callbacks resource_scope: 3, preflight: 2
+
+  def capability_names(%Capabilities{} = capabilities) do
+    (capabilities.observations ++ capabilities.effects)
+    |> Enum.map(& &1.capability)
+    |> Enum.uniq()
+  end
 end

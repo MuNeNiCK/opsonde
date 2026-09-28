@@ -22,6 +22,10 @@ defmodule Opsonde.Targets.IOSXE.NETCONF do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile,
+    do: IOSXE.access_method_profile("netconf", @native_observation, @native_effect)
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) do
     configuration

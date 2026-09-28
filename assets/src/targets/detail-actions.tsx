@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { targetAdapter } from "@/targets/adapters";
 import type { Provider, Target } from "@/targets/data";
 
 type Action = "identity" | "access" | "relationship" | "policy";
@@ -33,14 +32,17 @@ export function TargetDetailActions({
   const [pending, setPending] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [accessEndpoint, setAccessEndpoint] = useState("");
-  const physicalHost = target.kind === "physical_host" && target.platform === "bare_metal";
   const enabledProviders = providers.filter(
     (provider) =>
       provider.kind === "target" &&
       provider.enabled &&
       provider.check.status === "passed" &&
       provider.check.checked_revision === provider.revision &&
-      (!provider.adapter_type.startsWith("bmc-") || physicalHost),
+      provider.access_method_profile &&
+      (!provider.access_method_profile.target_platform ||
+        provider.access_method_profile.target_platform === target.platform) &&
+      (!provider.access_method_profile.target_kind ||
+        provider.access_method_profile.target_kind === target.kind),
   );
   const selectedProvider = enabledProviders.find((provider) => provider.id === selectedProviderId);
   const selectedIsBMC = selectedProvider?.adapter_type.startsWith("bmc-") ?? false;
@@ -66,8 +68,8 @@ export function TargetDetailActions({
 
   async function createAccessMethod(form: FormData) {
     const provider = enabledProviders.find((item) => item.id === value(form, "provider_id"));
-    const adapter = provider && targetAdapter(provider.adapter_type);
-    if (!provider || !adapter) throw new Error(t("targets.connectionRequired"));
+    const profile = provider?.access_method_profile;
+    if (!provider || !profile) throw new Error(t("targets.connectionRequired"));
     const response = apiData(
       await apiClient.POST("/api/v1/providers/{id}/target-capabilities", {
         params: { path: { id: provider.id } },
@@ -91,8 +93,8 @@ export function TargetDetailActions({
             target_id: target.id,
             provider_id: provider.id,
             name: value(form, "name"),
-            platform: adapter.platform,
-            method: adapter.method,
+            platform: profile.platform,
+            method: profile.method,
             endpoint: value(form, "endpoint"),
             provider_revision: provider.revision,
             priority: Number(value(form, "priority")),

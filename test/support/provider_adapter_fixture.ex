@@ -12,6 +12,9 @@ defmodule Opsonde.ProviderAdapterFixture do
   def kind, do: :target
 
   @impl Opsonde.Providers.Target
+  def access_method_profile, do: :unrestricted
+
+  @impl Opsonde.Providers.Target
   def resource_scope(operation, capability, selectors)
       when operation in [
              "service.restart",

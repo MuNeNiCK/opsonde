@@ -47,6 +47,24 @@ defmodule Opsonde.Targets.Linux.SSH do
   def kind, do: :target
 
   @impl Opsonde.Providers.Target
+  def access_method_profile do
+    %Target.AccessMethodProfile{
+      platform: "linux",
+      method: "ssh",
+      target_platform: "linux",
+      target_kind: nil,
+      capabilities:
+        Enum.uniq(
+          Enum.map(
+            [@identity, @processes, @service, @service_list, @journal, @restart],
+            &elem(&1, 0)
+          ) ++
+            [@native_observation, @native_effect]
+        )
+    }
+  end
+
+  @impl Opsonde.Providers.Target
   def resource_scope(operation, capability, selectors)
       when operation in ["linux.service.restart", "linux.service.inspect"] and
              capability in ["effect.service", "observe.service"] and is_map(selectors) do

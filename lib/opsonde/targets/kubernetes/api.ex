@@ -33,6 +33,18 @@ defmodule Opsonde.Targets.Kubernetes.API do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile do
+    {:ok, operations} = capabilities(nil, %{})
+
+    %Target.AccessMethodProfile{
+      platform: "kubernetes",
+      method: "api",
+      target_platform: "kubernetes",
+      capabilities: Target.capability_names(operations)
+    }
+  end
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials)
       when is_map(configuration) and is_map(credentials) do

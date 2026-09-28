@@ -24,6 +24,9 @@ defmodule Opsonde.Targets.BMC.IPMI do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile, do: BMC.access_method_profile("ipmi")
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
     with true <- Enum.sort(Map.keys(configuration)) in [["endpoint"], ["endpoint", "timeout_ms"]],

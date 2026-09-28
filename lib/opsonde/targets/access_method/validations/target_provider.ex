@@ -1,8 +1,9 @@
 defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
   use Ash.Resource.Validation
 
-  alias Opsonde.Providers
-  alias Opsonde.Targets.BMC.AccessBinding
+  alias Opsonde.{Providers, Targets}
+  alias Opsonde.Providers.Registry
+  alias Opsonde.Providers.Target.AccessMethodProfile
 
   @impl true
   def init(opts), do: {:ok, opts}
@@ -19,9 +20,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
            authorize?: false
          ) do
       {:ok, provider} ->
-        with :ok <- AccessBinding.validate(changeset, provider) do
-          validate_http(changeset, provider)
-        end
+        validate_profile(changeset, provider)
 
       {:error, _error} ->
         {:error,
@@ -30,21 +29,47 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
     end
   end
 
-  defp validate_http(changeset, %{adapter_type: "generic-http"} = provider) do
-    endpoint = Ash.Changeset.get_attribute(changeset, :endpoint)
-    capabilities = Ash.Changeset.get_attribute(changeset, :capabilities)
+  defp validate_profile(changeset, provider) do
+    case Registry.fetch(provider.adapter_type, Providers.Target) do
+      {:ok, adapter} ->
+        case adapter.access_method_profile() do
+          :unrestricted ->
+            :ok
 
-    if Ash.Changeset.get_attribute(changeset, :method) == "http_get" and
-         endpoint == provider.configuration["endpoint"] and
-         capabilities == ["observe.http"] do
-      :ok
-    else
-      {:error,
-       field: :endpoint,
-       message:
-         "HTTP Access Method must use its checked Provider endpoint and observe.http capability"}
+          %AccessMethodProfile{} = profile ->
+            validate_binding(changeset, provider, profile)
+
+          _invalid ->
+            {:error, field: :provider_id, message: "Target Provider has no binding profile"}
+        end
+
+      {:error, _reason} ->
+        {:error, field: :provider_id, message: "must reference a Target Provider adapter"}
     end
   end
 
-  defp validate_http(_changeset, _provider), do: :ok
+  defp validate_binding(changeset, provider, profile) do
+    target_id = Ash.Changeset.get_attribute(changeset, :target_id)
+    capabilities = Ash.Changeset.get_attribute(changeset, :capabilities)
+    endpoint = Ash.Changeset.get_attribute(changeset, :endpoint)
+
+    with true <- Ash.Changeset.get_attribute(changeset, :platform) == profile.platform,
+         true <- Ash.Changeset.get_attribute(changeset, :method) == profile.method,
+         true <-
+           not profile.configuration_endpoint? or endpoint == provider.configuration["endpoint"],
+         true <- is_list(capabilities) and capabilities != [],
+         true <- Enum.uniq(capabilities) == capabilities,
+         true <- Enum.all?(capabilities, &(&1 in profile.capabilities)),
+         true <- Enum.all?(profile.required_capabilities, &(&1 in capabilities)),
+         {:ok, %{active: true} = target} <- Targets.get_target(target_id, authorize?: false),
+         true <- is_nil(profile.target_platform) or target.platform == profile.target_platform,
+         true <- is_nil(profile.target_kind) or target.kind == profile.target_kind do
+      :ok
+    else
+      _other ->
+        {:error,
+         field: :method,
+         message: "Access Method must match its checked Provider, Target and capabilities"}
+    end
+  end
 end

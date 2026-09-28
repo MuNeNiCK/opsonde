@@ -25,6 +25,16 @@ defmodule Opsonde.Targets.Generic.HTTP do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile do
+    %Target.AccessMethodProfile{
+      platform: "generic",
+      method: "http_get",
+      configuration_endpoint?: true,
+      capabilities: [@capability]
+    }
+  end
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials)
       when is_map(configuration) and is_map(credentials) do

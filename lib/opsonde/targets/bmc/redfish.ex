@@ -32,6 +32,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile, do: BMC.access_method_profile("redfish")
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
     allowed = ~w(endpoint system_path expected_uuid ca_certificate timeout_ms)

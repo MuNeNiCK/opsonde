@@ -17,6 +17,10 @@ defmodule Opsonde.Targets.IOSXE.SSH do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile,
+    do: IOSXE.access_method_profile("ssh_cli", @native_observation, @native_effect)
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Transport.build(configuration, credentials)
 

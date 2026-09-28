@@ -69,6 +69,36 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert_secret_free(shown, [secret, "private-probe"])
   end
 
+  test "Target Provider returns its Access Method binding for Web and CLI clients", context do
+    response =
+      post_json(
+        "/api/v1/providers",
+        %{
+          "provider" => %{
+            "name" => "public-http-target",
+            "kind" => "target",
+            "adapter_type" => "generic-http",
+            "configuration" => %{"endpoint" => "https://example.test/health"},
+            "credentials" => %{}
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{
+             "data" => %{
+               "access_method_profile" => %{
+                 "platform" => "generic",
+                 "method" => "http_get",
+                 "target_platform" => nil,
+                 "target_kind" => nil
+               }
+             }
+           } = json_response(response, 201)
+
+    assert_operation_response(response)
+  end
+
   test "administrator configures every Provider kind without exposing credentials", context do
     providers =
       [

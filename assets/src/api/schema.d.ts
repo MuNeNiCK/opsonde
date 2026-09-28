@@ -1829,6 +1829,12 @@ export interface components {
             data: components["schemas"]["InventoryImport"];
         };
         Provider: {
+            access_method_profile?: {
+                method: string;
+                platform: string;
+                target_kind: string | null;
+                target_platform: string | null;
+            };
             adapter_type: string;
             check: {
                 /** @enum {string|null} */

@@ -17,6 +17,15 @@ defmodule Opsonde.Targets.Generic.SSH do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile do
+    %Target.AccessMethodProfile{
+      platform: "generic",
+      method: "ssh",
+      capabilities: [@observation_capability, @effect_capability]
+    }
+  end
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Transport.build(configuration, credentials)
 

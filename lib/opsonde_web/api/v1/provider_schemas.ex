@@ -48,6 +48,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
         name: %Schema{type: :string, minLength: 1, maxLength: 120},
         kind: provider_kind(),
         adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
+        access_method_profile: access_method_profile(),
         configuration: map(),
         revision: positive_integer(),
         enabled: %Schema{type: :boolean},
@@ -67,6 +68,19 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
         :inserted_at,
         :updated_at
       ],
+      false
+    )
+  end
+
+  defp access_method_profile do
+    object(
+      %{
+        platform: %Schema{type: :string},
+        method: %Schema{type: :string},
+        target_platform: %Schema{type: :string, nullable: true},
+        target_kind: %Schema{type: :string, nullable: true}
+      },
+      [:platform, :method, :target_platform, :target_kind],
       false
     )
   end

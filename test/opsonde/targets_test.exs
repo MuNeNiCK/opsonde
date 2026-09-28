@@ -381,7 +381,121 @@ defmodule Opsonde.TargetsTest do
         assert {:error, error} =
                  create.(target_id, candidate_method, candidate_endpoint, capabilities)
 
-        assert Exception.message(error) =~ "BMC Access Method must match"
+        assert Exception.message(error) =~ "Access Method must match"
+      end
+    end
+  end
+
+  test "Linux SSH cannot be registered as an unrelated Access Method", context do
+    endpoint = "ssh://192.0.2.30:22"
+
+    provider =
+      Providers.create_provider!(
+        "linux-binding-provider",
+        :target,
+        "linux-ssh",
+        %{
+          "host_key_fingerprints" => %{
+            endpoint => "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        },
+        %{"username" => "operator", "auth_method" => "password", "password" => "test-only"},
+        actor: context.admin
+      )
+      |> then(
+        &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    linux = create_target!(context.admin, "linux-binding-target", "host", "linux")
+
+    assert {:error, error} =
+             Targets.create_access_method(
+               linux.id,
+               provider.id,
+               "wrong-method",
+               "bare_metal",
+               "ipmi",
+               endpoint,
+               provider.revision,
+               100,
+               ["observe.identity"],
+               actor: context.admin
+             )
+
+    assert Exception.message(error) =~ "Access Method"
+
+    registered =
+      Targets.create_access_method!(
+        linux.id,
+        provider.id,
+        "linux-management",
+        "linux",
+        "ssh",
+        endpoint,
+        provider.revision,
+        100,
+        ["observe.identity"],
+        actor: context.admin
+      )
+
+    assert {:error, _error} =
+             Targets.update_access_method(
+               registered,
+               registered.revision,
+               %{method: "ipmi"},
+               actor: context.admin
+             )
+
+    assert Targets.get_access_method!(registered.id, actor: context.admin).method == "ssh"
+  end
+
+  test "typed and generic adapters enforce their registration boundary", context do
+    linux = create_target!(context.admin, "profile-linux", "host", "linux")
+    cluster = create_target!(context.admin, "profile-cluster", "cluster", "kubernetes")
+    switch = create_target!(context.admin, "profile-switch", "network_device", "cisco_ios_xe")
+    other = create_target!(context.admin, "profile-other", "network_device", "junos")
+
+    for {type, target, platform, method, capability, invalid_target} <- [
+          {"kubernetes-api", cluster, "kubernetes", "api", "native.kubernetes_api.observe",
+           linux},
+          {"ios-xe-ssh", switch, "cisco_ios_xe", "ssh_cli", "native.cli.observe", linux},
+          {"ios-xe-netconf", switch, "cisco_ios_xe", "netconf", "native.netconf.observe", linux},
+          {"ios-xe-restconf", switch, "cisco_ios_xe", "restconf", "native.restconf.observe",
+           linux},
+          {"generic-ssh", other, "generic", "ssh", "native.ssh.observe", nil}
+        ] do
+      # Only Access Method registration is under test; Provider check has no remote transport here.
+      provider =
+        Providers.create_provider!(type, :target, type, %{}, %{}, actor: context.admin)
+        |> then(
+          &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
+        )
+        |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+      endpoint = "https://example.test/#{type}"
+
+      create = fn selected_target, candidate_method ->
+        Targets.create_access_method(
+          selected_target.id,
+          provider.id,
+          type,
+          platform,
+          candidate_method,
+          endpoint,
+          provider.revision,
+          100,
+          [capability],
+          actor: context.admin
+        )
+      end
+
+      assert {:ok, registered} = create.(target, method)
+      assert registered.target_id == target.id
+      assert {:error, _error} = create.(target, "ipmi")
+
+      if invalid_target do
+        assert {:error, _error} = create.(invalid_target, method)
       end
     end
   end

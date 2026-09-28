@@ -44,6 +44,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     %{
+      admin: admin,
       admin_token: token!(admin.email),
       operator: operator,
       operator_token: token!(operator.email),
@@ -51,6 +52,54 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       target_provider: target_provider,
       inventory_provider: inventory_provider
     }
+  end
+
+  test "Access Method API rejects a Provider mismatch and accepts its declared binding",
+       context do
+    endpoint = "https://example.test/health"
+
+    provider =
+      Providers.create_provider!(
+        "http-binding-provider",
+        :target,
+        "generic-http",
+        %{"endpoint" => endpoint},
+        %{},
+        actor: context.admin
+      )
+      |> then(
+        &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target = create_target!(context.admin_token, "http-binding-target", "host", "linux", nil)
+
+    method = %{
+      "target_id" => target["id"],
+      "provider_id" => provider.id,
+      "name" => "http-observation",
+      "platform" => "generic",
+      "method" => "http_get",
+      "endpoint" => endpoint,
+      "provider_revision" => provider.revision,
+      "priority" => 100,
+      "capabilities" => ["observe.http"]
+    }
+
+    invalid =
+      post_json(
+        "/api/v1/access-methods",
+        %{"access_method" => %{method | "method" => "ipmi"}},
+        context.admin_token
+      )
+
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+
+    registered =
+      post_data!("/api/v1/access-methods", %{"access_method" => method}, context.admin_token)
+
+    assert registered["method"] == "http_get"
+    assert registered["provider_id"] == provider.id
   end
 
   test "administrator registers a layered environment and every permitted access path", context do

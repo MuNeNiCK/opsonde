@@ -1106,6 +1106,32 @@
       "Provider": {
         "additionalProperties": false,
         "properties": {
+          "access_method_profile": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "target_kind": {
+                "nullable": true,
+                "type": "string"
+              },
+              "target_platform": {
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "method",
+              "target_platform",
+              "target_kind"
+            ],
+            "type": "object"
+          },
           "adapter_type": {
             "maxLength": 120,
             "minLength": 1,

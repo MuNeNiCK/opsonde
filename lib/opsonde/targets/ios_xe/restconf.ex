@@ -25,6 +25,10 @@ defmodule Opsonde.Targets.IOSXE.RESTCONF do
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
 
+  @impl Opsonde.Providers.Target
+  def access_method_profile,
+    do: IOSXE.access_method_profile("restconf", @native_observation, @native_effect)
+
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
     with :ok <- exact_keys(configuration, @configuration_keys),
