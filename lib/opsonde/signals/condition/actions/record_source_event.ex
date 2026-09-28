@@ -34,7 +34,7 @@ defmodule Opsonde.Signals.Condition.Actions.RecordSourceEvent do
     condition.target_id == args.target_id and condition.subject_ref == args.subject_ref
   end
 
-  # Ingress holds the corresponding SignalCorrelation row lock for this action.
+  # SignalReceipt ingestion holds the corresponding SignalCorrelation row lock for this action.
   # A stale event is retained as native history, but cannot be assigned to a
   # newer occurrence when its original occurrence is uncertain.
   defp record(_latest_identity, _latest_any, %{current: false}), do: {:ok, %{condition: nil}}

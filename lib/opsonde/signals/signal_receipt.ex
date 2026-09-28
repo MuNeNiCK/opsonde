@@ -61,7 +61,7 @@ defmodule Opsonde.Signals.SignalReceipt do
         constraints: [instance_of: Opsonde.Providers.Signal.Envelope]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
-      run Opsonde.Signals.Ingress
+      run Opsonde.Signals.SignalReceipt.Actions.Ingest
     end
   end
 

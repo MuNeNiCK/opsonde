@@ -1,4 +1,4 @@
-defmodule Opsonde.Signals.Ingress do
+defmodule Opsonde.Signals.SignalReceipt.Actions.Ingest do
   use Ash.Resource.Actions.Implementation
 
   require Ash.Query
