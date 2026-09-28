@@ -3,8 +3,10 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
   import OpenApiSpex.TestAssertions
   import Ecto.Query
+  import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
+  alias Opsonde.Cases.{Case, Realtime}
   alias Opsonde.Cases.ReviewDelivery
   alias Opsonde.Cases.CaseDispatchWorker
   alias Opsonde.Providers.{AI, Signal}
@@ -88,6 +90,36 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
+  test "public Case creation publishes its changes only after commit", context do
+    body = %{
+      "case" => %{
+        "trigger_kind" => "manual",
+        "source" => "api",
+        "source_ref" => "notification-on-commit",
+        "title" => "Check notification timing",
+        "severity" => "warning",
+        "initial_context" => %{"desired_outcome" => "Target responds as expected"}
+      }
+    }
+
+    log =
+      capture_log(fn ->
+        assert {:ok, case_id} =
+                 Ash.transact(Case, fn ->
+                   response = post_json("/api/v1/cases", body, context.operator_token)
+                   %{"data" => %{"id" => case_id}} = json_response(response, 201)
+                   :ok = Realtime.subscribe(case_id)
+                   refute_receive {:case_changed, ^case_id}, 20
+                   case_id
+                 end)
+
+        for _ <- 1..3, do: assert_receive({:case_changed, ^case_id})
+        refute_receive {:case_changed, ^case_id}, 100
+      end)
+
+    refute log =~ "Missed"
+  end
+
   test "public manual Case creation requires an explicit desired outcome", context do
     body = %{
       "case" => %{
@@ -135,12 +167,22 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       }
     }
 
-    assert {:error, :simulated_persistence_failure} =
-             Opsonde.Repo.transaction(fn ->
-               response = post_json("/api/v1/cases", body, context.operator_token)
-               assert %{"data" => %{"id" => _id}} = json_response(response, 201)
-               Opsonde.Repo.rollback(:simulated_persistence_failure)
-             end)
+    log =
+      capture_log(fn ->
+        assert {:error, _reason} =
+                 Ash.transact(Case, fn ->
+                   response = post_json("/api/v1/cases", body, context.operator_token)
+                   assert %{"data" => %{"id" => case_id}} = json_response(response, 201)
+                   :ok = Realtime.subscribe(case_id)
+                   send(self(), {:rolled_back_case, case_id})
+                   {:error, :simulated_persistence_failure}
+                 end)
+
+        assert_receive {:rolled_back_case, rolled_back_id}
+        refute_receive {:case_changed, ^rolled_back_id}, 100
+      end)
+
+    refute log =~ "Missed"
 
     assert Cases.list_cases!(actor: context.admin) == []
     assert Opsonde.Repo.all(Oban.Job) == []
