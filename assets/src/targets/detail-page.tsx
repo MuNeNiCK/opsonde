@@ -4,6 +4,7 @@ import {
   Cable,
   CheckCircle2,
   CircleAlert,
+  Cpu,
   Fingerprint,
   Link2,
   ShieldBan,
@@ -18,6 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Spinner } from "@/components/ui/spinner";
 import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
 import { TargetDetailActions } from "@/targets/detail-actions";
+import { BMCMethodSetup } from "@/targets/bmc-setup";
 
 export function TargetDetailPage() {
   const { targetId = "" } = useParams();
@@ -78,6 +80,12 @@ export function TargetDetailPage() {
   const methods = snapshot.methods
     .filter((item) => item.target_id === target.id && item.active)
     .sort((left, right) => left.priority - right.priority);
+  const bmcMethods = methods.filter((method) => {
+    if (target.kind !== "physical_host" || !["redfish", "ipmi"].includes(method.method))
+      return false;
+    const provider = snapshot.providers.find((item) => item.id === method.provider_id);
+    return provider?.adapter_type === `bmc-${method.method}`;
+  });
   const relationships = snapshot.relationships.filter(
     (item) =>
       item.active &&
@@ -237,6 +245,22 @@ export function TargetDetailPage() {
           ))}
         </Section>
       </div>
+      {bmcMethods.length > 0 && (
+        <Section
+          icon={<Cpu />}
+          title={t("targets.bmc.title")}
+          empty={t("targets.bmc.noOperations")}
+        >
+          {bmcMethods.map((method) => (
+            <BMCMethodSetup
+              key={method.id}
+              method={method}
+              canManage={canManage}
+              canReadSecrets={account?.role === "admin" || account?.role === "operator"}
+            />
+          ))}
+        </Section>
+      )}
     </div>
   );
 }
