@@ -7,6 +7,7 @@ defmodule Opsonde.Cases do
       define :list_authority_settings, action: :read
       define :page_authority_settings, action: :page
       define :current_authority_setting, action: :current
+      define :bootstrap_authority_setting, action: :bootstrap
       define :create_authority_setting_revision, action: :create_revision
       define :retire_authority_setting, action: :retire, args: [:expected_revision]
 

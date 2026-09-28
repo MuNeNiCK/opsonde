@@ -135,7 +135,7 @@ defmodule Opsonde.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       "assets.setup": ["cmd --cd assets corepack pnpm install --frozen-lockfile"],
       "assets.build": ["cmd --cd assets corepack pnpm run build"],
-      test: ["ash.setup --quiet", "test"],
+      test: ["ash.setup --quiet", "run priv/repo/seeds.exs", "test"],
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",

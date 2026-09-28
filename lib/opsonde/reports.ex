@@ -21,6 +21,7 @@ defmodule Opsonde.Reports do
 
     resource Opsonde.Reports.Setting do
       define :current_setting, action: :current
+      define :bootstrap_setting, action: :bootstrap
 
       define :configure_setting,
         action: :configure,

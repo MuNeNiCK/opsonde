@@ -13,6 +13,10 @@ defmodule Opsonde.Reports.Setting do
   actions do
     defaults [:read]
 
+    create :bootstrap do
+      accept []
+    end
+
     read :current do
       get? true
       filter expr(scope == "global")
@@ -31,6 +35,10 @@ defmodule Opsonde.Reports.Setting do
   end
 
   policies do
+    policy action(:bootstrap) do
+      forbid_if always()
+    end
+
     policy action(:configure) do
       authorize_if actor_attribute_equals(:role, :admin)
     end

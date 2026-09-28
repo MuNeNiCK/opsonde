@@ -46,6 +46,22 @@ defmodule Opsonde.Cases.AuthoritySetting do
       ]
     end
 
+    create :bootstrap do
+      accept []
+      change set_attribute(:authority_mode, :readonly)
+      change set_attribute(:signal_automation_enabled, false)
+      change set_attribute(:max_elapsed_seconds, 3600)
+      change set_attribute(:max_resolver_turns, 20)
+      change set_attribute(:max_target_requests, 100)
+      change set_attribute(:max_effects, 10)
+      change set_attribute(:max_related_targets, 20)
+      change set_attribute(:max_ai_usage_units, 1_000_000)
+      change set_attribute(:max_no_progress_turns, 3)
+      change set_attribute(:setting_revision, 1)
+      change set_attribute(:active, true)
+      change set_attribute(:reason, "system bootstrap")
+    end
+
     update :retire do
       accept []
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
@@ -110,7 +126,7 @@ defmodule Opsonde.Cases.AuthoritySetting do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:create_revision, :retire]) do
+    policy action([:bootstrap, :create_revision, :retire]) do
       forbid_if always()
     end
 
