@@ -4,7 +4,14 @@ defmodule Opsonde.SignalIngressTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
-  alias Opsonde.Cases.{DecisionRouteWorker, ResolverDelivery, ResolverProjection}
+
+  alias Opsonde.Cases.{
+    ConditionContext,
+    DecisionRouteWorker,
+    ResolverDelivery,
+    ResolverProjection
+  }
+
   alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Repo
   alias Opsonde.Cases.RecoveryRecheckWorker
@@ -738,8 +745,7 @@ defmodule Opsonde.SignalIngressTest do
         turn.revision,
         %{
           "outcome" => "decision",
-          "condition_revisions" =>
-            Opsonde.Cases.ResolverProjection.condition_revisions(request.conditions),
+          "condition_revisions" => ConditionContext.condition_revisions(request.conditions),
           "intent" => %{"type" => "handoff", "reason" => "Check the independent core fault"}
         },
         :none,
@@ -760,7 +766,7 @@ defmodule Opsonde.SignalIngressTest do
         parent.id,
         parent.revision,
         [core.id],
-        Opsonde.Cases.ResolverProjection.condition_revisions(request.conditions),
+        ConditionContext.condition_revisions(request.conditions),
         "The core has independent SSH symptoms",
         actor: context.admin
       )
@@ -837,7 +843,7 @@ defmodule Opsonde.SignalIngressTest do
     assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
     run = Cases.active_resolution_run!(parent.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(parent)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(parent)
 
     selection = %AI.Selection{
       role: :resolver,
@@ -976,7 +982,7 @@ defmodule Opsonde.SignalIngressTest do
     assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
     run = Cases.active_resolution_run!(parent.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(parent)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(parent)
     [moved | _rest] = revisions
 
     sources = Cases.signal_context_evidence!(parent.id, authorize?: false)
@@ -1060,7 +1066,7 @@ defmodule Opsonde.SignalIngressTest do
     run = Cases.active_resolution_run!(parent.id, authorize?: false)
     [initial_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
 
-    {:ok, snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+    {:ok, snapshot} = ConditionContext.current_condition_revisions(parent)
 
     moved_id =
       Signals.list_signal_events!(actor: context.admin)
@@ -1190,7 +1196,7 @@ defmodule Opsonde.SignalIngressTest do
     parent = Cases.get_case!(parent.id, authorize?: false)
     assert parent.status == :running
     assert Cases.active_resolution_run!(parent.id, authorize?: false).status == :running
-    {:ok, next_snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+    {:ok, next_snapshot} = ConditionContext.current_condition_revisions(parent)
 
     Cases.complete_turn!(
       parent_turn.id,
@@ -1277,7 +1283,7 @@ defmodule Opsonde.SignalIngressTest do
     assert %{status: :sent} = Cases.send_initial_case_turn!(parent.id, authorize?: false)
     run = Cases.active_resolution_run!(parent.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, snapshot} = Opsonde.Cases.ResolverProjection.current_condition_revisions(parent)
+    {:ok, snapshot} = ConditionContext.current_condition_revisions(parent)
 
     Cases.complete_turn!(
       turn.id,

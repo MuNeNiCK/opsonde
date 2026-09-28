@@ -1424,7 +1424,7 @@ defmodule Opsonde.OperationDeliveryTest do
     current = Cases.get_case!(incident.id, authorize?: false)
     run = Cases.active_resolution_run!(current.id, authorize?: false)
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(current)
 
     Cases.complete_turn!(
       turn.id,
@@ -1478,7 +1478,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
       assert_receive {:effect, _, _}
 
-      {:ok, [condition]} = ResolverProjection.current_conditions(incident)
+      {:ok, [condition]} = ConditionContext.current_conditions(incident)
 
       assert {:ok, nil} =
                ConditionRecovery.applied_effect_refresh_at(incident, run.id, [condition.id])
@@ -1551,7 +1551,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     [turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
     current = Cases.get_case!(incident.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(current)
     source = hd(Cases.signal_context_evidence!(incident.id, authorize?: false))
 
     completed =
@@ -1669,7 +1669,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert_receive {:observe, _, _}
     observation_evidence = operation_evidence_record(observation.id)
     [effect_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(incident)
 
     second_intent =
       signal_proposal_intent(observation_evidence.id, context, :effect)
@@ -2106,7 +2106,7 @@ defmodule Opsonde.OperationDeliveryTest do
              })
 
     target_evidence = operation_evidence_record(effect_target_observation.id)
-    [condition] = ResolverProjection.current_conditions(incident) |> elem(1)
+    [condition] = ConditionContext.current_conditions(incident) |> elem(1)
 
     claim = %{
       "condition_id" => condition.id,
@@ -2297,7 +2297,7 @@ defmodule Opsonde.OperationDeliveryTest do
              })
 
     target_evidence = operation_evidence_record(effect_target_observation.id)
-    [condition] = ResolverProjection.current_conditions(incident) |> elem(1)
+    [condition] = ConditionContext.current_conditions(incident) |> elem(1)
 
     claim = %{
       "condition_id" => condition.id,
@@ -2522,7 +2522,7 @@ defmodule Opsonde.OperationDeliveryTest do
     evidence = operation_evidence_record(observation.id)
     current = Cases.get_case!(incident.id, authorize?: false)
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
-    {:ok, [condition]} = ResolverProjection.current_conditions(current)
+    {:ok, [condition]} = ConditionContext.current_conditions(current)
 
     claim = %{"condition_id" => condition.id, "revision" => condition.revision}
     effect_intent = signal_proposal_intent(evidence.id, context)
@@ -2760,7 +2760,7 @@ defmodule Opsonde.OperationDeliveryTest do
     evidence = operation_evidence_record(operation.id)
     current = Cases.get_case!(incident.id, authorize?: false)
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(current)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(current)
 
     completed =
       Cases.complete_turn!(
@@ -3442,7 +3442,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
 
     [reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(incident)
 
     replacement =
       Cases.complete_turn!(
@@ -3661,7 +3661,7 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   defp complete_signal_proposal!(turn, intent, incident, context) do
-    {:ok, revisions} = ResolverProjection.current_condition_revisions(incident)
+    {:ok, revisions} = ConditionContext.current_condition_revisions(incident)
 
     completed =
       Cases.complete_turn!(
@@ -3818,7 +3818,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     result =
       if trigger_kind == :signal do
-        {:ok, revisions} = Opsonde.Cases.ResolverProjection.current_condition_revisions(incident)
+        {:ok, revisions} = ConditionContext.current_condition_revisions(incident)
         result = Map.put(result, "condition_revisions", revisions)
 
         if request_kind == :effect do

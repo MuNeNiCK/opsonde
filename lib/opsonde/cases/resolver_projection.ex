@@ -1,7 +1,8 @@
 defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
-  alias Opsonde.{Cases, Signals, Targets}
+  alias Opsonde.{Cases, Targets}
+  alias Opsonde.Cases.ConditionContext
   alias Opsonde.Cases.CaseSymptom
   alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Cases.TraversalBoundary
@@ -21,7 +22,7 @@ defmodule Opsonde.Cases.ResolverProjection do
          :ok <- eligible(incident, run, turn),
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
-         {:ok, {conditions, recovery_ids}} <- current_condition_context(incident),
+         {:ok, {conditions, recovery_ids}} <- ConditionContext.current_condition_context(incident),
          {:ok, recovery_evidence} <-
            current_recovery_evidence(
              incident,
@@ -140,94 +141,6 @@ defmodule Opsonde.Cases.ResolverProjection do
         :ok
     end
   end
-
-  def current_conditions(%{trigger_kind: :signal} = incident) do
-    with {:ok, memberships} <-
-           Cases.active_conditions_for_case(incident.id, authorize?: false),
-         true <- memberships != [] || {:error, "Signal Case has no active Conditions"} do
-      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
-        case Signals.get_condition(membership.condition_id, authorize?: false) do
-          {:ok, condition} ->
-            item = %AI.Condition{
-              id: condition.id,
-              revision: condition.revision,
-              occurrence: condition.occurrence,
-              predicate: condition.predicate,
-              subject_key: condition.subject_key,
-              subject_ref: condition.subject_ref,
-              state: condition.state,
-              target_id: condition.target_id,
-              current_occurred_at_us:
-                DateTime.to_unix(condition.current_occurred_at, :microsecond)
-            }
-
-            {:cont, {:ok, [item | collected]}}
-
-          {:error, _error} = error ->
-            {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, collected} -> {:ok, Enum.reverse(collected)}
-        error -> error
-      end
-    end
-  end
-
-  def current_conditions(_incident), do: {:ok, []}
-
-  def current_condition_context(incident, exclude_operation_id \\ nil) do
-    with {:ok, conditions} <- current_conditions(incident) do
-      recovery_context(incident, conditions, exclude_operation_id)
-    end
-  end
-
-  def condition_revisions(conditions) do
-    conditions
-    |> Enum.map(&%{"id" => &1.id, "revision" => &1.revision})
-    |> Enum.sort_by(& &1["id"])
-  end
-
-  def current_condition_revisions(incident) do
-    with {:ok, conditions} <- current_conditions(incident) do
-      {:ok, condition_revisions(conditions)}
-    end
-  end
-
-  defp recovery_context(%{trigger_kind: :signal} = incident, conditions, exclude_operation_id) do
-    case ConditionRecovery.assess_current(incident, exclude_operation_id) do
-      {:ok, assessments} ->
-        by_id = Map.new(assessments, &{&1.condition_id, &1})
-
-        conditions =
-          Enum.map(conditions, fn condition ->
-            assessment = Map.fetch!(by_id, condition.id)
-
-            %{
-              condition
-              | recovery_status: assessment.status,
-                recovery_evidence_ids: assessment.evidence_ids,
-                failed_observation_ids: assessment.failed_observation_ids
-            }
-          end)
-
-        proof_ids =
-          if ConditionRecovery.ready_for_review?(assessments),
-            do: assessments |> Enum.flat_map(& &1.evidence_ids) |> Enum.uniq(),
-            else: []
-
-        {:ok, {conditions, proof_ids}}
-
-      {:error, "Relevant Target effect is not complete"} ->
-        {:ok, {conditions, []}}
-
-      {:error, _error} = error ->
-        error
-    end
-  end
-
-  defp recovery_context(_incident, conditions, _exclude_operation_id),
-    do: {:ok, {conditions, []}}
 
   defp selected_target(%{selected_target_id: nil, selected_target_revision: nil}), do: {:ok, nil}
 
@@ -585,7 +498,7 @@ defmodule Opsonde.Cases.ResolverProjection do
       case_id: incident.id,
       turn: turn.ordinal,
       objective: objective(incident, turn, recent_recovery_review),
-      alert_state: projected_alert_state(incident, conditions),
+      alert_state: ConditionContext.projected_alert_state(incident, conditions),
       report_language: incident.report_language,
       disclosure: %AI.Disclosure{
         allowed_target_ids: selected_target_ids(target),
@@ -748,14 +661,6 @@ defmodule Opsonde.Cases.ResolverProjection do
           end)
     }
   end
-
-  def projected_alert_state(%{trigger_kind: :signal}, conditions) do
-    if conditions != [] and Enum.all?(conditions, &(&1.state == :recovered)),
-      do: :recovered,
-      else: :firing
-  end
-
-  def projected_alert_state(_incident, _conditions), do: :not_applicable
 
   defp objective(incident, turn, recent_recovery_review) do
     value = %{

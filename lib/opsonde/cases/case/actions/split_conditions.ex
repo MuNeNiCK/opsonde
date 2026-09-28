@@ -13,12 +13,12 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     CaseConditionMembership,
     CaseDispatch,
     CaseEvent,
+    ConditionContext,
     ConditionRecovery,
     Evidence,
     Operation,
     Proposal,
     ResolutionRun,
-    ResolverProjection,
     Turn,
     VerificationAttempt
   }
@@ -265,7 +265,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   defp exact_members(parent, members, args) do
     with true <- length(members) >= 2 || {:error, "Case needs at least two Conditions"},
          {:ok, expected} <- normalize_expected(args.expected_conditions),
-         {:ok, current} <- ResolverProjection.current_condition_revisions(parent),
+         {:ok, current} <- ConditionContext.current_condition_revisions(parent),
          true <-
            expected == current ||
              {:error,

@@ -164,6 +164,38 @@ defmodule Opsonde.DecisionRouteWorkerTest do
            |> Enum.count(&(&1.event_type == "case_target_selected")) == 0
   end
 
+  test "Resolver retry cannot queue a Turn from another Case", context do
+    {incident, run} = open_case!("retry-owner", context.operator)
+    source = completed_turn!(incident, run, "retry-owner", %{"type" => "handoff"})
+    {other, other_run} = open_case!("retry-other", context.operator)
+
+    foreign =
+      Cases.start_turn!(
+        other.id,
+        other_run.id,
+        "foreign-turn",
+        %{"objective" => "Unrelated investigation"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      ).value
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    assert {:error, _error} =
+             Cases.queue_case_resolver_turn(
+               current,
+               current.revision,
+               source.id,
+               foreign.id,
+               authorize?: false
+             )
+
+    reloaded = Cases.get_case!(incident.id, authorize?: false)
+    assert reloaded.revision == current.revision
+    assert reloaded.pending_intent == current.pending_intent
+  end
+
   defp open_case!(source_ref, actor) do
     incident =
       Cases.open_case!(

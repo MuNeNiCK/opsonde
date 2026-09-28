@@ -1,18 +1,113 @@
 defmodule Opsonde.Cases.ConditionContext do
   @moduledoc false
 
-  alias Opsonde.{Cases, Targets}
+  alias Opsonde.{Cases, Signals, Targets}
   alias Opsonde.Cases.ConditionRecovery
-  alias Opsonde.Cases.ResolverProjection
   alias Opsonde.Providers.AI
   alias Opsonde.Targets.ResourceScope
+
+  def current_conditions(%{trigger_kind: :signal} = incident) do
+    with {:ok, memberships} <-
+           Cases.active_conditions_for_case(incident.id, authorize?: false),
+         true <- memberships != [] || {:error, "Signal Case has no active Conditions"} do
+      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
+        case Signals.get_condition(membership.condition_id, authorize?: false) do
+          {:ok, condition} ->
+            item = %AI.Condition{
+              id: condition.id,
+              revision: condition.revision,
+              occurrence: condition.occurrence,
+              predicate: condition.predicate,
+              subject_key: condition.subject_key,
+              subject_ref: condition.subject_ref,
+              state: condition.state,
+              target_id: condition.target_id,
+              current_occurred_at_us:
+                DateTime.to_unix(condition.current_occurred_at, :microsecond)
+            }
+
+            {:cont, {:ok, [item | collected]}}
+
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, collected} -> {:ok, Enum.reverse(collected)}
+        error -> error
+      end
+    end
+  end
+
+  def current_conditions(_incident), do: {:ok, []}
+
+  def current_condition_context(incident, exclude_operation_id \\ nil) do
+    with {:ok, conditions} <- current_conditions(incident) do
+      recovery_context(incident, conditions, exclude_operation_id)
+    end
+  end
+
+  def condition_revisions(conditions) do
+    conditions
+    |> Enum.map(&%{"id" => &1.id, "revision" => &1.revision})
+    |> Enum.sort_by(& &1["id"])
+  end
+
+  def current_condition_revisions(incident) do
+    with {:ok, conditions} <- current_conditions(incident) do
+      {:ok, condition_revisions(conditions)}
+    end
+  end
+
+  defp recovery_context(%{trigger_kind: :signal} = incident, conditions, exclude_operation_id) do
+    case ConditionRecovery.assess_current(incident, exclude_operation_id) do
+      {:ok, assessments} ->
+        by_id = Map.new(assessments, &{&1.condition_id, &1})
+
+        conditions =
+          Enum.map(conditions, fn condition ->
+            assessment = Map.fetch!(by_id, condition.id)
+
+            %{
+              condition
+              | recovery_status: assessment.status,
+                recovery_evidence_ids: assessment.evidence_ids,
+                failed_observation_ids: assessment.failed_observation_ids
+            }
+          end)
+
+        proof_ids =
+          if ConditionRecovery.ready_for_review?(assessments),
+            do: assessments |> Enum.flat_map(& &1.evidence_ids) |> Enum.uniq(),
+            else: []
+
+        {:ok, {conditions, proof_ids}}
+
+      {:error, "Relevant Target effect is not complete"} ->
+        {:ok, {conditions, []}}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp recovery_context(_incident, conditions, _exclude_operation_id),
+    do: {:ok, {conditions, []}}
+
+  def projected_alert_state(%{trigger_kind: :signal}, conditions) do
+    if conditions != [] and Enum.all?(conditions, &(&1.state == :recovered)),
+      do: :recovered,
+      else: :firing
+  end
+
+  def projected_alert_state(_incident, _conditions), do: :not_applicable
 
   # The completed Resolver Turn owns the Conditions considered when it made a
   # decision. An authorization based on that Turn must still see exactly those
   # Conditions. Callers taking a decision hold the Case admission lock.
   def current?(%{trigger_kind: :signal} = incident, source_turn_id) do
     with {:ok, turn} <- Cases.get_turn(source_turn_id, authorize?: false),
-         {:ok, revisions} <- ResolverProjection.current_condition_revisions(incident) do
+         {:ok, revisions} <- current_condition_revisions(incident) do
       {:ok,
        turn.case_id == incident.id and is_list(turn.result["condition_revisions"]) and
          revisions == turn.result["condition_revisions"]}
@@ -30,7 +125,7 @@ defmodule Opsonde.Cases.ConditionContext do
         exclude_operation_id \\ nil
       ) do
     with {:ok, {conditions, _recovery_ids}} <-
-           ResolverProjection.current_condition_context(incident, exclude_operation_id) do
+           current_condition_context(incident, exclude_operation_id) do
       {:ok,
        AI.valid_affected_conditions?(request_kind, claims, conditions, evidence_ids) and
          current_effect_scope?(incident, request_kind, claims, conditions, evidence_ids, action)}

@@ -12,6 +12,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     Case,
     CaseAdmissionLock,
     CaseEvent,
+    ConditionContext,
     ResolutionRun,
     ResolverProjection,
     Turn
@@ -267,7 +268,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
     incident.status == :running and not incident.cancel_requested and
       incident.selected_target_id == request.selected_target_id and
       incident.selected_target_revision == request.selected_target_revision and
-      case ResolverProjection.current_conditions(incident) do
+      case ConditionContext.current_conditions(incident) do
         {:ok, conditions} ->
           same_conditions? =
             conditions ==
@@ -280,11 +281,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
                     failed_observation_ids: []
                 }
               ) and
-              ResolverProjection.projected_alert_state(incident, conditions) ==
+              ConditionContext.projected_alert_state(incident, conditions) ==
                 request.alert_state
 
           if same_conditions? and check_assessment? do
-            case ResolverProjection.current_condition_context(incident) do
+            case ConditionContext.current_condition_context(incident) do
               {:ok, {assessed, _proof_ids}} -> assessed == request.conditions
               {:error, _error} -> false
             end
@@ -457,7 +458,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
            "input_tokens" => decision.usage.input_tokens,
            "output_tokens" => decision.usage.output_tokens
          },
-         "condition_revisions" => ResolverProjection.condition_revisions(request.conditions),
+         "condition_revisions" => ConditionContext.condition_revisions(request.conditions),
          "condition_groups" =>
            AI.normalize_condition_groups(
              decision.condition_groups,
@@ -853,10 +854,11 @@ defmodule Opsonde.Cases.ResolverDelivery do
       {:ok, result}
     else
       with {:ok, _updated} <-
-             Cases.update_case_record(
+             Cases.queue_case_resolver_turn(
                incident,
                incident.revision,
-               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               source_turn_id,
+               next_turn.id,
                authorize?: false
              ) do
         {:ok, result}

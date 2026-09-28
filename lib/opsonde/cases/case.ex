@@ -201,6 +201,19 @@ defmodule Opsonde.Cases.Case do
       change Opsonde.Cases.Case.Changes.BudgetExhaustion
     end
 
+    update :queue_resolver_turn do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :source_turn_id, :uuid, allow_nil?: false
+      argument :next_turn_id, :uuid, allow_nil?: false
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      change Opsonde.Cases.Case.Changes.QueueResolverTurn
+      change optimistic_lock(:revision)
+    end
+
     action :open, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -488,6 +501,7 @@ defmodule Opsonde.Cases.Case do
              :create_record,
              :update_record,
              :mark_budget_exhausted,
+             :queue_resolver_turn,
              :require_attention,
              :reconcile_verified_effect,
              :recheck_signal_conditions,

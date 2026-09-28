@@ -14,7 +14,7 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
          :ok <- eligible(turn, incident, run),
          {:ok, {conditions, _recovery_ids}} <-
-           Opsonde.Cases.ResolverProjection.current_condition_context(incident),
+           ConditionContext.current_condition_context(incident),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, cited_evidence} <- cited_evidence(turn, incident),
          {:ok, context_evidence} <-

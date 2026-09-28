@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.{ConditionContext, ResolverProjection, ReviewerEvidence}
+  alias Opsonde.Cases.{ConditionContext, ReviewerEvidence}
   alias Opsonde.Providers.AI
 
   def build(proposal_id, selection, retry_context \\ nil)
@@ -13,7 +13,7 @@ defmodule Opsonde.Cases.ReviewProjection do
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
          {:ok, {conditions, _recovery_ids}} <-
-           ResolverProjection.current_condition_context(incident),
+           ConditionContext.current_condition_context(incident),
          {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
          {:ok, true} <-
            ConditionContext.affected_current?(

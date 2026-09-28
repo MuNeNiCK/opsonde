@@ -10,8 +10,8 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
     Case,
     CaseAdmissionLock,
     CaseEvent,
+    ConditionContext,
     ResolutionRun,
-    ResolverProjection,
     Turn
   }
 
@@ -128,7 +128,7 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
   end
 
   defp current_conditions?(%{trigger_kind: :signal} = incident, turn) do
-    with {:ok, current} <- ResolverProjection.current_condition_revisions(incident) do
+    with {:ok, current} <- ConditionContext.current_condition_revisions(incident) do
       {:ok, current == turn.result["condition_revisions"]}
     end
   end
@@ -260,25 +260,15 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
     if incident.pending_intent == pending do
       {:ok, result}
     else
-      with :ok <- available_pending_turn(incident.pending_intent, source_id) do
-        Cases.update_case_record(
-          incident,
-          incident.revision,
-          %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
-          authorize?: false
-        )
-      end
+      Cases.queue_case_resolver_turn(
+        incident,
+        incident.revision,
+        source_id,
+        next_turn.id,
+        authorize?: false
+      )
     end
   end
-
-  defp available_pending_turn(%{"action" => action, "turn_id" => source_id}, source_id)
-       when action in ["resolve_turn", "route_resolver_decision"],
-       do: :ok
-
-  defp available_pending_turn(current, _source_id) when map_size(current) == 0, do: :ok
-
-  defp available_pending_turn(_current, _source_id),
-    do: {:error, "Case already has another pending decision"}
 
   defp dispatch(type, turn_id) when type in ["target_search", "target_selection"],
     do: Cases.route_target_discovery(turn_id, authorize?: false)

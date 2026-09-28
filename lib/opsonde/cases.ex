@@ -61,6 +61,10 @@ defmodule Opsonde.Cases do
           :event_data
         ]
 
+      define :queue_case_resolver_turn,
+        action: :queue_resolver_turn,
+        args: [:expected_revision, :source_turn_id, :next_turn_id]
+
       define :open_case,
         action: :open,
         args: [

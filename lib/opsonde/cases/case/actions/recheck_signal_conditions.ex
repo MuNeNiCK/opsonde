@@ -9,8 +9,8 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
     Case,
     CaseAdmissionLock,
     CaseDispatch,
+    ConditionContext,
     ResolutionRun,
-    ResolverProjection,
     Turn
   }
 
@@ -38,7 +38,7 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
 
   defp recheck(incident, _dispatch) do
     with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
-         {:ok, conditions} <- ResolverProjection.current_conditions(incident),
+         {:ok, conditions} <- ConditionContext.current_conditions(incident),
          {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false) do
       cond do
         conditions == [] or not Enum.any?(conditions, &(&1.state == :recovered)) ->
@@ -54,7 +54,7 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
   end
 
   defp start_recheck(incident, run, conditions) do
-    revisions = ResolverProjection.condition_revisions(conditions)
+    revisions = ConditionContext.condition_revisions(conditions)
 
     key =
       "signal:source-recheck:" <>
