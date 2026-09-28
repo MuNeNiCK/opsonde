@@ -87,7 +87,7 @@ defmodule Opsonde.Cases.ReviewProjection do
           item = %AI.Evidence{
             id: evidence.id,
             kind: evidence.kind,
-            target_id: evidence_target(evidence.content, proposal.target_id),
+            target_id: evidence_target(evidence.content),
             observed_at_us: DateTime.to_unix(evidence.observed_at, :microsecond),
             content: ReviewerEvidence.project_content(evidence.content)
           }
@@ -116,45 +116,62 @@ defmodule Opsonde.Cases.ReviewProjection do
     end
   end
 
-  defp target_relations(%{initial_target_id: nil}, _proposal), do: {:ok, []}
-
-  defp target_relations(%{initial_target_id: id}, %{target_id: id}), do: {:ok, []}
-
   defp target_relations(incident, proposal) do
-    with {:ok, adjacent} <-
-           Targets.adjacent_relationships_for_traversal(incident.initial_target_id,
-             authorize?: false
-           ),
-         direct <-
-           Enum.filter(adjacent, fn relation ->
-             relation.source_target_id == proposal.target_id or
-               relation.destination_target_id == proposal.target_id
-           end),
-         {:ok, relations} <- project_relations(direct, incident, proposal) do
-      {:ok, relations}
+    with {:ok, initial} <- initial_target_relations(incident, proposal),
+         {:ok, claimed} <- claimed_target_relations(proposal),
+         {:ok, projected} <-
+           project_relations(Enum.uniq_by(initial ++ claimed, & &1.id), proposal) do
+      {:ok, projected}
     end
   end
 
-  defp project_relations([], _incident, _proposal), do: {:ok, []}
+  defp initial_target_relations(%{initial_target_id: nil}, _proposal), do: {:ok, []}
+  defp initial_target_relations(%{initial_target_id: id}, %{target_id: id}), do: {:ok, []}
 
-  defp project_relations(relations, incident, proposal) do
-    with {:ok, %{active: true} = initial} <-
-           Targets.get_target(incident.initial_target_id, authorize?: false),
-         {:ok, %{active: true, revision: revision} = target} <-
-           Targets.get_target(proposal.target_id, authorize?: false),
+  defp initial_target_relations(%{initial_target_id: id}, proposal) do
+    with {:ok, adjacent} <-
+           Targets.adjacent_relationships_for_traversal(id, authorize?: false) do
+      {:ok,
+       Enum.filter(adjacent, fn relation ->
+         proposal.target_id in [relation.source_target_id, relation.destination_target_id]
+       end)}
+    end
+  end
+
+  defp claimed_target_relations(proposal) do
+    proposal.affected_conditions
+    |> Enum.filter(&Map.has_key?(&1, "relationship_id"))
+    |> Enum.uniq_by(& &1["relationship_id"])
+    |> Enum.reduce_while({:ok, []}, fn claim, {:ok, relations} ->
+      case Targets.load_relationship_for_traversal(
+             claim["relationship_id"],
+             claim["relationship_revision"],
+             authorize?: false
+           ) do
+        {:ok, relation} -> {:cont, {:ok, [relation | relations]}}
+        _changed -> {:halt, {:error, "Reviewer Target relationship changed"}}
+      end
+    end)
+  end
+
+  defp project_relations([], _proposal), do: {:ok, []}
+
+  defp project_relations(relations, proposal) do
+    ids =
+      relations
+      |> Enum.flat_map(&[&1.source_target_id, &1.destination_target_id])
+      |> Enum.uniq()
+
+    with {:ok, candidates} <- relation_targets(ids),
+         %{revision: revision} <- Map.get(candidates, proposal.target_id),
          true <- revision == proposal.target_revision do
-      candidates = %{
-        initial.id => target_candidate(initial),
-        target.id => target_candidate(target)
-      }
-
       {:ok,
        Enum.map(relations, fn relation ->
          %AI.TargetRelation{
            id: relation.id,
            revision: relation.revision,
-           source_target: candidates[relation.source_target_id],
-           destination_target: candidates[relation.destination_target_id],
+           source_target: target_candidate(candidates[relation.source_target_id]),
+           destination_target: target_candidate(candidates[relation.destination_target_id]),
            kind: relation.kind,
            attributes: relation.facts
          }
@@ -162,6 +179,18 @@ defmodule Opsonde.Cases.ReviewProjection do
     else
       _changed -> {:error, "Reviewer Target relationship changed"}
     end
+  end
+
+  defp relation_targets(ids) do
+    Enum.reduce_while(ids, {:ok, %{}}, fn id, {:ok, targets} ->
+      case Targets.get_target(id, authorize?: false) do
+        {:ok, %{active: true} = target} ->
+          {:cont, {:ok, Map.put(targets, id, target)}}
+
+        _changed ->
+          {:halt, {:error, "Reviewer Target relationship changed"}}
+      end
+    end)
   end
 
   defp target_candidate(target) do
@@ -183,8 +212,8 @@ defmodule Opsonde.Cases.ReviewProjection do
     |> String.slice(0, 8_000)
   end
 
-  defp evidence_target(%{"target_id" => target_id}, target_id), do: target_id
-  defp evidence_target(_content, _target_id), do: nil
+  defp evidence_target(%{"target_id" => target_id}) when is_binary(target_id), do: target_id
+  defp evidence_target(_content), do: nil
 
   defp review_proposal(proposal) do
     %AI.Proposal{

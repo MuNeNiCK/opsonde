@@ -484,7 +484,12 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         affected_conditions:
           array(
             object(
-              %{condition_id: Schemas.uuid(), revision: positive_integer()},
+              %{
+                condition_id: Schemas.uuid(),
+                revision: positive_integer(),
+                relationship_id: Schemas.uuid(),
+                relationship_revision: positive_integer()
+              },
               ~w(condition_id revision)a,
               false
             ),

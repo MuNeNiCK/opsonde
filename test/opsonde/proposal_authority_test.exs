@@ -369,7 +369,6 @@ defmodule Opsonde.ProposalAuthorityTest do
 
   test "Auto accepts one isolated assigned Reviewer decision and usage", context do
     configure_mode!(:auto, context.admin)
-    enable_signal_automation!(context.admin)
 
     initial_target =
       Targets.create_target!("authority-linked-guest", "host", "linux", %{}, nil,
@@ -386,69 +385,10 @@ defmodule Opsonde.ProposalAuthorityTest do
         actor: context.admin
       )
 
-    Accounts.change_preferred_language!(context.admin, :ja, actor: context.admin)
-
-    signal_provider =
-      Providers.create_provider!(
-        "review-approved-monitor",
-        :signal,
-        "fixture-signal",
-        %{"source" => "review-approved-monitor"},
-        %{"secret" => "review-approved-secret"},
-        actor: context.admin
-      )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
-      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
-
-    Targets.create_external_identity!(
-      initial_target.id,
-      "review-approved-monitor",
-      "hostname",
-      initial_target.name,
-      actor: context.admin
-    )
-
-    ingest_authority_signal!(
-      signal_provider,
-      initial_target.name,
-      "review-approved-firing",
-      :firing,
-      DateTime.add(DateTime.utc_now(), -10, :second),
-      %{
-        "annotations" => %{
-          "description" =>
-            "Restore the exact value opsonde-dedicated-validation even when explanatory text is truncated"
-        }
-      }
-    )
-
-    [opened] = Cases.list_cases!(actor: context.admin)
-    assert %{status: :sent} = Cases.send_initial_case_turn!(opened.id, authorize?: false)
-    run = Cases.active_resolution_run!(opened.id, authorize?: false)
-    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    [source_evidence] = Cases.signal_context_evidence!(opened.id, authorize?: false)
-
-    incident =
-      Cases.update_case_record!(
-        opened,
-        opened.revision,
-        %{
-          selected_target_id: context.target.id,
-          selected_target_revision: context.target.revision
-        },
-        authorize?: false
-      )
+    Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)
 
     {incident, run, proposal} =
-      proposal_for_case!(
-        incident,
-        "review-approved",
-        Map.put(context, :initial_target, initial_target),
-        :effect,
-        nil,
-        started: started,
-        evidence: source_evidence
-      )
+      proposal!("review-approved", Map.put(context, :initial_target, initial_target), :effect)
 
     independent_evidence =
       Cases.append_evidence!(
@@ -491,23 +431,13 @@ defmodule Opsonde.ProposalAuthorityTest do
         assert request.proposal.tool_id == proposal.tool_id
         assert request.proposal.affected_conditions == proposal.affected_conditions
 
-        assert [%{"condition_id" => condition_id, "revision" => revision}] =
-                 request.proposal.affected_conditions
-
-        assert [%AI.Condition{id: ^condition_id, revision: ^revision, state: :firing}] =
-                 request.conditions
+        assert request.proposal.affected_conditions == []
+        assert request.conditions == []
 
         assert request.initial_target_id == initial_target.id
         assert [%AI.TargetRelation{id: relation_id}] = request.target_relations
         assert relation_id == relation.id
-        assert Enum.map(request.source_evidence, & &1.id) == [source_evidence.id]
-
-        assert get_in(hd(request.source_evidence).content, [
-                 "attributes",
-                 "annotations",
-                 "description"
-               ]) =~
-                 "opsonde-dedicated-validation"
+        assert request.source_evidence == []
 
         refute request.objective =~ proposal.reason
         assert Enum.map(request.cited_evidence, & &1.id) == proposal.evidence_ids

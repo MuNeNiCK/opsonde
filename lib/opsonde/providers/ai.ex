@@ -60,7 +60,9 @@ defmodule Opsonde.Providers.AI do
       :current_occurred_at_us
     ]
 
-    defstruct @enforce_keys ++ [recovery_status: nil, recovery_evidence_ids: []]
+    defstruct @enforce_keys ++
+                [recovery_status: nil, recovery_evidence_ids: [], failed_observation_ids: []]
+
     @type t :: %__MODULE__{}
   end
 
@@ -105,20 +107,62 @@ defmodule Opsonde.Providers.AI do
   end
 
   def proposal_evidence_ids(request) do
-    request.evidence
+    related_targets =
+      request.target_relations
+      |> Enum.flat_map(fn relation ->
+        cond do
+          relation.source_target.id == request.selected_target_id ->
+            [relation.destination_target.id]
+
+          relation.destination_target.id == request.selected_target_id ->
+            [relation.source_target.id]
+
+          true ->
+            []
+        end
+      end)
+      |> MapSet.new()
+
+    conditions =
+      Enum.filter(request.conditions, fn condition ->
+        MapSet.member?(related_targets, condition.target_id)
+      end)
+
+    (request.evidence ++ request.observation_results)
     |> Enum.filter(fn
-      %Evidence{kind: "observation", target_id: target_id} ->
+      %Evidence{kind: "observation", target_id: target_id, observed_at_us: at} = item ->
+        target_id == request.selected_target_id or
+          Enum.any?(conditions, fn condition ->
+            condition.target_id == target_id and is_integer(at) and
+              at >= condition.current_occurred_at_us and
+              (condition.state == :firing or
+                 item.id in condition.recovery_evidence_ids or
+                 item.id in condition.failed_observation_ids)
+          end)
+
+      %{__struct__: __MODULE__.ObservationResult, kind: "observation", target_id: target_id} ->
         target_id == request.selected_target_id
 
       _evidence ->
         false
     end)
     |> Enum.map(& &1.id)
-    |> Kernel.++(
-      request.observation_results
-      |> Enum.filter(&(&1.kind == "observation" and &1.target_id == request.selected_target_id))
-      |> Enum.map(& &1.id)
-    )
+    |> Enum.uniq()
+  end
+
+  def effect_target_evidence_ids(request) do
+    (request.evidence ++ request.observation_results)
+    |> Enum.filter(fn
+      %Evidence{kind: "observation", target_id: target_id} ->
+        target_id == request.selected_target_id
+
+      %{__struct__: __MODULE__.ObservationResult, kind: "observation", target_id: target_id} ->
+        target_id == request.selected_target_id
+
+      _other ->
+        false
+    end)
+    |> Enum.map(& &1.id)
     |> Enum.uniq()
   end
 
@@ -353,13 +397,16 @@ defmodule Opsonde.Providers.AI do
     length(claims) <= length(conditions) and length(ids) == MapSet.size(MapSet.new(ids)) and
       Enum.all?(claims, fn
         %{"condition_id" => id, "revision" => revision} = claim
-        when is_binary(id) and is_integer(revision) and map_size(claim) == 2 ->
+        when is_binary(id) and is_integer(revision) and
+               (map_size(claim) == 2 or (effect? and map_size(claim) == 4)) ->
           case Map.get(current, id) do
             %Condition{revision: ^revision} = condition ->
-              not effect? or condition.state == :firing or
-                (condition.state == :recovered and
-                   condition.recovery_status == :ready_for_review and
-                   Enum.any?(condition.recovery_evidence_ids, &(&1 in evidence_ids)))
+              valid_link_shape?(claim, effect?) and
+                (not effect? or condition.state == :firing or
+                   (condition.state == :recovered and
+                      ((condition.recovery_status == :ready_for_review and
+                          Enum.any?(condition.recovery_evidence_ids, &(&1 in evidence_ids))) or
+                         Enum.any?(condition.failed_observation_ids, &(&1 in evidence_ids)))))
 
             _other ->
               false
@@ -369,6 +416,13 @@ defmodule Opsonde.Providers.AI do
           false
       end)
   end
+
+  defp valid_link_shape?(claim, true) when map_size(claim) == 4,
+    do:
+      is_binary(claim["relationship_id"]) and claim["relationship_id"] != "" and
+        is_integer(claim["relationship_revision"]) and claim["relationship_revision"] > 0
+
+  defp valid_link_shape?(claim, _effect?), do: map_size(claim) == 2
 
   defmodule RecoveryConclusion do
     @moduledoc false

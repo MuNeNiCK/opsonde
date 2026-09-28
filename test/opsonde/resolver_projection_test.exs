@@ -230,6 +230,44 @@ defmodule Opsonde.ResolverProjectionTest do
     assert available.traversable_relation_ids == [id]
   end
 
+  test "exhausted traversal budget retains relation evidence for an effect", context do
+    guest =
+      Targets.create_target!("guest-after-traversal", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    relation =
+      Targets.create_relationship!(
+        guest.id,
+        context.target.id,
+        "managed_by",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    {incident, run} = open!("relation-after-traversal", context.operator, context.target)
+
+    run =
+      Cases.update_resolution_run_counters!(
+        run,
+        run.revision,
+        %{related_target_count: run.max_related_targets},
+        authorize?: false
+      )
+
+    started = start!(incident, run, "relation-after-traversal-turn")
+    capabilities = %Target.Capabilities{observations: [], effects: []}
+
+    assert {:ok, request} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert [%AI.TargetRelation{id: id, revision: revision}] = request.target_relations
+    assert id == relation.id
+    assert revision == relation.revision
+    assert request.traversable_relation_ids == []
+  end
+
   test "effect tools require a matching observation fact before disclosure", context do
     {incident, run} = open!("evidence-gate", context.operator, context.target)
     started = start!(incident, run, "evidence-gate-turn")

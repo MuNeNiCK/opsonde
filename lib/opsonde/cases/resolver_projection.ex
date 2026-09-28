@@ -22,7 +22,11 @@ defmodule Opsonde.Cases.ResolverProjection do
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
          {:ok, {conditions, recovery_ids}} <- current_condition_context(incident),
-         {:ok, recovery_evidence} <- current_recovery_evidence(incident, recovery_ids),
+         {:ok, recovery_evidence} <-
+           current_recovery_evidence(
+             incident,
+             Enum.uniq(recovery_ids ++ Enum.flat_map(conditions, & &1.failed_observation_ids))
+           ),
          {:ok, source_context} <-
            source_context(incident, Enum.uniq_by(recovery_evidence ++ evidence, & &1.id)),
          {:ok, target} <- selected_target(incident),
@@ -202,7 +206,8 @@ defmodule Opsonde.Cases.ResolverProjection do
             %{
               condition
               | recovery_status: assessment.status,
-                recovery_evidence_ids: assessment.evidence_ids
+                recovery_evidence_ids: assessment.evidence_ids,
+                failed_observation_ids: assessment.failed_observation_ids
             }
           end)
 
@@ -300,21 +305,11 @@ defmodule Opsonde.Cases.ResolverProjection do
 
   defp relations(nil, _incident, _run, _turn), do: {:ok, {[], []}}
 
-  defp relations(
-         _target,
-         _incident,
-         %{max_related_targets: maximum, related_target_count: count},
-         _turn
-       )
-       when count >= maximum,
-       do: {:ok, {[], []}}
-
-  defp relations(target, _incident, _run, turn) do
+  defp relations(target, _incident, run, turn) do
     with {:ok, relationships} <-
            Targets.adjacent_relationships_for_traversal(target.id, authorize?: false),
          {:ok, projected} <-
            relationships
-           |> Enum.reject(&TraversalBoundary.immediate_reverse?(&1.id, turn.intent))
            |> Enum.reduce_while({:ok, []}, fn relationship, {:ok, projected} ->
              case relation(relationship, target) do
                {:ok, value} -> {:cont, {:ok, [value | projected]}}
@@ -324,8 +319,16 @@ defmodule Opsonde.Cases.ResolverProjection do
            end) do
       projected = Enum.reverse(projected)
 
-      {:ok,
-       {Enum.map(projected, &elem(&1, 0)), for({relation, true} <- projected, do: relation.id)}}
+      traversable =
+        if run.related_target_count < run.max_related_targets do
+          for {relation, true} <- projected,
+              not TraversalBoundary.immediate_reverse?(relation.id, turn.intent),
+              do: relation.id
+        else
+          []
+        end
+
+      {:ok, {Enum.map(projected, &elem(&1, 0)), traversable}}
     end
   end
 
@@ -657,6 +660,7 @@ defmodule Opsonde.Cases.ResolverProjection do
     end)
     |> normalize_disclosure()
     |> mark_recovery_proofs(recovery_ids ++ manual_recovery_ids)
+    |> mark_visible_failed_observations()
     |> then(fn current ->
       visible_ids = MapSet.new(Enum.map(current.target_relations, & &1.id))
 
@@ -716,6 +720,22 @@ defmodule Opsonde.Cases.ResolverProjection do
     else
       request
     end
+  end
+
+  defp mark_visible_failed_observations(request) do
+    visible = MapSet.new(Enum.map(request.evidence, & &1.id))
+
+    %{
+      request
+      | conditions:
+          Enum.map(request.conditions, fn condition ->
+            %{
+              condition
+              | failed_observation_ids:
+                  Enum.filter(condition.failed_observation_ids, &MapSet.member?(visible, &1))
+            }
+          end)
+    }
   end
 
   def projected_alert_state(%{trigger_kind: :signal}, conditions) do

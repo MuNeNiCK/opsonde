@@ -85,7 +85,10 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     assert {:ok, vm_request} = projection(vm_turn, context)
 
-    assert adjacent_target_ids(vm_request, context.vm.id) == MapSet.new([context.bmc.id])
+    assert adjacent_target_ids(vm_request, context.vm.id) ==
+             MapSet.new([context.linux.id, context.bmc.id])
+
+    assert traversable_target_ids(vm_request, context.vm.id) == MapSet.new([context.bmc.id])
 
     assert Enum.map(vm_request.observation_tools, & &1.access_method_id) == [
              access_method_id!(context.vm.id)
@@ -101,7 +104,8 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert selected.selected_target_revision == context.bmc.revision
 
     assert {:ok, bmc_request} = projection(bmc_turn, context)
-    assert adjacent_target_ids(bmc_request, context.bmc.id) == MapSet.new()
+    assert adjacent_target_ids(bmc_request, context.bmc.id) == MapSet.new([context.vm.id])
+    assert traversable_target_ids(bmc_request, context.bmc.id) == MapSet.new()
 
     assert Enum.map(bmc_request.observation_tools, & &1.access_method_id) == [
              access_method_id!(context.bmc.id)
@@ -147,7 +151,12 @@ defmodule Opsonde.RelatedTargetRouteTest do
              "Reassess the selected Target before returning through the same relationship"
 
     assert {:ok, rejected_request} = projection(rejected_turn, context)
-    assert adjacent_target_ids(rejected_request, context.vm.id) == MapSet.new([context.bmc.id])
+
+    assert adjacent_target_ids(rejected_request, context.vm.id) ==
+             MapSet.new([context.linux.id, context.bmc.id])
+
+    assert traversable_target_ids(rejected_request, context.vm.id) ==
+             MapSet.new([context.bmc.id])
 
     {_observed_case, _observed_run, _observed_evidence, observed_turn} =
       case_with_evidence!(
@@ -174,6 +183,9 @@ defmodule Opsonde.RelatedTargetRouteTest do
              projection(observed_after_traversal, context)
 
     assert adjacent_target_ids(observed_after_traversal_request, context.vm.id) ==
+             MapSet.new([context.linux.id, context.bmc.id])
+
+    assert traversable_target_ids(observed_after_traversal_request, context.vm.id) ==
              MapSet.new([context.bmc.id])
 
     reverse_source =
@@ -514,6 +526,17 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
   defp adjacent_target_ids(request, current_target_id) do
     request.target_relations
+    |> Enum.map(fn relationship ->
+      if relationship.source_target.id == current_target_id,
+        do: relationship.destination_target.id,
+        else: relationship.source_target.id
+    end)
+    |> MapSet.new()
+  end
+
+  defp traversable_target_ids(request, current_target_id) do
+    request.target_relations
+    |> Enum.filter(&(&1.id in request.traversable_relation_ids))
     |> Enum.map(fn relationship ->
       if relationship.source_target.id == current_target_id,
         do: relationship.destination_target.id,

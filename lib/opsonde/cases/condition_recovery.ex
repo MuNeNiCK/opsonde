@@ -83,6 +83,13 @@ defmodule Opsonde.Cases.ConditionRecovery do
       true ->
         case Targets.get_target(condition.target_id, authorize?: false) do
           {:ok, %{active: true, revision: revision}} ->
+            failed_ids =
+              evidence
+              |> Enum.filter(&current_failed_observation?(&1, condition, after_at, revision))
+              |> Enum.uniq_by(&citation_scope/1)
+              |> Enum.take(@max_citations_per_condition)
+              |> Enum.map(& &1.id)
+
             citations =
               evidence
               |> Enum.filter(&current_evidence?(&1, condition, after_at, revision))
@@ -93,11 +100,11 @@ defmodule Opsonde.Cases.ConditionRecovery do
             case citations do
               [] ->
                 if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
-                  do: result(condition, :stale_source),
-                  else: result(condition, :needs_observation)
+                  do: result(condition, :stale_source, [], failed_ids),
+                  else: result(condition, :needs_observation, [], failed_ids)
 
               ids ->
-                result(condition, :ready_for_review, ids)
+                result(condition, :ready_for_review, ids, failed_ids)
             end
 
           _other ->
@@ -191,13 +198,40 @@ defmodule Opsonde.Cases.ConditionRecovery do
     {evidence.kind, content["capability"], content["operation"], content["selectors"]}
   end
 
-  defp result(condition, status, evidence_ids \\ []) do
+  defp result(condition, status, evidence_ids \\ [], failed_observation_ids \\ []) do
     %{
       condition_id: condition.id,
       revision: condition.revision,
       status: status,
-      evidence_ids: evidence_ids
+      evidence_ids: evidence_ids,
+      failed_observation_ids: failed_observation_ids
     }
+  end
+
+  defp current_failed_observation?(evidence, condition, baseline, target_revision) do
+    with true <- DateTime.compare(evidence.observed_at, baseline) != :lt,
+         true <- DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt,
+         true <-
+           evidence.kind == "observation" and
+             evidence.content["target_id"] == condition.target_id and
+             evidence.content["status"] == "failed" and
+             evidence.content["category"] == "observation_failed",
+         {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
+         true <- operation.id == evidence.source_ref and operation.case_id == evidence.case_id,
+         true <-
+           operation.request_kind == :observation and operation.status == :failed and
+             is_struct(operation.dispatch_started_at, DateTime),
+         true <-
+           operation.target_id == condition.target_id and
+             operation.target_revision == target_revision,
+         true <-
+           operation.capability == evidence.content["capability"] and
+             operation.operation == evidence.content["operation"] and
+             operation.selectors == evidence.content["selectors"] do
+      true
+    else
+      _invalid -> false
+    end
   end
 
   defp valid_operation_evidence?(

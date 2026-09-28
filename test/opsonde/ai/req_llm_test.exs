@@ -2192,6 +2192,191 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert proposal_schema["properties"]["affected_conditions"]["minItems"] == 0
   end
 
+  test "effect proposal carries a cited related Condition and exact relationship revision",
+       context do
+    effect_target = %AI.TargetCandidate{
+      id: "target-1",
+      revision: 4,
+      name: "controller",
+      kind: "host",
+      platform: "generic",
+      facts: %{}
+    }
+
+    condition_target = %AI.TargetCandidate{
+      id: "target-2",
+      revision: 2,
+      name: "guest",
+      kind: "host",
+      platform: "linux",
+      facts: %{}
+    }
+
+    condition = %AI.Condition{
+      id: "condition-2",
+      revision: 3,
+      occurrence: 1,
+      predicate: "service unavailable",
+      subject_key: "service",
+      subject_ref: %{},
+      state: :recovered,
+      target_id: condition_target.id,
+      current_occurred_at_us: 10,
+      recovery_status: :ready_for_review,
+      recovery_evidence_ids: ["symptom-observation"]
+    }
+
+    relation = %AI.TargetRelation{
+      id: "relation-1",
+      revision: 7,
+      source_target: condition_target,
+      destination_target: effect_target,
+      kind: "managed_by"
+    }
+
+    request = %{
+      resolver_request()
+      | alert_state: :recovered,
+        selected_target_id: effect_target.id,
+        selected_target_revision: effect_target.revision,
+        conditions: [condition],
+        recovery_evidence_ids: ["symptom-observation"],
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: [effect_target.id, condition_target.id],
+            allowed_evidence_kinds: ["observation"]
+        },
+        evidence: [
+          %AI.Evidence{
+            id: "effect-observation",
+            kind: "observation",
+            target_id: effect_target.id,
+            observed_at_us: 12,
+            content: %{"status" => "applied", "facts" => %{"power_state" => "off"}}
+          },
+          %AI.Evidence{
+            id: "symptom-observation",
+            kind: "observation",
+            target_id: condition_target.id,
+            observed_at_us: 13,
+            content: %{"status" => "applied", "facts" => %{"service" => "inactive"}}
+          }
+        ],
+        target_relations: [relation],
+        observation_tools: [observation_tool()],
+        proposal_tools: [proposal_tool()]
+    }
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "relationship_id" => relation.id,
+      "relationship_revision" => relation.revision
+    }
+
+    result = %{
+      "reason" => "The guest remains unavailable while its controller reports power off",
+      "intent" => %{
+        "type" => "proposal",
+        "action" => %{
+          "tool_id" => "proposal-tool",
+          "selectors" => %{"service" => "api"},
+          "parameters" => %{"grace_seconds" => 5}
+        },
+        "evidence_ids" => ["effect-observation", "symptom-observation"],
+        "affected_conditions" => [claim],
+        "verification" => %{
+          "tool_id" => "observe-tool",
+          "selectors" => %{"service" => "api"},
+          "parameters" => %{},
+          "expected_result_json" => Jason.encode!(%{"status" => "running"})
+        }
+      }
+    }
+
+    assert AI.proposal_evidence_ids(request) == [
+             "effect-observation",
+             "symptom-observation"
+           ]
+
+    set_mode(context.agent, {:raw_text, Jason.encode!(result)})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    assert {:ok,
+            %AI.ResolverDecision{intent: %AI.Proposal{affected_conditions: [^claim]}} =
+              accepted} = Adapter.resolve(state, request, %{})
+
+    assert :ok = AI.Validator.validate_decision(:resolve, accepted, request)
+
+    for ids <- [["effect-observation"], ["symptom-observation"]] do
+      incomplete = %{accepted | intent: %{accepted.intent | evidence_ids: ids}}
+
+      assert {:error, %AI.Error{category: :invalid_output}} =
+               AI.Validator.validate_decision(:resolve, incomplete, request)
+    end
+
+    [wire] = requests(context.agent)
+    assert user_payload(wire)["effect_evidence_ids"] == result["intent"]["evidence_ids"]
+
+    proposal_schema =
+      output_schema(wire)["properties"]["intent"]["anyOf"]
+      |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["proposal"]))
+
+    assert get_in(proposal_schema, [
+             "properties",
+             "affected_conditions",
+             "items",
+             "properties",
+             "relationship_id",
+             "enum"
+           ]) ==
+             [relation.id]
+
+    changed =
+      put_in(result, ["intent", "affected_conditions"], [
+        %{claim | "relationship_revision" => relation.revision + 1}
+      ])
+
+    set_mode(context.agent, {:raw_text, Jason.encode!(changed)})
+
+    assert {:ok, %AI.ResolverDecision{} = stale_decision} =
+             Adapter.resolve(state, request, %{})
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(:resolve, stale_decision, request)
+
+    failed_request = %{
+      request
+      | conditions: [
+          %{
+            condition
+            | recovery_status: :needs_observation,
+              recovery_evidence_ids: [],
+              failed_observation_ids: ["symptom-observation"]
+          }
+        ],
+        recovery_evidence_ids: [],
+        evidence:
+          Enum.map(request.evidence, fn
+            %{id: "symptom-observation"} = item ->
+              %{item | content: %{"status" => "failed", "category" => "observation_failed"}}
+
+            item ->
+              item
+          end)
+    }
+
+    set_mode(context.agent, {:raw_text, Jason.encode!(result)})
+
+    assert {:ok, %AI.ResolverDecision{} = failed_observation_decision} =
+             Adapter.resolve(state, failed_request, %{})
+
+    assert :ok =
+             AI.Validator.validate_decision(:resolve, failed_observation_decision, failed_request)
+
+    assert AI.recovery_evidence_ids(failed_request) == []
+  end
+
   test "malformed output, deadline, and caller cancellation stay typed", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{

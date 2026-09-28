@@ -273,7 +273,12 @@ defmodule Opsonde.Cases.ResolverDelivery do
             conditions ==
               Enum.map(
                 request.conditions,
-                &%{&1 | recovery_status: nil, recovery_evidence_ids: []}
+                &%{
+                  &1
+                  | recovery_status: nil,
+                    recovery_evidence_ids: [],
+                    failed_observation_ids: []
+                }
               ) and
               ResolverProjection.projected_alert_state(incident, conditions) ==
                 request.alert_state

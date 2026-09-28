@@ -190,20 +190,89 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_review_relations?(%AI.ReviewRequest{
          initial_target_id: initial_id,
          target_relations: relations,
-         proposal: %AI.Proposal{target_id: proposal_id}
+         proposal: %AI.Proposal{target_id: proposal_id} = proposal,
+         conditions: conditions
        })
        when is_list(relations) do
+    relevant_ids =
+      [initial_id | Enum.map(conditions, & &1.target_id)]
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
     (is_nil(initial_id) or nonempty?(initial_id)) and
       Enum.all?(relations, &valid_relation?/1) and
       unique?(Enum.map(relations, & &1.id)) and
       Enum.all?(relations, fn relation ->
-        not is_nil(initial_id) and
-          Enum.sort([relation.source_target.id, relation.destination_target.id]) ==
-            Enum.sort([initial_id, proposal_id])
-      end)
+        proposal_id in [relation.source_target.id, relation.destination_target.id] and
+          Enum.any?(
+            [relation.source_target.id, relation.destination_target.id],
+            &MapSet.member?(relevant_ids, &1)
+          )
+      end) and valid_effect_link_claims?(proposal, conditions, relations)
   end
 
   defp valid_review_relations?(_request), do: false
+
+  defp valid_effect_link_claims?(
+         %AI.Proposal{request_kind: :observation},
+         _conditions,
+         _relations
+       ),
+       do: true
+
+  defp valid_effect_link_claims?(
+         %AI.Proposal{request_kind: :effect, target_id: target_id, affected_conditions: claims},
+         conditions,
+         relations
+       ) do
+    current = Map.new(conditions, &{&1.id, &1})
+
+    Enum.all?(claims, fn claim ->
+      case Map.get(current, claim["condition_id"]) do
+        %{target_id: ^target_id} ->
+          map_size(claim) == 2
+
+        %{target_id: condition_target_id} when is_binary(condition_target_id) ->
+          Enum.any?(relations, fn relation ->
+            relation.id == claim["relationship_id"] and
+              relation.revision == claim["relationship_revision"] and
+              Enum.sort([relation.source_target.id, relation.destination_target.id]) ==
+                Enum.sort([condition_target_id, target_id])
+          end)
+
+        _unmapped ->
+          false
+      end
+    end)
+  end
+
+  defp valid_effect_link_claims?(_proposal, _conditions, _relations), do: false
+
+  defp valid_effect_citations?(%AI.Proposal{request_kind: :observation}, _request), do: true
+
+  defp valid_effect_citations?(%AI.Proposal{} = proposal, request) do
+    cited = MapSet.new(proposal.evidence_ids)
+    target_evidence = AI.effect_target_evidence_ids(request)
+    current = Map.new(request.conditions, &{&1.id, &1})
+
+    Enum.any?(target_evidence, &MapSet.member?(cited, &1)) and
+      Enum.all?(proposal.affected_conditions, fn claim ->
+        condition = Map.fetch!(current, claim["condition_id"])
+
+        condition.target_id == proposal.target_id or
+          Enum.any?(request.evidence, fn
+            %AI.Evidence{kind: "observation", target_id: target_id, id: id, observed_at_us: at}
+            when is_integer(at) ->
+              target_id == condition.target_id and at >= condition.current_occurred_at_us and
+                MapSet.member?(cited, id) and
+                (condition.state == :firing or id in condition.recovery_evidence_ids or
+                   id in condition.failed_observation_ids)
+
+            _other ->
+              false
+          end)
+      end)
+  end
 
   defp valid_retry_context?(nil), do: true
 
@@ -329,6 +398,10 @@ defmodule Opsonde.Providers.AI.Validator do
       length(condition.recovery_evidence_ids) <= 3 and
       unique?(condition.recovery_evidence_ids) and
       Enum.all?(condition.recovery_evidence_ids, &nonempty?/1) and
+      is_list(condition.failed_observation_ids) and
+      length(condition.failed_observation_ids) <= 3 and
+      unique?(condition.failed_observation_ids) and
+      Enum.all?(condition.failed_observation_ids, &nonempty?/1) and
       (is_nil(condition.target_id) or nonempty?(condition.target_id)) and
       is_integer(condition.current_occurred_at_us)
   end
@@ -572,6 +645,8 @@ defmodule Opsonde.Providers.AI.Validator do
              ) and
              exact_proposal?(proposal, tool) and
              AI.valid_affected_conditions?(proposal, request.conditions) and
+             valid_effect_link_claims?(proposal, request.conditions, request.target_relations) and
+             valid_effect_citations?(proposal, request) and
              valid_request_verification?(proposal, tool, request.observation_tools) and
              AI.valid_resolver_reason?(proposal.reason) and
              valid_request_evidence_ids?(proposal, evidence_ids) do

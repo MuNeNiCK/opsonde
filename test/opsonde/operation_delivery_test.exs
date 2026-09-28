@@ -2032,6 +2032,332 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Cases.list_operations!(actor: context.admin)) == 1
   end
 
+  test "related Target effect needs both direct observations and a current relationship at dispatch",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal, _signal_provider} =
+      authorized_proposal!("related-effect", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    symptom_observation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(symptom_observation, %{
+               "unit" => "api.service",
+               "active_state" => "inactive"
+             })
+
+    symptom_evidence = operation_evidence_record(symptom_observation.id)
+    effect_context = separate_target!(context, "related-effect-target")
+
+    relation =
+      Targets.create_relationship!(
+        context.target.id,
+        effect_context.target.id,
+        "managed_by",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    Cases.update_case_record!(
+      current,
+      current.revision,
+      %{
+        selected_target_id: effect_context.target.id,
+        selected_target_revision: effect_context.target.revision
+      },
+      authorize?: false
+    )
+
+    turn =
+      incident.id
+      |> Cases.get_case!(authorize?: false)
+      |> Map.fetch!(:pending_intent)
+      |> Map.fetch!("turn_id")
+      |> then(&Cases.get_turn!(&1, authorize?: false))
+
+    effect_target_observation_proposal =
+      complete_signal_proposal!(
+        turn,
+        signal_proposal_intent(symptom_evidence.id, effect_context, :observation),
+        incident,
+        context
+      )
+
+    effect_target_observation =
+      Cases.accept_operation!(effect_target_observation_proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(effect_target_observation, %{
+               "unit" => "api.service",
+               "active_state" => "inactive"
+             })
+
+    target_evidence = operation_evidence_record(effect_target_observation.id)
+    [condition] = ResolverProjection.current_conditions(incident) |> elem(1)
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "relationship_id" => relation.id,
+      "relationship_revision" => relation.revision
+    }
+
+    action = signal_proposal_intent(target_evidence.id, effect_context, :effect)
+    evidence_ids = [symptom_evidence.id, target_evidence.id]
+
+    assert {:ok, true} =
+             ConditionContext.affected_current?(
+               incident,
+               :effect,
+               [claim],
+               evidence_ids,
+               action
+             )
+
+    for {claims, ids} <- [
+          {[%{"condition_id" => condition.id, "revision" => condition.revision}], evidence_ids},
+          {[%{claim | "relationship_revision" => relation.revision + 1}], evidence_ids},
+          {[claim], [symptom_evidence.id]},
+          {[claim], [target_evidence.id]}
+        ] do
+      assert {:ok, false} =
+               ConditionContext.affected_current?(
+                 incident,
+                 :effect,
+                 claims,
+                 ids,
+                 action
+               )
+    end
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    effect_proposal =
+      complete_signal_proposal!(
+        turn,
+        action
+        |> Map.put("evidence_ids", evidence_ids)
+        |> Map.put("affected_conditions", [claim]),
+        incident,
+        context
+      )
+
+    effect = Cases.accept_operation!(effect_proposal.id, authorize?: false)
+
+    Targets.deactivate_relationship!(relation, relation.revision, actor: context.admin)
+
+    assert %{state: :terminal} = Cases.claim_operation_dispatch!(effect.id, authorize?: false)
+    assert Cases.get_operation!(effect.id, authorize?: false).dispatch_started_at == nil
+    refute_receive {:effect, _, _}
+  end
+
+  test "a failed native symptom observation supports investigation but never recovery",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, _run, proposal, _signal_provider} =
+      authorized_proposal!("failed-related-effect", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    symptom_operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(symptom_operation.id,
+               target_invocation: invocation({:error, :failed, "Guest is unreachable"})
+             )
+
+    symptom = operation_evidence_record(symptom_operation.id)
+    assert symptom.content["category"] == "observation_failed"
+
+    assert {:ok,
+            [
+              %{
+                status: :needs_observation,
+                evidence_ids: [],
+                failed_observation_ids: [failed_id]
+              }
+            ]} = ConditionRecovery.assess_current(incident)
+
+    assert failed_id == symptom.id
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    effect_context = separate_target!(context, "failed-related-effect-target")
+
+    relation =
+      Targets.create_relationship!(
+        context.target.id,
+        effect_context.target.id,
+        "managed_by",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    Cases.update_case_record!(
+      current,
+      current.revision,
+      %{
+        selected_target_id: effect_context.target.id,
+        selected_target_revision: effect_context.target.revision
+      },
+      authorize?: false
+    )
+
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: context.resolver_provider.id,
+      provider_revision: context.resolver_provider.revision,
+      assignment_id: context.resolver_assignment.id,
+      assignment_revision: context.resolver_assignment.revision,
+      source: :assignment
+    }
+
+    assert {:ok, request} =
+             ResolverProjection.build(
+               turn.id,
+               selection,
+               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
+             )
+
+    assert [%AI.Condition{failed_observation_ids: [^failed_id]}] = request.conditions
+    assert request.recovery_evidence_ids == []
+    assert failed_id in Enum.map(request.evidence, & &1.id)
+    assert relation.id in Enum.map(request.target_relations, & &1.id)
+    assert failed_id in AI.proposal_evidence_ids(request)
+
+    effect_target_observation_proposal =
+      complete_signal_proposal!(
+        turn,
+        signal_proposal_intent(symptom.id, effect_context, :observation),
+        incident,
+        context
+      )
+
+    effect_target_observation =
+      Cases.accept_operation!(effect_target_observation_proposal.id, authorize?: false)
+
+    assert :ok =
+             deliver_observation(effect_target_observation, %{
+               "unit" => "api.service",
+               "active_state" => "inactive"
+             })
+
+    target_evidence = operation_evidence_record(effect_target_observation.id)
+    [condition] = ResolverProjection.current_conditions(incident) |> elem(1)
+
+    claim = %{
+      "condition_id" => condition.id,
+      "revision" => condition.revision,
+      "relationship_id" => relation.id,
+      "relationship_revision" => relation.revision
+    }
+
+    action = signal_proposal_intent(target_evidence.id, effect_context, :effect)
+
+    assert {:ok, true} =
+             ConditionContext.affected_current?(
+               incident,
+               :effect,
+               [claim],
+               [symptom.id, target_evidence.id],
+               action
+             )
+
+    assert {:ok, false} =
+             ConditionContext.affected_current?(
+               incident,
+               :effect,
+               [claim],
+               [symptom.id],
+               action
+             )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    effect_proposal =
+      complete_signal_proposal!(
+        turn,
+        action
+        |> Map.put("evidence_ids", [symptom.id, target_evidence.id])
+        |> Map.put("affected_conditions", [claim]),
+        incident,
+        context
+      )
+
+    assert effect_proposal.affected_conditions == [claim]
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
+  test "Resolver receives a current failed observation after Signal recovery", context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("failed-recovered-resolver", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    observation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(observation.id,
+               target_invocation: invocation({:error, :failed, "Guest is unreachable"})
+             )
+
+    evidence = operation_evidence_record(observation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.alert_state == :recovered
+
+                   assert [%AI.Condition{failed_observation_ids: [evidence_id]}] =
+                            request.conditions
+
+                   assert evidence_id == evidence.id
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Handoff{
+                        reason: "The current Linux observation failed",
+                        required_input: "Investigate the host"
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.result["outcome"] == "decision"
+    refute completed.result["outcome"] == "context_changed"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+  end
+
   test "a recovered Signal with a still-failing Target observation persists a nonterminal assessment",
        context do
     enable_signal_automation!(context.admin)

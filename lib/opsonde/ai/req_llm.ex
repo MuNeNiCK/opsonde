@@ -408,9 +408,11 @@ defmodule Opsonde.AI.ReqLLM do
         "of Conditions while choosing another observation or handoff; an empty list is valid. " <>
         "For each included Condition say recovered, still_failing, or unknown and cite " <>
         "only that Condition's recovery_evidence_ids. Omitted Conditions remain unassessed. " <>
-        "If a Condition has no recovery_evidence_ids, its status is unknown and evidence_ids " <>
-        "is empty; request " <>
-        "a new observation before judging whether that symptom still exists. These " <>
+        "If a Condition has no recovery_evidence_ids, its recovery status is unknown and " <>
+        "recovery evidence_ids is empty. failed_observation_ids identify current direct " <>
+        "observation attempts that failed; they do not prove recovery or the cause. Inspect " <>
+        "their diagnostics and obtain independent evidence before an effect. If neither " <>
+        "kind is present, request a new observation before judging the symptom. These " <>
         "assessments are advisory " <>
         "and do not close the Case. If you include them with a recovery intent, each " <>
         "status must be recovered and each citation must be current; the intent's " <>
@@ -421,8 +423,9 @@ defmodule Opsonde.AI.ReqLLM do
         "that measures the exact rejected Condition or desired_outcome, or hand off if no suitable observation " <>
         "can be made. A successful inventory or discovery request is not proof that a " <>
         "particular monitored service or endpoint recovered. When a recovered Condition " <>
-        "has recovery_status needs_observation, prioritize a direct observation of that " <>
-        "Condition's Target and native symptom over further visits to related Targets. " <>
+        "has recovery_status needs_observation and no failed_observation_ids, prioritize " <>
+        "a direct observation of that Condition's Target and native symptom over further " <>
+        "visits to related Targets. " <>
         "For a still-firing Condition, investigate its target and do not assign its cause " <>
         "to another Target from timing or inventory proximity alone. " <>
         "A newer verified effect outcome supersedes " <>
@@ -439,6 +442,11 @@ defmodule Opsonde.AI.ReqLLM do
         "failing Target symptom; propose an effect for it only when a current direct " <>
         "observation proves that symptom persists. For a Signal Case, put the exact ID and " <>
         "revision of each Condition addressed by an effect in affected_conditions. " <>
+        "If an effect acts on a different Target than an affected Condition, include " <>
+        "the current direct relationship_id and relationship_revision in that Condition claim. " <>
+        "Cite both a direct observation of that Condition's symptom and a direct " <>
+        "observation of the effect Target's exact resource scope. A relationship alone " <>
+        "does not establish a shared cause; the Reviewer must judge the proposed link. " <>
         "For an effect, take evidence_ids only from effect_evidence_ids in the user payload; " <>
         "these are current Target observations. A signal_event identifies a Condition but " <>
         "cannot be cited as evidence for an effect. " <>
@@ -1625,8 +1633,9 @@ defmodule Opsonde.AI.ReqLLM do
       Enum.filter(request.conditions, fn condition ->
         condition.state == :firing or
           (condition.state == :recovered and
-             condition.recovery_status == :ready_for_review and
-             Enum.any?(condition.recovery_evidence_ids, &(&1 in effect_evidence_ids)))
+             ((condition.recovery_status == :ready_for_review and
+                 Enum.any?(condition.recovery_evidence_ids, &(&1 in effect_evidence_ids))) or
+                Enum.any?(condition.failed_observation_ids, &(&1 in effect_evidence_ids))))
       end)
 
     observation_schema =
@@ -1639,12 +1648,14 @@ defmodule Opsonde.AI.ReqLLM do
       end
 
     effect_schema =
-      if effect_variants != [] and verification_variants != [] and effect_evidence_ids != [] and
+      if effect_variants != [] and verification_variants != [] and
+           AI.effect_target_evidence_ids(request) != [] and
            (request.conditions == [] or actionable_conditions != []) do
         intent_schema("proposal", %{
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
-          "affected_conditions" => condition_claims_schema(actionable_conditions, 1),
+          "affected_conditions" =>
+            condition_claims_schema(actionable_conditions, 1, request.target_relations),
           "verification" => %{"anyOf" => verification_variants}
         })
       end
@@ -1656,21 +1667,34 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp condition_claims_schema([], _minimum), do: %{"type" => "array", "maxItems" => 0}
+  defp condition_claims_schema(conditions, minimum, relations \\ [])
 
-  defp condition_claims_schema(conditions, minimum) do
+  defp condition_claims_schema([], _minimum, _relations),
+    do: %{"type" => "array", "maxItems" => 0}
+
+  defp condition_claims_schema(conditions, minimum, relations) do
+    relation_ids = Enum.map(relations, & &1.id)
+
+    properties = %{
+      "condition_id" => enum_schema(Enum.map(conditions, & &1.id)),
+      "revision" => %{"type" => "integer", "minimum" => 1}
+    }
+
+    properties =
+      if relation_ids == [] do
+        properties
+      else
+        Map.merge(properties, %{
+          "relationship_id" => enum_schema(relation_ids),
+          "relationship_revision" => %{"type" => "integer", "minimum" => 1}
+        })
+      end
+
     %{
       "type" => "array",
       "minItems" => minimum,
       "maxItems" => length(conditions),
-      "items" =>
-        object_schema(
-          %{
-            "condition_id" => enum_schema(Enum.map(conditions, & &1.id)),
-            "revision" => %{"type" => "integer", "minimum" => 1}
-          },
-          ~w(condition_id revision)
-        )
+      "items" => object_schema(properties, ~w(condition_id revision))
     }
   end
 
