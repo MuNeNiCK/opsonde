@@ -4,7 +4,7 @@ defmodule Opsonde.NotificationDeliveryTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Notifications, Providers, Reports}
-  alias Opsonde.Notifications.{DeliveryDispatch, DeliveryWorker}
+  alias Opsonde.Notifications.Delivery.{Dispatch, DispatchWorker}
   alias Opsonde.Providers.Notification
   alias Opsonde.Reports.Report.Document
 
@@ -79,7 +79,7 @@ defmodule Opsonde.NotificationDeliveryTest do
       delivery = enqueue!(context, "delivery-#{status}")
 
       assert {:ok, terminal} =
-               DeliveryDispatch.run(
+               Dispatch.run(
                  delivery.id,
                  invocation(%Notification.Result{
                    status: status,
@@ -102,6 +102,18 @@ defmodule Opsonde.NotificationDeliveryTest do
       assert request.payload == Document.build(context.report)
       assert request.payload["text"] =~ "Notification delivery report"
       refute_receive {:delivery, _, _}
+
+      job =
+        Opsonde.Repo.one!(
+          from(job in Oban.Job,
+            where:
+              job.worker == ^Oban.Worker.to_string(DispatchWorker) and
+                fragment("?->>'delivery_id'", job.args) == ^delivery.id
+          )
+        )
+
+      assert :ok = DispatchWorker.perform(job)
+      refute_receive {:delivery, _, _}
     end
   end
 
@@ -114,7 +126,7 @@ defmodule Opsonde.NotificationDeliveryTest do
     assert dispatching.status == :dispatching
 
     assert {:ok, unknown} =
-             DeliveryDispatch.run(
+             Dispatch.run(
                delivery.id,
                invocation(%Notification.Result{status: :delivered})
              )
@@ -135,7 +147,7 @@ defmodule Opsonde.NotificationDeliveryTest do
     timed = enqueue!(context, "delivery-timeout")
 
     assert {:ok, timed_out} =
-             DeliveryDispatch.run(timed.id, %{
+             Dispatch.run(timed.id, %{
                test_pid: self(),
                respond: fn -> {:error, :timeout, "remote response was lost"} end
              })
@@ -148,7 +160,7 @@ defmodule Opsonde.NotificationDeliveryTest do
     Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
 
     assert {:ok, failed} =
-             DeliveryDispatch.run(
+             Dispatch.run(
                stale.id,
                invocation(%Notification.Result{status: :delivered})
              )
@@ -202,7 +214,7 @@ defmodule Opsonde.NotificationDeliveryTest do
     Opsonde.Repo.aggregate(
       from(job in Oban.Job,
         where:
-          job.worker == ^Oban.Worker.to_string(DeliveryWorker) and
+          job.worker == ^Oban.Worker.to_string(DispatchWorker) and
             fragment("?->>'delivery_id'", job.args) == ^delivery_id
       ),
       :count

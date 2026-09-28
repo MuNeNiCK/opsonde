@@ -4,7 +4,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   import OpenApiSpex.TestAssertions
 
   alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Signals, Targets}
-  alias Opsonde.Notifications.DeliveryDispatch
+  alias Opsonde.Notifications.Delivery.Dispatch
   alias Opsonde.Providers.Notification
   alias Opsonde.Providers.Signal
 
@@ -444,7 +444,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert json_response(duplicate_delivery, 202)["data"]["id"] == delivery_id
 
     assert {:ok, failed} =
-             DeliveryDispatch.run(delivery_id, %{
+             Dispatch.run(delivery_id, %{
                test_pid: self(),
                respond: fn ->
                  {:ok,

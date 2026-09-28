@@ -135,7 +135,7 @@ defmodule Opsonde.Notifications.Delivery.Actions.Enqueue do
 
   defp enqueue(id) do
     id
-    |> then(&Opsonde.Notifications.DeliveryWorker.new(%{"delivery_id" => &1}))
+    |> then(&Opsonde.Notifications.Delivery.DispatchWorker.new(%{"delivery_id" => &1}))
     |> Oban.insert()
   end
 end

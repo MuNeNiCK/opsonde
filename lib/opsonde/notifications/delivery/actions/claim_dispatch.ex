@@ -3,7 +3,8 @@ defmodule Opsonde.Notifications.Delivery.Actions.ClaimDispatch do
   require Ash.Query
 
   alias Opsonde.Notifications
-  alias Opsonde.Notifications.{Delivery, DeliveryClaim}
+  alias Opsonde.Notifications.Delivery
+  alias Opsonde.Notifications.Delivery.DispatchClaim
 
   @terminal [:accepted, :delivered, :failed, :unknown]
 
@@ -24,7 +25,7 @@ defmodule Opsonde.Notifications.Delivery.Actions.ClaimDispatch do
              %{dispatch_started_at: DateTime.utc_now()},
              authorize?: false
            ) do
-      %DeliveryClaim{state: :claimed, delivery: claimed}
+      %DispatchClaim{state: :claimed, delivery: claimed}
     end
   end
 
@@ -42,12 +43,12 @@ defmodule Opsonde.Notifications.Delivery.Actions.ClaimDispatch do
              },
              authorize?: false
            ) do
-      %DeliveryClaim{state: :terminal, delivery: terminal}
+      %DispatchClaim{state: :terminal, delivery: terminal}
     end
   end
 
   defp claim(%Delivery{status: status} = delivery) when status in @terminal,
-    do: %DeliveryClaim{state: :terminal, delivery: delivery}
+    do: %DispatchClaim{state: :terminal, delivery: delivery}
 
   defp lock(id) do
     Delivery

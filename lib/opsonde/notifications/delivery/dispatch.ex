@@ -1,17 +1,17 @@
-defmodule Opsonde.Notifications.DeliveryDispatch do
+defmodule Opsonde.Notifications.Delivery.Dispatch do
   @moduledoc false
 
   alias Opsonde.{Notifications, Providers, Reports}
-  alias Opsonde.Notifications.DeliveryClaim
+  alias Opsonde.Notifications.Delivery.DispatchClaim
   alias Opsonde.Providers.Notification
   alias Opsonde.Reports.Report.Document
 
   def run(delivery_id, invocation \\ %{}) do
     case Notifications.claim_delivery_dispatch(delivery_id, authorize?: false) do
-      {:ok, %DeliveryClaim{state: :claimed, delivery: delivery}} ->
+      {:ok, %DispatchClaim{state: :claimed, delivery: delivery}} ->
         dispatch(delivery, invocation)
 
-      {:ok, %DeliveryClaim{state: :terminal, delivery: delivery}} ->
+      {:ok, %DispatchClaim{state: :terminal, delivery: delivery}} ->
         {:ok, delivery}
 
       {:error, error} ->

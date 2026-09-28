@@ -89,7 +89,7 @@ defmodule Opsonde.Notifications.Delivery do
     end
 
     action :claim_dispatch, :struct do
-      constraints instance_of: Opsonde.Notifications.DeliveryClaim
+      constraints instance_of: Opsonde.Notifications.Delivery.DispatchClaim
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Notifications.Delivery.Actions.ClaimDispatch

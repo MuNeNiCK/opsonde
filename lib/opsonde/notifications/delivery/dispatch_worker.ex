@@ -1,4 +1,4 @@
-defmodule Opsonde.Notifications.DeliveryWorker do
+defmodule Opsonde.Notifications.Delivery.DispatchWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -8,7 +8,7 @@ defmodule Opsonde.Notifications.DeliveryWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"delivery_id" => delivery_id}}) when is_binary(delivery_id) do
-    case Opsonde.Notifications.DeliveryDispatch.run(delivery_id) do
+    case Opsonde.Notifications.Delivery.Dispatch.run(delivery_id) do
       {:ok, _delivery} -> :ok
       {:error, error} -> {:error, error}
     end
