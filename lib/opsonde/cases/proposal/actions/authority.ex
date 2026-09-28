@@ -169,13 +169,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
            ) do
       case started do
         %{status: status, value: %Turn{} = turn} when status in [:charged, :duplicate] ->
-          with {:ok, _case} <-
-                 update_pending(incident, %{
-                   "action" => "resolve_turn",
-                   "turn_id" => turn.id,
-                   "proposal_id" => proposal.id,
-                   "blocked_proposal_id" => proposal.id
-                 }) do
+          with {:ok, _case} <- handoff(incident, proposal, :continue, turn.id) do
             proposal
           end
 
@@ -237,7 +231,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              :ok <- valid_context(proposal, incident, run),
              :ok <- available_pending(incident.pending_intent, proposal.id) do
           case arguments.decision do
-            :approved -> approve_human(proposal, incident, run, arguments.reason, actor)
+            :approved -> authorize_with(proposal, incident, run, actor, :human, arguments.reason)
             :rejected -> reject_human(proposal, incident, run, arguments.reason, actor)
           end
         end
@@ -313,35 +307,21 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp route_auto(proposal, incident, _run), do: await_reviewer(proposal, incident)
 
   defp authorize_observation(proposal, incident, run, source) do
-    with {:ok, actor} <- current_owner(incident),
-         {:ok, clearance} <- revalidate(proposal, actor),
-         {:ok, approval} <-
-           create_approval(
-             proposal,
-             actor,
-             :approved,
-             source,
-             "Target policy authorized the exact observation request",
-             clearance
-           ),
-         {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
-         :ok <- schedule_acceptance(authorized) do
-      authorized
-    else
-      {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
-      {:error, _error} = error -> error
+    with {:ok, actor} <- current_owner(incident) do
+      authorize_with(
+        proposal,
+        incident,
+        run,
+        actor,
+        source,
+        "Target policy authorized the exact observation request"
+      )
     end
   end
 
   defp await_human(proposal, incident) do
     with {:ok, waiting} <- transition(proposal, :awaiting_human),
-         {:ok, _case} <-
-           update_pending(incident, %{
-             "action" => "decide_proposal",
-             "proposal_id" => waiting.id,
-             "proposal_digest" => waiting.proposal_digest
-           }),
+         {:ok, _case} <- handoff(incident, waiting, :human),
          :ok <- schedule_expiration(waiting) do
       waiting
     end
@@ -349,12 +329,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp await_reviewer(proposal, incident) do
     with {:ok, reviewing} <- transition(proposal, :reviewing),
-         {:ok, _case} <-
-           update_pending(incident, %{
-             "action" => "review_proposal",
-             "proposal_id" => reviewing.id,
-             "proposal_digest" => reviewing.proposal_digest
-           }),
+         {:ok, _case} <- handoff(incident, reviewing, :review),
          {:ok, _job} <- enqueue_review(reviewing.id) do
       reviewing
     end
@@ -464,13 +439,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
            incident.pending_intent["proposal_id"] == proposal.id ||
              {:error, "Case pending decision changed"},
          {:ok, invalidated} <- transition(proposal, :invalidated),
-         {:ok, _cleared} <-
-           Cases.update_case_record(
-             incident,
-             incident.revision,
-             %{pending_intent: %{}, stop_reason: nil, required_human_input: nil},
-             authorize?: false
-           ),
+         {:ok, _cleared} <- handoff(incident, invalidated, :clear),
          {:ok, started} <-
            Cases.start_turn(
              incident.id,
@@ -484,20 +453,16 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
              "Review Resolver limits",
              authorize?: false
            ),
-         {:ok, _pending} <- pending_after_supersede(started, proposal.id) do
+         {:ok, _pending} <- pending_after_supersede(started, invalidated) do
       invalidated
     end
   end
 
-  defp pending_after_supersede(%{status: :exhausted}, _proposal_id), do: {:ok, :needs_attention}
+  defp pending_after_supersede(%{status: :exhausted}, _proposal), do: {:ok, :needs_attention}
 
-  defp pending_after_supersede(%{status: status, case: incident, value: turn}, proposal_id)
+  defp pending_after_supersede(%{status: status, case: incident, value: turn}, proposal)
        when status in [:charged, :duplicate] do
-    update_pending(incident, %{
-      "action" => "resolve_turn",
-      "turn_id" => turn.id,
-      "source_proposal_id" => proposal_id
-    })
+    handoff(incident, proposal, :continue, turn.id)
   end
 
   defp fail_review_delivery(proposal_id, category, reason) do
@@ -570,30 +535,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     do: "Restore Reviewer AI availability and resume the Case"
 
   defp approve_review(proposal, decision, incident, run) do
-    with {:ok, actor} <- current_owner(incident),
-         {:ok, clearance} <- revalidate(proposal, actor),
-         {:ok, approval} <-
-           create_approval(proposal, actor, :approved, :reviewer, decision.reason, clearance),
-         {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
-         :ok <- schedule_acceptance(authorized) do
-      authorized
-    else
-      {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
-      {:error, _error} = error -> error
+    with {:ok, actor} <- current_owner(incident) do
+      authorize_with(proposal, incident, run, actor, :reviewer, decision.reason)
     end
   end
 
   defp await_human_review(proposal, decision, incident) do
     with {:ok, waiting} <- transition(proposal, :awaiting_human),
-         {:ok, _case} <-
-           update_pending(incident, %{
-             "action" => "decide_proposal",
-             "proposal_id" => waiting.id,
-             "proposal_digest" => waiting.proposal_digest,
-             "review_decision_id" => decision.id,
-             "review_reason" => decision.reason
-           }),
+         {:ok, _case} <- handoff(incident, waiting, :human, decision.id),
          :ok <- schedule_expiration(waiting) do
       waiting
     end
@@ -609,33 +558,24 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   end
 
   defp authorize_full_access(proposal, incident, run) do
-    with {:ok, actor} <- current_owner(incident),
-         {:ok, clearance} <- revalidate(proposal, actor),
-         {:ok, approval} <-
-           create_approval(
-             proposal,
-             actor,
-             :approved,
-             :full_access,
-             "FullAccess mode authorized the exact Proposal",
-             clearance
-           ),
-         {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
-         :ok <- schedule_acceptance(authorized) do
-      authorized
-    else
-      {:blocked, category, reason} -> invalidate(proposal, incident, run, category, reason)
-      {:error, _error} = error -> error
+    with {:ok, actor} <- current_owner(incident) do
+      authorize_with(
+        proposal,
+        incident,
+        run,
+        actor,
+        :full_access,
+        "FullAccess mode authorized the exact Proposal"
+      )
     end
   end
 
-  defp approve_human(proposal, incident, run, reason, actor) do
+  defp authorize_with(proposal, incident, run, actor, source, reason) do
     with {:ok, clearance} <- revalidate(proposal, actor),
          {:ok, approval} <-
-           create_approval(proposal, actor, :approved, :human, reason, clearance),
+           create_approval(proposal, actor, :approved, source, reason, clearance),
          {:ok, authorized} <- transition(proposal, :authorized),
-         {:ok, _case} <- update_pending(incident, dispatch_pending(authorized, approval)),
+         {:ok, _case} <- handoff(incident, authorized, :dispatch, approval.id),
          :ok <- schedule_acceptance(authorized) do
       authorized
     else
@@ -680,12 +620,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
        do: {:ok, :needs_attention}
 
   defp continue_after_rejection(%{value: %Turn{} = turn}, incident, proposal) do
-    update_pending(incident, %{
-      "action" => "resolve_turn",
-      "proposal_id" => proposal.id,
-      "turn_id" => turn.id,
-      "rejected_proposal_id" => proposal.id
-    })
+    handoff(incident, proposal, :continue, turn.id)
   end
 
   defp invalidate(proposal, incident, run, category, reason) do
@@ -784,15 +719,15 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     Cases.transition_proposal(proposal, proposal.revision, %{status: status}, authorize?: false)
   end
 
-  defp update_pending(incident, pending) do
-    with :ok <- available_pending(incident.pending_intent, pending["proposal_id"]) do
-      Cases.update_case_record(
-        incident,
-        incident.revision,
-        %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
-        authorize?: false
-      )
-    end
+  defp handoff(incident, proposal, kind, reference_id \\ nil) do
+    Cases.handoff_case_proposal(
+      incident,
+      incident.revision,
+      proposal.id,
+      kind,
+      reference_id,
+      authorize?: false
+    )
   end
 
   defp valid_context(proposal, incident, run) do
@@ -913,15 +848,6 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp required({:ok, nil}, message), do: {:error, message}
   defp required(result, _message), do: result
-
-  defp dispatch_pending(proposal, approval) do
-    %{
-      "action" => "dispatch_operation",
-      "proposal_id" => proposal.id,
-      "approval_id" => approval.id,
-      "operation_id" => proposal.reserved_operation_id
-    }
-  end
 
   defp schedule_if_authorized(%{status: :authorized} = proposal) do
     with :ok <- schedule_acceptance(proposal), do: proposal

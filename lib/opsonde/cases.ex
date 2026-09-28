@@ -86,6 +86,10 @@ defmodule Opsonde.Cases do
           :next_turn_id
         ]
 
+      define :handoff_case_proposal,
+        action: :handoff_proposal,
+        args: [:expected_revision, :proposal_id, :kind, :reference_id]
+
       define :open_case,
         action: :open,
         args: [
