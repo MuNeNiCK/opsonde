@@ -337,6 +337,43 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_operation!(applied.id, authorize?: false).status == :applied
   end
 
+  test "Case action rejects a conflicting observation handoff without charging a Turn", context do
+    {incident, run, proposal} =
+      authorized_proposal!("conflicting-observation-handoff", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    claim = Cases.claim_operation_dispatch!(operation.id, authorize?: false)
+    assert claim.state == :claimed
+
+    Cases.record_operation_outcome!(
+      claim.operation,
+      claim.operation.revision,
+      %{
+        status: :applied,
+        outcome_category: "target_observed",
+        result_details: %{"facts" => %{"active_state" => "active"}},
+        completed_at: DateTime.utc_now()
+      },
+      authorize?: false
+    )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+
+    Cases.update_case_record!(
+      current,
+      current.revision,
+      %{pending_intent: %{"action" => "verify_operation", "operation_id" => operation.id}},
+      authorize?: false
+    )
+
+    turns_before = Cases.list_turns!(actor: context.admin) |> length()
+    count_before = Cases.get_resolution_run!(run.id, authorize?: false).turn_count
+
+    assert {:error, _error} = OperationDelivery.run(operation.id)
+    assert length(Cases.list_turns!(actor: context.admin)) == turns_before
+    assert Cases.get_resolution_run!(run.id, authorize?: false).turn_count == count_before
+  end
+
   test "revoked approval authority creates no Operation, job or budget charge", context do
     {incident, run, proposal} = authorized_proposal!("revoked", context)
     Accounts.change_role!(context.operator, :viewer, actor: context.admin)

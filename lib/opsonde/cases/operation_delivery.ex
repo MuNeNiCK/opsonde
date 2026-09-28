@@ -274,8 +274,7 @@ defmodule Opsonde.Cases.OperationDelivery do
          incident
        ) do
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
-      with :ok <- available_pending(incident.pending_intent, operation),
-           {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
+      with {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
            {:ok, result} <-
              Cases.start_turn(
                operation.case_id,
@@ -390,18 +389,6 @@ defmodule Opsonde.Cases.OperationDelivery do
 
   defp evidence_turn_id(%{request_kind: :observation}, proposal), do: proposal.source_turn_id
   defp evidence_turn_id(%{request_kind: :effect}, _proposal), do: nil
-
-  defp available_pending(%{"action" => "verify_operation", "operation_id" => id}, %{id: id}),
-    do: :ok
-
-  defp available_pending(%{"action" => "dispatch_operation", "operation_id" => id}, %{id: id}),
-    do: :ok
-
-  defp available_pending(%{"action" => "resolve_turn", "operation_id" => id}, %{id: id}),
-    do: :ok
-
-  defp available_pending(pending, _operation) when map_size(pending) == 0, do: :ok
-  defp available_pending(_pending, _operation), do: {:error, "Case has another pending action"}
 
   defp current_actor(operation) do
     case Accounts.get_user(operation.actor_id, authorize?: false) do
