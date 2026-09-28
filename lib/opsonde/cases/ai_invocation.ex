@@ -1,4 +1,6 @@
 defmodule Opsonde.Cases.AIInvocation do
+  alias Opsonde.Providers.AI
+
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Cases,
@@ -169,4 +171,36 @@ defmodule Opsonde.Cases.AIInvocation do
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
+
+  def failure_accounting(error, reserved_units) do
+    ai_error = find_ai_error(error)
+
+    usage =
+      case ai_error do
+        %AI.Error{usage: %AI.Usage{} = value} -> value
+        _other -> nil
+      end
+
+    dispatched? = match?(%AI.Error{dispatched?: true}, ai_error)
+
+    failure_accounting(usage, dispatched?, reserved_units)
+    |> Map.put(:ai_error, ai_error)
+  end
+
+  def failure_accounting(%AI.Usage{} = usage, _dispatched?, _reserved_units) do
+    %{amount: usage.input_tokens + usage.output_tokens, usage: usage}
+  end
+
+  def failure_accounting(nil, true, reserved_units),
+    do: %{amount: reserved_units, usage: nil}
+
+  def failure_accounting(nil, _dispatched?, _reserved_units),
+    do: %{amount: 0, usage: nil}
+
+  defp find_ai_error(%AI.Error{} = error), do: error
+
+  defp find_ai_error(%{errors: errors}) when is_list(errors),
+    do: Enum.find_value(errors, &find_ai_error/1)
+
+  defp find_ai_error(_error), do: nil
 end

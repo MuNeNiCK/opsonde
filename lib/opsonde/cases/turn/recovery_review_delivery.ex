@@ -269,20 +269,16 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
   end
 
   defp settle_failure(turn, invocation, error, opts) do
-    ai_error = find_error(error)
-    usage = if match?(%AI.Error{usage: %AI.Usage{}}, ai_error), do: ai_error.usage
-
-    amount =
-      if usage,
-        do: usage.input_tokens + usage.output_tokens,
-        else: if(dispatched?(ai_error), do: invocation.reserved_units, else: 0)
+    accounting = AIInvocation.failure_accounting(error, invocation.reserved_units)
+    ai_error = accounting.ai_error
+    usage = accounting.usage
 
     category = if match?(%AI.Error{}, ai_error), do: to_string(ai_error.category), else: "failed"
     code = if match?(%AI.Error{}, ai_error), do: ai_error.failure_code
 
     with {:ok, _result} <-
            Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent], fn ->
-             with {:ok, _charged} <- charge(turn, amount, "failure:#{invocation.id}"),
+             with {:ok, _charged} <- charge(turn, accounting.amount, "failure:#{invocation.id}"),
                   {:ok, recorded} <-
                     Cases.record_ai_invocation_outcome(
                       invocation,
@@ -472,13 +468,4 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       _other -> false
     end
   end
-
-  defp dispatched?(%AI.Error{dispatched?: value}), do: value == true
-  defp dispatched?(_error), do: false
-  defp find_error(%AI.Error{} = error), do: error
-
-  defp find_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_error/1)
-
-  defp find_error(_error), do: nil
 end

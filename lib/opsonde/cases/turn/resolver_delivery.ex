@@ -738,7 +738,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp retryable_invalid_decision_failure?(turn, rejection_code, error) do
     rejection_code in ["schema_validation", "missing_structured_object", "json_decode"] and
       turn.intent["source"] != "resolver_delivery_failure" and
-      match?(%AI.Usage{}, error_usage(error))
+      match?(%AI.Usage{}, AIInvocation.failure_accounting(error, 0).usage)
   end
 
   defp persist_retryable_failure(turn, invocation, error, category, message, rejection_code) do
@@ -890,19 +890,13 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     do: settle_failed_usage(turn, invocation, category, error)
 
   defp settle_failed_usage(turn, invocation, category, error) do
-    usage = error_usage(error)
-
-    amount =
-      cond do
-        usage -> usage.input_tokens + usage.output_tokens
-        dispatched?(error) -> invocation.reserved_units
-        true -> 0
-      end
+    accounting = AIInvocation.failure_accounting(error, invocation.reserved_units)
+    usage = accounting.usage
 
     key =
       if usage, do: "resolver-result:#{invocation.id}", else: "resolver-unknown:#{invocation.id}"
 
-    with {:ok, _charged} <- charge_usage(turn, amount, key),
+    with {:ok, _charged} <- charge_usage(turn, accounting.amount, key),
          {:ok, recorded} <-
            record_invocation(invocation, :failed,
              input_tokens: if(usage, do: usage.input_tokens, else: 0),
@@ -912,20 +906,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
              failure_code: rejection_code(error)
            ) do
       {:ok, recorded}
-    end
-  end
-
-  defp error_usage(error) do
-    case find_error(error) do
-      %AI.Error{usage: %AI.Usage{} = usage} -> usage
-      _other -> nil
-    end
-  end
-
-  defp dispatched?(error) do
-    case find_error(error) do
-      %AI.Error{dispatched?: true} -> true
-      _other -> false
     end
   end
 

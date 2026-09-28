@@ -89,7 +89,12 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       {:error, error} ->
         if review_context_current_with_conditions?(proposal),
           do: persist_failure(proposal, error, claim.invocation, opts),
-          else: settle_and_supersede(proposal, claim.invocation, error_usage(error))
+          else:
+            settle_and_supersede(
+              proposal,
+              claim.invocation,
+              AIInvocation.failure_accounting(error, 0).usage
+            )
     end
   end
 
@@ -495,54 +500,35 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         proposal,
         invocation,
         category,
-        error_usage(error),
-        dispatched?(error),
+        AIInvocation.failure_accounting(error, invocation.reserved_units),
         failure_code(error)
       )
 
-  defp settle_failed_usage(proposal, invocation, category, usage, dispatched?, failure_code) do
-    amount =
-      cond do
-        usage -> usage.input_tokens + usage.output_tokens
-        dispatched? -> invocation.reserved_units
-        true -> 0
-      end
-
-    key = if usage, do: "review-result:#{invocation.id}", else: "review-unknown:#{invocation.id}"
+  defp settle_failed_usage(proposal, invocation, category, accounting, failure_code) do
+    key =
+      if accounting.usage,
+        do: "review-result:#{invocation.id}",
+        else: "review-unknown:#{invocation.id}"
 
     Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent], fn ->
       with {:ok, _charged} <-
              charge_usage(
                proposal,
-               amount,
+               accounting.amount,
                key,
                %{"action" => "review_ai_usage", "proposal_id" => proposal.id}
              ),
            {:ok, recorded} <-
              record_invocation(invocation, :failed,
-               input_tokens: if(usage, do: usage.input_tokens, else: 0),
-               output_tokens: if(usage, do: usage.output_tokens, else: 0),
-               usage: usage,
+               input_tokens: if(accounting.usage, do: accounting.usage.input_tokens, else: 0),
+               output_tokens: if(accounting.usage, do: accounting.usage.output_tokens, else: 0),
+               usage: accounting.usage,
                category: category,
                failure_code: failure_code
              ) do
         recorded
       end
     end)
-  end
-
-  defp error_usage(error) do
-    case find_error(error) do
-      %AI.Error{usage: %AI.Usage{} = usage} -> usage
-      _other -> nil
-    end
-  end
-
-  defp dispatched?(error) do
-    case find_error(error) do
-      %AI.Error{dispatched?: true} -> true
-      _other -> false
-    end
   end
 
   defp record_invocation(invocation, status, attrs) do
@@ -682,7 +668,9 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   end
 
   defp settle_changed_context(proposal, invocation, usage) do
-    case settle_failed_usage(proposal, invocation, "context_changed", usage, true, nil) do
+    accounting = AIInvocation.failure_accounting(usage, true, invocation.reserved_units)
+
+    case settle_failed_usage(proposal, invocation, "context_changed", accounting, nil) do
       {:ok, _invocation} -> :ok
       {:error, _error} = error -> error
     end
