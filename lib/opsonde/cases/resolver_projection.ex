@@ -398,29 +398,40 @@ defmodule Opsonde.Cases.ResolverProjection do
   end
 
   defp available_methods(methods, incident, run, target, conditions, evidence) do
-    refreshed_at = source_refresh_at(evidence, run, target, conditions)
+    condition_ids =
+      conditions
+      |> Enum.filter(&(&1.target_id == target.id))
+      |> Enum.map(& &1.id)
 
-    Enum.reduce_while(methods, {:ok, []}, fn method, {:ok, available} ->
-      case Cases.recent_method_observations(
-             incident.id,
-             run.id,
-             target.id,
-             method.id,
-             method.revision,
-             authorize?: false
-           ) do
-        {:ok, recent} ->
-          if repeated_transport_failure?(recent, refreshed_at),
-            do: {:cont, {:ok, available}},
-            else: {:cont, {:ok, [method | available]}}
+    with {:ok, effect_at} <-
+           ConditionRecovery.applied_effect_refresh_at(incident, run.id, condition_ids) do
+      refreshed_at =
+        [source_refresh_at(evidence, run, target, conditions), effect_at]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.max(DateTime, fn -> nil end)
 
-        {:error, _reason} = error ->
-          {:halt, error}
+      Enum.reduce_while(methods, {:ok, []}, fn method, {:ok, available} ->
+        case Cases.recent_method_observations(
+               incident.id,
+               run.id,
+               target.id,
+               method.id,
+               method.revision,
+               authorize?: false
+             ) do
+          {:ok, recent} ->
+            if repeated_transport_failure?(recent, refreshed_at),
+              do: {:cont, {:ok, available}},
+              else: {:cont, {:ok, [method | available]}}
+
+          {:error, _reason} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, available} -> {:ok, Enum.reverse(available)}
+        error -> error
       end
-    end)
-    |> case do
-      {:ok, available} -> {:ok, Enum.reverse(available)}
-      error -> error
     end
   end
 

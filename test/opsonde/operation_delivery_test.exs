@@ -2164,7 +2164,7 @@ defmodule Opsonde.OperationDeliveryTest do
        context do
     enable_signal_automation!(context.admin)
 
-    {incident, _run, proposal, _signal_provider} =
+    {incident, run, proposal, _signal_provider} =
       authorized_proposal!("failed-related-effect", context,
         trigger_kind: :signal,
         request_kind: :observation,
@@ -2175,7 +2175,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert :ok =
              OperationDelivery.run(symptom_operation.id,
-               target_invocation: invocation({:error, :failed, "Guest is unreachable"})
+               target_invocation: invocation({:error, :retryable, "Guest is unreachable"})
              )
 
     symptom = operation_evidence_record(symptom_operation.id)
@@ -2192,6 +2192,48 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert failed_id == symptom.id
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    second_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    second_proposal =
+      complete_signal_proposal!(
+        second_turn,
+        signal_proposal_intent(symptom.id, context, :observation),
+        incident,
+        context
+      )
+
+    second_operation = Cases.accept_operation!(second_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(second_operation.id,
+               target_invocation: invocation({:error, :timeout, "Guest still unreachable"})
+             )
+
+    symptom = operation_evidence_record(second_operation.id)
+    failed_id = symptom.id
+
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: context.resolver_provider.id,
+      provider_revision: context.resolver_provider.revision,
+      assignment_id: context.resolver_assignment.id,
+      assignment_revision: context.resolver_assignment.revision,
+      source: :assignment
+    }
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    pre_effect_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert {:ok, suppressed} =
+             ResolverProjection.build(
+               pre_effect_turn.id,
+               selection,
+               invocation(fn -> flunk("twice-failed method was queried before effect") end)
+             )
+
+    assert suppressed.observation_tools == []
 
     effect_context = separate_target!(context, "failed-related-effect-target")
 
@@ -2218,15 +2260,6 @@ defmodule Opsonde.OperationDeliveryTest do
     )
 
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
-
-    selection = %AI.Selection{
-      role: :resolver,
-      provider_id: context.resolver_provider.id,
-      provider_revision: context.resolver_provider.revision,
-      assignment_id: context.resolver_assignment.id,
-      assignment_revision: context.resolver_assignment.revision,
-      source: :assignment
-    }
 
     assert {:ok, request} =
              ResolverProjection.build(
@@ -2268,6 +2301,9 @@ defmodule Opsonde.OperationDeliveryTest do
       "relationship_revision" => relation.revision
     }
 
+    assert {:ok, nil} =
+             ConditionRecovery.applied_effect_refresh_at(incident, run.id, [condition.id])
+
     action = signal_proposal_intent(target_evidence.id, effect_context, :effect)
 
     assert {:ok, true} =
@@ -2303,6 +2339,19 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert effect_proposal.affected_conditions == [claim]
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    effect = Cases.accept_operation!(effect_proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(effect.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert {:ok, %DateTime{}} =
+             ConditionRecovery.applied_effect_refresh_at(incident, run.id, [condition.id])
+
+    assert {:ok, nil} =
+             ConditionRecovery.applied_effect_refresh_at(incident, run.id, [Ecto.UUID.generate()])
   end
 
   test "Resolver receives a current failed observation after Signal recovery", context do
@@ -2469,6 +2518,7 @@ defmodule Opsonde.OperationDeliveryTest do
     current = Cases.get_case!(incident.id, authorize?: false)
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
     {:ok, [condition]} = ResolverProjection.current_conditions(current)
+
     claim = %{"condition_id" => condition.id, "revision" => condition.revision}
     effect_intent = signal_proposal_intent(evidence.id, context)
 
@@ -2518,6 +2568,7 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     assert Cases.get_operation!(effect.id, authorize?: false).status == :applied
+
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
   end
 

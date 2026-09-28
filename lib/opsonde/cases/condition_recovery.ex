@@ -37,6 +37,25 @@ defmodule Opsonde.Cases.ConditionRecovery do
 
   def inherited_baseline(incident), do: incident.recovery_baseline_at || incident.inserted_at
 
+  def applied_effect_refresh_at(incident, run_id, condition_ids) do
+    selected = MapSet.new(condition_ids)
+
+    if MapSet.size(selected) == 0 do
+      {:ok, nil}
+    else
+      with {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, nil) do
+        effects
+        |> Enum.filter(fn {operation, ids} ->
+          operation.resolution_run_id == run_id and operation.status == :applied and
+            is_struct(operation.completed_at, DateTime) and
+            Enum.any?(ids, &MapSet.member?(selected, &1))
+        end)
+        |> Enum.map(fn {operation, _ids} -> operation.completed_at end)
+        |> then(&{:ok, Enum.max(&1, DateTime, fn -> nil end)})
+      end
+    end
+  end
+
   def baseline_for_case(incident) do
     inherited = inherited_baseline(incident)
 
