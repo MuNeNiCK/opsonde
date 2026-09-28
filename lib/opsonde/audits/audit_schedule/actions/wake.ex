@@ -185,7 +185,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Wake do
 
   defp maybe_enqueue_run(%{status: :queued} = run) do
     run.id
-    |> then(&Opsonde.Audits.AuditRunWorker.new(%{"audit_run_id" => &1}))
+    |> then(&Opsonde.Audits.AuditRun.Worker.new(%{"audit_run_id" => &1}))
     |> Oban.insert()
   end
 
@@ -199,7 +199,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Wake do
 
   defp enqueue_next(schedule) do
     schedule
-    |> Opsonde.Audits.AuditWakeWorker.job()
+    |> Opsonde.Audits.AuditSchedule.WakeWorker.job()
     |> Oban.insert()
   end
 end

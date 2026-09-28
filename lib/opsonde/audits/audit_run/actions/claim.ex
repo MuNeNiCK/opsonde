@@ -3,7 +3,7 @@ defmodule Opsonde.Audits.AuditRun.Actions.Claim do
   require Ash.Query
 
   alias Opsonde.{Audits, Cases}
-  alias Opsonde.Audits.{AuditRun, AuditRunClaim, AuditSchedule}
+  alias Opsonde.Audits.{AuditRun, AuditSchedule}
   alias Opsonde.Targets.Target
 
   @terminal [:case_opened, :skipped, :cancelled, :failed]
@@ -20,7 +20,7 @@ defmodule Opsonde.Audits.AuditRun.Actions.Claim do
   end
 
   defp claim(%{status: status} = run, schedule) when status in @terminal,
-    do: %AuditRunClaim{state: :terminal, run: run, schedule: schedule}
+    do: %AuditRun.ClaimResult{state: :terminal, run: run, schedule: schedule}
 
   defp claim(%{status: :running} = run, schedule) do
     with {:ok, existing} <- existing_case(run) do
@@ -65,7 +65,7 @@ defmodule Opsonde.Audits.AuditRun.Actions.Claim do
   end
 
   defp claimed(run, schedule),
-    do: %AuditRunClaim{state: :claimed, run: run, schedule: schedule}
+    do: %AuditRun.ClaimResult{state: :claimed, run: run, schedule: schedule}
 
   defp terminal(run, schedule, status, reason) do
     with {:ok, terminal} <-
@@ -75,7 +75,7 @@ defmodule Opsonde.Audits.AuditRun.Actions.Claim do
              %{status: status, reason: reason, completed_at: DateTime.utc_now()},
              authorize?: false
            ) do
-      %AuditRunClaim{state: :terminal, run: terminal, schedule: schedule}
+      %AuditRun.ClaimResult{state: :terminal, run: terminal, schedule: schedule}
     end
   end
 

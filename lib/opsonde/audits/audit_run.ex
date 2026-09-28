@@ -104,7 +104,7 @@ defmodule Opsonde.Audits.AuditRun do
     end
 
     action :claim, :struct do
-      constraints instance_of: Opsonde.Audits.AuditRunClaim
+      constraints instance_of: Opsonde.Audits.AuditRun.ClaimResult
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Audits.AuditRun.Actions.Claim

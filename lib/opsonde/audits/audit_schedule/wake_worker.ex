@@ -1,4 +1,4 @@
-defmodule Opsonde.Audits.AuditWakeWorker do
+defmodule Opsonde.Audits.AuditSchedule.WakeWorker do
   @moduledoc false
 
   use Oban.Worker,

@@ -201,7 +201,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     refute event_response.resp_body =~ "raw-event-metadata"
   end
 
-  test "Audit schedule API exposes persisted queued, running and skipped outcomes", context do
+  test "Audit schedule API exposes queued, running, opened and skipped outcomes", context do
     boundary =
       Targets.create_management_boundary!("outcome-audit-dc", "datacenter", %{},
         actor: context.admin
@@ -262,6 +262,17 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert get_data!("/api/v1/audit-runs/#{queued.id}", context.viewer_token)["status"] ==
              "running"
 
+    assert :ok =
+             Opsonde.Audits.AuditRun.Worker.perform(%Oban.Job{
+               args: %{"audit_run_id" => queued.id}
+             })
+
+    opened = get_data!("/api/v1/audit-runs/#{queued.id}", context.viewer_token)
+    assert opened["status"] == "case_opened"
+
+    assert get_data!("/api/v1/cases/#{opened["case_id"]}", context.viewer_token)["case"]["id"] ==
+             opened["case_id"]
+
     empty_boundary =
       Targets.create_management_boundary!("outcome-empty-dc", "datacenter", %{},
         actor: context.admin
@@ -287,7 +298,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     )
 
     runs = get_data!("/api/v1/audit-runs", context.viewer_token)
-    assert Enum.any?(runs, &(&1["status"] == "running" and &1["id"] == queued.id))
+    assert Enum.any?(runs, &(&1["status"] == "case_opened" and &1["id"] == queued.id))
     assert Enum.any?(runs, &(&1["status"] == "skipped"))
 
     current = Audits.get_audit_schedule!(persisted.id, actor: context.admin)

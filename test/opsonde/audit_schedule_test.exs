@@ -4,7 +4,7 @@ defmodule Opsonde.AuditScheduleTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Audits, Cases, Repo, Targets}
-  alias Opsonde.Audits.{AuditRunDispatch, AuditRunWorker, AuditWakeWorker}
+  alias Opsonde.Audits.{AuditRun, AuditSchedule}
   alias Opsonde.Audits.AuditSchedule.Scheduling
 
   @password "correct horse battery staple"
@@ -73,13 +73,13 @@ defmodule Opsonde.AuditScheduleTest do
     assert [%Oban.Job{state: "scheduled"} = wake_job] = jobs_for_schedule(schedule.id)
     assert DateTime.compare(wake_job.scheduled_at, schedule.next_run_at) == :eq
 
-    assert :ok = AuditWakeWorker.perform(wake_job)
+    assert :ok = AuditSchedule.WakeWorker.perform(wake_job)
     advanced = current_schedule(schedule.id, context.viewer)
 
     assert advanced.revision == 2
     assert DateTime.compare(advanced.next_run_at, schedule.next_run_at) == :gt
 
-    assert :ok = AuditWakeWorker.perform(wake_job)
+    assert :ok = AuditSchedule.WakeWorker.perform(wake_job)
 
     assert [run] =
              Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at,
@@ -92,7 +92,7 @@ defmodule Opsonde.AuditScheduleTest do
     assert one_job_for_run?(run.id)
 
     run_job = job_for_run(run.id)
-    assert :ok = AuditRunWorker.perform(run_job)
+    assert :ok = AuditRun.Worker.perform(run_job)
 
     [completed] =
       Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
@@ -118,7 +118,7 @@ defmodule Opsonde.AuditScheduleTest do
     assert turn.intent["audit_run_id"] == run.id
     assert one_resolver_job?(turn.id)
 
-    assert {:ok, repeated} = AuditRunDispatch.run(run.id)
+    assert {:ok, repeated} = AuditRun.Dispatch.run(run.id)
     assert repeated.id == completed.id
     assert length(Cases.list_cases!(actor: context.viewer)) == 1
     assert length(Cases.list_turns!(actor: context.viewer)) == 1
@@ -154,7 +154,7 @@ defmodule Opsonde.AuditScheduleTest do
     advanced = current_schedule(cancelled_schedule.id, context.viewer)
     Audits.deactivate_audit_schedule!(advanced, advanced.revision, actor: context.admin)
 
-    assert {:ok, cancelled} = AuditRunDispatch.run(cancelled_run.id)
+    assert {:ok, cancelled} = AuditRun.Dispatch.run(cancelled_run.id)
     assert cancelled.status == :cancelled
     assert cancelled.case_id == nil
 
@@ -169,7 +169,7 @@ defmodule Opsonde.AuditScheduleTest do
       actor: context.admin
     )
 
-    assert {:ok, skipped} = AuditRunDispatch.run(changed_run.id)
+    assert {:ok, skipped} = AuditRun.Dispatch.run(changed_run.id)
     assert skipped.status == :skipped
     assert skipped.reason == "Target changed before Audit Case creation"
     assert Cases.list_cases!(actor: context.viewer) == []
@@ -186,11 +186,59 @@ defmodule Opsonde.AuditScheduleTest do
     assert running.status == :running
     assert running.started_at
 
-    assert {:ok, completed} = AuditRunDispatch.run(run.id)
+    assert {:ok, completed} = AuditRun.Dispatch.run(run.id)
     assert completed.status == :case_opened
 
-    assert {:ok, same} = AuditRunDispatch.run(run.id)
+    assert {:ok, same} = AuditRun.Dispatch.run(run.id)
     assert same.case_id == completed.case_id
+    assert length(Cases.list_cases!(actor: context.viewer)) == 1
+    assert length(Cases.list_turns!(actor: context.viewer)) == 1
+  end
+
+  test "a persisted Case resumes the initial audit Turn after interruption", context do
+    schedule = schedule!(context, "case-interrupted-audit", :en, [context.target.id], nil)
+    wake!(schedule)
+    [run] = occurrence_runs(schedule)
+    assert {:ok, %{state: :claimed}} = Audits.claim_audit_run(run.id, authorize?: false)
+
+    incident = opened_audit_case!(run, schedule)
+    assert Cases.list_turns!(actor: context.viewer) == []
+
+    assert {:ok, completed} = AuditRun.Dispatch.run(run.id)
+    assert completed.status == :case_opened
+    assert completed.case_id == incident.id
+    assert length(Cases.list_cases!(actor: context.viewer)) == 1
+    assert length(Cases.list_turns!(actor: context.viewer)) == 1
+  end
+
+  test "a persisted initial Turn resumes Run outcome recording without another Turn", context do
+    schedule = schedule!(context, "turn-interrupted-audit", :en, [context.target.id], nil)
+    wake!(schedule)
+    [run] = occurrence_runs(schedule)
+    assert {:ok, %{state: :claimed}} = Audits.claim_audit_run(run.id, authorize?: false)
+
+    incident = opened_audit_case!(run, schedule)
+    resolution_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    started =
+      Cases.start_turn!(
+        incident.id,
+        resolution_run.id,
+        "audit-run:#{run.id}:initial",
+        %{
+          "objective" => schedule.objective,
+          "audit_schedule_id" => schedule.id,
+          "audit_run_id" => run.id
+        },
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      )
+
+    assert started.status == :charged
+    assert {:ok, completed} = AuditRun.Dispatch.run(run.id)
+    assert completed.status == :case_opened
+    assert completed.case_id == incident.id
     assert length(Cases.list_cases!(actor: context.viewer)) == 1
     assert length(Cases.list_turns!(actor: context.viewer)) == 1
   end
@@ -259,6 +307,25 @@ defmodule Opsonde.AuditScheduleTest do
     Audits.audit_runs_for_occurrence!(schedule.id, schedule.next_run_at, authorize?: false)
   end
 
+  defp opened_audit_case!(run, schedule) do
+    Cases.open_case!(
+      :audit,
+      "audit-schedule",
+      "audit-run:#{run.id}",
+      "Scheduled audit: #{schedule.name}",
+      :info,
+      %{
+        "desired_outcome" => schedule.objective,
+        "audit_schedule_id" => schedule.id,
+        "audit_run_id" => run.id,
+        "scheduled_for" => DateTime.to_iso8601(run.scheduled_for)
+      },
+      run.target_id,
+      schedule.report_language,
+      authorize?: false
+    )
+  end
+
   defp current_schedule(id, actor) do
     Audits.list_audit_schedules!(actor: actor) |> Enum.find(&(&1.id == id))
   end
@@ -266,7 +333,7 @@ defmodule Opsonde.AuditScheduleTest do
   defp jobs_for_schedule(schedule_id) do
     from(job in Oban.Job,
       where:
-        job.worker == "Opsonde.Audits.AuditWakeWorker" and
+        job.worker == "Opsonde.Audits.AuditSchedule.WakeWorker" and
           fragment("?->>'audit_schedule_id'", job.args) == ^schedule_id
     )
     |> Repo.all()
@@ -283,7 +350,7 @@ defmodule Opsonde.AuditScheduleTest do
   defp run_job_query(run_id) do
     from job in Oban.Job,
       where:
-        job.worker == "Opsonde.Audits.AuditRunWorker" and
+        job.worker == "Opsonde.Audits.AuditRun.Worker" and
           fragment("?->>'audit_run_id'", job.args) == ^run_id
   end
 

@@ -109,7 +109,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
 
   defp enqueue(schedule) do
     schedule
-    |> Opsonde.Audits.AuditWakeWorker.job()
+    |> Opsonde.Audits.AuditSchedule.WakeWorker.job()
     |> Oban.insert()
   end
 end

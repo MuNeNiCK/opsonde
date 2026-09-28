@@ -1,17 +1,17 @@
-defmodule Opsonde.Audits.AuditRunDispatch do
+defmodule Opsonde.Audits.AuditRun.Dispatch do
   @moduledoc false
 
   alias Opsonde.{Audits, Cases}
-  alias Opsonde.Audits.AuditRunClaim
+  alias Opsonde.Audits.AuditRun
 
   def run(id, opts \\ []) do
     final_attempt? = Keyword.get(opts, :final_attempt?, false)
 
     case Audits.claim_audit_run(id, authorize?: false) do
-      {:ok, %AuditRunClaim{state: :terminal, run: run}} ->
+      {:ok, %AuditRun.ClaimResult{state: :terminal, run: run}} ->
         {:ok, run}
 
-      {:ok, %AuditRunClaim{state: :claimed, run: run, schedule: schedule}} ->
+      {:ok, %AuditRun.ClaimResult{state: :claimed, run: run, schedule: schedule}} ->
         case open_case(run, schedule) do
           {:ok, incident} -> complete(run, incident)
           {:error, _error, incident} when final_attempt? -> fail(run, incident)
