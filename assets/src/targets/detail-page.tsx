@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
+import { AccessMethodForm } from "@/targets/access-method-form";
 import { TargetDetailActions } from "@/targets/detail-actions";
 import { BMCMethodSetup } from "@/targets/bmc-setup";
 
@@ -29,6 +30,7 @@ export function TargetDetailPage() {
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
   const [error, setError] = useState("");
+  const [editingMethodId, setEditingMethodId] = useState<string | null>(null);
   const [success, setSuccess] = useState(
     (location.state as { created?: boolean } | null)?.created ? t("targets.targetCreated") : "",
   );
@@ -193,6 +195,31 @@ export function TargetDetailPage() {
                         {capability}
                       </Badge>
                     ))}
+                  </div>
+                )}
+                {canManage && (
+                  <div className="mt-3">
+                    {editingMethodId === method.id ? (
+                      <AccessMethodForm
+                        target={target}
+                        providers={snapshot.providers}
+                        method={method}
+                        onSaved={async () => {
+                          await complete(t("targets.accessMethodUpdated"));
+                          setEditingMethodId(null);
+                        }}
+                        onCancel={() => setEditingMethodId(null)}
+                        onError={setError}
+                      />
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditingMethodId(method.id)}
+                      >
+                        {t("targets.editAccessMethod")}
+                      </Button>
+                    )}
                   </div>
                 )}
               </Record>

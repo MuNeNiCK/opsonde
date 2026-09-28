@@ -1,13 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { Cable, Fingerprint, Link2, Plus, ShieldBan, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData } from "@/api/client";
+import { apiClient } from "@/api/client";
 import { FormSelect, type FormSelectOption } from "@/components/form-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { AccessMethodForm } from "@/targets/access-method-form";
 import type { Provider, Target } from "@/targets/data";
 
 type Action = "identity" | "access" | "relationship" | "policy";
@@ -30,23 +31,6 @@ export function TargetDetailActions({
   const { t } = useTranslation();
   const [action, setAction] = useState<Action | null>(initialAction ?? null);
   const [pending, setPending] = useState(false);
-  const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [accessEndpoint, setAccessEndpoint] = useState("");
-  const enabledProviders = providers.filter(
-    (provider) =>
-      provider.kind === "target" &&
-      provider.enabled &&
-      provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision &&
-      provider.access_method_profile &&
-      (!provider.access_method_profile.target_platform ||
-        provider.access_method_profile.target_platform === target.platform) &&
-      (!provider.access_method_profile.target_kind ||
-        provider.access_method_profile.target_kind === target.kind),
-  );
-  const selectedProvider = enabledProviders.find((provider) => provider.id === selectedProviderId);
-  const selectedIsBMC = selectedProvider?.adapter_type.startsWith("bmc-") ?? false;
-  const selectedIsHTTP = selectedProvider?.adapter_type === "generic-http";
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -64,45 +48,6 @@ export function TargetDetailActions({
     } finally {
       setPending(false);
     }
-  }
-
-  async function createAccessMethod(form: FormData) {
-    const provider = enabledProviders.find((item) => item.id === value(form, "provider_id"));
-    const profile = provider?.access_method_profile;
-    if (!provider || !profile) throw new Error(t("targets.connectionRequired"));
-    const response = apiData(
-      await apiClient.POST("/api/v1/providers/{id}/target-capabilities", {
-        params: { path: { id: provider.id } },
-        body: { provider: { expected_revision: provider.revision } },
-      }),
-    );
-    const capabilities = Array.from(
-      new Set(
-        [...response.data.observations, ...response.data.effects].map(
-          (operation) => operation.capability,
-        ),
-      ),
-    ).filter(
-      (capability) =>
-        !selectedIsBMC || capability !== "effect.power" || form.has("allow_power_control"),
-    );
-    return apiData(
-      await apiClient.POST("/api/v1/access-methods", {
-        body: {
-          access_method: {
-            target_id: target.id,
-            provider_id: provider.id,
-            name: value(form, "name"),
-            platform: profile.platform,
-            method: profile.method,
-            endpoint: value(form, "endpoint"),
-            provider_revision: provider.revision,
-            priority: Number(value(form, "priority")),
-            capabilities,
-          },
-        },
-      }),
-    );
   }
 
   if (!action) {
@@ -172,70 +117,15 @@ export function TargetDetailActions({
           </form>
         )}
         {action === "access" && (
-          <form
-            className="grid gap-4 md:grid-cols-2"
-            onSubmit={(event) => void submit(event, createAccessMethod)}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="target-action-provider_id">{t("targets.connection")}</Label>
-              <FormSelect
-                id="target-action-provider_id"
-                name="provider_id"
-                required
-                placeholder={t("targets.chooseConnection")}
-                value={selectedProviderId}
-                onValueChange={(id) => {
-                  setSelectedProviderId(id ?? "");
-                  const provider = enabledProviders.find((item) => item.id === id);
-                  setAccessEndpoint(
-                    typeof provider?.configuration.endpoint === "string"
-                      ? provider.configuration.endpoint
-                      : "",
-                  );
-                }}
-                options={enabledProviders.map((provider) => ({
-                  value: provider.id,
-                  label: `${provider.name} · ${provider.adapter_type}`,
-                }))}
-              />
-            </div>
-            <Field label={t("targets.name")} name="name" required />
-            <Field
-              label={t("targets.endpoint")}
-              name="endpoint"
-              placeholder={
-                selectedIsHTTP
-                  ? "https://service.example.com/health"
-                  : selectedIsBMC
-                    ? ""
-                    : "ssh://host:22"
-              }
-              value={accessEndpoint}
-              onChange={(event) => setAccessEndpoint(event.target.value)}
-              readOnly={selectedIsBMC || selectedIsHTTP}
-              required
-            />
-            {selectedIsBMC && (
-              <label className="flex items-center gap-2 text-sm md:col-span-2">
-                <input type="checkbox" name="allow_power_control" className="size-4" />
-                {t("targets.allowPowerControl")}
-              </label>
-            )}
-            <Field
-              label={t("targets.priority")}
-              name="priority"
-              type="number"
-              min={0}
-              max={10000}
-              defaultValue={100}
-              required
-            />
-            <Submit
-              pending={pending}
-              label={t("targets.addAccessMethod")}
-              disabled={enabledProviders.length === 0}
-            />
-          </form>
+          <AccessMethodForm
+            target={target}
+            providers={providers}
+            onSaved={async () => {
+              await onComplete(t("targets.changeSaved"));
+              setAction(null);
+            }}
+            onError={onError}
+          />
         )}
         {action === "relationship" && (
           <form

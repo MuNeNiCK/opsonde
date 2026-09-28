@@ -965,6 +965,7 @@ const en = {
       boundaryCreated: "Management boundary created. It is now available for the new Target.",
       backToTargetForm: "Back to Target form",
       changeSaved: "The Target record was added.",
+      accessMethodUpdated: "The access method was updated.",
       connectionCreated: "The connection was added and its initial check completed.",
       chooseConnection: "Choose a verified connection",
       chooseTarget: "Choose a Target",
@@ -1060,6 +1061,8 @@ const en = {
       addIdentity: "Add external identity",
       identityDescription: "Link monitoring and inventory identifiers to a Target.",
       addAccessMethod: "Add access method",
+      editAccessMethod: "Edit access method",
+      saveAccessMethod: "Save access method",
       accessMethodDescription: "Assign one verified Provider path and its advertised capabilities.",
       addRelationship: "Add relationship",
       relationshipDescription:
