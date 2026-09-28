@@ -76,6 +76,16 @@ defmodule Opsonde.Cases do
           :evidence_id
         ]
 
+      define :handoff_case_verification,
+        action: :handoff_verification,
+        args: [
+          :expected_revision,
+          :verification_attempt_id,
+          :verification_evidence_id,
+          :kind,
+          :next_turn_id
+        ]
+
       define :open_case,
         action: :open,
         args: [

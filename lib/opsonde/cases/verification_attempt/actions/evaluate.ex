@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Evaluate do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.BudgetResult
+  alias Opsonde.Cases.{BudgetResult, Case, CaseEvent, ResolutionRun, Turn}
 
   @terminal [:verified, :not_verified, :unknown]
 
@@ -13,15 +13,18 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Evaluate do
          {:ok, evidence} <- verification_evidence(attempt),
          {:ok, incident} <- Cases.get_case(attempt.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(attempt.resolution_run_id, authorize?: false),
-         :ok <- valid_context(attempt, evidence, incident, run),
-         {:ok, %BudgetResult{} = result} <- start_turn(attempt, evidence, incident) do
-      case result do
-        %{status: status, value: turn} when status in [:charged, :duplicate] ->
-          with {:ok, _case} <- set_pending(attempt, evidence, turn), do: {:ok, turn}
+         :ok <- valid_context(attempt, evidence, incident, run) do
+      Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+        with {:ok, %BudgetResult{} = result} <- start_turn(attempt, evidence, incident) do
+          case result do
+            %{status: status, value: turn} when status in [:charged, :duplicate] ->
+              with {:ok, _case} <- set_pending(attempt, evidence, turn), do: turn
 
-        %{status: :exhausted} ->
-          {:error, "Resolver turn budget exhausted after verification"}
-      end
+            %{status: :exhausted} ->
+              {:error, "Resolver turn budget exhausted after verification"}
+          end
+        end
+      end)
     end
   end
 
@@ -82,42 +85,17 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Evaluate do
 
   defp set_pending(attempt, evidence, turn) do
     with {:ok, incident} <- Cases.get_case(attempt.case_id, authorize?: false),
-         :ok <- available_pending(incident.pending_intent, attempt, turn),
          {:ok, updated} <-
-           Cases.update_case_record(
+           Cases.handoff_case_verification(
              incident,
              incident.revision,
-             %{
-               pending_intent: %{
-                 "action" => "resolve_turn",
-                 "turn_id" => turn.id,
-                 "operation_id" => attempt.operation_id,
-                 "verification_attempt_id" => attempt.id,
-                 "verification_evidence_id" => evidence.id
-               },
-               stop_reason: nil,
-               required_human_input: nil
-             },
+             attempt.id,
+             evidence.id,
+             :resolve_turn,
+             turn.id,
              authorize?: false
            ) do
       {:ok, updated}
     end
   end
-
-  defp available_pending(
-         %{"action" => "evaluate_verification", "verification_attempt_id" => id},
-         %{id: id},
-         _turn
-       ),
-       do: :ok
-
-  defp available_pending(
-         %{"action" => "resolve_turn", "turn_id" => turn_id, "verification_attempt_id" => id},
-         %{id: id},
-         %{id: turn_id}
-       ),
-       do: :ok
-
-  defp available_pending(_pending, _attempt, _turn),
-    do: {:error, "Case has another pending action"}
 end

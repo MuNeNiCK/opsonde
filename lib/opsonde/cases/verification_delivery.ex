@@ -122,27 +122,34 @@ defmodule Opsonde.Cases.VerificationDelivery do
   end
 
   defp continue_handoff(attempt, evidence, incident) do
-    case available_pending(incident.pending_intent, attempt) do
-      :ok ->
-        with {:ok, _case} <-
-               Cases.update_case_record(
+    result =
+      case incident.pending_intent do
+        %{
+          "action" => "evaluate_verification",
+          "verification_attempt_id" => id,
+          "verification_evidence_id" => evidence_id
+        }
+        when id == attempt.id and evidence_id == evidence.id ->
+          :ok
+
+        _other ->
+          case Cases.handoff_case_verification(
                  incident,
                  incident.revision,
-                 %{
-                   pending_intent: %{
-                     "action" => "evaluate_verification",
-                     "verification_attempt_id" => attempt.id,
-                     "verification_evidence_id" => evidence.id,
-                     "operation_id" => attempt.operation_id
-                   },
-                   stop_reason: nil,
-                   required_human_input: nil
-                 },
+                 attempt.id,
+                 evidence.id,
+                 :evaluate,
+                 nil,
                  authorize?: false
-               ),
-             :ok <- evaluate(attempt) do
-          :ok
-        end
+               ) do
+            {:ok, _case} -> :ok
+            {:error, _error} = error -> error
+          end
+      end
+
+    case result do
+      :ok ->
+        evaluate(attempt)
 
       {:error, _error} = conflict ->
         case Cases.turn_by_idempotency(
@@ -190,26 +197,6 @@ defmodule Opsonde.Cases.VerificationDelivery do
       "access_method_id" => attempt.access_method_id
     }
   end
-
-  defp available_pending(
-         %{"action" => "evaluate_verification", "verification_attempt_id" => id},
-         %{id: id}
-       ),
-       do: :ok
-
-  defp available_pending(
-         %{"action" => "resolve_turn", "verification_attempt_id" => id},
-         %{id: id}
-       ),
-       do: :ok
-
-  defp available_pending(%{"action" => "verify_operation", "operation_id" => operation_id}, %{
-         operation_id: operation_id
-       }),
-       do: :ok
-
-  defp available_pending(_pending, _attempt),
-    do: {:error, "Case has another pending action"}
 
   defp current_actor(attempt) do
     case Accounts.get_user(attempt.actor_id, authorize?: false) do
