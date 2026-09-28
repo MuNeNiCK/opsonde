@@ -137,6 +137,10 @@ defmodule Opsonde.Cases do
         action: :reconcile_verified_effect,
         args: [:id, :verification_attempt_id]
 
+      define :continue_case_after_verification,
+        action: :continue_after_verification,
+        args: [:id, :verification_attempt_id]
+
       define :recheck_signal_conditions,
         action: :recheck_signal_conditions,
         args: [:id]

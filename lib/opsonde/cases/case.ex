@@ -383,6 +383,13 @@ defmodule Opsonde.Cases.Case do
       run Opsonde.Cases.Case.Actions.VerifiedEffectRecovery
     end
 
+    action :continue_after_verification, :boolean do
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :verification_attempt_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.ContinueAfterVerification
+    end
+
     action :recheck_signal_conditions, :map do
       transaction? false
       argument :id, :uuid, allow_nil?: false
@@ -581,6 +588,7 @@ defmodule Opsonde.Cases.Case do
              :handoff_proposal,
              :require_attention,
              :reconcile_verified_effect,
+             :continue_after_verification,
              :recheck_signal_conditions,
              :resume_after_target_registration,
              :route_target_discovery,

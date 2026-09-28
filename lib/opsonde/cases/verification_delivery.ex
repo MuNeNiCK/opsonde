@@ -149,7 +149,12 @@ defmodule Opsonde.Cases.VerificationDelivery do
 
     case result do
       :ok ->
-        evaluate(attempt)
+        case Cases.continue_case_after_verification(attempt.case_id, attempt.id,
+               authorize?: false
+             ) do
+          {:ok, true} -> :ok
+          {:error, _reason} = error -> error
+        end
 
       {:error, _error} = conflict ->
         case Cases.turn_by_idempotency(
@@ -160,27 +165,6 @@ defmodule Opsonde.Cases.VerificationDelivery do
              ) do
           {:ok, %Opsonde.Cases.Turn{}} -> :ok
           _missing -> conflict
-        end
-    end
-  end
-
-  defp evaluate(attempt) do
-    result =
-      with :verified <- attempt.status,
-           {:ok, %{trigger_kind: :signal}} <- Cases.get_case(attempt.case_id, authorize?: false) do
-        Cases.reconcile_verified_effect(attempt.case_id, attempt.id, authorize?: false)
-      else
-        _other -> Cases.evaluate_verification(attempt.id, authorize?: false)
-      end
-
-    case result do
-      {:ok, _turn} ->
-        :ok
-
-      {:error, error} ->
-        case Cases.get_case(attempt.case_id, authorize?: false) do
-          {:ok, %{status: :needs_attention}} -> :ok
-          _active -> {:error, error}
         end
     end
   end
