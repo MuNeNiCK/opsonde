@@ -12,7 +12,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.Proposal.ProposalExpirationWorker
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, RequestClearance}
 
   @impl true
   def run(input, opts, context) do
@@ -651,7 +651,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   end
 
   defp revalidate(proposal, actor) do
-    case Targets.clear_target_request(policy_request(proposal), actor: actor) do
+    case Targets.clear_target_request(Proposal.policy_request(proposal), actor: actor) do
       {:ok, %RequestClearance{} = clearance} ->
         if clearance.provider_id == proposal.provider_id and
              clearance.provider_revision == proposal.provider_revision do
@@ -669,24 +669,6 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
             {:error, error}
         end
     end
-  end
-
-  defp policy_request(proposal) do
-    %PolicyRequest{
-      kind: proposal.request_kind,
-      authority_mode: proposal.authority_mode,
-      target_id: proposal.target_id,
-      target_revision: proposal.target_revision,
-      access_method_id: proposal.access_method_id,
-      access_method_revision: proposal.access_method_revision,
-      capability: proposal.capability,
-      operation: proposal.operation,
-      selectors: proposal.selectors,
-      parameters: proposal.parameters,
-      operation_id: proposal.reserved_operation_id,
-      idempotency_key: proposal.operation_idempotency_key,
-      max_attempts: 1
-    }
   end
 
   defp require_attention(proposal, incident, run, reason, action, required_input) do

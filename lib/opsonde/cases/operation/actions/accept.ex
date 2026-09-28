@@ -6,7 +6,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   alias Opsonde.Cases.{Operation, Proposal}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
-  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.RequestClearance
 
   @impl true
   def run(input, _opts, _context) do
@@ -65,7 +65,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
          :ok <- valid_approval(approval, proposal),
          {:ok, actor} <- current_actor(approval),
          {:ok, %RequestClearance{} = clearance} <-
-           Targets.clear_target_request(request(proposal), actor: actor),
+           Targets.clear_target_request(Proposal.policy_request(proposal), actor: actor),
          :ok <- exact_provider(clearance, proposal),
          {:ok, operation} <- create(proposal, approval, actor, clearance),
          {:ok, _job} <- enqueue(operation.id) do
@@ -130,24 +130,6 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
       _unavailable ->
         {:error, "Approval actor authority changed"}
     end
-  end
-
-  defp request(proposal) do
-    %PolicyRequest{
-      kind: proposal.request_kind,
-      authority_mode: proposal.authority_mode,
-      target_id: proposal.target_id,
-      target_revision: proposal.target_revision,
-      access_method_id: proposal.access_method_id,
-      access_method_revision: proposal.access_method_revision,
-      capability: proposal.capability,
-      operation: proposal.operation,
-      selectors: proposal.selectors,
-      parameters: proposal.parameters,
-      operation_id: proposal.reserved_operation_id,
-      idempotency_key: proposal.operation_idempotency_key,
-      max_attempts: 1
-    }
   end
 
   defp exact_provider(clearance, proposal) do

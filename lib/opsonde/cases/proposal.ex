@@ -1,4 +1,6 @@
 defmodule Opsonde.Cases.Proposal do
+  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Cases,
@@ -395,5 +397,23 @@ defmodule Opsonde.Cases.Proposal do
   identities do
     identity :unique_source_turn, [:source_turn_id]
     identity :unique_reserved_operation, [:reserved_operation_id]
+  end
+
+  def policy_request(%__MODULE__{} = proposal) do
+    %PolicyRequest{
+      kind: proposal.request_kind,
+      authority_mode: proposal.authority_mode,
+      target_id: proposal.target_id,
+      target_revision: proposal.target_revision,
+      access_method_id: proposal.access_method_id,
+      access_method_revision: proposal.access_method_revision,
+      capability: proposal.capability,
+      operation: proposal.operation,
+      selectors: proposal.selectors,
+      parameters: proposal.parameters,
+      operation_id: proposal.reserved_operation_id,
+      idempotency_key: proposal.operation_idempotency_key,
+      max_attempts: 1
+    }
   end
 end
