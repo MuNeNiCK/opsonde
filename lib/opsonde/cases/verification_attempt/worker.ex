@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.VerificationWorker do
+defmodule Opsonde.Cases.VerificationAttempt.Worker do
   @moduledoc false
 
   use Oban.Worker,
@@ -8,7 +8,7 @@ defmodule Opsonde.Cases.VerificationWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"verification_attempt_id" => id}}) when is_binary(id),
-    do: Opsonde.Cases.VerificationDelivery.run(id)
+    do: Opsonde.Cases.VerificationAttempt.Delivery.run(id)
 
   def perform(_job), do: {:cancel, "Verification job arguments are invalid"}
 end

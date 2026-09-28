@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.OperationDelivery do
+defmodule Opsonde.Cases.Operation.Delivery do
   @moduledoc false
 
   alias Opsonde.{Accounts, Cases, Targets}

@@ -196,7 +196,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   end
 
   defp enqueue(id),
-    do: id |> then(&Opsonde.Cases.OperationWorker.new(%{"operation_id" => &1})) |> Oban.insert()
+    do: id |> then(&Opsonde.Cases.Operation.Worker.new(%{"operation_id" => &1})) |> Oban.insert()
 
   defp required_existing(proposal_id) do
     case existing(proposal_id) do

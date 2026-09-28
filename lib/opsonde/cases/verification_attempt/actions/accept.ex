@@ -189,7 +189,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
 
   defp enqueue(id) do
     id
-    |> then(&Opsonde.Cases.VerificationWorker.new(%{"verification_attempt_id" => &1}))
+    |> then(&Opsonde.Cases.VerificationAttempt.Worker.new(%{"verification_attempt_id" => &1}))
     |> Oban.insert()
   end
 

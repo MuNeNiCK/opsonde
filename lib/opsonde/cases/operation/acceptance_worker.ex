@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.OperationAcceptanceWorker do
+defmodule Opsonde.Cases.Operation.AcceptanceWorker do
   @moduledoc false
 
   alias Opsonde.Cases

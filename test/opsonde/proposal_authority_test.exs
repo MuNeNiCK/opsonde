@@ -3,10 +3,8 @@ defmodule Opsonde.ProposalAuthorityTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
-  alias Opsonde.Cases.{
-    OperationAcceptanceWorker,
-    OperationWorker
-  }
+  alias Opsonde.Cases.Operation.AcceptanceWorker, as: OperationAcceptanceWorker
+  alias Opsonde.Cases.Operation.Worker, as: OperationWorker
 
   alias Opsonde.Cases.Proposal.{
     ProposalExpirationWorker,
@@ -118,7 +116,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     observed_at = DateTime.utc_now()
 
     assert :ok =
-             Opsonde.Cases.OperationDelivery.run(operation.id,
+             Opsonde.Cases.Operation.Delivery.run(operation.id,
                target_invocation: %{
                  test_pid: self(),
                  respond: fn ->

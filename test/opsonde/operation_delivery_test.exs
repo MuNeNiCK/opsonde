@@ -3,15 +3,12 @@ defmodule Opsonde.OperationDeliveryTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
 
-  alias Opsonde.Cases.{
-    OperationAcceptanceWorker,
-    OperationDelivery,
-    OperationWorker,
-    ResolverDelivery,
-    ResolverProjection,
-    VerificationDelivery,
-    VerificationWorker
-  }
+  alias Opsonde.Cases.{ResolverDelivery, ResolverProjection}
+  alias Opsonde.Cases.Operation.AcceptanceWorker, as: OperationAcceptanceWorker
+  alias Opsonde.Cases.Operation.Delivery, as: OperationDelivery
+  alias Opsonde.Cases.Operation.Worker, as: OperationWorker
+  alias Opsonde.Cases.VerificationAttempt.Delivery, as: VerificationDelivery
+  alias Opsonde.Cases.VerificationAttempt.Worker, as: VerificationWorker
 
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery

@@ -796,7 +796,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert Cases.get_operation!(operation.id, authorize?: false).revision == operation.revision
 
     assert :ok =
-             Opsonde.Cases.OperationDelivery.run(operation.id,
+             Opsonde.Cases.Operation.Delivery.run(operation.id,
                target_invocation: %{
                  test_pid: self(),
                  respond: fn ->

@@ -857,7 +857,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp schedule_if_authorized(proposal), do: proposal
 
   defp schedule_acceptance(proposal) do
-    case Opsonde.Cases.OperationAcceptanceWorker.new(%{"proposal_id" => proposal.id})
+    case Opsonde.Cases.Operation.AcceptanceWorker.new(%{"proposal_id" => proposal.id})
          |> Oban.insert() do
       {:ok, _job} -> :ok
       {:error, _error} = error -> error
