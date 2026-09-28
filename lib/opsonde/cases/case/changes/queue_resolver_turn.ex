@@ -35,7 +35,7 @@ defmodule Opsonde.Cases.Case.Changes.QueueResolverTurn do
   end
 
   defp available?(%{"action" => action, "turn_id" => source_id}, source_id)
-       when action in ["resolve_turn", "route_resolver_decision"],
+       when action in ["resolve_turn", "route_resolver_decision", "review_recovery"],
        do: true
 
   defp available?(current, _source_id) when map_size(current) == 0, do: true

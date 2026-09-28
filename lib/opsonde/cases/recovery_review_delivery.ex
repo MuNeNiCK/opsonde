@@ -401,16 +401,11 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
             if incident.status == :running and
                  incident.pending_intent ==
                    %{"action" => "review_recovery", "turn_id" => turn.id} do
-              case Cases.update_case_record(
+              case Cases.queue_case_resolver_turn(
                      incident,
                      incident.revision,
-                     %{
-                       pending_intent: %{
-                         "action" => "resolve_turn",
-                         "turn_id" => next_turn.id,
-                         "source_turn_id" => turn.id
-                       }
-                     },
+                     turn.id,
+                     next_turn.id,
                      authorize?: false
                    ) do
                 {:ok, _updated} -> :ok
