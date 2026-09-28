@@ -580,6 +580,52 @@ defmodule Opsonde.Providers.AITest do
     assert Exception.message(no_resolver) =~ "No eligible Resolver AI is assigned"
   end
 
+  test "eligible order follows priority, creation order, and current provider state", context do
+    first = assign!(context.admin, context.provider, :resolver, 10)
+    second_provider = create_ai_provider!(context.admin, "second-resolver", "second-model")
+    second = assign!(context.admin, second_provider, :resolver, 10)
+
+    preferred_provider =
+      create_ai_provider!(context.admin, "preferred-resolver", "preferred-model")
+
+    preferred = assign!(context.admin, preferred_provider, :resolver, 5)
+
+    eligible_ids = fn ->
+      Providers.eligible_ai_usage_role_assignments!(:resolver, authorize?: false)
+      |> Enum.map(& &1.id)
+    end
+
+    assert eligible_ids.() == [preferred.id, first.id, second.id]
+
+    assert Providers.select_resolver_ai!(actor: context.operator).provider_id ==
+             preferred_provider.id
+
+    Providers.disable_provider!(preferred_provider, preferred_provider.revision,
+      actor: context.admin
+    )
+
+    assert eligible_ids.() == [first.id, second.id]
+
+    assert Providers.select_resolver_ai!(actor: context.operator).provider_id ==
+             context.provider.id
+
+    Providers.update_provider!(
+      second_provider,
+      second_provider.revision,
+      %{configuration: %{"model" => "updated-model"}},
+      actor: context.admin
+    )
+
+    assert eligible_ids.() == [first.id]
+
+    Providers.retire_ai_provider!(context.provider.id, context.provider.revision,
+      actor: context.admin
+    )
+
+    assert eligible_ids.() == []
+    assert {:error, _error} = Providers.select_resolver_ai(actor: context.operator)
+  end
+
   test "Resolver returns exactly one Target request, recovery or handoff intent",
        context do
     request = resolver_request(context.provider.revision)
