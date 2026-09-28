@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMCOperation do
+defmodule Opsonde.Targets.BMC.Operation do
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Targets,
@@ -57,7 +57,7 @@ defmodule Opsonde.Targets.BMCOperation do
         :verification_schema
       ]
 
-      validate Opsonde.Targets.BMCOperation.Validations.Definition
+      validate Opsonde.Targets.BMC.Operation.Validations.Definition
     end
 
     update :update do
@@ -79,7 +79,7 @@ defmodule Opsonde.Targets.BMCOperation do
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
-      validate Opsonde.Targets.BMCOperation.Validations.Definition
+      validate Opsonde.Targets.BMC.Operation.Validations.Definition
       change optimistic_lock(:revision)
     end
 

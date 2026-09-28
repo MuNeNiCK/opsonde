@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMCOperation.Validations.Definition do
+defmodule Opsonde.Targets.BMC.Operation.Validations.Definition do
   use Ash.Resource.Validation
 
   alias Opsonde.Targets

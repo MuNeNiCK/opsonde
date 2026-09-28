@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMCSecret do
+defmodule Opsonde.Targets.BMC.Secret do
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Targets,
@@ -49,7 +49,7 @@ defmodule Opsonde.Targets.BMCSecret do
     create :create do
       primary? true
       accept [:access_method_id, :name, :value]
-      validate Opsonde.Targets.BMCSecret.Validations.BoundMethod
+      validate Opsonde.Targets.BMC.Secret.Validations.BoundMethod
     end
 
     update :update do
@@ -58,7 +58,7 @@ defmodule Opsonde.Targets.BMCSecret do
       accept [:name, :value]
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
-      validate Opsonde.Targets.BMCSecret.Validations.BoundMethod
+      validate Opsonde.Targets.BMC.Secret.Validations.BoundMethod
       change optimistic_lock(:revision)
     end
 

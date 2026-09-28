@@ -173,7 +173,7 @@ defmodule Opsonde.Targets do
         args: [:inventory_import_id]
     end
 
-    resource Opsonde.Targets.BMCOperation do
+    resource Opsonde.Targets.BMC.Operation do
       define :available_bmc_operations_for_method,
         action: :available_for_method,
         args: [:access_method_id]
@@ -198,7 +198,7 @@ defmodule Opsonde.Targets do
       define :update_bmc_operation, action: :update, args: [:expected_revision]
     end
 
-    resource Opsonde.Targets.BMCSecret do
+    resource Opsonde.Targets.BMC.Secret do
       define :get_bmc_secret, action: :read, get_by: [:id]
 
       define :load_bmc_secret_for_use,

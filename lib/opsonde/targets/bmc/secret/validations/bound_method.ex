@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMCSecret.Validations.BoundMethod do
+defmodule Opsonde.Targets.BMC.Secret.Validations.BoundMethod do
   use Ash.Resource.Validation
 
   alias Opsonde.Targets.BMC.CurrentAccessMethod
