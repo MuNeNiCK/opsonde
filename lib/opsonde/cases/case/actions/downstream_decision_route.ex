@@ -124,10 +124,10 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp persist_recovery_review_request(turn, intent, incident, run, pending) do
     with :ok <- available_pending_intent(incident.pending_intent, pending, turn),
          {:ok, updated} <-
-           Cases.update_case_record(
+           Cases.record_case_pending_intent(
              incident,
              incident.revision,
-             %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+             pending,
              authorize?: false
            ),
          {:ok, _event} <-
@@ -271,10 +271,10 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     with :ok <- ensure_running(incident, run),
          :ok <- available_pending_intent(incident.pending_intent, pending, turn),
          {:ok, updated} <-
-           Cases.update_case_record(
+           Cases.record_case_pending_intent(
              incident,
              incident.revision,
-             %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+             pending,
              authorize?: false
            ),
          {:ok, _event} <-

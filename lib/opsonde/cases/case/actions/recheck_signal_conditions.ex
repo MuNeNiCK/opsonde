@@ -90,14 +90,10 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
   defp set_recheck_pending(incident, turn) do
     with {:ok, current} <- Cases.get_case(incident.id, authorize?: false),
          {:ok, _updated} <-
-           Cases.update_case_record(
+           Cases.record_case_pending_intent(
              current,
              current.revision,
-             %{
-               pending_intent: %{"action" => "resolve_turn", "turn_id" => turn.id},
-               stop_reason: nil,
-               required_human_input: nil
-             },
+             %{"action" => "resolve_turn", "turn_id" => turn.id},
              authorize?: false
            ) do
       {:ok, %{status: :started}}

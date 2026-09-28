@@ -283,14 +283,12 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     {incident, run, source_turn} =
       completed_turn!("pending-conflict", context.operator, search_intent())
 
-    Cases.update_case_record!(
+    Cases.record_case_pending_intent!(
       incident,
       incident.revision,
       %{
-        pending_intent: %{
-          "action" => "resolve_turn",
-          "turn_id" => Ash.UUID.generate()
-        }
+        "action" => "resolve_turn",
+        "turn_id" => Ash.UUID.generate()
       },
       authorize?: false
     )

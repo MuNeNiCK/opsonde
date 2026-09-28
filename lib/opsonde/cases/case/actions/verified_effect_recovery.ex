@@ -87,10 +87,10 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
           }
 
           with {:ok, waiting} <-
-                 Cases.update_case_record(
+                 Cases.record_case_pending_intent(
                    incident,
                    incident.revision,
-                   %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+                   pending,
                    authorize?: false
                  ),
                {:ok, _event} <-
@@ -140,17 +140,15 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
       case result do
         %{status: status, value: turn} when status in [:charged, :duplicate] ->
           with {:ok, current} <- Cases.get_case(incident.id, authorize?: false) do
-            Cases.update_case_record(
+            Cases.record_case_pending_intent(
               current,
               current.revision,
               %{
-                pending_intent: %{
-                  "action" => "resolve_turn",
-                  "turn_id" => turn.id,
-                  "verification_attempt_id" => attempt.id,
-                  "verification_evidence_id" => evidence.id,
-                  "operation_id" => attempt.operation_id
-                }
+                "action" => "resolve_turn",
+                "turn_id" => turn.id,
+                "verification_attempt_id" => attempt.id,
+                "verification_evidence_id" => evidence.id,
+                "operation_id" => attempt.operation_id
               },
               authorize?: false
             )

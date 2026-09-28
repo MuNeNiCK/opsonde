@@ -46,6 +46,33 @@ defmodule Opsonde.CaseLifecycleTest do
              )
   end
 
+  test "pending intent requires a running Case and its named transition", context do
+    incident = open_case!(:manual, "web", "pending-transition", context.operator)
+    pending = %{"action" => "resolve_turn", "turn_id" => Ecto.UUID.generate()}
+
+    assert {:error, _error} =
+             Cases.update_case_record(
+               incident,
+               incident.revision,
+               %{pending_intent: pending},
+               authorize?: false
+             )
+
+    queued =
+      Cases.record_case_pending_intent!(incident, incident.revision, pending, authorize?: false)
+
+    assert queued.pending_intent == pending
+    assert queued.stop_reason == nil
+    assert queued.required_human_input == nil
+
+    cancelled = Cases.record_case_cancellation!(queued, queued.revision, authorize?: false)
+
+    assert {:error, _error} =
+             Cases.record_case_pending_intent(cancelled, cancelled.revision, pending,
+               authorize?: false
+             )
+  end
+
   test "manual and audit opening reject an absent or blank desired outcome before persistence",
        context do
     for kind <- [:manual, :audit], value <- [nil, "  "] do

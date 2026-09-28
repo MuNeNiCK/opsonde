@@ -332,10 +332,10 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, result}
     else
       with {:ok, _updated} <-
-             Cases.update_case_record(
+             Cases.record_case_pending_intent(
                incident,
                incident.revision,
-               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               pending,
                authorize?: false
              ) do
         {:ok, result}

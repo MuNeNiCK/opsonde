@@ -169,9 +169,6 @@ defmodule Opsonde.Cases.Case do
         :max_related_targets,
         :max_ai_usage_units,
         :max_no_progress_turns,
-        :stop_reason,
-        :pending_intent,
-        :required_human_input,
         :selected_target_id,
         :selected_target_revision
       ]
@@ -179,7 +176,21 @@ defmodule Opsonde.Cases.Case do
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
-      validate {Opsonde.Validations.BoundedMap, attribute: :pending_intent}
+      change optimistic_lock(:revision)
+    end
+
+    update :record_pending_intent do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :pending_intent, :map, allow_nil?: false
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      validate {Opsonde.Validations.BoundedMap, argument: :pending_intent}
+      change set_attribute(:pending_intent, arg(:pending_intent))
+      change set_attribute(:stop_reason, nil)
+      change set_attribute(:required_human_input, nil)
       change optimistic_lock(:revision)
     end
 
@@ -688,6 +699,7 @@ defmodule Opsonde.Cases.Case do
              :unresolved_signals_without_target,
              :create_record,
              :update_record,
+             :record_pending_intent,
              :record_cancellation,
              :record_attention,
              :record_resume,

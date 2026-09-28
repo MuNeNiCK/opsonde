@@ -358,10 +358,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     current = Cases.get_case!(incident.id, authorize?: false)
 
-    Cases.update_case_record!(
+    Cases.record_case_pending_intent!(
       current,
       current.revision,
-      %{pending_intent: %{"action" => "verify_operation", "operation_id" => operation.id}},
+      %{"action" => "verify_operation", "operation_id" => operation.id},
       authorize?: false
     )
 

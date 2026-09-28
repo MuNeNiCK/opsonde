@@ -196,10 +196,10 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
     existing = %{"action" => "another_owner", "reference" => "keep-me"}
 
-    Cases.update_case_record!(
+    Cases.record_case_pending_intent!(
       conflict_case,
       conflict_case.revision,
-      %{pending_intent: existing},
+      existing,
       authorize?: false
     )
 

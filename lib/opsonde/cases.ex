@@ -50,6 +50,10 @@ defmodule Opsonde.Cases do
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]
 
+      define :record_case_pending_intent,
+        action: :record_pending_intent,
+        args: [:expected_revision, :pending_intent]
+
       define :record_case_cancellation,
         action: :record_cancellation,
         args: [:expected_revision]

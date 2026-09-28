@@ -651,15 +651,13 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
              {:error, "Split reassessment exhausted its Resolver budget"},
          {:ok, current} <- Cases.get_case(incident.id, authorize?: false),
          {:ok, _updated} <-
-           Cases.update_case_record(
+           Cases.record_case_pending_intent(
              current,
              current.revision,
              %{
-               pending_intent: %{
-                 "action" => "resolve_turn",
-                 "turn_id" => started.value.id,
-                 "related_split_case_id" => other_case_id
-               }
+               "action" => "resolve_turn",
+               "turn_id" => started.value.id,
+               "related_split_case_id" => other_case_id
              },
              authorize?: false
            ) do

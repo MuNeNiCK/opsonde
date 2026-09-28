@@ -335,9 +335,7 @@ defmodule Opsonde.SignalIngressTest do
 
     current = Cases.get_case!(incident.id, authorize?: false)
 
-    Cases.update_case_record!(current, current.revision, %{pending_intent: %{}},
-      authorize?: false
-    )
+    Cases.record_case_pending_intent!(current, current.revision, %{}, authorize?: false)
 
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent == %{}
     assert :ok = RecoveryRecheckWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})

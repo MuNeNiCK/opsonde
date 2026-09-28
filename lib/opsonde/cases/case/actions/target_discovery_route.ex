@@ -146,10 +146,10 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
     else
       with :ok <- available_pending_turn(incident.pending_intent, source_turn_id),
            {:ok, _updated} <-
-             Cases.update_case_record(
+             Cases.record_case_pending_intent(
                incident,
                incident.revision,
-               %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+               pending,
                authorize?: false
              ) do
         {:ok, result}
