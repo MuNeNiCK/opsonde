@@ -219,8 +219,9 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   defp current_selection(selection) do
     with {:ok, assignment} <-
-           Providers.load_resolver_ai_usage_role_assignment(
+           Providers.load_current_ai_usage_role_assignment(
              selection.assignment_id,
+             :resolver,
              selection.assignment_revision,
              selection.provider_revision,
              authorize?: false

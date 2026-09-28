@@ -1010,6 +1010,39 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "a persisted Reviewer assignment cannot be replayed after its role is removed", context do
+    configure_mode!(:auto, context.admin)
+    {incident, _run, proposal} = proposal!("reviewer-role-removed", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    assert {:error, _retryable} =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> {:error, :timeout, "review deadline exceeded"} end
+               }
+             )
+
+    assert_receive {:review, _, _}
+
+    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :resolver, 10, context.admin)
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               assignment_generation: 1,
+               delivery_attempt: 2,
+               max_delivery_attempts: 3
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.list_approvals!(actor: context.admin) == []
+    refute_receive {:review, _, _}
+    refute_receive {:effect, _, _}
+  end
+
   test "Reviewer delivery retries remain autonomous and terminal failure stops the Case",
        context do
     configure_mode!(:auto, context.admin)

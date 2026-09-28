@@ -282,15 +282,19 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     do: {:error, ai_error(:invalid_input, "Persisted Reviewer assignment is invalid")}
 
   defp current_selection(%AI.Selection{source: :assignment} = selection) do
-    case Providers.eligible_ai_usage_role_assignments(:reviewer, authorize?: false) do
-      {:ok, assignments} ->
-        if Enum.any?(assignments, fn item ->
-             item.id == selection.assignment_id and item.revision == selection.assignment_revision and
-               item.provider_id == selection.provider_id and
-               item.provider.revision == selection.provider_revision
-           end),
-           do: {:ok, selection},
-           else: {:error, ai_error(:unavailable, "Reviewer assignment changed")}
+    case Providers.load_current_ai_usage_role_assignment(
+           selection.assignment_id,
+           :reviewer,
+           selection.assignment_revision,
+           selection.provider_revision,
+           authorize?: false,
+           not_found_error?: false
+         ) do
+      {:ok, %{provider_id: provider_id}} when provider_id == selection.provider_id ->
+        {:ok, selection}
+
+      {:ok, _changed} ->
+        {:error, ai_error(:unavailable, "Reviewer assignment changed")}
 
       {:error, _error} ->
         {:error, ai_error(:unavailable, "Reviewer assignment is unavailable")}

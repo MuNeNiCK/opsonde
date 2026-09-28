@@ -34,10 +34,14 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc], load: [:provider])
     end
 
-    read :current_resolver do
+    read :current_assignment do
       get? true
 
       argument :id, :uuid, allow_nil?: false
+
+      argument :role, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:resolver, :reviewer]]
 
       argument :expected_assignment_revision, :integer,
         allow_nil?: false,
@@ -49,7 +53,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
 
       filter expr(
                id == ^arg(:id) and revision == ^arg(:expected_assignment_revision) and
-                 role == :resolver and enabled == true and provider.kind == :ai and
+                 role == ^arg(:role) and enabled == true and provider.kind == :ai and
                  is_nil(provider.retired_at) and
                  provider.enabled == true and provider.check_status == :passed and
                  provider.checked_revision == provider.revision and
@@ -120,7 +124,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       forbid_if always()
     end
 
-    policy action([:eligible, :current_resolver]) do
+    policy action([:eligible, :current_assignment]) do
       forbid_if always()
     end
 

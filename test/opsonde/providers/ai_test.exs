@@ -580,6 +580,62 @@ defmodule Opsonde.Providers.AITest do
     assert Exception.message(no_resolver) =~ "No eligible Resolver AI is assigned"
   end
 
+  test "persisted AI assignment is valid only for its role and current revisions", context do
+    %{resolver: resolver, reviewer: reviewer} =
+      Opsonde.TestAIUsage.configure!(context.provider.id, :all, 10, context.admin)
+
+    assert {:ok, %{id: resolver_id}} =
+             Providers.load_current_ai_usage_role_assignment(
+               resolver.id,
+               :resolver,
+               resolver.revision,
+               context.provider.revision,
+               authorize?: false
+             )
+
+    assert resolver_id == resolver.id
+
+    assert {:ok, %{id: reviewer_id}} =
+             Providers.load_current_ai_usage_role_assignment(
+               reviewer.id,
+               :reviewer,
+               reviewer.revision,
+               context.provider.revision,
+               authorize?: false
+             )
+
+    assert reviewer_id == reviewer.id
+
+    for {assignment, role, assignment_revision, provider_revision} <- [
+          {resolver, :reviewer, resolver.revision, context.provider.revision},
+          {reviewer, :resolver, reviewer.revision, context.provider.revision},
+          {reviewer, :reviewer, reviewer.revision + 1, context.provider.revision},
+          {reviewer, :reviewer, reviewer.revision, context.provider.revision + 1}
+        ] do
+      assert {:ok, nil} =
+               Providers.load_current_ai_usage_role_assignment(
+                 assignment.id,
+                 role,
+                 assignment_revision,
+                 provider_revision,
+                 authorize?: false,
+                 not_found_error?: false
+               )
+    end
+
+    Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
+
+    assert {:ok, nil} =
+             Providers.load_current_ai_usage_role_assignment(
+               reviewer.id,
+               :reviewer,
+               reviewer.revision,
+               context.provider.revision,
+               authorize?: false,
+               not_found_error?: false
+             )
+  end
+
   test "eligible order follows priority, creation order, and current provider state", context do
     first = assign!(context.admin, context.provider, :resolver, 10)
     second_provider = create_ai_provider!(context.admin, "second-resolver", "second-model")
