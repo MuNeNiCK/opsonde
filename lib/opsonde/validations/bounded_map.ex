@@ -3,19 +3,21 @@ defmodule Opsonde.Validations.BoundedMap do
 
   @impl true
   def init(opts) do
-    with {:ok, attribute} <- Keyword.fetch(opts, :attribute) do
-      {:ok,
-       opts
-       |> Keyword.put(:attribute, attribute)
-       |> Keyword.put_new(:max_fields, 100)
-       |> Keyword.put_new(:max_bytes, 65_536)}
+    if Keyword.has_key?(opts, :attribute) or Keyword.has_key?(opts, :argument) do
+      {:ok, opts |> Keyword.put_new(:max_fields, 100) |> Keyword.put_new(:max_bytes, 65_536)}
+    else
+      {:error, "expected :attribute or :argument"}
     end
   end
 
   @impl true
   def validate(changeset, opts, _context) do
-    attribute = opts[:attribute]
-    value = Ash.Changeset.get_attribute(changeset, attribute)
+    attribute = opts[:attribute] || opts[:argument]
+
+    value =
+      if opts[:argument],
+        do: Ash.Changeset.get_argument(changeset, attribute),
+        else: Ash.Changeset.get_attribute(changeset, attribute)
 
     cond do
       not is_map(value) ->

@@ -169,6 +169,38 @@ defmodule Opsonde.Cases.Case do
       change optimistic_lock(:revision)
     end
 
+    update :mark_budget_exhausted do
+      accept []
+      require_atomic? false
+
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :resolution_run_id, :uuid, allow_nil?: false
+      argument :expected_run_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :reason, :string, allow_nil?: false, constraints: [min_length: 1, max_length: 500]
+      argument :limit, :atom, allow_nil?: false
+      argument :kind, :atom, allow_nil?: false
+      argument :amount, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :ledger_key, :string, allow_nil?: false, constraints: [min_length: 1]
+      argument :pending_intent, :map, allow_nil?: false
+      argument :event_data, :map, allow_nil?: false
+
+      argument :required_human_input, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      validate {Opsonde.Validations.BoundedMap, argument: :pending_intent}
+
+      change set_attribute(:status, :needs_attention)
+      change set_attribute(:stop_reason, arg(:reason))
+      change set_attribute(:pending_intent, arg(:pending_intent))
+      change set_attribute(:required_human_input, arg(:required_human_input))
+      change optimistic_lock(:revision)
+      change Opsonde.Cases.Case.Changes.BudgetExhaustion
+    end
+
     action :open, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -449,6 +481,7 @@ defmodule Opsonde.Cases.Case do
              :unresolved_signals_without_target,
              :create_record,
              :update_record,
+             :mark_budget_exhausted,
              :require_attention,
              :reconcile_verified_effect,
              :recheck_signal_conditions,

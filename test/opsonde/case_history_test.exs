@@ -193,6 +193,54 @@ defmodule Opsonde.CaseHistoryTest do
     refute reloaded_case.status == :resolved
   end
 
+  test "budget exhaustion rejects stale state and rolls back when its event cannot persist",
+       context do
+    {incident, run} = open!("atomic-exhaustion", context.operator)
+    key = "budget-exhaustion-collision"
+    pending = %{"action" => "inspect"}
+
+    exhaust = fn case_revision ->
+      Cases.mark_case_budget_exhausted(
+        incident,
+        case_revision,
+        run.id,
+        run.revision,
+        "Target request limit exhausted",
+        :target_request,
+        :target_request,
+        1,
+        key,
+        pending,
+        "Inspect manually",
+        %{},
+        authorize?: false
+      )
+    end
+
+    assert {:error, _error} = exhaust.(999)
+
+    Cases.create_case_event_record!(
+      %{
+        case_id: incident.id,
+        resolution_run_id: run.id,
+        event_type: "reserved_key",
+        idempotency_key: key,
+        data: %{}
+      },
+      authorize?: false
+    )
+
+    assert {:error, _error} = exhaust.(incident.revision)
+
+    assert Cases.get_case!(incident.id, actor: context.viewer).status == :running
+    assert Cases.get_resolution_run!(run.id, actor: context.viewer).status == :running
+
+    assert Enum.count(
+             Cases.list_case_events!(actor: context.viewer),
+             &(&1.case_id == incident.id and &1.idempotency_key == key)
+           ) == 1
+  end
+
   test "each finite limit persists its exact handoff and never marks the Case resolved",
        context do
     scenarios = [

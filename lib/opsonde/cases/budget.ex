@@ -108,43 +108,29 @@ defmodule Opsonde.Cases.Budget do
   end
 
   defp exhaust(incident, run, limit, opts) do
-    reason = limit_reason(limit)
-
     with {:ok, updated_case} <-
-           Cases.update_case_record(
+           Cases.mark_case_budget_exhausted(
              incident,
              incident.revision,
-             %{
-               status: :needs_attention,
-               stop_reason: reason,
-               pending_intent: opts[:pending_intent],
-               required_human_input: opts[:required_human_input]
-             },
+             run.id,
+             run.revision,
+             limit_reason(limit),
+             limit,
+             opts[:kind],
+             opts[:amount],
+             opts[:ledger_key],
+             opts[:pending_intent],
+             opts[:required_human_input],
+             Keyword.get(opts, :event_data, %{}),
+             actor: opts[:actor],
              authorize?: false
            ),
-         {:ok, paused_run} <-
-           Cases.pause_resolution_run(run, run.revision, authorize?: false),
-         {:ok, _event} <-
-           create_event(
-             updated_case,
-             paused_run,
-             opts[:actor],
-             "limit_exhausted",
-             opts[:ledger_key],
-             Map.merge(Keyword.get(opts, :event_data, %{}), %{
-               "limit" => to_string(limit),
-               "reason" => reason,
-               "attempted_kind" => to_string(opts[:kind]),
-               "attempted_amount" => opts[:amount],
-               "pending_intent" => opts[:pending_intent],
-               "required_human_input" => opts[:required_human_input]
-             })
-           ) do
+         {:ok, paused_run} <- Cases.active_resolution_run(incident.id, authorize?: false) do
       %BudgetResult{
         status: :exhausted,
         case: updated_case,
         run: paused_run,
-        reason: reason
+        reason: updated_case.stop_reason
       }
     end
   end

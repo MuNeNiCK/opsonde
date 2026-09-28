@@ -45,6 +45,22 @@ defmodule Opsonde.Cases do
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]
 
+      define :mark_case_budget_exhausted,
+        action: :mark_budget_exhausted,
+        args: [
+          :expected_revision,
+          :resolution_run_id,
+          :expected_run_revision,
+          :reason,
+          :limit,
+          :kind,
+          :amount,
+          :ledger_key,
+          :pending_intent,
+          :required_human_input,
+          :event_data
+        ]
+
       define :open_case,
         action: :open,
         args: [
