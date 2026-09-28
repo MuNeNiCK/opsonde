@@ -179,6 +179,10 @@ defmodule Opsonde.Cases do
       define :route_downstream_decision,
         action: :route_downstream_decision,
         args: [:turn_id]
+
+      define :route_resolver_decision,
+        action: :route_resolver_decision,
+        args: [:turn_id]
     end
 
     resource Opsonde.Cases.ResolutionRun do

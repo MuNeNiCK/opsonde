@@ -458,6 +458,12 @@ defmodule Opsonde.Cases.Case do
       argument :turn_id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.DownstreamDecisionRoute
     end
+
+    action :route_resolver_decision, :map do
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      run Opsonde.Cases.Case.Actions.DecisionRoute
+    end
   end
 
   policies do
@@ -488,7 +494,8 @@ defmodule Opsonde.Cases.Case do
              :resume_after_target_registration,
              :route_target_discovery,
              :route_related_target,
-             :route_downstream_decision
+             :route_downstream_decision,
+             :route_resolver_decision
            ]) do
       forbid_if always()
     end
