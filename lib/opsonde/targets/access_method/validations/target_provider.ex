@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Validations.TargetProvider do
+defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
   use Ash.Resource.Validation
 
   alias Opsonde.Providers

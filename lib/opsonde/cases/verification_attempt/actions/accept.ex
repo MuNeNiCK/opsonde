@@ -4,7 +4,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
 
   alias Opsonde.{Accounts, Cases, Targets}
   alias Opsonde.Cases.{Budget, Operation, Proposal, VerificationAttempt}
-  alias Opsonde.Targets.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 
   @verifiable [:applied, :failed, :partial, :unknown]
 

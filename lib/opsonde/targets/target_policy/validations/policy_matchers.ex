@@ -1,7 +1,7 @@
-defmodule Opsonde.Targets.Validations.PolicyMatchers do
+defmodule Opsonde.Targets.TargetPolicy.Validations.PolicyMatchers do
   use Ash.Resource.Validation
 
-  alias Opsonde.Targets.PolicyMatcher
+  alias Opsonde.Targets.TargetPolicy.PolicyMatcher
 
   @impl true
   def init(opts), do: {:ok, opts}

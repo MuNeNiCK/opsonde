@@ -14,7 +14,7 @@ defmodule Opsonde.Cases.OperationDelivery do
   }
 
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 
   @terminal [:applied, :failed, :partial, :unknown]
 

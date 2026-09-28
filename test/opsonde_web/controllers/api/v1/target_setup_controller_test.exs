@@ -4,7 +4,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   import OpenApiSpex.TestAssertions
 
   alias Opsonde.{Accounts, Providers, Targets}
-  alias Opsonde.Targets.{PolicyError, PolicyRequest}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
 
   @password "correct horse battery staple"
   @provider_secret "target-provider-secret"

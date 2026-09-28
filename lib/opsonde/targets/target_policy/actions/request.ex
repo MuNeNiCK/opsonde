@@ -5,7 +5,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.BMC.SecretBindings
-  alias Opsonde.Targets.{PolicyError, PolicyMatcher, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyMatcher, PolicyRequest, RequestClearance}
 
   @authority_modes [:readonly, :ask, :auto, :full_access]
   @request_kinds [:observation, :effect, :verification]

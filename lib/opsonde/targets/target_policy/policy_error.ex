@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.PolicyError do
+defmodule Opsonde.Targets.TargetPolicy.PolicyError do
   @moduledoc false
 
   use Splode.Error, class: :forbidden, fields: [:category, :message, :policy_id]

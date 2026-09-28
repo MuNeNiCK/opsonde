@@ -4,7 +4,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
 
   alias Opsonde.{Accounts, Cases, Targets}
   alias Opsonde.Cases.{Budget, ConditionContext, Operation, Proposal}
-  alias Opsonde.Targets.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 
   @impl true
   def run(input, _opts, _context) do

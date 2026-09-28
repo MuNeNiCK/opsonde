@@ -89,7 +89,7 @@ defmodule Opsonde.Targets.AccessMethod do
         :capabilities
       ]
 
-      validate Opsonde.Targets.Validations.TargetProvider
+      validate Opsonde.Targets.AccessMethod.Validations.TargetProvider
     end
 
     update :update do
@@ -111,7 +111,7 @@ defmodule Opsonde.Targets.AccessMethod do
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
-      validate Opsonde.Targets.Validations.TargetProvider
+      validate Opsonde.Targets.AccessMethod.Validations.TargetProvider
       change optimistic_lock(:revision)
     end
 

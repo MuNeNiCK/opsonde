@@ -17,7 +17,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     Turn
   }
 
-  alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
 
   @impl true
   def run(input, _opts, _context) do

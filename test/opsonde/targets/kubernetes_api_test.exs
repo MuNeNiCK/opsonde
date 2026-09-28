@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Kubernetes.API
-  alias Opsonde.Targets.PolicyRequest
+  alias Opsonde.Targets.TargetPolicy.PolicyRequest
 
   @password "correct horse battery staple"
   @namespace "bounded-namespace"

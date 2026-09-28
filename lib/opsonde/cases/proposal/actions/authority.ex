@@ -19,7 +19,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     Turn
   }
 
-  alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
 
   @impl true
   def run(input, opts, context) do

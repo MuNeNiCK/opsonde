@@ -42,7 +42,7 @@ defmodule Opsonde.Targets.TargetPolicy do
         :reason
       ]
 
-      validate Opsonde.Targets.Validations.PolicyMatchers
+      validate Opsonde.Targets.TargetPolicy.Validations.PolicyMatchers
       validate {Opsonde.Validations.BoundedMap, attribute: :selector_match}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameter_match}
     end
@@ -64,7 +64,7 @@ defmodule Opsonde.Targets.TargetPolicy do
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
-      validate Opsonde.Targets.Validations.PolicyMatchers
+      validate Opsonde.Targets.TargetPolicy.Validations.PolicyMatchers
       validate {Opsonde.Validations.BoundedMap, attribute: :selector_match}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameter_match}
       change optimistic_lock(:revision)
@@ -79,12 +79,12 @@ defmodule Opsonde.Targets.TargetPolicy do
     end
 
     action :clear_request, :struct do
-      constraints instance_of: Opsonde.Targets.RequestClearance
+      constraints instance_of: Opsonde.Targets.TargetPolicy.RequestClearance
       transaction? false
 
       argument :request, :struct,
         allow_nil?: false,
-        constraints: [instance_of: Opsonde.Targets.PolicyRequest]
+        constraints: [instance_of: Opsonde.Targets.TargetPolicy.PolicyRequest]
 
       run {Opsonde.Targets.TargetPolicy.Actions.Request, operation: :clear}
     end
@@ -95,7 +95,7 @@ defmodule Opsonde.Targets.TargetPolicy do
 
       argument :clearance, :struct,
         allow_nil?: false,
-        constraints: [instance_of: Opsonde.Targets.RequestClearance]
+        constraints: [instance_of: Opsonde.Targets.TargetPolicy.RequestClearance]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
       run {Opsonde.Targets.TargetPolicy.Actions.Request, operation: :observe}
@@ -108,7 +108,7 @@ defmodule Opsonde.Targets.TargetPolicy do
 
       argument :clearance, :struct,
         allow_nil?: false,
-        constraints: [instance_of: Opsonde.Targets.RequestClearance]
+        constraints: [instance_of: Opsonde.Targets.TargetPolicy.RequestClearance]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
       run {Opsonde.Targets.TargetPolicy.Actions.Request, operation: :effect}
@@ -120,7 +120,7 @@ defmodule Opsonde.Targets.TargetPolicy do
 
       argument :clearance, :struct,
         allow_nil?: false,
-        constraints: [instance_of: Opsonde.Targets.RequestClearance]
+        constraints: [instance_of: Opsonde.Targets.TargetPolicy.RequestClearance]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
       run {Opsonde.Targets.TargetPolicy.Actions.Request, operation: :verify}

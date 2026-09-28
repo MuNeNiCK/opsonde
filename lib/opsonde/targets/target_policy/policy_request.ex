@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.PolicyRequest do
+defmodule Opsonde.Targets.TargetPolicy.PolicyRequest do
   @moduledoc false
 
   @enforce_keys [

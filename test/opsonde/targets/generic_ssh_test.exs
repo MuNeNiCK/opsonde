@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.NativeShell
-  alias Opsonde.Targets.{PolicyError, PolicyRequest}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
   alias Opsonde.Transports.SSH, as: Transport
 
   @password "correct horse battery staple"

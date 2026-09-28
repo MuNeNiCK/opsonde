@@ -2,7 +2,7 @@ defmodule Opsonde.BMCOperationTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
-  alias Opsonde.Targets.{PolicyRequest, PolicyError}
+  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, PolicyError}
   alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.BMC.SecretBindings
   alias Opsonde.Targets.ResourceScope

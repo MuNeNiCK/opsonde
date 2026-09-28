@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.RequestClearance do
+defmodule Opsonde.Targets.TargetPolicy.RequestClearance do
   @moduledoc false
 
   @enforce_keys [

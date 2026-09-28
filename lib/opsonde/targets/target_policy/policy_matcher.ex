@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.PolicyMatcher do
+defmodule Opsonde.Targets.TargetPolicy.PolicyMatcher do
   @moduledoc false
 
   @operators ~w(eq prefix contains in)

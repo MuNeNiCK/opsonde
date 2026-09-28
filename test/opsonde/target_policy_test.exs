@@ -3,7 +3,7 @@ defmodule Opsonde.TargetPolicyTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
 
   @password "correct horse battery staple"
   @modes [:readonly, :ask, :auto, :full_access]

@@ -4,7 +4,7 @@ defmodule Opsonde.Cases.VerificationDelivery do
   alias Opsonde.{Accounts, Cases, Targets}
   alias Opsonde.Cases.{VerificationAttempt, VerificationClaim}
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 
   @terminal [:verified, :not_verified, :unknown]
 

@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Targets.BMC.OperationKey
-  alias Opsonde.Targets.PolicyRequest
+  alias Opsonde.Targets.TargetPolicy.PolicyRequest
 
   @system_path "/redfish/v1/Systems/1"
   @uuid "b70d412b-9707-4784-ae6d-14ce38586e00"
