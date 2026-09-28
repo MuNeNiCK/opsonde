@@ -538,13 +538,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     base
     |> add_items(
       :evidence,
-      generic_evidence(
-        source_evidence,
-        base.disclosure.allowed_target_ids,
-        incident,
-        run,
-        recovery_baseline
-      )
+      generic_evidence(source_evidence, base.disclosure.allowed_target_ids)
     )
     |> add_mapped_condition_candidates(conditions)
     |> add_candidate_group(other_evidence)
@@ -555,13 +549,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       add_items(
         current,
         :evidence,
-        generic_evidence(
-          other_evidence,
-          current.disclosure.allowed_target_ids,
-          incident,
-          run,
-          recovery_baseline
-        )
+        generic_evidence(other_evidence, current.disclosure.allowed_target_ids)
       )
     end)
     |> then(fn current ->
@@ -572,10 +560,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         :historical_evidence,
         generic_evidence(
           Enum.reject(historical_evidence, &MapSet.member?(current_ids, &1.id)),
-          current.disclosure.allowed_target_ids,
-          incident,
-          run,
-          recovery_baseline
+          current.disclosure.allowed_target_ids
         )
       )
     end)
@@ -809,7 +794,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
   defp candidates(_evidence), do: []
 
-  defp generic_evidence(evidence, allowed_target_ids, incident, run, recovery_baseline) do
+  defp generic_evidence(evidence, allowed_target_ids) do
     evidence
     |> Enum.reject(&candidate_evidence?/1)
     |> compact_repeated_operations()
@@ -819,13 +804,10 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         kind: item.kind,
         target_id: evidence_target_id(item, allowed_target_ids),
         observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
-        content: recovery_evidence_content(item, incident, run, recovery_baseline)
+        content: projected_evidence_content(item)
       }
     end)
   end
-
-  defp recovery_evidence_content(evidence, _incident, _run, _baseline),
-    do: projected_evidence_content(evidence)
 
   defp manual_recovery_candidate?(evidence, incident, run, target, baseline) do
     DateTime.compare(evidence.observed_at, baseline) != :lt and
