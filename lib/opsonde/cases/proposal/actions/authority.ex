@@ -13,12 +13,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     CaseEvent,
     ConditionContext,
     Proposal,
-    ProposalExpirationWorker,
     ResolutionRun,
     ReviewDecision,
     Turn
   }
 
+  alias Opsonde.Cases.Proposal.ProposalExpirationWorker
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
 
   @impl true
@@ -882,7 +882,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp enqueue_review(proposal_id) do
     %{"proposal_id" => proposal_id}
-    |> Opsonde.Cases.ReviewWorker.new()
+    |> Opsonde.Cases.Proposal.ReviewWorker.new()
     |> Oban.insert()
   end
 end

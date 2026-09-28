@@ -5,7 +5,10 @@ defmodule Opsonde.ProposalAuthorityTest do
 
   alias Opsonde.Cases.{
     OperationAcceptanceWorker,
-    OperationWorker,
+    OperationWorker
+  }
+
+  alias Opsonde.Cases.Proposal.{
     ProposalExpirationWorker,
     ReviewDelivery,
     ReviewProjection,

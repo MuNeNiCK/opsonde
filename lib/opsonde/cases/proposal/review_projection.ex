@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ReviewProjection do
+defmodule Opsonde.Cases.Proposal.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}

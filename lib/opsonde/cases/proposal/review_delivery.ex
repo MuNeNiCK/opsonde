@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ReviewDelivery do
+defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   @moduledoc false
 
   require Ash.Query
@@ -14,11 +14,11 @@ defmodule Opsonde.Cases.ReviewDelivery do
     ConditionContext,
     Proposal,
     ResolutionRun,
-    ReviewDecision,
-    ReviewProjection
+    ReviewDecision
   }
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
+  alias Opsonde.Cases.Proposal.ReviewProjection
   alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.AI

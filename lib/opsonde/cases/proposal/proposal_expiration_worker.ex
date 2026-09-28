@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ProposalExpirationWorker do
+defmodule Opsonde.Cases.Proposal.ProposalExpirationWorker do
   @moduledoc false
 
   use Oban.Worker,

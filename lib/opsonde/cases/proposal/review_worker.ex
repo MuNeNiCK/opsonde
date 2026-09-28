@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ReviewWorker do
+defmodule Opsonde.Cases.Proposal.ReviewWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -14,7 +14,7 @@ defmodule Opsonde.Cases.ReviewWorker do
       })
       when is_binary(proposal_id),
       do:
-        Opsonde.Cases.ReviewDelivery.run(proposal_id,
+        Opsonde.Cases.Proposal.ReviewDelivery.run(proposal_id,
           delivery_attempt: attempt,
           max_delivery_attempts: max_attempts
         )
