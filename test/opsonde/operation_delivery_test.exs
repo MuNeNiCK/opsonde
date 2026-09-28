@@ -20,7 +20,7 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.Targets.ResourceScope
 
   alias Opsonde.Providers.{AI, Signal, Target}
-  alias Opsonde.Reports.GenerationWorker
+  alias Opsonde.Reports.Report.GenerationWorker
 
   @password "correct horse battery staple"
 
@@ -2060,6 +2060,15 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
     assert Cases.get_operation!(operation.id, authorize?: false).request_kind == :observation
     assert Enum.count(Cases.list_operations!(actor: context.admin)) == 1
+
+    assert [job] = report_jobs(resolved.id)
+    assert job.args["case_revision"] == resolved.revision
+    assert :ok = GenerationWorker.perform(job)
+    assert :ok = GenerationWorker.perform(job)
+
+    report = Reports.report_by_case_revision!(resolved.id, resolved.revision, authorize?: false)
+    assert report.case_id == resolved.id
+    assert Enum.count(Reports.list_reports!(actor: context.admin)) == 1
   end
 
   test "related Target effect needs both direct observations and a current relationship at dispatch",

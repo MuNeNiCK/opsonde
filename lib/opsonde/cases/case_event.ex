@@ -85,6 +85,14 @@ defmodule Opsonde.Cases.CaseEvent do
 
       validate {Opsonde.Validations.BoundedMap, attribute: :data}
     end
+
+    action :record_report_generation_failure, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :case_id, :uuid, allow_nil?: false
+      argument :case_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      run Opsonde.Cases.CaseEvent.Actions.RecordReportGenerationFailure
+    end
   end
 
   policies do
@@ -93,7 +101,8 @@ defmodule Opsonde.Cases.CaseEvent do
              :target_history,
              :recovery_review_history,
              :observation_progress_history,
-             :create_record
+             :create_record,
+             :record_report_generation_failure
            ]) do
       forbid_if always()
     end

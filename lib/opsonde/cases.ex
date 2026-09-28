@@ -268,6 +268,10 @@ defmodule Opsonde.Cases do
         args: [:case_id, :resolution_run_id]
 
       define :create_case_event_record, action: :create_record
+
+      define :record_report_generation_failure,
+        action: :record_report_generation_failure,
+        args: [:case_id, :case_revision]
     end
 
     resource Opsonde.Cases.Turn do

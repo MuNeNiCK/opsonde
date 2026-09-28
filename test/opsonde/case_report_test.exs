@@ -7,7 +7,7 @@ defmodule Opsonde.CaseReportTest do
   alias Opsonde.Reports.Report.Content
   alias Opsonde.Reports.Report.Document
   alias Opsonde.Reports.Report
-  alias Opsonde.Reports.GenerationWorker
+  alias Opsonde.Reports.Report.GenerationWorker
 
   @password "correct horse battery staple"
 
@@ -181,12 +181,20 @@ defmodule Opsonde.CaseReportTest do
   test "a final automatic Report failure is persisted without claiming completion", context do
     incident = open!("failed-report", context.operator)
 
+    job = %Oban.Job{
+      args: %{"case_id" => incident.id, "case_revision" => incident.revision},
+      attempt: 3,
+      max_attempts: 3
+    }
+
     assert {:error, _error} =
-             GenerationWorker.perform(%Oban.Job{
-               args: %{"case_id" => incident.id, "case_revision" => incident.revision},
-               attempt: 3,
-               max_attempts: 3
-             })
+             GenerationWorker.perform(job)
+
+    assert {:error, _error} = GenerationWorker.perform(job)
+
+    setting = Reports.current_setting!(actor: context.admin)
+    Reports.configure_setting!(setting, setting.revision, false, actor: context.admin)
+    assert :ok = GenerationWorker.perform(%{job | meta: %{"snoozed" => 1}})
 
     assert Reports.list_reports!(actor: context.admin) == []
 
@@ -197,6 +205,7 @@ defmodule Opsonde.CaseReportTest do
              )
 
     assert event.resolution_run_id == nil
+    assert event.data["case_revision"] == incident.revision
   end
 
   test "disabling automatic reports suppresses queued work while manual generation remains available",

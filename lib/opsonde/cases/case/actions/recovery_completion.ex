@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.ConditionRecovery
-  alias Opsonde.Reports.GenerationWorker
+  alias Opsonde.Reports.Report.GenerationWorker
 
   # Internal step shared by Case actions. The caller owns the transaction and
   # proves that its recovery evidence is current before entering this step.
