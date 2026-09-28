@@ -65,6 +65,17 @@ defmodule Opsonde.Cases do
         action: :queue_resolver_turn,
         args: [:expected_revision, :source_turn_id, :next_turn_id]
 
+      define :handoff_case_operation,
+        action: :handoff_operation,
+        args: [
+          :expected_revision,
+          :operation_id,
+          :kind,
+          :next_turn_id,
+          :source_turn_id,
+          :evidence_id
+        ]
+
       define :open_case,
         action: :open,
         args: [

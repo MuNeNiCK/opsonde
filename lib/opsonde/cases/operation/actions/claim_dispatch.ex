@@ -250,18 +250,14 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
 
   defp pending_after_context_change(%{status: status, case: incident, value: turn}, operation_id)
        when status in [:charged, :duplicate] do
-    Cases.update_case_record(
+    Cases.handoff_case_operation(
       incident,
       incident.revision,
-      %{
-        pending_intent: %{
-          "action" => "resolve_turn",
-          "turn_id" => turn.id,
-          "source_operation_id" => operation_id
-        },
-        stop_reason: nil,
-        required_human_input: nil
-      },
+      operation_id,
+      :stale_dispatch,
+      turn.id,
+      nil,
+      nil,
       authorize?: false
     )
   end

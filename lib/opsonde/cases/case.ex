@@ -214,6 +214,26 @@ defmodule Opsonde.Cases.Case do
       change optimistic_lock(:revision)
     end
 
+    update :handoff_operation do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :operation_id, :uuid, allow_nil?: false
+
+      argument :kind, :atom,
+        allow_nil?: false,
+        constraints: [one_of: [:verification, :observation, :stale_dispatch]]
+
+      argument :next_turn_id, :uuid
+      argument :source_turn_id, :uuid
+      argument :evidence_id, :uuid
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      change Opsonde.Cases.Case.Changes.OperationHandoff
+      change optimistic_lock(:revision)
+    end
+
     action :open, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -502,6 +522,7 @@ defmodule Opsonde.Cases.Case do
              :update_record,
              :mark_budget_exhausted,
              :queue_resolver_turn,
+             :handoff_operation,
              :require_attention,
              :reconcile_verified_effect,
              :recheck_signal_conditions,

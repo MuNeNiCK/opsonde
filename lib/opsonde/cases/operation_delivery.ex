@@ -2,7 +2,17 @@ defmodule Opsonde.Cases.OperationDelivery do
   @moduledoc false
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{BudgetResult, Operation, OperationClaim}
+
+  alias Opsonde.Cases.{
+    BudgetResult,
+    Case,
+    CaseEvent,
+    Operation,
+    OperationClaim,
+    ResolutionRun,
+    Turn
+  }
+
   alias Opsonde.Providers.Target, as: ProviderTarget
   alias Opsonde.Targets.{PolicyRequest, RequestClearance}
 
@@ -220,26 +230,31 @@ defmodule Opsonde.Cases.OperationDelivery do
   end
 
   defp continue_handoff(%{request_kind: :effect} = operation, _proposal, _evidence, incident) do
-    case available_pending(incident.pending_intent, operation) do
-      :ok ->
-        with {:ok, _case} <-
-               Cases.update_case_record(
-                 incident,
-                 incident.revision,
-                 %{
-                   pending_intent: %{
-                     "action" => "verify_operation",
-                     "operation_id" => operation.id,
-                     "proposal_id" => operation.proposal_id
-                   },
-                   stop_reason: nil,
-                   required_human_input: nil
-                 },
-                 authorize?: false
-               ),
-             :ok <- accept_verification(operation) do
-          :ok
-        end
+    pending = %{
+      "action" => "verify_operation",
+      "operation_id" => operation.id,
+      "proposal_id" => operation.proposal_id
+    }
+
+    result =
+      if incident.pending_intent == pending do
+        {:ok, incident}
+      else
+        Cases.handoff_case_operation(
+          incident,
+          incident.revision,
+          operation.id,
+          :verification,
+          nil,
+          nil,
+          nil,
+          authorize?: false
+        )
+      end
+
+    case result do
+      {:ok, _case} ->
+        accept_verification(operation)
 
       {:error, _error} = conflict ->
         case Cases.verification_attempt_by_operation(operation.id,
@@ -258,19 +273,25 @@ defmodule Opsonde.Cases.OperationDelivery do
          evidence,
          incident
        ) do
-    with :ok <- available_pending(incident.pending_intent, operation),
-         {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
-         {:ok, result} <-
-           Cases.start_turn(
-             operation.case_id,
-             operation.resolution_run_id,
-             "operation:observation:next-turn:#{operation.id}",
-             observation_turn_intent(source_turn, evidence),
-             %{"action" => "continue_resolution", "operation_id" => operation.id},
-             "Review Resolver limits or continue the Case manually",
-             authorize?: false
-           ) do
-      set_observation_pending(operation, proposal, evidence, incident, result)
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with :ok <- available_pending(incident.pending_intent, operation),
+           {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
+           {:ok, result} <-
+             Cases.start_turn(
+               operation.case_id,
+               operation.resolution_run_id,
+               "operation:observation:next-turn:#{operation.id}",
+               observation_turn_intent(source_turn, evidence),
+               %{"action" => "continue_resolution", "operation_id" => operation.id},
+               "Review Resolver limits or continue the Case manually",
+               authorize?: false
+             ) do
+        set_observation_pending(operation, proposal, evidence, incident, result)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, _error} = error -> error
     end
   end
 
@@ -312,10 +333,14 @@ defmodule Opsonde.Cases.OperationDelivery do
         :ok
 
       {:ok, current} ->
-        Cases.update_case_record(
+        Cases.handoff_case_operation(
           current,
           current.revision,
-          %{pending_intent: pending, stop_reason: nil, required_human_input: nil},
+          operation.id,
+          :observation,
+          turn.id,
+          proposal.source_turn_id,
+          evidence.id,
           authorize?: false
         )
         |> case do

@@ -1032,6 +1032,16 @@ defmodule Opsonde.OperationDeliveryTest do
       assert assessment.intent["verification_attempt_id"] == attempt.id
       assert assessment.intent["verification_status"] == to_string(status)
       assert verification_evidence(attempt.id) == 1
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(fn -> flunk("terminal effect repeated") end)
+               )
+
+      assert Cases.get_case!(incident.id, authorize?: false).pending_intent == pending
+
+      assert Cases.verification_attempt_by_operation!(operation.id, authorize?: false).id ==
+               attempt.id
     end
   end
 
