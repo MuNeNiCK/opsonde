@@ -255,10 +255,6 @@ defmodule Opsonde.Cases do
         action: :by_idempotency,
         args: [:case_id, :idempotency_key]
 
-      define :case_target_history,
-        action: :target_history,
-        args: [:case_id, :resolution_run_id]
-
       define :recovery_review_history,
         action: :recovery_review_history,
         args: [:case_id]
