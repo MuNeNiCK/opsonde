@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun, Turn}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Evidence.Citation, as: EvidenceCitation
-  alias Opsonde.Cases.TraversalBoundary
+  alias Opsonde.Cases.Turn.TraversalBoundary, as: TraversalBoundary
 
   defmodule Error do
     use Splode.Error, class: :invalid, fields: [:category, :message]

@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.RecoveryReviewWorker do
+defmodule Opsonde.Cases.Turn.RecoveryReviewWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -10,7 +10,7 @@ defmodule Opsonde.Cases.RecoveryReviewWorker do
   def perform(%Oban.Job{args: %{"turn_id" => turn_id}, attempt: attempt, max_attempts: maximum})
       when is_binary(turn_id),
       do:
-        Opsonde.Cases.RecoveryReviewDelivery.run(turn_id,
+        Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn_id,
           delivery_attempt: attempt,
           max_delivery_attempts: maximum
         )

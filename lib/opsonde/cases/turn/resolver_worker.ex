@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ResolverWorker do
+defmodule Opsonde.Cases.Turn.ResolverWorker do
   @moduledoc false
 
   use Oban.Worker,
@@ -6,7 +6,7 @@ defmodule Opsonde.Cases.ResolverWorker do
     max_attempts: 3,
     unique: [period: :infinity, fields: [:worker, :queue, :args], states: :all]
 
-  alias Opsonde.Cases.ResolverDelivery
+  alias Opsonde.Cases.Turn.ResolverDelivery, as: ResolverDelivery
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"turn_id" => turn_id}}) when is_binary(turn_id) do

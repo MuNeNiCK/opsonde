@@ -4,7 +4,8 @@ defmodule Opsonde.ResolverDeliveryTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{ResolverDelivery, ResolverWorker}
+  alias Opsonde.Cases.Turn.ResolverDelivery, as: ResolverDelivery
+  alias Opsonde.Cases.Turn.ResolverWorker, as: ResolverWorker
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.DecisionRouteWorker
   alias Opsonde.Providers.{AI, Target}

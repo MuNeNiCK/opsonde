@@ -126,7 +126,7 @@ defmodule Opsonde.CaseHistoryTest do
     assert Cases.list_turns!(actor: context.viewer) == []
 
     assert Repo.all(Oban.Job)
-           |> Enum.filter(&(&1.worker == "Opsonde.Cases.ResolverWorker")) == []
+           |> Enum.filter(&(&1.worker == "Opsonde.Cases.Turn.ResolverWorker")) == []
 
     reloaded_run = Cases.get_resolution_run!(run.id, actor: context.viewer)
     assert reloaded_run.turn_count == 0

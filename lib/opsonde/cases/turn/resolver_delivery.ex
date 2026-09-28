@@ -1,11 +1,12 @@
-defmodule Opsonde.Cases.ResolverDelivery do
+defmodule Opsonde.Cases.Turn.ResolverDelivery do
   @moduledoc false
 
   require Ash.Query
 
   alias Opsonde.{Cases, Providers}
 
-  alias Opsonde.Cases.{AIInvocation, Case, CaseEvent, ResolutionRun, ResolverProjection, Turn}
+  alias Opsonde.Cases.{AIInvocation, Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock

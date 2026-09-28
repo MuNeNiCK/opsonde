@@ -5,16 +5,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{
-    Approval,
-    Case,
-    CaseEvent,
-    Evidence,
-    Proposal,
-    RecoveryReviewFingerprint,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{Approval, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.Turn.RecoveryReviewFingerprint, as: RecoveryReviewFingerprint
 
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
@@ -155,7 +147,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            ),
          {:ok, _job} <-
            %{"turn_id" => turn.id}
-           |> Opsonde.Cases.RecoveryReviewWorker.new()
+           |> Opsonde.Cases.Turn.RecoveryReviewWorker.new()
            |> Oban.insert() do
       updated
     end

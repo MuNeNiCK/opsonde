@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.RecoveryReviewProjection do
+defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
   @moduledoc false
 
   alias Opsonde.Cases

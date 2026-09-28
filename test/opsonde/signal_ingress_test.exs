@@ -9,7 +9,8 @@ defmodule Opsonde.SignalIngressTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
-  alias Opsonde.Cases.{ResolverDelivery, ResolverProjection}
+  alias Opsonde.Cases.Turn.ResolverDelivery, as: ResolverDelivery
+  alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.Case.DecisionRouteWorker
@@ -734,7 +735,7 @@ defmodule Opsonde.SignalIngressTest do
       source: :assignment
     }
 
-    assert {:ok, request} = Opsonde.Cases.ResolverProjection.build(turn.id, selection)
+    assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(turn.id, selection)
     assert length(request.conditions) == 22
     assert request.conditions |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 22
     assert Enum.count(request.evidence, &(&1.kind == "signal_event")) == 22

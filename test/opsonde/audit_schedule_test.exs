@@ -358,7 +358,7 @@ defmodule Opsonde.AuditScheduleTest do
     Repo.exists?(
       from job in Oban.Job,
         where:
-          job.worker == "Opsonde.Cases.ResolverWorker" and
+          job.worker == "Opsonde.Cases.Turn.ResolverWorker" and
             fragment("?->>'turn_id'", job.args) == ^turn_id
     )
   end

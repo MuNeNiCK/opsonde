@@ -2,7 +2,7 @@ defmodule Opsonde.ResolverProjectionTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
-  alias Opsonde.Cases.ResolverProjection
+  alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
   alias Opsonde.Providers.{AI, Signal, Target}
 
   @password "correct horse battery staple"

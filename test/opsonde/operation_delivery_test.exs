@@ -3,7 +3,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
 
-  alias Opsonde.Cases.{ResolverDelivery, ResolverProjection}
+  alias Opsonde.Cases.Turn.ResolverDelivery, as: ResolverDelivery
+  alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
   alias Opsonde.Cases.Operation.AcceptanceWorker, as: OperationAcceptanceWorker
   alias Opsonde.Cases.Operation.Delivery, as: OperationDelivery
   alias Opsonde.Cases.Operation.Worker, as: OperationWorker
@@ -1989,7 +1990,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert requested.pending_intent["action"] == "review_recovery"
 
     assert {:error, _reason} =
-             Opsonde.Cases.RecoveryReviewDelivery.run(completed.id,
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(completed.id,
                delivery_attempt: 1,
                max_delivery_attempts: 3,
                ai_invocation: %{
@@ -2782,7 +2783,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert claim.state == :claimed
 
     assert :ok =
-             Opsonde.Cases.RecoveryReviewDelivery.run(turn.id,
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn _ -> flunk("interrupted review was sent again") end
@@ -3115,7 +3116,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert requested.pending_intent["action"] == "review_recovery"
 
     assert :ok =
-             Opsonde.Cases.RecoveryReviewDelivery.run(completed.id,
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(completed.id,
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
@@ -3145,7 +3146,7 @@ defmodule Opsonde.OperationDeliveryTest do
              &(&1.case_id == incident.id and &1.event_type == "case_resolved")
            )
 
-    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(completed.id)
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(completed.id)
 
     assert Cases.get_case!(incident.id, authorize?: false).pending_intent ==
              current.pending_intent
@@ -3380,7 +3381,7 @@ defmodule Opsonde.OperationDeliveryTest do
       actor: context.admin
     )
 
-    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(turn.id)
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
     stopped = Cases.get_case!(incident.id, authorize?: false)
     assert stopped.status == :needs_attention
     assert stopped.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id}
@@ -3461,7 +3462,7 @@ defmodule Opsonde.OperationDeliveryTest do
       DateTime.add(DateTime.utc_now(), 1, :second)
     )
 
-    assert :ok = Opsonde.Cases.RecoveryReviewDelivery.run(turn.id)
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
     current = Cases.get_case!(incident.id, authorize?: false)
     assert current.status == :needs_attention
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
@@ -4236,7 +4237,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
   defp approve_recovery!(turn, context, delivery_opts \\ []) do
     assert :ok =
-             Opsonde.Cases.RecoveryReviewDelivery.run(
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(
                turn.id,
                delivery_opts ++
                  [

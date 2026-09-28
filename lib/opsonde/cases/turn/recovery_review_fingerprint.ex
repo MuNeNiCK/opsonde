@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.RecoveryReviewFingerprint do
+defmodule Opsonde.Cases.Turn.RecoveryReviewFingerprint do
   @moduledoc false
 
   alias Opsonde.Cases

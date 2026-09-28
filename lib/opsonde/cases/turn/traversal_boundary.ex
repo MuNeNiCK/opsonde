@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.TraversalBoundary do
+defmodule Opsonde.Cases.Turn.TraversalBoundary do
   @moduledoc false
 
   def immediate_reverse?(relationship_id, %{

@@ -53,7 +53,7 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
 
   defp enqueue(turn_id) do
     %{"turn_id" => turn_id}
-    |> Opsonde.Cases.ResolverWorker.new()
+    |> Opsonde.Cases.Turn.ResolverWorker.new()
     |> Oban.insert()
   end
 end

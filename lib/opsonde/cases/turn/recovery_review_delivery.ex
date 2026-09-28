@@ -1,16 +1,10 @@
-defmodule Opsonde.Cases.RecoveryReviewDelivery do
+defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
   @moduledoc false
 
   alias Opsonde.{Cases, Providers}
 
-  alias Opsonde.Cases.{
-    AIInvocation,
-    Case,
-    CaseEvent,
-    RecoveryReviewFingerprint,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{AIInvocation, Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.Turn.RecoveryReviewFingerprint, as: RecoveryReviewFingerprint
 
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
@@ -37,7 +31,7 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
          {:ok, selection} <- current_selection(selection),
          {:ok, retry_context} <- retry_context(turn),
          {:ok, request} <-
-           Opsonde.Cases.RecoveryReviewProjection.build(
+           Opsonde.Cases.Turn.RecoveryReviewProjection.build(
              turn.id,
              selection,
              retry_context
