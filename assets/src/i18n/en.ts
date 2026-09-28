@@ -367,6 +367,13 @@ const en = {
       summaryInProgress: "In progress",
       summaryWaiting: "Waiting for operator",
       summaryStopped: "Automation stopped",
+      stopReasonLabel: "Why it stopped",
+      nextActionLabel: "What to do",
+      stopReasonSignalDisabled: "Signal automation is disabled.",
+      nextActionSignalDisabled:
+        "Enable Signal automation, or claim the Case and handle it manually.",
+      stopReasonReviewerUnavailable: "No Reviewer AI connection is available.",
+      nextActionReviewerUnavailable: "Check the Reviewer AI connection, then resume the Case.",
       summaryTerminal: "Terminal",
       readOnly: "Your account can inspect this Case. An operator or administrator must act on it.",
       signalConnections: "Signal connections",

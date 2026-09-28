@@ -279,6 +279,18 @@ export function CaseDetailPage() {
     (report) => report.case_revision === incident.revision,
   );
   const complete = incident.status === "resolved" && exactReport !== undefined;
+  const stopReasonText =
+    incident.stop_reason === "Signal automation is disabled"
+      ? t("cases.stopReasonSignalDisabled")
+      : incident.stop_reason === "Reviewer delivery failed: Reviewer AI is unavailable"
+        ? t("cases.stopReasonReviewerUnavailable")
+        : incident.stop_reason;
+  const nextActionText =
+    incident.required_human_input === "Enable automation or claim the Case"
+      ? t("cases.nextActionSignalDisabled")
+      : incident.required_human_input === "Restore Reviewer AI availability and resume the Case"
+        ? t("cases.nextActionReviewerUnavailable")
+        : incident.required_human_input;
   const targetName = (id: string | null) =>
     id ? (detail.targets.find((target) => target.id === id)?.name ?? id) : t("cases.unresolved");
   const providerName = (id: string) => detail.providers.find((item) => item.id === id)?.name ?? id;
@@ -421,6 +433,24 @@ export function CaseDetailPage() {
       {!canOperate && (
         <Alert>
           <AlertDescription>{t("cases.readOnly")}</AlertDescription>
+        </Alert>
+      )}
+      {incident.status === "needs_attention" && (stopReasonText || nextActionText) && (
+        <Alert variant="destructive">
+          <AlertDescription className="space-y-2">
+            {stopReasonText && (
+              <p>
+                <strong>{t("cases.stopReasonLabel")}: </strong>
+                {stopReasonText}
+              </p>
+            )}
+            {nextActionText && (
+              <p>
+                <strong>{t("cases.nextActionLabel")}: </strong>
+                {nextActionText}
+              </p>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

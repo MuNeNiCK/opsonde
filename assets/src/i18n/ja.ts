@@ -359,6 +359,13 @@ const ja = {
       summaryInProgress: "対応中",
       summaryWaiting: "運用者待ち",
       summaryStopped: "自動解決停止",
+      stopReasonLabel: "停止理由",
+      nextActionLabel: "必要な対応",
+      stopReasonSignalDisabled: "Signalの自動対応が無効です。",
+      nextActionSignalDisabled:
+        "Signalの自動対応を有効にするか、Caseを担当して手動で対応してください。",
+      stopReasonReviewerUnavailable: "Reviewer用のAI接続を利用できません。",
+      nextActionReviewerUnavailable: "Reviewer用のAI接続を確認してから、Caseを再開してください。",
       summaryTerminal: "終了済み",
       readOnly: "このアカウントではケースを参照できます。操作には運用者または管理者が必要です。",
       signalConnections: "Signal接続",
