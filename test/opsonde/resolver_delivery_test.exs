@@ -280,6 +280,30 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert successor.intent["rejection_code"] == "schema_validation"
     assert successor.intent["rejection_path"] == "/intent/type"
 
+    before_retry = Cases.get_case!(successor.case_id, authorize?: false)
+    turn_count = length(Cases.list_turns!(authorize?: false))
+
+    assert {:error, _reason} =
+             Cases.route_resolver_failure(
+               turn.id,
+               "timeout",
+               "schema_validation",
+               "/intent/type",
+               authorize?: false
+             )
+
+    assert {:ok, true} =
+             Cases.route_resolver_failure(
+               turn.id,
+               "invalid_output",
+               "schema_validation",
+               "/intent/type",
+               authorize?: false
+             )
+
+    assert Cases.get_case!(successor.case_id, authorize?: false).revision == before_retry.revision
+    assert length(Cases.list_turns!(authorize?: false)) == turn_count
+
     assert Cases.get_turn!(turn.id, authorize?: false).progress_kind == :delivery_retry
 
     assert Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false).no_progress_turns ==

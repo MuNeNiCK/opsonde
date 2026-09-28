@@ -220,6 +220,10 @@ defmodule Opsonde.Cases do
       define :route_resolver_decision,
         action: :route_resolver_decision,
         args: [:turn_id]
+
+      define :route_resolver_failure,
+        action: :route_resolver_failure,
+        args: [:turn_id, :category, :rejection_code, :rejection_path]
     end
 
     resource Opsonde.Cases.ResolutionRun do

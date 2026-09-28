@@ -751,7 +751,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
            true <-
              (incident.status == :running and not incident.cancel_requested) ||
                {:error, "Case resolution is not running"},
-           {:ok, completed} <-
+           {:ok, _completed} <-
              Cases.complete_turn(
                turn.id,
                turn.revision,
@@ -767,75 +767,19 @@ defmodule Opsonde.Cases.ResolverDelivery do
                authorize?: false
              ),
            {:ok, _invocation} <- record_failure(turn, invocation, category, error) do
-        continue_after_failure(turn, completed, error, category, rejection_code, intent)
+        Cases.route_resolver_failure(
+          turn.id,
+          category,
+          rejection_code,
+          rejection_path(error),
+          authorize?: false
+        )
       end
     end)
-  end
-
-  defp continue_after_failure(turn, completed, error, category, rejection_code, intent) do
-    with {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false) do
-      cond do
-        run.status == :needs_attention ->
-          with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
-            %{completed: completed, case: incident}
-          end
-
-        run.ai_usage_units >= run.max_ai_usage_units ->
-          with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
-               {:ok, stopped} <-
-                 Cases.require_case_attention(
-                   turn.case_id,
-                   incident.revision,
-                   run.id,
-                   run.revision,
-                   "resolver-usage-exhausted:#{turn.id}",
-                   "AI usage limit exhausted after Resolver delivery failure",
-                   %{"action" => "retry_resolver", "turn_id" => turn.id},
-                   "Increase the AI usage limit or review the Case",
-                   authorize?: false
-                 ) do
-            %{completed: completed, case: stopped}
-          end
-
-        true ->
-          with {:ok, next_turn} <-
-                 Cases.start_turn(
-                   turn.case_id,
-                   turn.resolution_run_id,
-                   "resolver:delivery-retry:#{turn.id}",
-                   retry_turn_intent(turn, category, rejection_code, rejection_path(error)),
-                   intent,
-                   "Review Resolver limits or continue the Case manually",
-                   authorize?: false
-                 ),
-               {:ok, next_turn} <- set_retry_pending(next_turn, turn.id) do
-            %{completed: completed, next_turn: next_turn}
-          end
-      end
-    end
   end
 
   defp retryable_failure?(category),
     do: category in ["timeout", "unreachable", "rate_limited", "failed"]
-
-  defp retry_turn_intent(turn, category, rejection_code, rejection_path) do
-    %{
-      "objective" => "Continue resolution after a retryable Resolver delivery failure",
-      "source" => "resolver_delivery_failure",
-      "source_turn_id" => turn.id,
-      "category" => category
-    }
-    |> then(fn intent ->
-      if is_binary(rejection_code) and rejection_code != "",
-        do: Map.put(intent, "rejection_code", rejection_code),
-        else: intent
-    end)
-    |> then(fn intent ->
-      if is_binary(rejection_path),
-        do: Map.put(intent, "rejection_path", rejection_path),
-        else: intent
-    end)
-  end
 
   defp set_retry_pending(%{status: :exhausted} = result, _source_turn_id), do: {:ok, result}
 

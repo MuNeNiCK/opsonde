@@ -558,6 +558,15 @@ defmodule Opsonde.Cases.Case do
       argument :turn_id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.DecisionRoute
     end
+
+    action :route_resolver_failure, :boolean do
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      argument :category, :string, allow_nil?: false
+      argument :rejection_code, :string
+      argument :rejection_path, :string
+      run Opsonde.Cases.Case.Actions.ResolverFailureRoute
+    end
   end
 
   policies do
@@ -594,7 +603,8 @@ defmodule Opsonde.Cases.Case do
              :route_target_discovery,
              :route_related_target,
              :route_downstream_decision,
-             :route_resolver_decision
+             :route_resolver_decision,
+             :route_resolver_failure
            ]) do
       forbid_if always()
     end
