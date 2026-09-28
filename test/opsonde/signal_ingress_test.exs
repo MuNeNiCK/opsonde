@@ -12,6 +12,7 @@ defmodule Opsonde.SignalIngressTest do
   alias Opsonde.Cases.Turn.ResolverDelivery, as: ResolverDelivery
   alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.Realtime
 
   alias Opsonde.Cases.Case.DecisionRouteWorker
   alias Opsonde.Providers.{AI, Signal}
@@ -446,6 +447,8 @@ defmodule Opsonde.SignalIngressTest do
       authorize?: false
     )
 
+    incident_id = incident.id
+    :ok = Realtime.subscribe(incident_id)
     recovered_at = DateTime.utc_now()
 
     recover = fn ->
@@ -467,8 +470,11 @@ defmodule Opsonde.SignalIngressTest do
 
     [condition] = Signals.list_conditions!(actor: context.admin)
     assert condition.state == :firing
+    refute_receive {:case_changed, ^incident_id}, 20
 
     recover.()
+
+    assert_receive {:case_changed, ^incident_id}
 
     assert [_job] =
              Repo.all(
@@ -1302,6 +1308,8 @@ defmodule Opsonde.SignalIngressTest do
     )
 
     parent = Cases.get_case!(parent.id, authorize?: false)
+    parent_id = parent.id
+    :ok = Realtime.subscribe(parent_id)
     moved_id = hd(snapshot)["id"]
     jobs_before = Repo.aggregate(Oban.Job, :count)
 
@@ -1328,6 +1336,7 @@ defmodule Opsonde.SignalIngressTest do
 
     assert Repo.aggregate(Oban.Job, :count) == jobs_before
     assert {:error, _not_found} = Cases.get_case(rolled_back_id, authorize?: false)
+    refute_receive {:case_changed, ^parent_id}, 20
 
     child =
       Cases.split_case_conditions!(
@@ -1338,6 +1347,8 @@ defmodule Opsonde.SignalIngressTest do
         "Separate fault-a",
         actor: context.admin
       )
+
+    assert_receive {:case_changed, ^parent_id}
 
     assert child.id != rolled_back_id
     assert length(Cases.active_conditions_for_case!(parent.id, authorize?: false)) == 1

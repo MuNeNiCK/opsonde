@@ -375,6 +375,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert json_response(stale_membership, 409)["error"]["code"] == "conflict"
 
+    :ok = Realtime.subscribe(parent.id)
     response = post_json("/api/v1/cases/#{parent.id}/split", body, context.operator_token)
 
     assert %{"data" => %{"id" => child_id, "split_parent_id" => parent_id}} =
@@ -382,6 +383,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert_operation_response(response)
     assert parent_id == parent.id
+    assert_receive {:case_changed, ^parent_id}
 
     stale_revision =
       body

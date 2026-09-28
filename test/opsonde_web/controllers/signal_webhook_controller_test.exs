@@ -4,6 +4,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
   import OpenApiSpex.TestAssertions
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
+  alias Opsonde.Cases.Case.Realtime
 
   @password "correct horse battery staple"
   @secret "monitoring-webhook-secret"
@@ -35,11 +36,16 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
 
     first = context.conn |> authorized() |> post_json(path, firing)
     replay = build_conn() |> authorized() |> post_json(path, firing)
+    [incident] = Cases.list_cases!(actor: context.admin)
+    incident_id = incident.id
+    :ok = Realtime.subscribe(incident_id)
 
     recovered =
       build_conn()
       |> authorized()
       |> post_json(path, generic_payload(DateTime.add(occurred_at, 10, :second), "recovered"))
+
+    assert_receive {:case_changed, ^incident_id}
 
     assert json_response(first, 202)["receipt_id"] == json_response(replay, 202)["receipt_id"]
     assert response(recovered, 202)
@@ -47,7 +53,6 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
     assert_operation_response(recovered)
 
     assert length(Signals.list_signal_receipts!(actor: context.admin)) == 2
-    assert [incident] = Cases.list_cases!(actor: context.admin)
     assert incident.initial_target_id == target.id
 
     events = Signals.list_signal_events!(actor: context.admin) |> Enum.sort_by(& &1.occurred_at)
