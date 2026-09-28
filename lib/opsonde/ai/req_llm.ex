@@ -28,12 +28,10 @@ defmodule Opsonde.AI.ReqLLM do
   @configuration_keys ~w(provider model endpoint stream max_tokens timeout_ms reasoning_effort region project_id deployment api_version chatgpt_account_id)
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
-  @max_output_bytes 65_536
+  @max_output_bytes AI.max_output_bytes()
   @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
-  @reviewer_reason_codepoints 1_000
-  @handoff_input_codepoints 250
   @resolver_intent_types ~w(target_search target_selection target_traversal proposal case_split recovery handoff)
 
   @impl Opsonde.Providers.Adapter
@@ -1386,7 +1384,7 @@ defmodule Opsonde.AI.ReqLLM do
         proposal_schema(request),
         case_split_schema(request),
         recovery_schema(request),
-        handoff_schema(traversal)
+        handoff_schema()
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -1789,13 +1787,11 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp handoff_schema(nil),
+  defp handoff_schema(),
     do:
       intent_schema("handoff", %{
-        "required_input" => bounded_string_schema(@handoff_input_codepoints)
+        "required_input" => bounded_string_schema(AI.handoff_input_codepoints())
       })
-
-  defp handoff_schema(_traversal), do: nil
 
   defp intent_schema(type, properties),
     do:
@@ -1892,7 +1888,7 @@ defmodule Opsonde.AI.ReqLLM do
     object_schema(
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
-        "reason" => bounded_string_schema(@reviewer_reason_codepoints)
+        "reason" => bounded_string_schema(AI.reviewer_reason_codepoints())
       },
       ~w(verdict reason)
     )
@@ -1909,7 +1905,7 @@ defmodule Opsonde.AI.ReqLLM do
     object_schema(
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
-        "reason" => bounded_string_schema(@reviewer_reason_codepoints),
+        "reason" => bounded_string_schema(AI.reviewer_reason_codepoints()),
         "desired_outcome_assessment" =>
           object_schema(
             %{
@@ -1922,7 +1918,7 @@ defmodule Opsonde.AI.ReqLLM do
                 "items" => enum_schema(claim_ids)
               },
               "status" => enum_schema(~w(supported unsupported unknown)),
-              "reason" => bounded_string_schema(@reviewer_reason_codepoints)
+              "reason" => bounded_string_schema(AI.reviewer_reason_codepoints())
             },
             ~w(symptom_id desired_outcome evidence_ids status reason)
           )

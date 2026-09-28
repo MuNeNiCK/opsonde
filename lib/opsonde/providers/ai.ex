@@ -3,9 +3,15 @@ defmodule Opsonde.Providers.AI do
 
   @resolver_disclosure_limits %{max_items: 100, max_bytes: 65_536}
   @resolver_reason_codepoints 500
+  @max_output_bytes 65_536
+  @reviewer_reason_codepoints 1_000
+  @handoff_input_codepoints 250
 
   def resolver_disclosure_limits, do: @resolver_disclosure_limits
   def resolver_reason_codepoints, do: @resolver_reason_codepoints
+  def max_output_bytes, do: @max_output_bytes
+  def reviewer_reason_codepoints, do: @reviewer_reason_codepoints
+  def handoff_input_codepoints, do: @handoff_input_codepoints
 
   def valid_resolver_reason?(reason) when is_binary(reason) and byte_size(reason) > 0 do
     case :unicode.characters_to_list(reason) do

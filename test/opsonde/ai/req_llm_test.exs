@@ -782,7 +782,7 @@ defmodule Opsonde.AI.ReqLLMTest do
              request.retry_context
   end
 
-  test "eligible Target traversal removes avoidable handoff from the Resolver contract",
+  test "eligible Target traversal also permits handoff when operator input is needed",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
@@ -866,19 +866,23 @@ defmodule Opsonde.AI.ReqLLMTest do
              }
            ]
 
-    refute "handoff" in payload["allowed_intents"]
+    assert "handoff" in payload["allowed_intents"]
 
-    refute Enum.any?(variants, fn variant ->
+    assert Enum.any?(variants, fn variant ->
              get_in(variant, ["properties", "type", "enum"]) == ["handoff"]
            end)
 
     set_mode(context.agent, {:decision, handoff()})
+
+    assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
+             Adapter.resolve(state, request, %{})
+
     unavailable = %{request | traversable_relation_ids: []}
 
     assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
              Adapter.resolve(state, unavailable, %{})
 
-    [unavailable_request] = requests(context.agent)
+    unavailable_request = context.agent |> requests() |> List.last()
     unavailable_payload = user_payload(unavailable_request)
     assert length(unavailable_payload["target_relations"]) == 1
     assert unavailable_payload["traversable_relation_ids"] == []

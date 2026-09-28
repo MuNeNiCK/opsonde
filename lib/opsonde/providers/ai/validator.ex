@@ -5,11 +5,9 @@ defmodule Opsonde.Providers.AI.Validator do
   alias Opsonde.Providers.{AI, Target}
   alias Opsonde.Targets.SearchQuery
 
-  @max_output_bytes 65_536
+  @max_output_bytes AI.max_output_bytes()
   @max_review_items 100
   @max_review_bytes 65_536
-  @reviewer_reason_codepoints 1_000
-  @handoff_input_codepoints 250
 
   def validate_request(:resolve, %AI.ResolverRequest{} = request) do
     cond do
@@ -544,7 +542,7 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:review, %AI.ReviewDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
-         true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
+         true <- bounded_text?(decision.reason, AI.reviewer_reason_codepoints()),
          true <- review_decision_size(decision) <= @max_output_bytes do
       :ok
     else
@@ -556,7 +554,7 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:review_recovery, %AI.ReviewDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
-         true <- bounded_text?(decision.reason, @reviewer_reason_codepoints),
+         true <- bounded_text?(decision.reason, AI.reviewer_reason_codepoints()),
          true <-
            CaseSymptom.valid_assessment?(
              decision.desired_outcome_assessment,
@@ -729,7 +727,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(%AI.Handoff{} = handoff, _request) do
     if AI.valid_resolver_reason?(handoff.reason) and
-         bounded_text?(handoff.required_input, @handoff_input_codepoints),
+         bounded_text?(handoff.required_input, AI.handoff_input_codepoints()),
        do: :ok,
        else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
   end
