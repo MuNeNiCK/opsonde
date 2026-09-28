@@ -70,7 +70,7 @@ defmodule Opsonde.Targets.ExternalIdentity do
       primary? true
       accept [:target_id, :source, :kind, :value]
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:source, :kind, :value]}
-      change Opsonde.Targets.Changes.ReconcileSignalCases
+      change Opsonde.Targets.Changes.EnqueueCaseReconciliation
     end
 
     update :update do
@@ -82,7 +82,7 @@ defmodule Opsonde.Targets.ExternalIdentity do
 
       validate Opsonde.Validations.CurrentRevision
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:source, :kind, :value]}
-      change Opsonde.Targets.Changes.ReconcileSignalCases
+      change Opsonde.Targets.Changes.EnqueueCaseReconciliation
       change optimistic_lock(:revision)
     end
 

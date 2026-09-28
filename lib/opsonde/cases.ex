@@ -39,8 +39,12 @@ defmodule Opsonde.Cases do
       define :case_reconnect_snapshot, action: :reconnect, args: [:id]
       define :case_by_trigger, action: :by_trigger, args: [:trigger_kind, :source, :source_ref]
 
-      define :unresolved_signal_cases_without_target,
-        action: :unresolved_signals_without_target
+      define :running_signal_cases_without_target,
+        action: :running_signals_without_target
+
+      define :signal_cases_waiting_for_external_identity,
+        action: :waiting_for_external_identity,
+        args: [:source, :kind, :value]
 
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]

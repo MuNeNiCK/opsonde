@@ -2,6 +2,10 @@ defmodule Opsonde.SignalIngressTest do
   use Opsonde.DataCase, async: false
 
   import Ecto.Query
+  import Phoenix.ConnTest
+  import Plug.Conn, only: [put_req_header: 3]
+
+  @endpoint OpsondeWeb.Endpoint
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
@@ -2072,16 +2076,23 @@ defmodule Opsonde.SignalIngressTest do
       actor: context.admin
     )
 
-    job =
-      Repo.one!(
+    Targets.update_target!(target, target.revision, %{facts: %{"catalog" => "updated"}},
+      actor: context.admin
+    )
+
+    [stale_job, current_job] =
+      Repo.all(
         from(job in Oban.Job,
-          where: job.worker == "Opsonde.Signals.CaseReconciliationWorker",
-          order_by: [asc: job.inserted_at],
-          limit: 1
+          where:
+            job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker" and
+              fragment("?->>'resource_id'", job.args) == ^target.id
         )
       )
+      |> Enum.sort_by(& &1.args["revision"])
 
-    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(stale_job)
+    assert length(Cases.list_turns!(actor: context.admin)) == 1
+    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(current_job)
 
     turns = Cases.list_turns!(actor: context.admin)
     assert length(turns) == 2
@@ -2151,7 +2162,7 @@ defmodule Opsonde.SignalIngressTest do
       )
 
     assert :ok =
-             Opsonde.Signals.CaseReconciliationWorker.perform(
+             Opsonde.Cases.TargetCatalogReconciliationWorker.perform(
                reconciliation_job!(unrelated_identity.id)
              )
 
@@ -2159,26 +2170,50 @@ defmodule Opsonde.SignalIngressTest do
     assert unchanged.status == :needs_attention
     assert unchanged.revision == waiting.revision
 
-    target =
-      Targets.create_target!("late-linux", "host", "linux", %{}, nil, actor: context.admin)
+    token = api_token!(context.admin.email)
 
-    identity =
-      Targets.create_external_identity!(
-        target.id,
-        "test-monitor",
-        "hostname",
-        "late-linux",
-        actor: context.admin
+    target =
+      api_post_data!(
+        "/api/v1/targets",
+        %{"target" => %{"name" => "late-linux", "kind" => "host", "platform" => "linux"}},
+        token
       )
 
-    job = reconciliation_job!(identity.id)
-    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
+    identity =
+      api_post_data!(
+        "/api/v1/external-identities",
+        %{
+          "external_identity" => %{
+            "target_id" => target["id"],
+            "source" => "test-monitor",
+            "kind" => "hostname",
+            "value" => "late-linux"
+          }
+        },
+        token
+      )
+
+    job = reconciliation_job!(identity["id"])
+
+    assert job.args == %{
+             "resource" => "external_identity",
+             "resource_id" => identity["id"],
+             "revision" => identity["revision"]
+           }
+
+    assert :ok =
+             Task.async(fn -> Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job) end)
+             |> Task.await()
 
     resumed = Cases.get_case!(waiting.id, actor: context.admin)
     assert resumed.status == :running
-    assert resumed.selected_target_id == target.id
-    assert resumed.selected_target_revision == target.revision
+    assert resumed.selected_target_id == target["id"]
+    assert resumed.selected_target_revision == target["revision"]
     assert resumed.current_owner_id == context.admin.id
+
+    snapshot = api_get_data!("/api/v1/cases/#{waiting.id}", token)
+    assert snapshot["case"]["status"] == "running"
+    assert snapshot["case"]["selected_target_id"] == target["id"]
 
     runs = Cases.list_resolution_runs!(actor: context.admin) |> Enum.sort_by(& &1.generation)
 
@@ -2200,7 +2235,7 @@ defmodule Opsonde.SignalIngressTest do
              "objective" => "Continue resolution after Target registration"
            }
 
-    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
     assert length(Cases.list_resolution_runs!(actor: context.admin)) == 2
     assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
@@ -2214,10 +2249,21 @@ defmodule Opsonde.SignalIngressTest do
     assert :ok = dispatch_initial!(incident)
 
     [first_turn] = Cases.list_turns!(actor: context.admin)
-    job = %Oban.Job{args: %{"change_key" => "target:later"}}
 
-    assert {:error, "Signal Case still has an active Resolver Turn"} =
-             Opsonde.Signals.CaseReconciliationWorker.perform(job)
+    target =
+      Targets.create_target!("later-target", "host", "linux", %{}, nil, actor: context.admin)
+
+    job =
+      Repo.one!(
+        from(job in Oban.Job,
+          where:
+            job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker" and
+              fragment("?->>'resource_id'", job.args) == ^target.id
+        )
+      )
+
+    assert {:error, "Case still has an active Resolver Turn"} =
+             Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
 
     Cases.complete_turn!(
       first_turn.id,
@@ -2229,8 +2275,56 @@ defmodule Opsonde.SignalIngressTest do
       authorize?: false
     )
 
-    assert :ok = Opsonde.Signals.CaseReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
     assert length(Cases.list_turns!(actor: context.admin)) == 2
+  end
+
+  test "Target registration rolls back when its Case reconciliation job cannot be saved",
+       context do
+    assert {:error, :job_rejected} =
+             Repo.transaction(fn ->
+               Repo.query!("""
+               CREATE FUNCTION reject_case_reconciliation_job() RETURNS trigger AS $$
+               BEGIN
+                 IF NEW.worker = 'Opsonde.Cases.TargetCatalogReconciliationWorker' THEN
+                   RAISE EXCEPTION 'reconciliation job rejected';
+                 END IF;
+                 RETURN NEW;
+               END;
+               $$ LANGUAGE plpgsql
+               """)
+
+               Repo.query!("""
+               CREATE TRIGGER reject_case_reconciliation_job
+               BEFORE INSERT ON oban_jobs
+               FOR EACH ROW EXECUTE FUNCTION reject_case_reconciliation_job()
+               """)
+
+               assert_raise Ash.Error.Unknown, fn ->
+                 Targets.create_target!(
+                   "job-rejected-target",
+                   "host",
+                   "linux",
+                   %{},
+                   nil,
+                   actor: context.admin
+                 )
+               end
+
+               Repo.rollback(:job_rejected)
+             end)
+
+    refute Enum.any?(
+             Targets.list_targets!(actor: context.admin),
+             &(&1.name == "job-rejected-target")
+           )
+
+    assert Repo.aggregate(
+             from(job in Oban.Job,
+               where: job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker"
+             ),
+             :count
+           ) == 0
   end
 
   defp dispatch_initial!(incident) do
@@ -2288,12 +2382,43 @@ defmodule Opsonde.SignalIngressTest do
   defp reconciliation_job!(identity_id) do
     Repo.all(
       from(job in Oban.Job,
-        where: job.worker == "Opsonde.Signals.CaseReconciliationWorker"
+        where: job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker"
       )
     )
     |> Enum.find(fn job ->
-      String.contains?(job.args["change_key"], identity_id)
+      job.args["resource"] == "external_identity" and job.args["resource_id"] == identity_id
     end)
+  end
+
+  defp api_token!(email) do
+    build_json_conn(%{})
+    |> post("/api/v1/sessions", %{
+      "session" => %{"email" => to_string(email), "password" => @password}
+    })
+    |> json_response(201)
+    |> get_in(["data", "token"])
+  end
+
+  defp api_post_data!(path, body, token) do
+    build_json_conn(body)
+    |> put_req_header("authorization", "Bearer " <> token)
+    |> post(path, body)
+    |> json_response(201)
+    |> Map.fetch!("data")
+  end
+
+  defp api_get_data!(path, token) do
+    build_json_conn(nil)
+    |> put_req_header("authorization", "Bearer " <> token)
+    |> get(path)
+    |> json_response(200)
+    |> Map.fetch!("data")
+  end
+
+  defp build_json_conn(_body) do
+    Phoenix.ConnTest.build_conn()
+    |> put_req_header("accept", "application/json")
+    |> put_req_header("content-type", "application/json")
   end
 
   defp ingest_one!(provider, receipt_id, state, occurred_at) do

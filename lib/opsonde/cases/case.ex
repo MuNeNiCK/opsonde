@@ -95,10 +95,27 @@ defmodule Opsonde.Cases.Case do
              )
     end
 
-    read :unresolved_signals_without_target do
+    read :running_signals_without_target do
       filter expr(
-               trigger_kind == :signal and
-                 status in [:running, :needs_attention] and is_nil(selected_target_id) and
+               trigger_kind == :signal and status == :running and
+                 is_nil(selected_target_id) and
+                 exists(condition_memberships, is_nil(detached_at) and condition.state == :firing)
+             )
+
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
+    read :waiting_for_external_identity do
+      argument :source, :string, allow_nil?: false
+      argument :kind, :string, allow_nil?: false
+      argument :value, :string, allow_nil?: false
+
+      filter expr(
+               trigger_kind == :signal and status == :needs_attention and
+                 is_nil(selected_target_id) and source == ^arg(:source) and
+                 get_path(pending_intent, ["action"]) == "provide_human_input" and
+                 get_path(initial_context, ["target_ref", "kind"]) == ^arg(:kind) and
+                 get_path(initial_context, ["target_ref", "value"]) == ^arg(:value) and
                  exists(condition_memberships, is_nil(detached_at) and condition.state == :firing)
              )
 
