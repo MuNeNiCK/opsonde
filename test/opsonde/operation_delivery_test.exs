@@ -2141,13 +2141,11 @@ defmodule Opsonde.OperationDeliveryTest do
 
     current = Cases.get_case!(incident.id, authorize?: false)
 
-    Cases.update_case_record!(
+    Cases.record_case_selected_target!(
       current,
       current.revision,
-      %{
-        selected_target_id: effect_context.target.id,
-        selected_target_revision: effect_context.target.revision
-      },
+      effect_context.target.id,
+      effect_context.target.revision,
       authorize?: false
     )
 
@@ -2324,13 +2322,11 @@ defmodule Opsonde.OperationDeliveryTest do
 
     current = Cases.get_case!(incident.id, authorize?: false)
 
-    Cases.update_case_record!(
+    Cases.record_case_selected_target!(
       current,
       current.revision,
-      %{
-        selected_target_id: effect_context.target.id,
-        selected_target_revision: effect_context.target.revision
-      },
+      effect_context.target.id,
+      effect_context.target.revision,
       authorize?: false
     )
 

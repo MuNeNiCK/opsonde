@@ -57,10 +57,10 @@ defmodule OpsondeWeb.CaseChannelTest do
     :ok = Opsonde.Cases.Case.Realtime.subscribe(context.case.id)
 
     assert {:error, _error} =
-             Cases.update_case_record(
+             Cases.record_case_owner(
                context.case,
                context.case.revision + 100,
-               %{required_human_input: "must not persist"},
+               context.admin.id,
                authorize?: false
              )
 

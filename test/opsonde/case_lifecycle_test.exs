@@ -20,18 +20,8 @@ defmodule Opsonde.CaseLifecycleTest do
     %{admin: admin, operator: operator, next_operator: next_operator, viewer: viewer}
   end
 
-  test "Case status changes require a named transition action", context do
+  test "Case resolution cannot be repeated after the Case is terminal", context do
     incident = open_case!(:manual, "web", "named-transition", context.operator)
-
-    assert {:error, _error} =
-             Cases.update_case_record(
-               incident,
-               incident.revision,
-               %{status: :resolved},
-               authorize?: false
-             )
-
-    assert Cases.get_case!(incident.id, authorize?: false).status == :running
 
     resolved =
       Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
@@ -46,17 +36,47 @@ defmodule Opsonde.CaseLifecycleTest do
              )
   end
 
+  test "owner and Target state actions reject stale or terminal Cases", context do
+    incident = open_case!(:manual, "web", "state-action-guards", context.operator)
+
+    target =
+      Targets.create_target!("state-guard-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    assert {:error, _error} =
+             Cases.record_case_owner(incident, incident.revision + 1, context.next_operator.id,
+               authorize?: false
+             )
+
+    owned =
+      Cases.record_case_owner!(incident, incident.revision, context.next_operator.id,
+        authorize?: false
+      )
+
+    assert owned.current_owner_id == context.next_operator.id
+
+    selected =
+      Cases.record_case_selected_target!(owned, owned.revision, target.id, target.revision,
+        authorize?: false
+      )
+
+    assert selected.selected_target_id == target.id
+    assert selected.selected_target_revision == target.revision
+
+    cancelled = Cases.record_case_cancellation!(selected, selected.revision, authorize?: false)
+
+    assert {:error, _error} =
+             Cases.record_case_selected_target(
+               cancelled,
+               cancelled.revision,
+               target.id,
+               target.revision,
+               authorize?: false
+             )
+  end
+
   test "pending intent requires a running Case and its named transition", context do
     incident = open_case!(:manual, "web", "pending-transition", context.operator)
     pending = %{"action" => "resolve_turn", "turn_id" => Ecto.UUID.generate()}
-
-    assert {:error, _error} =
-             Cases.update_case_record(
-               incident,
-               incident.revision,
-               %{pending_intent: pending},
-               authorize?: false
-             )
 
     queued =
       Cases.record_case_pending_intent!(incident, incident.revision, pending, authorize?: false)

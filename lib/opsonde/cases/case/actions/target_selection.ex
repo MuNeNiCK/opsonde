@@ -51,13 +51,11 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
         end
       else
         with {:ok, updated} <-
-               Cases.update_case_record(
+               Cases.record_case_selected_target(
                  incident,
                  arguments.expected_revision,
-                 %{
-                   selected_target_id: target.id,
-                   selected_target_revision: target.revision
-                 },
+                 target.id,
+                 target.revision,
                  authorize?: false
                ),
              {:ok, _event} <-

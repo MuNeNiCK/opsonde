@@ -64,13 +64,11 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   defp select_related_target(turn, incident, run, intent) do
     with {:ok, target} <- traversal_context(turn, incident, run, intent),
          {:ok, updated} <-
-           Cases.update_case_record(
+           Cases.record_case_selected_target(
              incident,
              incident.revision,
-             %{
-               selected_target_id: target.id,
-               selected_target_revision: target.revision
-             },
+             target.id,
+             target.revision,
              authorize?: false
            ) do
       {:ok, updated}

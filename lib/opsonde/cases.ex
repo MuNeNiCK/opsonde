@@ -48,7 +48,12 @@ defmodule Opsonde.Cases do
         args: [:source, :kind, :value]
 
       define :create_case_record, action: :create_record
-      define :update_case_record, action: :update_record, args: [:expected_revision]
+
+      define :record_case_owner, action: :record_owner, args: [:expected_revision, :owner_id]
+
+      define :record_case_selected_target,
+        action: :record_selected_target,
+        args: [:expected_revision, :target_id, :target_revision]
 
       define :record_case_pending_intent,
         action: :record_pending_intent,

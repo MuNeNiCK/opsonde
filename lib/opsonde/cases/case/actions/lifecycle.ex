@@ -31,18 +31,15 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     key = idempotency_key("claim", [arguments.id, arguments.expected_revision, actor.id])
 
     transition_once(arguments.id, key, fn incident ->
-      with :ok <- ensure_mutable(incident),
-           attrs <- %{
-             current_owner_id: actor.id
-           } do
-        update_with_event(
+      with :ok <- ensure_mutable(incident) do
+        record_owner_with_event(
           incident,
           arguments.expected_revision,
           nil,
           actor,
           "case_claimed",
           key,
-          attrs,
+          actor.id,
           %{"owner_id" => actor.id}
         )
       end
@@ -60,14 +57,14 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     transition_once(arguments.id, key, fn incident ->
       with :ok <- ensure_mutable(incident),
            :ok <- ensure_operational_owner(arguments.owner_id) do
-        update_with_event(
+        record_owner_with_event(
           incident,
           arguments.expected_revision,
           nil,
           actor,
           "case_handed_off",
           key,
-          %{current_owner_id: arguments.owner_id},
+          arguments.owner_id,
           %{"from_owner_id" => incident.current_owner_id, "to_owner_id" => arguments.owner_id}
         )
       end
@@ -457,19 +454,19 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     end
   end
 
-  defp update_with_event(
+  defp record_owner_with_event(
          incident,
          expected_revision,
          run,
          actor,
          event_type,
          key,
-         attrs,
+         owner_id,
          data
        ) do
     Ash.transact([Case, CaseEvent], fn ->
       with {:ok, updated} <-
-             Cases.update_case_record(incident, expected_revision, attrs,
+             Cases.record_case_owner(incident, expected_revision, owner_id,
                actor: actor,
                authorize?: false
              ),

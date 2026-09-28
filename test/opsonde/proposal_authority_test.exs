@@ -1686,13 +1686,11 @@ defmodule Opsonde.ProposalAuthorityTest do
       if initial_target.id == context.target.id do
         incident
       else
-        Cases.update_case_record!(
+        Cases.record_case_selected_target!(
           incident,
           incident.revision,
-          %{
-            selected_target_id: context.target.id,
-            selected_target_revision: context.target.revision
-          },
+          context.target.id,
+          context.target.revision,
           authorize?: false
         )
       end

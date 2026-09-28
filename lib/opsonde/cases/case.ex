@@ -158,24 +158,28 @@ defmodule Opsonde.Cases.Case do
       validate {Opsonde.Validations.BoundedMap, attribute: :pending_intent}
     end
 
-    update :update_record do
-      accept [
-        :current_owner_id,
-        :authority_mode,
-        :max_elapsed_seconds,
-        :max_resolver_turns,
-        :max_target_requests,
-        :max_effects,
-        :max_related_targets,
-        :max_ai_usage_units,
-        :max_no_progress_turns,
-        :selected_target_id,
-        :selected_target_revision
-      ]
-
+    update :record_owner do
+      accept []
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :owner_id, :uuid, allow_nil?: false
       validate Opsonde.Validations.CurrentRevision
+      validate attribute_in(:status, [:running, :needs_attention])
+      change set_attribute(:current_owner_id, arg(:owner_id))
+      change optimistic_lock(:revision)
+    end
+
+    update :record_selected_target do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :target_id, :uuid, allow_nil?: false
+      argument :target_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      change set_attribute(:selected_target_id, arg(:target_id))
+      change set_attribute(:selected_target_revision, arg(:target_revision))
       change optimistic_lock(:revision)
     end
 
@@ -698,7 +702,8 @@ defmodule Opsonde.Cases.Case do
              :active_by_trigger,
              :unresolved_signals_without_target,
              :create_record,
-             :update_record,
+             :record_owner,
+             :record_selected_target,
              :record_pending_intent,
              :record_cancellation,
              :record_attention,
