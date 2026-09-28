@@ -16,7 +16,7 @@ defmodule Opsonde.Accounts.OIDC.Provider.Actions.Authorization do
     with {:ok, provider} <- current_provider(arguments.provider_revision),
          :ok <- validate_link_request(arguments.request_id, arguments.start_token),
          browser_binding <- OIDCRequest.random_secret(),
-         {:ok, started} <- Client.start(provider, browser_binding),
+         {:ok, started} <- Client.start(provider, browser_binding, arguments.callback_uri),
          {:ok, request_id} <-
            begin_link_request(arguments.request_id, arguments.start_token, browser_binding) do
       {:ok,

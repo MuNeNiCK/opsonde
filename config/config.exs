@@ -9,7 +9,7 @@ import Config
 
 config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
 
-config :opsonde, :oidc_redirect_base_url, "http://localhost:4000/auth"
+config :opsonde, :public_url, "http://localhost:4000"
 
 ai_concurrency = 10
 

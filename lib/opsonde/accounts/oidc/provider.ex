@@ -74,6 +74,7 @@ defmodule Opsonde.Accounts.OIDC.Provider do
       argument :request_id, :uuid
       argument :start_token, :string, sensitive?: true
       argument :provider_revision, :integer, constraints: [min: 1]
+      argument :callback_uri, :string, allow_nil?: false
       run Opsonde.Accounts.OIDC.Provider.Actions.Authorization
     end
 

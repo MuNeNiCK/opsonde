@@ -9,6 +9,7 @@ defmodule Opsonde.OIDCTest do
   @issuer "https://identity.example.test/realms/opsonde"
   @stub __MODULE__.Provider
   @password "correct horse battery staple"
+  @callback_uri "http://localhost:4000/auth/user/oidc/callback"
 
   setup do
     Req.Test.set_req_test_to_shared()
@@ -62,7 +63,7 @@ defmodule Opsonde.OIDCTest do
   test "AttestoClient binds authorization state to the browser and consumes it once", context do
     admin = bootstrap_admin!()
     configure_provider!(admin)
-    authorization = Accounts.begin_oidc_authorization!(nil, nil, nil)
+    authorization = Accounts.begin_oidc_authorization!(nil, nil, nil, @callback_uri)
     params = callback_params(authorization, context, "unknown-subject")
 
     assert {:error, _error} =
@@ -88,7 +89,7 @@ defmodule Opsonde.OIDCTest do
   test "an unknown verified OIDC subject cannot create or select a local account", context do
     admin = bootstrap_admin!()
     configure_provider!(admin)
-    authorization = Accounts.begin_oidc_authorization!(nil, nil, nil)
+    authorization = Accounts.begin_oidc_authorization!(nil, nil, nil, @callback_uri)
 
     assert {:error, _error} =
              Accounts.complete_oidc_authorization(
@@ -111,7 +112,8 @@ defmodule Opsonde.OIDCTest do
       Accounts.begin_oidc_authorization!(
         link_request.request.id,
         link_request.start_token,
-        nil
+        nil,
+        @callback_uri
       )
 
     linked =
@@ -132,7 +134,7 @@ defmodule Opsonde.OIDCTest do
     assert identity.uid == "linked-subject"
     assert Ash.get!(OIDCRequest, link_request.request.id, authorize?: false).completed_at
 
-    login_authorization = Accounts.begin_oidc_authorization!(nil, nil, nil)
+    login_authorization = Accounts.begin_oidc_authorization!(nil, nil, nil, @callback_uri)
 
     signed_in =
       Accounts.complete_oidc_authorization!(
@@ -152,7 +154,8 @@ defmodule Opsonde.OIDCTest do
       Accounts.begin_oidc_authorization!(
         second_request.request.id,
         second_request.start_token,
-        nil
+        nil,
+        @callback_uri
       )
 
     assert {:error, _error} =
@@ -186,14 +189,16 @@ defmodule Opsonde.OIDCTest do
       Accounts.begin_oidc_authorization!(
         admin_request.request.id,
         admin_request.start_token,
-        nil
+        nil,
+        @callback_uri
       )
 
     _operator_authorization =
       Accounts.begin_oidc_authorization!(
         operator_request.request.id,
         operator_request.start_token,
-        nil
+        nil,
+        @callback_uri
       )
 
     assert {:error, _error} =

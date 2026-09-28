@@ -7,6 +7,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
   alias Opsonde.Accounts.OIDC.Provider, as: OIDCProvider
   alias OpsondeWeb.API.Response
   alias OpsondeWeb.API.V1.AccountSchemas
+  alias OpsondeWeb.PublicURL
 
   tags ["OIDC"]
 
@@ -62,8 +63,8 @@ defmodule OpsondeWeb.API.V1.OIDCController do
 
     Response.data(conn, %{
       enabled: enabled,
-      authorization_url: if(enabled, do: Opsonde.Secrets.public_url("/auth/user/oidc")),
-      callback_uri: Opsonde.Secrets.oidc_callback_uri()
+      authorization_url: if(enabled, do: PublicURL.url("/auth/user/oidc")),
+      callback_uri: PublicURL.oidc_callback_uri()
     })
   end
 
@@ -75,7 +76,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
       {:ok, nil} ->
         Response.data(conn, %{
           enabled: false,
-          callback_uri: Opsonde.Secrets.oidc_callback_uri()
+          callback_uri: PublicURL.oidc_callback_uri()
         })
 
       {:error,
@@ -84,7 +85,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
        }} ->
         Response.data(conn, %{
           enabled: false,
-          callback_uri: Opsonde.Secrets.oidc_callback_uri()
+          callback_uri: PublicURL.oidc_callback_uri()
         })
 
       {:error, error} ->
@@ -127,7 +128,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
         conn,
         %{
           authorization_url:
-            Opsonde.Secrets.public_url(
+            PublicURL.url(
               "/auth/oidc/start/#{request.id}?token=#{URI.encode_www_form(start_token)}"
             ),
           expires_at: request.expires_at
@@ -147,7 +148,7 @@ defmodule OpsondeWeb.API.V1.OIDCController do
       id_token_alg: provider.id_token_alg,
       enabled: provider.enabled,
       revision: provider.revision,
-      callback_uri: Opsonde.Secrets.oidc_callback_uri(),
+      callback_uri: PublicURL.oidc_callback_uri(),
       inserted_at: provider.inserted_at,
       updated_at: provider.updated_at
     }

@@ -8,6 +8,10 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
   @password "correct horse battery staple"
 
   test "a local Web account explicitly approves one PKCE-protected CLI session" do
+    previous_public_url = Application.fetch_env!(:opsonde, :public_url)
+    Application.put_env(:opsonde, :public_url, "https://opsonde.example:8443")
+    on_exit(fn -> Application.put_env(:opsonde, :public_url, previous_public_url) end)
+
     token = bootstrap_and_sign_in!()
     verifier = OIDCRequest.random_secret()
     challenge = verifier |> OIDCRequest.digest() |> Base.url_encode64(padding: false)
@@ -25,6 +29,9 @@ defmodule OpsondeWeb.API.V1.CLISessionControllerTest do
     assert_operation_response(created)
 
     authorization_uri = URI.parse(authorization_url)
+    assert authorization_uri.scheme == "https"
+    assert authorization_uri.host == "opsonde.example"
+    assert authorization_uri.port == 8443
     assert authorization_uri.path == "/cli-login/#{id}"
     assert %{"token" => start_token} = URI.decode_query(authorization_uri.fragment)
 

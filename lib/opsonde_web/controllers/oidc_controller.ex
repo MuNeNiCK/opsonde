@@ -4,6 +4,7 @@ defmodule OpsondeWeb.OIDCController do
   alias Opsonde.Accounts
   alias Opsonde.Accounts.OIDC.Request, as: OIDCRequest
   alias OpsondeWeb.API.V1.AccountJSON
+  alias OpsondeWeb.PublicURL
 
   @binding_key :opsonde_oidc_browser_binding
   @provider_revision_key :opsonde_oidc_provider_revision
@@ -46,7 +47,12 @@ defmodule OpsondeWeb.OIDCController do
 
   defp begin_authorization(conn, request_id, start_token) do
     with {:ok, authorization} when is_map(authorization) <-
-           Accounts.begin_oidc_authorization(request_id, start_token, nil) do
+           Accounts.begin_oidc_authorization(
+             request_id,
+             start_token,
+             nil,
+             PublicURL.oidc_callback_uri()
+           ) do
       conn
       |> protect_response()
       |> configure_session(renew: true)

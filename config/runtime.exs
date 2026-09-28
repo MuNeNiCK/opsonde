@@ -41,7 +41,7 @@ if public_url = System.get_env("OPSONDE_PUBLIC_URL") do
     raise "OPSONDE_PUBLIC_URL must be an HTTP(S) origin without credentials, path, query, or fragment"
   end
 
-  config :opsonde, :oidc_redirect_base_url, public_url <> "/auth"
+  config :opsonde, :public_url, public_url
 end
 
 if config_env() == :prod and not Burrito.Util.running_standalone?() do

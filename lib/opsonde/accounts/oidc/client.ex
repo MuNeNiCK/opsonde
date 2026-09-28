@@ -12,14 +12,15 @@ defmodule Opsonde.Accounts.OIDC.Client do
 
   def start(
         %{issuer: issuer, client_id: client_id, id_token_alg: id_token_alg},
-        browser_binding
+        browser_binding,
+        callback_uri
       )
-      when is_binary(browser_binding) do
+      when is_binary(browser_binding) and is_binary(callback_uri) do
     AuthorizationCode.start(store(),
       issuer: issuer,
       client_id: client_id,
       browser_binding: browser_binding,
-      redirect_uri: Opsonde.Secrets.oidc_callback_uri(),
+      redirect_uri: callback_uri,
       scopes: ["openid", "profile", "email"],
       id_token_alg: id_token_alg,
       req_options: req_options()

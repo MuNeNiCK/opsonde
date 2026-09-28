@@ -6,6 +6,7 @@ defmodule OpsondeWeb.API.V1.CLISessionController do
   alias Opsonde.Accounts
   alias OpsondeWeb.API.Response
   alias OpsondeWeb.API.V1.{AccountJSON, AccountSchemas}
+  alias OpsondeWeb.PublicURL
 
   tags ["CLI sessions"]
 
@@ -108,9 +109,7 @@ defmodule OpsondeWeb.API.V1.CLISessionController do
         %{
           id: request.id,
           authorization_url:
-            Opsonde.Secrets.public_url(
-              "/cli-login/#{request.id}#token=#{URI.encode_www_form(start_token)}"
-            ),
+            PublicURL.url("/cli-login/#{request.id}#token=#{URI.encode_www_form(start_token)}"),
           expires_at: request.expires_at
         },
         :created

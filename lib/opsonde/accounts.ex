@@ -27,7 +27,7 @@ defmodule Opsonde.Accounts do
 
       define :begin_oidc_authorization,
         action: :begin_authorization,
-        args: [:request_id, :start_token, :provider_revision]
+        args: [:request_id, :start_token, :provider_revision, :callback_uri]
 
       define :complete_oidc_authorization,
         action: :complete_authorization,

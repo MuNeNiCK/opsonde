@@ -130,6 +130,10 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
   end
 
   test "the browser route completes AttestoClient OIDC and returns a local session", context do
+    previous_public_url = Application.fetch_env!(:opsonde, :public_url)
+    Application.put_env(:opsonde, :public_url, "https://opsonde.example:8443")
+    on_exit(fn -> Application.put_env(:opsonde, :public_url, previous_public_url) end)
+
     admin =
       Accounts.bootstrap!(
         "oidc-browser-admin@example.com",
@@ -149,6 +153,13 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
       actor: admin
     )
 
+    assert %{
+             "data" => %{
+               "authorization_url" => "https://opsonde.example:8443/auth/user/oidc",
+               "callback_uri" => "https://opsonde.example:8443/auth/user/oidc/callback"
+             }
+           } = get_json("/api/v1/oidc") |> json_response(200)
+
     Ash.create!(
       UserIdentity,
       %{strategy: "oidc", uid: "browser-subject", user_id: admin.id},
@@ -165,6 +176,9 @@ defmodule OpsondeWeb.API.V1.OIDCControllerTest do
       |> URI.parse()
       |> Map.fetch!(:query)
       |> URI.decode_query()
+
+    assert query["redirect_uri"] ==
+             "https://opsonde.example:8443/auth/user/oidc/callback"
 
     Agent.update(context.response, fn _current ->
       %{

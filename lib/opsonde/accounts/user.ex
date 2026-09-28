@@ -16,7 +16,7 @@ defmodule Opsonde.Accounts.User do
     tokens do
       enabled? true
       token_resource Opsonde.Accounts.Token
-      signing_secret Opsonde.Secrets
+      signing_secret Opsonde.Accounts.User.SigningSecret
       store_all_tokens? true
       require_token_presence_for_authentication? true
     end
