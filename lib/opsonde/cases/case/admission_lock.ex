@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.CaseAdmissionLock do
+defmodule Opsonde.Cases.Case.AdmissionLock do
   @moduledoc false
 
   alias Opsonde.Repo

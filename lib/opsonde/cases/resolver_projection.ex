@@ -2,9 +2,9 @@ defmodule Opsonde.Cases.ResolverProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.ConditionContext
-  alias Opsonde.Cases.CaseSymptom
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.TraversalBoundary
   alias Opsonde.Providers.AI
   alias Opsonde.Targets.OperationCatalog

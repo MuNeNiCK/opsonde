@@ -9,13 +9,14 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     AIInvocation,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseEvent,
-    ConditionContext,
     Proposal,
     ResolutionRun,
     ReviewDecision
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
   alias Opsonde.Cases.Proposal.ReviewProjection

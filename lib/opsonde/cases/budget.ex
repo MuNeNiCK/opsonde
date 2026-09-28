@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.Budget do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, CaseAdmissionLock, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.{Case, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   @counter_fields [

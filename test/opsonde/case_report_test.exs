@@ -3,7 +3,7 @@ defmodule Opsonde.CaseReportTest do
 
   alias Opsonde.{Accounts, Cases, Reports}
   alias Opsonde.Cases.{Case, Operation, VerificationAttempt}
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Reports.Report.Content
   alias Opsonde.Reports.Report.Document
   alias Opsonde.Reports.Report

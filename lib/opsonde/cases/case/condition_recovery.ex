@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ConditionRecovery do
+defmodule Opsonde.Cases.Case.ConditionRecovery do
   @moduledoc false
 
   alias Opsonde.{Cases, Signals, Targets}

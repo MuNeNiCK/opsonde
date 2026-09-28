@@ -1,7 +1,7 @@
 defmodule Opsonde.Providers.AI.Validator do
   @moduledoc false
 
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Providers.{AI, Target}
   alias Opsonde.Targets.SearchQuery
 

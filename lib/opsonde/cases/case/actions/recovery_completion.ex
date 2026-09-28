@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
   @moduledoc false
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Reports.Report.GenerationWorker
 
   # Internal step shared by Case actions. The caller owns the transaction and

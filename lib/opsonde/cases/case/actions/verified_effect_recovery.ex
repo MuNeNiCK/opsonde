@@ -4,18 +4,12 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
   require Ash.Query
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
-  alias Opsonde.Cases.{
-    Case,
-    CaseAdmissionLock,
-    CaseEvent,
-    Evidence,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 
-  alias Opsonde.Cases.SignalRecoveryCheckWorker
+  alias Opsonde.Cases.Case.SignalRecoveryCheckWorker, as: SignalRecoveryCheckWorker
 
   @monitor_wait_seconds 30
 

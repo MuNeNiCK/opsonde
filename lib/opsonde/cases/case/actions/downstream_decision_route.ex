@@ -9,17 +9,18 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     Approval,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseEvent,
-    CaseSymptom,
-    ConditionContext,
-    ConditionRecovery,
     Evidence,
     Proposal,
     RecoveryReviewFingerprint,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
   alias Opsonde.Cases.Case.Actions.RecoveryCompletion
 

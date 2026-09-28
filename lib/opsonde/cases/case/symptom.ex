@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.CaseSymptom do
+defmodule Opsonde.Cases.Case.Symptom do
   @moduledoc false
 
   alias Opsonde.Providers.AI

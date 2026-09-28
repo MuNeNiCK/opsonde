@@ -2,7 +2,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   @moduledoc false
 
   alias OpsondeWeb.API.V1.OutcomeJSON
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   def authority(setting) do
     %{

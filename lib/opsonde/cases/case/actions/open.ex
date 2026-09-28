@@ -3,14 +3,8 @@ defmodule Opsonde.Cases.Case.Actions.Open do
 
   alias Opsonde.{Accounts, Cases}
 
-  alias Opsonde.Cases.{
-    AuthoritySetting,
-    Case,
-    CaseDispatch,
-    CaseEvent,
-    CaseSymptom,
-    ResolutionRun
-  }
+  alias Opsonde.Cases.{AuthoritySetting, Case, CaseDispatch, CaseEvent, ResolutionRun}
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   alias Opsonde.Targets
 

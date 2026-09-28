@@ -7,7 +7,6 @@ defmodule Opsonde.Signals.SignalReceipt.Actions.Ingest do
 
   alias Opsonde.Cases.{
     Case,
-    CaseAdmissionLock,
     CaseConditionMembership,
     CaseDispatch,
     CaseEvent,
@@ -15,8 +14,10 @@ defmodule Opsonde.Signals.SignalReceipt.Actions.Ingest do
     ResolutionRun
   }
 
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+
   alias Opsonde.Signals.{Condition, SignalCorrelation, SignalEvent, SignalReceipt}
-  alias Opsonde.Cases.RecoveryRecheckWorker
+  alias Opsonde.Cases.Case.RecoveryRecheckWorker, as: RecoveryRecheckWorker
 
   alias Opsonde.Providers.Signal
 

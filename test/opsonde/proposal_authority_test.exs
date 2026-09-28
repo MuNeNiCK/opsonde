@@ -646,7 +646,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     [started] = Cases.started_turns_for_run!(second_run.id, authorize?: false)
 
     {:ok, condition_revisions} =
-      Opsonde.Cases.ConditionContext.current_condition_revisions(incident)
+      Opsonde.Cases.Case.ConditionContext.current_condition_revisions(incident)
 
     turn =
       Cases.complete_turn!(
@@ -1749,7 +1749,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     intent =
       if incident.trigger_kind == :signal and request_kind == :effect do
-        {:ok, conditions} = Opsonde.Cases.ConditionContext.current_conditions(incident)
+        {:ok, conditions} = Opsonde.Cases.Case.ConditionContext.current_conditions(incident)
 
         Map.put(
           intent,
@@ -1778,7 +1778,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     result =
       if incident.trigger_kind == :signal do
         {:ok, revisions} =
-          Opsonde.Cases.ConditionContext.current_condition_revisions(incident)
+          Opsonde.Cases.Case.ConditionContext.current_condition_revisions(incident)
 
         Map.put(result, "condition_revisions", revisions)
       else

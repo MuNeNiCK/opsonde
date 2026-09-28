@@ -3,13 +3,8 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
 
   alias Opsonde.{Cases, Signals, Targets}
 
-  alias Opsonde.Cases.{
-    Case,
-    CaseAdmissionLock,
-    CaseConditionMembership,
-    CaseDispatch,
-    ResolutionRun
-  }
+  alias Opsonde.Cases.{Case, CaseConditionMembership, CaseDispatch, ResolutionRun}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 
   @max_conditions 32
   @max_graph_nodes 128

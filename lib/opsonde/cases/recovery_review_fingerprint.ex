@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.RecoveryReviewFingerprint do
 
   alias Opsonde.Cases
   alias Opsonde.Cases.AIInvocation
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   def current(incident, intent) do
     cited_ids = intent["evidence_ids"]

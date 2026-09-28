@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
 
   alias Opsonde.{Cases, Signals}
   alias Opsonde.Cases.Case.ReconnectSnapshot
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Reports
 
   @impl true

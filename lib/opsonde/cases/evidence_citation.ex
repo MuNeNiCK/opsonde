@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.EvidenceCitation do
   @moduledoc false
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
   def valid?(
         %{

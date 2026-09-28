@@ -2,7 +2,7 @@ defmodule Opsonde.CaseLifecycleTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   @password "correct horse battery staple"
 

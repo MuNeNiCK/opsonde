@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.SignalRecoveryCheckWorker do
+defmodule Opsonde.Cases.Case.SignalRecoveryCheckWorker do
   @moduledoc false
 
   use Oban.Worker,

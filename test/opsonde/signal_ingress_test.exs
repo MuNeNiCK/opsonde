@@ -9,16 +9,13 @@ defmodule Opsonde.SignalIngressTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
 
-  alias Opsonde.Cases.{
-    ConditionContext,
-    ResolverDelivery,
-    ResolverProjection
-  }
+  alias Opsonde.Cases.{ResolverDelivery, ResolverProjection}
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.Case.DecisionRouteWorker
   alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Repo
-  alias Opsonde.Cases.RecoveryRecheckWorker
+  alias Opsonde.Cases.Case.RecoveryRecheckWorker, as: RecoveryRecheckWorker
 
   @password "correct horse battery staple"
 

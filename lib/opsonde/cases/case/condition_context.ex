@@ -1,8 +1,8 @@
-defmodule Opsonde.Cases.ConditionContext do
+defmodule Opsonde.Cases.Case.ConditionContext do
   @moduledoc false
 
   alias Opsonde.{Cases, Signals, Targets}
-  alias Opsonde.Cases.ConditionRecovery
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Providers.AI
   alias Opsonde.Targets.ResourceScope
 

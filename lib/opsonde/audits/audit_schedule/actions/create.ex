@@ -5,7 +5,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
   alias Opsonde.Audits
   alias Opsonde.Audits.AuditSchedule
   alias Opsonde.Audits.AuditSchedule.Scheduling
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Targets.{ManagementBoundary, Target}
 
   @impl true

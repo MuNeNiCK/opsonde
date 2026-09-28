@@ -3,13 +3,8 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{
-    Budget,
-    CaseAdmissionLock,
-    CaseEvent,
-    Operation,
-    ResolutionRun
-  }
+  alias Opsonde.Cases.{Budget, CaseEvent, Operation, ResolutionRun}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 
   alias Opsonde.Cases.ResolutionRun.BudgetResult
 

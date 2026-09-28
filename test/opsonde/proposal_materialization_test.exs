@@ -407,9 +407,9 @@ defmodule Opsonde.ProposalMaterializationTest do
     result =
       if incident.trigger_kind == :signal do
         {:ok, revisions} =
-          Opsonde.Cases.ConditionContext.current_condition_revisions(incident)
+          Opsonde.Cases.Case.ConditionContext.current_condition_revisions(incident)
 
-        {:ok, conditions} = Opsonde.Cases.ConditionContext.current_conditions(incident)
+        {:ok, conditions} = Opsonde.Cases.Case.ConditionContext.current_conditions(incident)
 
         claims =
           Keyword.get_lazy(opts, :claims, fn ->

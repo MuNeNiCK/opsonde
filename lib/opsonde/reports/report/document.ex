@@ -3,7 +3,7 @@ defmodule Opsonde.Reports.Report.Document do
   use Gettext, backend: Opsonde.Gettext
 
   alias Opsonde.Reports.Report
-  alias Opsonde.Cases.CaseSymptom
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   def build(%Report{} = report) do
     content = report.content

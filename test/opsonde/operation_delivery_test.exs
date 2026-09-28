@@ -4,17 +4,18 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
 
   alias Opsonde.Cases.{
-    ConditionContext,
-    ConditionRecovery,
     OperationAcceptanceWorker,
     OperationDelivery,
     OperationWorker,
     ResolverDelivery,
     ResolverProjection,
-    SignalRecoveryCheckWorker,
     VerificationDelivery,
     VerificationWorker
   }
+
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
+  alias Opsonde.Cases.Case.SignalRecoveryCheckWorker, as: SignalRecoveryCheckWorker
 
   alias Opsonde.Cases.CaseDispatchWorker
   alias Opsonde.Targets.ResourceScope
@@ -2847,7 +2848,7 @@ defmodule Opsonde.OperationDeliveryTest do
             "condition_claims" => [],
             "desired_outcome_claims" => [
               %{
-                "symptom_id" => Opsonde.Cases.CaseSymptom.current(current).id,
+                "symptom_id" => Opsonde.Cases.Case.Symptom.current(current).id,
                 "evidence_id" => evidence.id,
                 "fact_keys" => ["unobserved_state"],
                 "reason" => "Claimed state"

@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.CaseDispatch.Actions.SendInitial do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Case, CaseAdmissionLock, CaseDispatch, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, CaseDispatch, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 
   @impl true
   def run(input, _opts, _context) do

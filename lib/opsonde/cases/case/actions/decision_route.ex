@@ -5,15 +5,9 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{
-    Budget,
-    Case,
-    CaseAdmissionLock,
-    CaseEvent,
-    ConditionContext,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{Budget, Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   @impl true
   def run(input, _opts, _context) do

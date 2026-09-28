@@ -9,14 +9,15 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     Approval,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseEvent,
-    ConditionContext,
     Proposal,
     ResolutionRun,
     ReviewDecision,
     Turn
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.Proposal.ProposalExpirationWorker
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}

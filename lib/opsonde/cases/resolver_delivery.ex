@@ -9,13 +9,14 @@ defmodule Opsonde.Cases.ResolverDelivery do
     AIInvocation,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseEvent,
-    ConditionContext,
     ResolutionRun,
     ResolverProjection,
     Turn
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
   alias Opsonde.Cases.ResolutionRun.BudgetResult

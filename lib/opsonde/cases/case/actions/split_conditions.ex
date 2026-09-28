@@ -9,12 +9,9 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     AIInvocation,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseConditionMembership,
     CaseDispatch,
     CaseEvent,
-    ConditionContext,
-    ConditionRecovery,
     Evidence,
     Operation,
     Proposal,
@@ -22,6 +19,10 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     Turn,
     VerificationAttempt
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
   @budgets [
     max_resolver_turns: :turn_count,

@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.{ConditionContext, ReviewerEvidence}
+  alias Opsonde.Cases.ReviewerEvidence
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Providers.AI
 
   def build(proposal_id, selection, retry_context \\ nil)

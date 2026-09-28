@@ -7,12 +7,13 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
     AIInvocation,
     Budget,
     Case,
-    CaseAdmissionLock,
     CaseEvent,
     RecoveryReviewFingerprint,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
   alias Opsonde.Cases.ResolutionRun.BudgetResult
@@ -462,7 +463,7 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
   defp current?(turn) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
-         {:ok, true} <- Opsonde.Cases.ConditionContext.current?(incident, turn.id) do
+         {:ok, true} <- Opsonde.Cases.Case.ConditionContext.current?(incident, turn.id) do
       incident.status == :running and not incident.cancel_requested and
         incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id} and
         run.active and run.status == :running

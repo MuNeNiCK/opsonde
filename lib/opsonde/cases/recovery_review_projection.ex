@@ -2,7 +2,9 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
   @moduledoc false
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{CaseSymptom, ConditionContext, ConditionRecovery}
+  alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.ReviewerEvidence
   alias Opsonde.Providers.AI
 

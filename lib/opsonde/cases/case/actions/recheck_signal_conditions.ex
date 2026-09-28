@@ -5,14 +5,9 @@ defmodule Opsonde.Cases.Case.Actions.RecheckSignalConditions do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{
-    Case,
-    CaseAdmissionLock,
-    CaseDispatch,
-    ConditionContext,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{Case, CaseDispatch, ResolutionRun, Turn}
+  alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
+  alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   @impl true
   def run(input, _opts, _context) do
