@@ -20,6 +20,32 @@ defmodule Opsonde.CaseLifecycleTest do
     %{admin: admin, operator: operator, next_operator: next_operator, viewer: viewer}
   end
 
+  test "Case status changes require a named transition action", context do
+    incident = open_case!(:manual, "web", "named-transition", context.operator)
+
+    assert {:error, _error} =
+             Cases.update_case_record(
+               incident,
+               incident.revision,
+               %{status: :resolved},
+               authorize?: false
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    resolved =
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
+        authorize?: false
+      )
+
+    assert resolved.status == :resolved
+
+    assert {:error, _error} =
+             Cases.record_case_resolution(resolved, resolved.revision, DateTime.utc_now(),
+               authorize?: false
+             )
+  end
+
   test "manual and audit opening reject an absent or blank desired outcome before persistence",
        context do
     for kind <- [:manual, :audit], value <- [nil, "  "] do

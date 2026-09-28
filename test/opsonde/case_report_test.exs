@@ -89,15 +89,12 @@ defmodule Opsonde.CaseReportTest do
       )
 
     terminal =
-      Cases.update_case_record!(
+      Cases.record_case_attention!(
         incident,
         incident.revision,
-        %{
-          status: :needs_attention,
-          stop_reason: "複合要因の調査には現地確認が必要です",
-          required_human_input: "ディスクLEDを確認してください",
-          pending_intent: %{"action" => "inspect_hardware"}
-        },
+        "複合要因の調査には現地確認が必要です",
+        %{"action" => "inspect_hardware"},
+        "ディスクLEDを確認してください",
         authorize?: false
       )
 
@@ -162,7 +159,7 @@ defmodule Opsonde.CaseReportTest do
     assert Reports.list_reports!(actor: context.viewer) == []
 
     resolved =
-      Cases.update_case_record!(running, running.revision, %{status: :resolved},
+      Cases.record_case_resolution!(running, running.revision, DateTime.utc_now(),
         authorize?: false
       )
 
@@ -216,7 +213,7 @@ defmodule Opsonde.CaseReportTest do
     incident = open!("automatic-off", context.operator)
 
     resolved =
-      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
         authorize?: false
       )
 
@@ -243,7 +240,7 @@ defmodule Opsonde.CaseReportTest do
     another = open!("automatic-on", context.operator)
 
     another_resolved =
-      Cases.update_case_record!(another, another.revision, %{status: :resolved},
+      Cases.record_case_resolution!(another, another.revision, DateTime.utc_now(),
         authorize?: false
       )
 
@@ -272,7 +269,7 @@ defmodule Opsonde.CaseReportTest do
     incident = open!("automatic-setting-unavailable", context.operator)
 
     resolved =
-      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
         authorize?: false
       )
 

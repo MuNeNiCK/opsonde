@@ -282,6 +282,39 @@ defmodule OpsondeCLI.CLITest do
     assert output =~ ~s("outcome": "succeeded")
   end
 
+  test "Case cancel and resume commands send transition requests to the public API", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "POST"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+      {:ok, encoded, conn} = read_body(conn)
+
+      case conn.request_path do
+        "/api/v1/cases/case-1/cancel" ->
+          assert Jason.decode!(encoded) == %{"case" => %{"expected_revision" => 2}}
+          Req.Test.json(conn, %{data: %{id: "case-1", status: "cancelled"}})
+
+        "/api/v1/cases/case-1/resume" ->
+          assert Jason.decode!(encoded) == %{"case" => %{"expected_case_revision" => 3}}
+          Req.Test.json(conn, %{data: %{id: "case-1", status: "running"}})
+      end
+    end)
+
+    cancelled =
+      capture_io(~s({"expected_revision":2}), fn ->
+        assert CLI.run(["case", "cancel", "case-1", "--input", "-"], runtime(context)) == 16
+      end)
+
+    resumed =
+      capture_io(~s({"expected_case_revision":3}), fn ->
+        assert CLI.run(["case", "resume", "case-1", "--input", "-"], runtime(context)) == 0
+      end)
+
+    assert cancelled =~ ~s("outcome": "cancel_requested")
+    assert resumed =~ ~s("outcome": "succeeded")
+  end
+
   test "reads a Case Report as text and requests a UTC period summary", context do
     save_session(context)
 

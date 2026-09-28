@@ -6,7 +6,7 @@ defmodule Opsonde.PeriodReportTest do
 
   @password "correct horse battery staple"
 
-  test "period summary counts Cases and audit outcomes without inventing recovery time" do
+  test "period summary counts Cases, measured recovery and audit outcomes" do
     admin = Accounts.bootstrap!("period-admin@example.com", @password, @password)
     viewer = Accounts.create_user!("period-viewer@example.com", @password, :viewer, actor: admin)
     boundary = Targets.create_management_boundary!("period-dc", "datacenter", %{}, actor: admin)
@@ -30,7 +30,9 @@ defmodule Opsonde.PeriodReportTest do
       )
 
     resolved =
-      Cases.update_case_record!(opened, opened.revision, %{status: :resolved}, authorize?: false)
+      Cases.record_case_resolution!(opened, opened.revision, DateTime.utc_now(),
+        authorize?: false
+      )
 
     provider =
       Providers.create_provider!(
@@ -130,11 +132,13 @@ defmodule Opsonde.PeriodReportTest do
     assert summary["case_trigger"]["manual"] == 1
     assert summary["case_trigger"]["signal"] == 1
 
-    assert summary["recovery"] == %{
-             "measured_cases" => 0,
-             "unmeasured_resolved_cases" => 1,
-             "average_seconds" => nil
-           }
+    assert %{
+             "measured_cases" => 1,
+             "unmeasured_resolved_cases" => 0,
+             "average_seconds" => average_seconds
+           } = summary["recovery"]
+
+    assert is_integer(average_seconds) and average_seconds >= 0
 
     assert summary["audit_count"] == 1
     assert summary["audit_status"]["skipped"] == 1

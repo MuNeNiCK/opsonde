@@ -90,16 +90,7 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
     Ash.transact([Case, ResolutionRun, CaseEvent], fn ->
       with {:ok, run} <- Cases.active_resolution_run(incident.id, authorize?: false),
            {:ok, updated} <-
-             Cases.update_case_record(
-               incident,
-               expected_revision,
-               %{
-                 status: :cancelled,
-                 cancel_requested: true,
-                 stop_reason: "Resolution cancelled by an operator",
-                 pending_intent: %{},
-                 required_human_input: nil
-               },
+             Cases.record_case_cancellation(incident, expected_revision,
                actor: actor,
                authorize?: false
              ),
@@ -127,15 +118,12 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
                stale(ResolutionRun) do
         Ash.transact([Case, ResolutionRun, CaseEvent], fn ->
           with {:ok, updated} <-
-                 Cases.update_case_record(
+                 Cases.record_case_attention(
                    incident,
                    arguments.expected_revision,
-                   %{
-                     status: :needs_attention,
-                     stop_reason: arguments.reason,
-                     pending_intent: arguments.pending_intent,
-                     required_human_input: arguments.required_human_input
-                   },
+                   arguments.reason,
+                   arguments.pending_intent,
+                   arguments.required_human_input,
                    actor: actor,
                    authorize?: false
                  ),
@@ -298,18 +286,11 @@ defmodule Opsonde.Cases.Case.Actions.Lifecycle do
                authorize?: false
              ),
            {:ok, updated_case} <-
-             Cases.update_case_record(
+             Cases.record_case_resume(
                incident,
                arguments.expected_case_revision,
                arguments
                |> Map.take([:authority_mode | @limit_fields])
-               |> Map.merge(%{
-                 status: :running,
-                 cancel_requested: false,
-                 stop_reason: nil,
-                 pending_intent: %{},
-                 required_human_input: nil
-               })
                |> resume_case_attributes(actor, options),
                actor: actor,
                authorize?: false

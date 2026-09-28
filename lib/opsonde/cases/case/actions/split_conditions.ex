@@ -24,6 +24,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
+  alias Opsonde.Cases.Case.Changes.SplitReallocation
 
   @budgets [
     max_resolver_turns: :turn_count,
@@ -359,7 +360,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   end
 
   defp create_child(parent, run, dispatch, selected_target, recovery_baseline, limits) do
-    active? = active_capacity?(limits, %{})
+    active? = SplitReallocation.active_capacity?(limits, %{})
     status = if active?, do: :running, else: :needs_attention
     reason = if active?, do: nil, else: "No Resolver capacity was allocated to this split Case"
 
@@ -513,15 +514,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   end
 
   defp reallocate_parent(parent, run, limits, moved, remaining, remaining_target) do
-    active? = active_capacity?(limits, run)
-
-    attrs =
-      Map.merge(limits, %{
-        status: if(active?, do: :running, else: :needs_attention),
-        pending_intent: %{},
-        stop_reason: if(active?, do: nil, else: "No Resolver capacity remains after split"),
-        required_human_input: if(active?, do: nil, else: "Increase Case limits")
-      })
+    attrs = limits
 
     moved_target_ids = MapSet.new(moved, & &1.target_id)
     remaining_target_ids = MapSet.new(remaining, & &1.target_id)
@@ -540,8 +533,15 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     with {:ok, updated_run} <-
            Cases.reallocate_resolution_run_limits(run, run.revision, limits, authorize?: false),
          {:ok, updated_parent} <-
-           Cases.update_case_record(parent, parent.revision, attrs, authorize?: false),
-         {:ok, final_run} <- maybe_pause(updated_run, active?) do
+           Cases.record_case_split_reallocation(
+             parent,
+             parent.revision,
+             run.turn_count,
+             run.ai_usage_units,
+             attrs,
+             authorize?: false
+           ),
+         {:ok, final_run} <- maybe_pause(updated_run, updated_parent.status == :running) do
       {:ok, updated_parent, final_run}
     end
   end
@@ -550,11 +550,6 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
   defp maybe_pause(run, false),
     do: Cases.pause_resolution_run(run, run.revision, authorize?: false)
-
-  defp active_capacity?(limits, counters) do
-    limits.max_resolver_turns > Map.get(counters, :turn_count, 0) and
-      limits.max_ai_usage_units > Map.get(counters, :ai_usage_units, 0)
-  end
 
   defp move_members(moved, child_id) do
     Enum.reduce_while(moved, :ok, fn member, :ok ->

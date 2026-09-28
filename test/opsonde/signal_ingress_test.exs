@@ -1955,12 +1955,7 @@ defmodule Opsonde.SignalIngressTest do
     incident = Cases.list_cases!(actor: context.admin) |> List.first()
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
-    Cases.update_case_record!(
-      incident,
-      incident.revision,
-      %{status: :cancelled},
-      authorize?: false
-    )
+    Cases.record_case_cancellation!(incident, incident.revision, authorize?: false)
 
     Cases.retire_resolution_run!(
       run,
@@ -1991,7 +1986,7 @@ defmodule Opsonde.SignalIngressTest do
     [first] = Cases.list_cases!(actor: context.admin)
     first_run = Cases.active_resolution_run!(first.id, authorize?: false)
 
-    Cases.update_case_record!(first, first.revision, %{status: :resolved}, authorize?: false)
+    Cases.record_case_resolution!(first, first.revision, DateTime.utc_now(), authorize?: false)
 
     Cases.retire_resolution_run!(
       first_run,

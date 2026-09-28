@@ -188,7 +188,7 @@ defmodule Opsonde.NotificationDeliveryTest do
       )
 
     resolved =
-      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
         authorize?: false
       )
 

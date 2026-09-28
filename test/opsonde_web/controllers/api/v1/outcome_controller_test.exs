@@ -82,7 +82,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     resolved =
-      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
         authorize?: false
       )
 
@@ -356,7 +356,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     terminal =
-      Cases.update_case_record!(incident, incident.revision, %{status: :resolved},
+      Cases.record_case_resolution!(incident, incident.revision, DateTime.utc_now(),
         authorize?: false
       )
 

@@ -50,6 +50,26 @@ defmodule Opsonde.Cases do
       define :create_case_record, action: :create_record
       define :update_case_record, action: :update_record, args: [:expected_revision]
 
+      define :record_case_cancellation,
+        action: :record_cancellation,
+        args: [:expected_revision]
+
+      define :record_case_attention,
+        action: :record_attention,
+        args: [:expected_revision, :reason, :pending_intent, :required_human_input]
+
+      define :record_case_resume,
+        action: :record_resume,
+        args: [:expected_revision]
+
+      define :record_case_resolution,
+        action: :record_resolution,
+        args: [:expected_revision, :resolved_at]
+
+      define :record_case_split_reallocation,
+        action: :record_split_reallocation,
+        args: [:expected_revision, :turn_count, :ai_usage_units]
+
       define :mark_case_budget_exhausted,
         action: :mark_budget_exhausted,
         args: [

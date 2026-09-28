@@ -169,9 +169,6 @@ defmodule Opsonde.Cases.Case do
         :max_related_targets,
         :max_ai_usage_units,
         :max_no_progress_turns,
-        :status,
-        :cancel_requested,
-        :resolved_at,
         :stop_reason,
         :pending_intent,
         :required_human_input,
@@ -183,6 +180,107 @@ defmodule Opsonde.Cases.Case do
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
       validate {Opsonde.Validations.BoundedMap, attribute: :pending_intent}
+      change optimistic_lock(:revision)
+    end
+
+    update :record_cancellation do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_in(:status, [:running, :needs_attention])
+      change set_attribute(:status, :cancelled)
+      change set_attribute(:cancel_requested, true)
+      change set_attribute(:stop_reason, "Resolution cancelled by an operator")
+      change set_attribute(:pending_intent, %{})
+      change set_attribute(:required_human_input, nil)
+      change optimistic_lock(:revision)
+    end
+
+    update :record_attention do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :reason, :string, allow_nil?: false, constraints: [min_length: 1, max_length: 500]
+      argument :pending_intent, :map, allow_nil?: false
+
+      argument :required_human_input, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 1_000]
+
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_in(:status, [:running, :needs_attention])
+      validate attribute_equals(:cancel_requested, false)
+      validate {Opsonde.Validations.BoundedMap, argument: :pending_intent}
+      change set_attribute(:status, :needs_attention)
+      change set_attribute(:stop_reason, arg(:reason))
+      change set_attribute(:pending_intent, arg(:pending_intent))
+      change set_attribute(:required_human_input, arg(:required_human_input))
+      change optimistic_lock(:revision)
+    end
+
+    update :record_resume do
+      accept [
+        :authority_mode,
+        :max_elapsed_seconds,
+        :max_resolver_turns,
+        :max_target_requests,
+        :max_effects,
+        :max_related_targets,
+        :max_ai_usage_units,
+        :max_no_progress_turns,
+        :current_owner_id,
+        :selected_target_id,
+        :selected_target_revision
+      ]
+
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :needs_attention)
+      change set_attribute(:status, :running)
+      change set_attribute(:cancel_requested, false)
+      change set_attribute(:stop_reason, nil)
+      change set_attribute(:pending_intent, %{})
+      change set_attribute(:required_human_input, nil)
+      change optimistic_lock(:revision)
+    end
+
+    update :record_resolution do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :resolved_at, :utc_datetime_usec, allow_nil?: false
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      change set_attribute(:status, :resolved)
+      change set_attribute(:resolved_at, arg(:resolved_at))
+      change set_attribute(:pending_intent, %{})
+      change set_attribute(:stop_reason, nil)
+      change set_attribute(:required_human_input, nil)
+      change optimistic_lock(:revision)
+    end
+
+    update :record_split_reallocation do
+      accept [
+        :max_resolver_turns,
+        :max_target_requests,
+        :max_effects,
+        :max_related_targets,
+        :max_ai_usage_units,
+        :selected_target_id,
+        :selected_target_revision
+      ]
+
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :turn_count, :integer, allow_nil?: false, constraints: [min: 0]
+      argument :ai_usage_units, :integer, allow_nil?: false, constraints: [min: 0]
+      validate Opsonde.Validations.CurrentRevision
+      validate attribute_equals(:status, :running)
+      validate attribute_equals(:cancel_requested, false)
+      change Opsonde.Cases.Case.Changes.SplitReallocation
       change optimistic_lock(:revision)
     end
 
@@ -590,6 +688,11 @@ defmodule Opsonde.Cases.Case do
              :unresolved_signals_without_target,
              :create_record,
              :update_record,
+             :record_cancellation,
+             :record_attention,
+             :record_resume,
+             :record_resolution,
+             :record_split_reallocation,
              :mark_budget_exhausted,
              :queue_resolver_turn,
              :handoff_operation,

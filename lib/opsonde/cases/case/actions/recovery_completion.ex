@@ -12,18 +12,7 @@ defmodule Opsonde.Cases.Case.Actions.RecoveryCompletion do
 
     with :ok <- condition_completion_ready(incident),
          {:ok, resolved} <-
-           Cases.update_case_record(
-             incident,
-             incident.revision,
-             %{
-               status: :resolved,
-               resolved_at: now,
-               pending_intent: %{},
-               stop_reason: nil,
-               required_human_input: nil
-             },
-             authorize?: false
-           ),
+           Cases.record_case_resolution(incident, incident.revision, now, authorize?: false),
          {:ok, _completed} <-
            Cases.retire_resolution_run(
              run,
