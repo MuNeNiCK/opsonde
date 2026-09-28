@@ -673,7 +673,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp policy_request(proposal) do
     %PolicyRequest{
-      kind: :effect,
+      kind: proposal.request_kind,
       authority_mode: proposal.authority_mode,
       target_id: proposal.target_id,
       target_revision: proposal.target_revision,

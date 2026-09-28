@@ -173,6 +173,52 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  test "Auto rejects an observation when a matching observation policy is added before authority",
+       context do
+    configure_mode!(:auto, context.admin)
+    {incident, _run, proposal} = proposal!("observation-policy-change", context, :observation)
+
+    Targets.create_target_policy!(
+      context.target.id,
+      "deny-api-inspection",
+      [:observation],
+      ["observe.service"],
+      ["service.inspect"],
+      %{},
+      %{},
+      "Inspection is now forbidden",
+      actor: context.admin
+    )
+
+    assert {:ok, invalidated} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert invalidated.status == :invalidated
+    assert Cases.list_approvals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+  end
+
+  test "Auto permits an observation when a new policy denies only effects", context do
+    configure_mode!(:auto, context.admin)
+    {_incident, _run, proposal} = proposal!("effect-policy-observation", context, :observation)
+
+    Targets.create_target_policy!(
+      context.target.id,
+      "deny-effects-only",
+      [:effect],
+      [],
+      [],
+      %{},
+      %{},
+      "Effects are forbidden",
+      actor: context.admin
+    )
+
+    assert {:ok, authorized} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+    assert authorized.status == :authorized
+    assert [approval] = Cases.list_approvals!(actor: context.admin)
+    assert approval.source == :auto_observation
+  end
+
   test "Auto refuses an observation when the exact Access Method changes", context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("auto-observation-stale", context, :observation)
