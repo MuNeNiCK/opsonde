@@ -47,4 +47,7 @@ export default defineConfig({
     outDir: "../priv/static",
     emptyOutDir: true,
   },
+  test: {
+    environment: "happy-dom",
+  },
 });

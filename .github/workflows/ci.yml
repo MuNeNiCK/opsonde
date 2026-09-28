@@ -41,4 +41,5 @@ jobs:
         run: |
           mix ash.codegen --check
           mix precommit
+          corepack pnpm --dir assets exec vp test
           cargo fmt --manifest-path native/ipmi_nif/Cargo.toml --check
