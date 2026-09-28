@@ -594,14 +594,14 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, "```json\n{\"status\":\"ready\"}\n```"})
     assert :ok = Adapter.check(state, %{})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -680,7 +680,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     )
 
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(
@@ -689,7 +689,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     )
 
     assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:raw_text, ~s({"reason":)})
@@ -1082,7 +1082,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     output =
       capture_log(fn ->
-        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
+        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation", _path} =
                  Adapter.resolve(state, resolver_request(), %{})
       end)
 
@@ -1104,7 +1104,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     output =
       capture_log(fn ->
-        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
+        assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation", _path} =
                  Adapter.resolve(state, resolver_request(), %{})
       end)
 
@@ -1136,7 +1136,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :invalid_output,
             "AI provider JSON does not match the requested schema at /intent/required_input",
-            %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"} =
+            %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -1159,7 +1159,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "```json\n{\"reason\":\"確認\",\"intent\":{\"type\":\"handoff\",\"required_input\":\"確認\"},\"extra\":true}\n```"
     })
 
-    assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation"} =
+    assert {:error, :invalid_output, _, %AI.Usage{}, "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -1200,7 +1200,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     })
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
 
     assert [_request] = requests(context.agent)
@@ -1216,9 +1216,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     })
 
     assert {:error, :invalid_output, message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} = Adapter.resolve(state, resolver_request(), %{})
+            "schema_validation", path} = Adapter.resolve(state, resolver_request(), %{})
 
     assert message =~ "AI provider JSON does not match the requested schema at /intent"
+    assert String.starts_with?(path, "/intent")
+    assert byte_size(path) <= 200
     assert [_request] = requests(context.agent)
   end
 
@@ -1289,7 +1291,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     })
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
   end
 
@@ -1756,7 +1758,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:stream, %{"unexpected" => true}})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(streamed, resolver_request(), %{})
   end
 
@@ -2105,18 +2107,18 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert {:error, :invalid_output,
             "AI provider JSON does not match the requested schema at /intent/evidence_ids",
-            %AI.Usage{}, "schema_validation"} = Adapter.resolve(state, request, %{})
+            %AI.Usage{}, "schema_validation", _path} = Adapter.resolve(state, request, %{})
 
     set_mode(context.agent, {:decision, %{decision | "tool_id" => "invented-tool"}})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, request, %{})
 
     set_mode(context.agent, {:decision, Map.delete(decision, "tool_id")})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, request, %{})
 
     malformed = put_in(decision, ["verification", "expected_result"], "not-an-object")
@@ -2390,7 +2392,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:decision, %{"unexpected" => true}})
 
     assert {:error, :invalid_output, _message, %AI.Usage{input_tokens: 7, output_tokens: 5},
-            "schema_validation"} =
+            "schema_validation", _path} =
              Adapter.resolve(state, resolver_request(), %{})
 
     set_mode(context.agent, {:sleep, 1_000})

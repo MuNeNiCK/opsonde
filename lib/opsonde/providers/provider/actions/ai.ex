@@ -119,10 +119,32 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
 
   defp normalize_adapter_result(
          _operation,
+         {:error, category, message, %AI.Usage{} = usage, failure_code, failure_path},
+         credentials
+       )
+       when category in @adapter_failures and is_binary(message) and is_binary(failure_code) and
+              byte_size(failure_code) <= 80 and
+              (is_nil(failure_path) or
+                 (is_binary(failure_path) and byte_size(failure_path) <= 200)),
+       do:
+         {:error,
+          AI.Error.exception(
+            category: category,
+            message: Redactor.message(message, credentials),
+            usage: usage,
+            dispatched?: true,
+            failure_code: failure_code,
+            failure_path:
+              if(failure_path, do: Redactor.message(failure_path, credentials), else: nil)
+          )}
+
+  defp normalize_adapter_result(
+         _operation,
          {:error, category, message, %AI.Usage{} = usage, failure_code},
          credentials
        )
-       when category in @adapter_failures and is_binary(message) and is_binary(failure_code),
+       when category in @adapter_failures and is_binary(message) and is_binary(failure_code) and
+              byte_size(failure_code) <= 80,
        do:
          {:error,
           AI.Error.exception(

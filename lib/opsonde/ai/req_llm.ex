@@ -809,12 +809,18 @@ defmodule Opsonde.AI.ReqLLM do
             {:error, :invalid_output, message} ->
               {:error, :invalid_output, message, usage, failure_code(message)}
 
+            {:error, :invalid_output, message, path} ->
+              {:error, :invalid_output, message, usage, "schema_validation", path}
+
             {:error, category, message} ->
               {:error, category, message, usage}
           end
 
         {:error, :invalid_output, message} ->
           {:error, :invalid_output, message, usage, failure_code(message)}
+
+        {:error, :invalid_output, message, path} ->
+          {:error, :invalid_output, message, usage, "schema_validation", path}
       end
     end
   end
@@ -1348,10 +1354,14 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp schema_invalid_output(nil),
-    do: invalid_output("AI provider JSON does not match the requested schema")
+    do: {:error, :invalid_output, "AI provider JSON does not match the requested schema", nil}
 
-  defp schema_invalid_output(path),
-    do: invalid_output("AI provider JSON does not match the requested schema at #{path}")
+  defp schema_invalid_output(path) when is_binary(path) and byte_size(path) <= 200,
+    do:
+      {:error, :invalid_output, "AI provider JSON does not match the requested schema at #{path}",
+       path}
+
+  defp schema_invalid_output(_path), do: schema_invalid_output(nil)
 
   defp usage(response) do
     usage = ReqLLM.Response.usage(response)

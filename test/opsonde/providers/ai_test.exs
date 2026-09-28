@@ -838,6 +838,7 @@ defmodule Opsonde.Providers.AITest do
                end)
 
       assert ai_error(invalid_recovery).category == :invalid_output
+      assert ai_error(invalid_recovery).failure_code == "recovery"
     end
 
     ordinary_recovery = %{recovery | evidence_ids: ["observation-1"]}

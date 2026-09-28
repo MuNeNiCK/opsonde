@@ -534,8 +534,11 @@ defmodule Opsonde.Providers.AI.Validator do
          true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
       :ok
     else
-      false -> {:error, ai_error(:invalid_output, "AI Resolver output is too large")}
-      {:error, _error} = error -> error
+      false ->
+        {:error, ai_error(:invalid_output, "AI Resolver output is too large", "output_too_large")}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -546,8 +549,11 @@ defmodule Opsonde.Providers.AI.Validator do
          true <- review_decision_size(decision) <= @max_output_bytes do
       :ok
     else
-      false -> {:error, ai_error(:invalid_output, "AI Reviewer output is invalid")}
-      {:error, _error} = error -> error
+      false ->
+        {:error, ai_error(:invalid_output, "AI Reviewer output is invalid", "reviewer_output")}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -565,13 +571,21 @@ defmodule Opsonde.Providers.AI.Validator do
          true <- encoded_size(%{}, [decision]) <= @max_output_bytes do
       :ok
     else
-      false -> {:error, ai_error(:invalid_output, "Recovery Reviewer output is invalid")}
-      {:error, _error} = error -> error
+      false ->
+        {:error,
+         ai_error(
+           :invalid_output,
+           "Recovery Reviewer output is invalid",
+           "recovery_reviewer_output"
+         )}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
   def validate_decision(_operation, _decision, _request),
-    do: {:error, ai_error(:invalid_output, "AI output is invalid")}
+    do: {:error, ai_error(:invalid_output, "AI output is invalid", "invalid_output")}
 
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and
@@ -579,7 +593,7 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(search.reason) do
       :ok
     else
-      {:error, ai_error(:invalid_output, "AI Target search is invalid")}
+      {:error, ai_error(:invalid_output, "AI Target search is invalid", "target_search")}
     end
   end
 
@@ -603,7 +617,7 @@ defmodule Opsonde.Providers.AI.Validator do
          ) do
       :ok
     else
-      {:error, ai_error(:invalid_output, "AI Target selection is invalid")}
+      {:error, ai_error(:invalid_output, "AI Target selection is invalid", "target_selection")}
     end
   end
 
@@ -624,7 +638,7 @@ defmodule Opsonde.Providers.AI.Validator do
          Enum.all?(traversal.evidence_ids, &(&1 in evidence_ids)) do
       :ok
     else
-      {:error, ai_error(:invalid_output, "AI Target traversal is invalid")}
+      {:error, ai_error(:invalid_output, "AI Target traversal is invalid", "target_traversal")}
     end
   end
 
@@ -650,11 +664,11 @@ defmodule Opsonde.Providers.AI.Validator do
              valid_request_evidence_ids?(proposal, evidence_ids) do
           :ok
         else
-          {:error, ai_error(:invalid_output, "AI Proposal is invalid")}
+          {:error, ai_error(:invalid_output, "AI Proposal is invalid", "proposal")}
         end
 
       _tool ->
-        {:error, ai_error(:invalid_output, "AI Proposal is invalid")}
+        {:error, ai_error(:invalid_output, "AI Proposal is invalid", "proposal")}
     end
   end
 
@@ -674,7 +688,7 @@ defmodule Opsonde.Providers.AI.Validator do
          ) do
       :ok
     else
-      {:error, ai_error(:invalid_output, "AI recovery conclusion is invalid")}
+      {:error, ai_error(:invalid_output, "AI recovery conclusion is invalid", "recovery")}
     end
   end
 
@@ -721,7 +735,7 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(split.reason) do
       :ok
     else
-      {:error, ai_error(:invalid_output, "AI Case split request is invalid")}
+      {:error, ai_error(:invalid_output, "AI Case split request is invalid", "case_split")}
     end
   end
 
@@ -729,11 +743,11 @@ defmodule Opsonde.Providers.AI.Validator do
     if AI.valid_resolver_reason?(handoff.reason) and
          bounded_text?(handoff.required_input, AI.handoff_input_codepoints()),
        do: :ok,
-       else: {:error, ai_error(:invalid_output, "AI handoff is invalid")}
+       else: {:error, ai_error(:invalid_output, "AI handoff is invalid", "handoff")}
   end
 
   defp validate_resolver_intent(_intent, _request),
-    do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid")}
+    do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid", "resolver_intent")}
 
   defp valid_condition_claims?([], %{conditions: []}, _evidence_ids), do: true
 
@@ -798,11 +812,19 @@ defmodule Opsonde.Providers.AI.Validator do
 
     if is_nil(issue),
       do: :ok,
-      else: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid: #{issue}")}
+      else:
+        {:error,
+         ai_error(
+           :invalid_output,
+           "AI Condition assessment is invalid: #{issue}",
+           "condition_assessment_#{issue}"
+         )}
   end
 
   defp validate_condition_assessments(_decision, _request),
-    do: {:error, ai_error(:invalid_output, "AI Condition assessment is invalid")}
+    do:
+      {:error,
+       ai_error(:invalid_output, "AI Condition assessment is invalid", "condition_assessment")}
 
   defp condition_assessment_issue(assessment, condition, visible) do
     ids = assessment["evidence_ids"]
@@ -1040,7 +1062,7 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp validate_usage(_usage, _budget),
-    do: {:error, ai_error(:invalid_output, "AI token usage is invalid")}
+    do: {:error, ai_error(:invalid_output, "AI token usage is invalid", "usage_invalid")}
 
   defp unique?(items), do: length(items) == MapSet.size(MapSet.new(items))
   defp positive?(value), do: is_integer(value) and value > 0
@@ -1063,4 +1085,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp bounded_identifier?(value), do: bounded_string?(value, 500)
 
   defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
+
+  defp ai_error(category, message, failure_code),
+    do: AI.Error.exception(category: category, message: message, failure_code: failure_code)
 end

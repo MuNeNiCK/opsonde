@@ -248,7 +248,8 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(turn, fn ->
                {:error, :invalid_output, "AI Condition assessment is invalid: citation_scope",
-                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+                %AI.Usage{input_tokens: 7, output_tokens: 5},
+                "condition_assessment_citation_scope"}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
@@ -268,9 +269,8 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert :ok =
              invalid_output(turn, fn ->
-               {:error, :invalid_output,
-                "AI provider JSON does not match the requested schema at /intent/type",
-                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+               {:error, :invalid_output, "Adapter rejected schema",
+                %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation", "/intent/type"}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
@@ -347,7 +347,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(turn, fn ->
                {:error, :invalid_output, "AI provider JSON does not match the requested schema",
-                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+                %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
@@ -359,7 +359,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(successor, fn ->
                {:error, :invalid_output, "AI provider JSON does not match the requested schema",
-                %AI.Usage{input_tokens: 4, output_tokens: 3}}
+                %AI.Usage{input_tokens: 4, output_tokens: 3}, "schema_validation"}
              end)
 
     stopped = Cases.get_case!(incident.id, authorize?: false)
@@ -383,7 +383,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(turn, fn ->
                {:error, :invalid_output, "AI provider did not return a structured object",
-                %AI.Usage{input_tokens: 7, output_tokens: 5}}
+                %AI.Usage{input_tokens: 7, output_tokens: 5}, "missing_structured_object"}
              end)
 
     assert_receive {:resolve, %{api_key: @api_key}, _request}
@@ -397,7 +397,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(successor, fn ->
                {:error, :invalid_output, "AI provider JSON does not match the requested schema",
-                %AI.Usage{input_tokens: 4, output_tokens: 3}}
+                %AI.Usage{input_tokens: 4, output_tokens: 3}, "schema_validation"}
              end)
 
     assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
@@ -412,7 +412,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert :ok =
              invalid_output(turn, fn ->
                {:error, :invalid_output, "AI provider JSON was truncated",
-                %AI.Usage{input_tokens: 9, output_tokens: 8}}
+                %AI.Usage{input_tokens: 9, output_tokens: 8}, "truncated"}
              end)
 
     stopped = Cases.get_case!(incident.id, authorize?: false)

@@ -637,7 +637,7 @@ defmodule Opsonde.Providers.AI do
     @moduledoc false
     use Splode.Error,
       class: :unknown,
-      fields: [:category, :message, :usage, :dispatched?, :failure_code]
+      fields: [:category, :message, :usage, :dispatched?, :failure_code, :failure_path]
 
     @impl true
     def message(error), do: error.message
@@ -693,6 +693,9 @@ defmodule Opsonde.Providers.AI do
 
   @type metered_adapter_error ::
           {:error, :invalid_output | :failed, String.t(), Usage.t()}
+          | {:error, :invalid_output | :failed, String.t(), Usage.t(), String.t()}
+          | {:error, :invalid_output | :failed, String.t(), Usage.t(), String.t(),
+             String.t() | nil}
 
   @callback resolve(state :: term(), ResolverRequest.t(), invocation()) ::
               {:ok, ResolverDecision.t()} | adapter_error() | metered_adapter_error()

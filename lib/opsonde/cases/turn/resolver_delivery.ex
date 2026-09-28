@@ -965,51 +965,14 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp rejection_code(error) do
     case find_error(error) do
       %AI.Error{category: :invalid_output, failure_code: code} when is_binary(code) -> code
-      %AI.Error{category: :invalid_output, message: message} -> invalid_output_code(message)
+      %AI.Error{category: :invalid_output} -> "invalid_output"
       _error -> nil
     end
   end
 
-  defp invalid_output_code("AI provider returned no JSON text"), do: "missing_json_text"
-  defp invalid_output_code("AI provider JSON text is too large"), do: "json_text_too_large"
-  defp invalid_output_code("AI provider output is not valid JSON"), do: "json_decode"
-
-  defp invalid_output_code("AI provider JSON does not match the requested schema"),
-    do: "schema_validation"
-
-  defp invalid_output_code("AI provider JSON does not match the requested schema at " <> _path),
-    do: "schema_validation"
-
-  defp invalid_output_code("AI provider did not return a structured object"),
-    do: "missing_structured_object"
-
-  defp invalid_output_code("AI provider output is too large"), do: "output_too_large"
-  defp invalid_output_code("AI provider JSON was truncated"), do: "truncated"
-  defp invalid_output_code("AI provider did not return token usage"), do: "usage_missing"
-  defp invalid_output_code("AI token usage is invalid"), do: "usage_invalid"
-  defp invalid_output_code("AI Resolver output is too large"), do: "output_too_large"
-  defp invalid_output_code("AI Resolver must conclude recovery"), do: "recovery_required"
-  defp invalid_output_code("AI Target search is invalid"), do: "target_search"
-  defp invalid_output_code("AI Target selection is invalid"), do: "target_selection"
-  defp invalid_output_code("AI Target traversal is invalid"), do: "target_traversal"
-  defp invalid_output_code("AI Proposal is invalid"), do: "proposal"
-  defp invalid_output_code("AI recovery conclusion is invalid"), do: "recovery"
-  defp invalid_output_code("AI handoff is invalid"), do: "handoff"
-
-  defp invalid_output_code("AI Condition assessment is invalid"),
-    do: "condition_assessment"
-
-  defp invalid_output_code("AI Condition assessment is invalid: " <> reason)
-       when reason in ~w(source_state recovery_intent_conflict membership shape revision reason citation_shape citation_scope citation_missing status),
-       do: "condition_assessment_" <> reason
-
-  defp invalid_output_code("AI Resolver intent is invalid"), do: "resolver_intent"
-  defp invalid_output_code(_message), do: "invalid_output"
-
   defp rejection_path(error) do
     case find_error(error) do
-      %AI.Error{message: "AI provider JSON does not match the requested schema at " <> path}
-      when byte_size(path) <= 200 ->
+      %AI.Error{failure_path: path} when is_binary(path) and byte_size(path) <= 200 ->
         path
 
       _other ->
