@@ -119,7 +119,7 @@ defmodule OpsondeWeb.SignalWebhookControllerTest do
       assert membership.case_id == incident.id
 
       assert :ok =
-               Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+               Opsonde.Cases.CaseDispatch.Worker.perform(%Oban.Job{
                  args: %{"case_id" => incident.id}
                })
     end

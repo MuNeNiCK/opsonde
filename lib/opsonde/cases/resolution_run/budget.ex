@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.Budget do
+defmodule Opsonde.Cases.ResolutionRun.Budget do
   require Ash.Query
 
   alias Opsonde.Cases

@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.CaseDispatchWorker do
+defmodule Opsonde.Cases.CaseDispatch.Worker do
   use Oban.Worker,
     queue: :resolver,
     max_attempts: 10,

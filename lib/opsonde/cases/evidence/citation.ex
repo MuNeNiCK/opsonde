@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.EvidenceCitation do
+defmodule Opsonde.Cases.Evidence.Citation do
   @moduledoc false
 
   alias Opsonde.Cases

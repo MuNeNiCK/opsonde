@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   @impl true
   def run(input, _opts, _context) do

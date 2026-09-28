@@ -5,13 +5,14 @@ defmodule Opsonde.Cases.RecoveryReviewDelivery do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    Budget,
     Case,
     CaseEvent,
     RecoveryReviewFingerprint,
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
 

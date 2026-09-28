@@ -7,7 +7,6 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
   alias Opsonde.Cases.{
     AIInvocation,
-    Budget,
     Case,
     CaseConditionMembership,
     CaseDispatch,
@@ -19,6 +18,8 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     Turn,
     VerificationAttempt
   }
+
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext

@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.ReviewerEvidenceTest do
+defmodule Opsonde.Cases.Evidence.ReviewerEvidenceTest do
   use ExUnit.Case, async: true
 
-  alias Opsonde.Cases.ReviewerEvidence
+  alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
 
   test "Reviewer projection preserves facts while removing duplicated transport data" do
     facts = %{"stdout" => String.duplicate("service active\n", 1_400), "exit_status" => 0}

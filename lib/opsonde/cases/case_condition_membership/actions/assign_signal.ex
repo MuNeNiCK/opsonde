@@ -107,7 +107,7 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
       if state == :collecting do
         with {:ok, _job} <-
                %{"case_id" => incident.id}
-               |> Opsonde.Cases.CaseDispatchWorker.new(scheduled_at: due_at)
+               |> Opsonde.Cases.CaseDispatch.Worker.new(scheduled_at: due_at)
                |> Oban.insert() do
           {:ok, dispatch}
         end

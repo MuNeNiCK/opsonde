@@ -5,7 +5,8 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, CaseEvent, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 

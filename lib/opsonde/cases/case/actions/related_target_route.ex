@@ -2,7 +2,9 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
+  alias Opsonde.Cases.Evidence.Citation, as: EvidenceCitation
   alias Opsonde.Cases.TraversalBoundary
 
   defmodule Error do

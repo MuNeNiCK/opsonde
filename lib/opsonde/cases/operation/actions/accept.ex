@@ -3,7 +3,8 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   require Ash.Query
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Budget, Operation, Proposal}
+  alias Opsonde.Cases.{Operation, Proposal}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 

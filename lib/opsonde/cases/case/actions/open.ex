@@ -220,7 +220,7 @@ defmodule Opsonde.Cases.Case.Actions.Open do
            ),
          {:ok, _job} <-
            %{"case_id" => incident.id}
-           |> Opsonde.Cases.CaseDispatchWorker.new(scheduled_at: now)
+           |> Opsonde.Cases.CaseDispatch.Worker.new(scheduled_at: now)
            |> Oban.insert() do
       :ok
     end

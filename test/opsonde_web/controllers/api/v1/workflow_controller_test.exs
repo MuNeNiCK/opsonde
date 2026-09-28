@@ -9,7 +9,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   alias Opsonde.Cases.Case
   alias Opsonde.Cases.Case.Realtime
   alias Opsonde.Cases.Proposal.ReviewDelivery
-  alias Opsonde.Cases.CaseDispatchWorker
+  alias Opsonde.Cases.CaseDispatch.Worker, as: CaseDispatchWorker
   alias Opsonde.Providers.{AI, Signal}
 
   @password "correct horse battery staple"
@@ -75,7 +75,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert [_job] =
              Opsonde.Repo.all(Oban.Job)
              |> Enum.filter(
-               &(&1.worker == "Opsonde.Cases.CaseDispatchWorker" and
+               &(&1.worker == "Opsonde.Cases.CaseDispatch.Worker" and
                    &1.args["case_id"] == incident_id)
              )
 

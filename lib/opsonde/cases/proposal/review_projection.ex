@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.ReviewerEvidence
+  alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Providers.AI
 

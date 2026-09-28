@@ -5,16 +5,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   alias Opsonde.{Accounts, Cases, Targets}
 
-  alias Opsonde.Cases.{
-    Approval,
-    Budget,
-    Case,
-    CaseEvent,
-    Proposal,
-    ResolutionRun,
-    ReviewDecision,
-    Turn
-  }
+  alias Opsonde.Cases.{Approval, Case, CaseEvent, Proposal, ResolutionRun, ReviewDecision, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext

@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.Budget
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   @impl true
   def run(input, _opts, context) do

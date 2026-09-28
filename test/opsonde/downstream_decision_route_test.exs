@@ -2,7 +2,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.Budget
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   @password "correct horse battery staple"
 

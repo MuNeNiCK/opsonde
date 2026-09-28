@@ -4,7 +4,9 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
   require Ash.Query
 
   alias Opsonde.{Cases, Signals, Targets}
-  alias Opsonde.Cases.{Budget, Case, CaseEvent, Evidence, EvidenceCitation, ResolutionRun}
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, ResolutionRun}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
+  alias Opsonde.Cases.Evidence.Citation, as: EvidenceCitation
 
   @impl true
   def run(input, _opts, context) do

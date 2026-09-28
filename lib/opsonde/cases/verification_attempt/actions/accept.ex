@@ -3,7 +3,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
   require Ash.Query
 
   alias Opsonde.{Accounts, Cases, Targets}
-  alias Opsonde.Cases.{Budget, Operation, Proposal, VerificationAttempt}
+  alias Opsonde.Cases.{Operation, Proposal, VerificationAttempt}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
 
   @verifiable [:applied, :failed, :partial, :unknown]

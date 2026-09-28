@@ -5,16 +5,8 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
 
   alias Opsonde.Cases
 
-  alias Opsonde.Cases.{
-    Budget,
-    Case,
-    CaseEvent,
-    Evidence,
-    Operation,
-    Proposal,
-    ResolutionRun,
-    Turn
-  }
+  alias Opsonde.Cases.{Case, CaseEvent, Evidence, Operation, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext

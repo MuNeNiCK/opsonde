@@ -421,7 +421,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     invocation = %{
       test_pid: self(),
       respond: fn request ->
-        key = Opsonde.Cases.Budget.key("proposal:reviewer_assignment", proposal.id)
+        key = Opsonde.Cases.ResolutionRun.Budget.key("proposal:reviewer_assignment", proposal.id)
         event = Cases.case_event_by_idempotency!(incident.id, key, authorize?: false)
         assert event.data["provider_id"] == context.reviewer_provider.id
         assert event.data["assignment_id"] == context.reviewer_assignment.id

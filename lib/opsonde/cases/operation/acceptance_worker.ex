@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.Operation.AcceptanceWorker do
   @moduledoc false
 
   alias Opsonde.Cases
-  alias Opsonde.Cases.{Budget, Operation}
+  alias Opsonde.Cases.Operation
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   use Oban.Worker,
     queue: :operations,

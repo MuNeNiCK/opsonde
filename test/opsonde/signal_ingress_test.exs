@@ -550,8 +550,8 @@ defmodule Opsonde.SignalIngressTest do
     assert Cases.list_turns!(actor: context.admin) == []
     job = %Oban.Job{args: %{"case_id" => incident.id}}
 
-    assert :ok = Opsonde.Cases.CaseDispatchWorker.perform(job)
-    assert :ok = Opsonde.Cases.CaseDispatchWorker.perform(job)
+    assert :ok = Opsonde.Cases.CaseDispatch.Worker.perform(job)
+    assert :ok = Opsonde.Cases.CaseDispatch.Worker.perform(job)
     assert length(Cases.list_turns!(actor: context.admin)) == 1
     assert {:ok, %{state: :sent}} = Cases.case_dispatch(incident.id, authorize?: false)
   end
@@ -617,7 +617,7 @@ defmodule Opsonde.SignalIngressTest do
 
       for incident <- new_cases do
         assert :ok =
-                 Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+                 Opsonde.Cases.CaseDispatch.Worker.perform(%Oban.Job{
                    args: %{"case_id" => incident.id}
                  })
 
@@ -721,7 +721,7 @@ defmodule Opsonde.SignalIngressTest do
     assert Cases.list_turns!(actor: context.admin) == []
 
     assert :ok =
-             Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{
+             Opsonde.Cases.CaseDispatch.Worker.perform(%Oban.Job{
                args: %{"case_id" => incident.id}
              })
 
@@ -1146,7 +1146,7 @@ defmodule Opsonde.SignalIngressTest do
     parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
     child_run = Cases.active_resolution_run!(child.id, authorize?: false)
 
-    refute Opsonde.Cases.EvidenceCitation.valid?(
+    refute Opsonde.Cases.Evidence.Citation.valid?(
              moved_source,
              Cases.get_case!(parent.id, authorize?: false),
              parent_run
@@ -2327,7 +2327,7 @@ defmodule Opsonde.SignalIngressTest do
   end
 
   defp dispatch_initial!(incident) do
-    Opsonde.Cases.CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
+    Opsonde.Cases.CaseDispatch.Worker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
   end
 
   defp enable_signal_automation!(admin) do

@@ -14,7 +14,7 @@ defmodule Opsonde.OperationDeliveryTest do
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.Case.SignalRecoveryCheckWorker, as: SignalRecoveryCheckWorker
 
-  alias Opsonde.Cases.CaseDispatchWorker
+  alias Opsonde.Cases.CaseDispatch.Worker, as: CaseDispatchWorker
   alias Opsonde.Targets.ResourceScope
 
   alias Opsonde.Providers.{AI, Signal, Target}
@@ -2931,7 +2931,7 @@ defmodule Opsonde.OperationDeliveryTest do
       Cases.list_turns!(actor: context.admin)
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
-    assert Opsonde.Cases.EvidenceCitation.valid?(
+    assert Opsonde.Cases.Evidence.Citation.valid?(
              evidence,
              Cases.get_case!(incident.id, authorize?: false),
              resumed_run
@@ -4282,7 +4282,7 @@ defmodule Opsonde.OperationDeliveryTest do
     event =
       Cases.case_event_by_idempotency!(
         turn.case_id,
-        Opsonde.Cases.Budget.key("recovery-review:result", turn.id),
+        Opsonde.Cases.ResolutionRun.Budget.key("recovery-review:result", turn.id),
         authorize?: false
       )
 

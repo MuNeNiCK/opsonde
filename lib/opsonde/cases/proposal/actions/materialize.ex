@@ -5,7 +5,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
 
-  alias Opsonde.Cases.{Budget, Case, Evidence, EvidenceCitation, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.{Case, Evidence, Proposal, ResolutionRun, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
+  alias Opsonde.Cases.Evidence.Citation, as: EvidenceCitation
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 

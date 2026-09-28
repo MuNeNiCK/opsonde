@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSearch do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.Budget
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Targets.SearchResult
 
   @impl true

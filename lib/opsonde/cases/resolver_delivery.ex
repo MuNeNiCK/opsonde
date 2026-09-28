@@ -5,15 +5,8 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   alias Opsonde.{Cases, Providers}
 
-  alias Opsonde.Cases.{
-    AIInvocation,
-    Budget,
-    Case,
-    CaseEvent,
-    ResolutionRun,
-    ResolverProjection,
-    Turn
-  }
+  alias Opsonde.Cases.{AIInvocation, Case, CaseEvent, ResolutionRun, ResolverProjection, Turn}
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext

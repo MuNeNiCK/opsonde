@@ -7,7 +7,6 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   alias Opsonde.Cases.{
     Approval,
-    Budget,
     Case,
     CaseEvent,
     Evidence,
@@ -16,6 +15,8 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     ResolutionRun,
     Turn
   }
+
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom

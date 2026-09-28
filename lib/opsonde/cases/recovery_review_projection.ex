@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.RecoveryReviewProjection do
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
-  alias Opsonde.Cases.ReviewerEvidence
+  alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
   alias Opsonde.Providers.AI
 
   def build(turn_id, selection, retry_context \\ nil)
