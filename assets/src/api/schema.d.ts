@@ -264,6 +264,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bmc-secrets/{id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deactivate a BMC secret */
+        post: operations["deactivateBMCSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/oidc/link-requests": {
         parameters: {
             query?: never;
@@ -298,6 +315,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bmc-operations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a BMC operation */
+        get: operations["getBMCOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update a BMC operation */
+        patch: operations["updateBMCOperation"];
+        trace?: never;
+    };
     "/api/v1/management-boundaries/{id}": {
         parameters: {
             query?: never;
@@ -330,6 +365,24 @@ export interface paths {
         head?: never;
         /** Update a Target policy */
         patch: operations["updateTargetPolicy"];
+        trace?: never;
+    };
+    "/api/v1/bmc-secrets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a BMC secret reference */
+        get: operations["getBMCSecret"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update or rotate a BMC secret */
+        patch: operations["updateBMCSecret"];
         trace?: never;
     };
     "/api/v1/target-relationships": {
@@ -550,6 +603,24 @@ export interface paths {
         put?: never;
         /** Disable a Provider */
         post: operations["disableProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access-methods/{access_method_id}/bmc-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List BMC secret references for an Access Method */
+        get: operations["listBMCSecrets"];
+        put?: never;
+        /** Create a BMC secret */
+        post: operations["createBMCSecret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -813,6 +884,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bmc-operations/{id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deactivate a BMC operation */
+        post: operations["deactivateBMCOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cli/session-requests": {
         parameters: {
             query?: never;
@@ -909,6 +997,24 @@ export interface paths {
         get: operations["getAuditRun"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access-methods/{access_method_id}/bmc-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List BMC operations for an Access Method */
+        get: operations["listBMCOperations"];
+        put?: never;
+        /** Create a BMC operation */
+        post: operations["createBMCOperation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1710,6 +1816,11 @@ export interface components {
                 name: string;
             };
         };
+        DeactivateBMCSecretRequest: {
+            bmc_secret: {
+                expected_revision: number;
+            };
+        };
         CaseEventPage: {
             data: components["schemas"]["CaseEvent"][];
             page: components["schemas"]["Page"];
@@ -1763,6 +1874,10 @@ export interface components {
                 verifier: string;
             };
         };
+        BMCOperationPage: {
+            data: components["schemas"]["BMCOperation"][];
+            page: components["schemas"]["Page"];
+        };
         AIUsageRoleAssignment: {
             enabled: boolean;
             /** Format: uuid */
@@ -1777,6 +1892,10 @@ export interface components {
             role: "resolver" | "reviewer";
             /** Format: date-time */
             updated_at: string;
+        };
+        BMCSecretPage: {
+            data: components["schemas"]["BMCSecret"][];
+            page: components["schemas"]["Page"];
         };
         ResolverTurn: {
             /** Format: uuid */
@@ -2077,6 +2196,11 @@ export interface components {
                 name?: string;
             };
         };
+        DeactivateBMCOperationRequest: {
+            bmc_operation: {
+                expected_revision: number;
+            };
+        };
         CasePage: {
             data: components["schemas"]["Case"][];
             page: components["schemas"]["Page"];
@@ -2128,6 +2252,19 @@ export interface components {
                 /** Format: uuid */
                 target_id: string;
             };
+        };
+        BMCSecret: {
+            /** Format: uuid */
+            access_method_id: string;
+            active: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            name: string;
+            revision: number;
+            /** Format: date-time */
+            updated_at: string;
         };
         ResolutionRun: {
             active: boolean;
@@ -2189,6 +2326,9 @@ export interface components {
         SignalWebhookPayload: {
             [key: string]: unknown;
         };
+        BMCOperationResponse: {
+            data: components["schemas"]["BMCOperation"];
+        };
         Operation: {
             /** Format: date-time */
             accepted_at: string;
@@ -2242,6 +2382,9 @@ export interface components {
         };
         ExternalIdentityResponse: {
             data: components["schemas"]["ExternalIdentity"];
+        };
+        BMCSecretResponse: {
+            data: components["schemas"]["BMCSecret"];
         };
         UpdateTargetPolicyRequest: {
             target_policy: {
@@ -2546,6 +2689,12 @@ export interface components {
                 redirect_uri: string;
             };
         };
+        CreateBMCSecretRequest: {
+            bmc_secret: {
+                name: string;
+                value: string;
+            };
+        };
         ExternalIdentityPage: {
             data: components["schemas"]["ExternalIdentity"][];
             page: components["schemas"]["Page"];
@@ -2619,6 +2768,9 @@ export interface components {
             affected_conditions: {
                 /** Format: uuid */
                 condition_id: string;
+                /** Format: uuid */
+                relationship_id?: string;
+                relationship_revision?: number;
                 revision: number;
             }[];
             /** Format: date-time */
@@ -2723,6 +2875,13 @@ export interface components {
                 expected_revision: number;
                 /** Format: uuid */
                 owner_id: string;
+            };
+        };
+        UpdateBMCSecretRequest: {
+            bmc_secret: {
+                expected_revision: number;
+                name?: string;
+                value?: string;
             };
         };
         TargetPolicyResponse: {
@@ -2881,6 +3040,40 @@ export interface components {
             data: components["schemas"]["Delivery"][];
             page: components["schemas"]["Page"];
         };
+        BMCOperation: {
+            /** Format: uuid */
+            access_method_id: string;
+            active: boolean;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            inserted_at: string;
+            name: string;
+            output_schema: {
+                [key: string]: unknown;
+            };
+            parameter_classes: {
+                [key: string]: unknown;
+            };
+            protocol_request: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
+            revision: number;
+            secret_bindings: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            updated_at: string;
+            verification_schema: {
+                [key: string]: unknown;
+            } | null;
+        };
         ReportSettingResponse: {
             data: components["schemas"]["ReportSetting"];
         };
@@ -2920,6 +3113,32 @@ export interface components {
             role_version: number;
             /** Format: date-time */
             updated_at: string;
+        };
+        CreateBMCOperationRequest: {
+            bmc_operation: {
+                description: string;
+                input_schema: {
+                    [key: string]: unknown;
+                };
+                name: string;
+                output_schema: {
+                    [key: string]: unknown;
+                };
+                parameter_classes?: {
+                    [key: string]: unknown;
+                };
+                protocol_request: {
+                    [key: string]: unknown;
+                };
+                /** @enum {string} */
+                request_kind: "observation" | "effect";
+                secret_bindings?: {
+                    [key: string]: unknown;
+                };
+                verification_schema?: {
+                    [key: string]: unknown;
+                } | null;
+            };
         };
         InventoryImportRow: {
             candidate: {
@@ -3194,6 +3413,33 @@ export interface components {
         };
         SignalReceiptResponse: {
             data: components["schemas"]["SignalReceipt"];
+        };
+        UpdateBMCOperationRequest: {
+            bmc_operation: {
+                description?: string;
+                expected_revision: number;
+                input_schema?: {
+                    [key: string]: unknown;
+                };
+                name?: string;
+                output_schema?: {
+                    [key: string]: unknown;
+                };
+                parameter_classes?: {
+                    [key: string]: unknown;
+                };
+                protocol_request?: {
+                    [key: string]: unknown;
+                };
+                /** @enum {string} */
+                request_kind?: "observation" | "effect";
+                secret_bindings?: {
+                    [key: string]: unknown;
+                };
+                verification_schema?: {
+                    [key: string]: unknown;
+                } | null;
+            };
         };
         DeactivateAuditScheduleRequest: {
             audit_schedule: {
@@ -4758,6 +5004,96 @@ export interface operations {
             };
         };
     };
+    deactivateBMCSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC secret revision */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeactivateBMCSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC secret deactivated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCSecretResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     createOIDCLinkRequest: {
         parameters: {
             query?: never;
@@ -4837,6 +5173,163 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExternalIdentityResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getBMCOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description BMC operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCOperationResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateBMCOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC operation update */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBMCOperationRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC operation updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCOperationResponse"];
                 };
             };
             /** @description Request body is invalid */
@@ -5017,6 +5510,163 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TargetPolicyResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getBMCSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description BMC secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCSecretResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateBMCSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC secret update */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBMCSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC secret updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCSecretResponse"];
                 };
             };
             /** @description Request body is invalid */
@@ -6052,6 +6702,157 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listBMCSecrets: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                access_method_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description BMC secret page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCSecretPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createBMCSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                access_method_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC secret */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBMCSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC secret created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCSecretResponse"];
                 };
             };
             /** @description Request body is invalid */
@@ -7393,6 +8194,96 @@ export interface operations {
             };
         };
     };
+    deactivateBMCOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC operation revision */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeactivateBMCOperationRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC operation deactivated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCOperationResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     createCLISessionRequest: {
         parameters: {
             query?: never;
@@ -7813,6 +8704,157 @@ export interface operations {
             };
             /** @description Resource was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listBMCOperations: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                access_method_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description BMC operation page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCOperationPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createBMCOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                access_method_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description BMC operation */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBMCOperationRequest"];
+            };
+        };
+        responses: {
+            /** @description BMC operation created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BMCOperationResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -59,6 +59,20 @@ defmodule OpsondeCLI.Commands do
     {"access-method", "update"} => Route.new(:patch, "/access-methods/:id", 1, "access_method"),
     {"access-method", "deactivate"} =>
       Route.new(:post, "/access-methods/:id/deactivate", 1, "access_method"),
+    {"bmc-operation", "list"} => Route.page("/access-methods/:id/bmc-operations", 1),
+    {"bmc-operation", "show"} => Route.new(:get, "/bmc-operations/:id", 1),
+    {"bmc-operation", "create"} =>
+      Route.new(:post, "/access-methods/:id/bmc-operations", 1, "bmc_operation"),
+    {"bmc-operation", "update"} => Route.new(:patch, "/bmc-operations/:id", 1, "bmc_operation"),
+    {"bmc-operation", "deactivate"} =>
+      Route.new(:post, "/bmc-operations/:id/deactivate", 1, "bmc_operation"),
+    {"bmc-secret", "list"} => Route.page("/access-methods/:id/bmc-secrets", 1),
+    {"bmc-secret", "show"} => Route.new(:get, "/bmc-secrets/:id", 1),
+    {"bmc-secret", "create"} =>
+      Route.new(:post, "/access-methods/:id/bmc-secrets", 1, "bmc_secret"),
+    {"bmc-secret", "update"} => Route.new(:patch, "/bmc-secrets/:id", 1, "bmc_secret"),
+    {"bmc-secret", "deactivate"} =>
+      Route.new(:post, "/bmc-secrets/:id/deactivate", 1, "bmc_secret"),
     {"relationship", "list"} => Route.page("/target-relationships"),
     {"relationship", "create"} => Route.new(:post, "/target-relationships", 0, "relationship"),
     {"relationship", "update"} =>

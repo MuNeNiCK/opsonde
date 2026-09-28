@@ -400,7 +400,7 @@ defmodule OpsondeCLI.CLI do
       opsonde report read ID
 
     Resources:
-      account provider ai-role boundary target identity access-method relationship policy
+      account provider ai-role boundary target identity access-method bmc-operation bmc-secret relationship policy
       inventory authority case proposal operation verification signal audit audit-run report delivery
 
     Input JSON contains the resource fields directly; the CLI adds the API envelope.

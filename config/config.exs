@@ -107,7 +107,7 @@ config :opsonde,
     Opsonde.Targets.Linux.SSH
   ]
 
-config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
+config :phoenix, :filter_parameters, ["bmc_secret", "client_secret", "credentials", "password", "token"]
 config :tzdata, :autoupdate, :disabled
 
 # Configure the endpoint

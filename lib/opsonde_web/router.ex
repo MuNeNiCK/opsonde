@@ -76,6 +76,22 @@ defmodule OpsondeWeb.Router do
     patch "/access-methods/:id", TargetSetupController, :access_methods_update
     post "/access-methods/:id/deactivate", TargetSetupController, :access_methods_deactivate
 
+    get "/access-methods/:access_method_id/bmc-operations", BMCSetupController, :operations_index
+
+    post "/access-methods/:access_method_id/bmc-operations",
+         BMCSetupController,
+         :operations_create
+
+    get "/bmc-operations/:id", BMCSetupController, :operations_show
+    patch "/bmc-operations/:id", BMCSetupController, :operations_update
+    post "/bmc-operations/:id/deactivate", BMCSetupController, :operations_deactivate
+
+    get "/access-methods/:access_method_id/bmc-secrets", BMCSetupController, :secrets_index
+    post "/access-methods/:access_method_id/bmc-secrets", BMCSetupController, :secrets_create
+    get "/bmc-secrets/:id", BMCSetupController, :secrets_show
+    patch "/bmc-secrets/:id", BMCSetupController, :secrets_update
+    post "/bmc-secrets/:id/deactivate", BMCSetupController, :secrets_deactivate
+
     get "/target-relationships", TargetSetupController, :relationships_index
     post "/target-relationships", TargetSetupController, :relationships_create
     patch "/target-relationships/:id", TargetSetupController, :relationships_update

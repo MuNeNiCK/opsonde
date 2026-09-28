@@ -31,6 +31,13 @@ defmodule Opsonde.Targets.BMC.Secret do
   actions do
     defaults [:read]
 
+    read :page_for_method do
+      argument :access_method_id, :uuid, allow_nil?: false
+      filter expr(access_method_id == ^arg(:access_method_id))
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
     read :for_use do
       get? true
       argument :id, :uuid, allow_nil?: false
@@ -80,7 +87,7 @@ defmodule Opsonde.Targets.BMC.Secret do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_for_method]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end

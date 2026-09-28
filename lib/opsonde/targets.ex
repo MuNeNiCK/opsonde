@@ -174,6 +174,12 @@ defmodule Opsonde.Targets do
     end
 
     resource Opsonde.Targets.BMC.Operation do
+      define :get_bmc_operation, action: :read, get_by: [:id]
+
+      define :page_bmc_operations_for_method,
+        action: :page_for_method,
+        args: [:access_method_id]
+
       define :available_bmc_operations_for_method,
         action: :available_for_method,
         args: [:access_method_id]
@@ -196,10 +202,15 @@ defmodule Opsonde.Targets do
         ]
 
       define :update_bmc_operation, action: :update, args: [:expected_revision]
+      define :deactivate_bmc_operation, action: :deactivate, args: [:expected_revision]
     end
 
     resource Opsonde.Targets.BMC.Secret do
       define :get_bmc_secret, action: :read, get_by: [:id]
+
+      define :page_bmc_secrets_for_method,
+        action: :page_for_method,
+        args: [:access_method_id]
 
       define :load_bmc_secret_for_use,
         action: :for_use,
