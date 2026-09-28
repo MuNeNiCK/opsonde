@@ -6,7 +6,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
-  alias Opsonde.Cases.{Case, Realtime}
+  alias Opsonde.Cases.Case
+  alias Opsonde.Cases.Case.Realtime
   alias Opsonde.Cases.ReviewDelivery
   alias Opsonde.Cases.CaseDispatchWorker
   alias Opsonde.Providers.{AI, Signal}

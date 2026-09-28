@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case do
     otp_app: :opsonde,
     domain: Opsonde.Cases,
     authorizers: [Ash.Policy.Authorizer],
-    simple_notifiers: [Opsonde.Cases.RealtimeNotifier],
+    simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer
 
   postgres do
@@ -321,7 +321,7 @@ defmodule Opsonde.Cases.Case do
     end
 
     action :reconnect, :struct do
-      constraints instance_of: Opsonde.Cases.ReconnectSnapshot
+      constraints instance_of: Opsonde.Cases.Case.ReconnectSnapshot
       transaction? false
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Case.Actions.Reconnect

@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.ReconnectSnapshot do
+defmodule Opsonde.Cases.Case.ReconnectSnapshot do
   @moduledoc false
 
   @enforce_keys [

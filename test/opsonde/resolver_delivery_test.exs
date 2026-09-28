@@ -4,7 +4,8 @@ defmodule Opsonde.ResolverDeliveryTest do
   import Ecto.Query
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.{Budget, DecisionRouteWorker, ResolverDelivery, ResolverWorker}
+  alias Opsonde.Cases.{Budget, ResolverDelivery, ResolverWorker}
+  alias Opsonde.Cases.Case.DecisionRouteWorker
   alias Opsonde.Providers.{AI, Target}
 
   @password "correct horse battery staple"

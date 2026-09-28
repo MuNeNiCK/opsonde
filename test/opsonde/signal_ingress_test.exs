@@ -11,11 +11,11 @@ defmodule Opsonde.SignalIngressTest do
 
   alias Opsonde.Cases.{
     ConditionContext,
-    DecisionRouteWorker,
     ResolverDelivery,
     ResolverProjection
   }
 
+  alias Opsonde.Cases.Case.DecisionRouteWorker
   alias Opsonde.Providers.{AI, Signal}
   alias Opsonde.Repo
   alias Opsonde.Cases.RecoveryRecheckWorker
@@ -2084,15 +2084,15 @@ defmodule Opsonde.SignalIngressTest do
       Repo.all(
         from(job in Oban.Job,
           where:
-            job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker" and
+            job.worker == "Opsonde.Cases.Case.TargetCatalogReconciliationWorker" and
               fragment("?->>'resource_id'", job.args) == ^target.id
         )
       )
       |> Enum.sort_by(& &1.args["revision"])
 
-    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(stale_job)
+    assert :ok = Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(stale_job)
     assert length(Cases.list_turns!(actor: context.admin)) == 1
-    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(current_job)
+    assert :ok = Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(current_job)
 
     turns = Cases.list_turns!(actor: context.admin)
     assert length(turns) == 2
@@ -2162,7 +2162,7 @@ defmodule Opsonde.SignalIngressTest do
       )
 
     assert :ok =
-             Opsonde.Cases.TargetCatalogReconciliationWorker.perform(
+             Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(
                reconciliation_job!(unrelated_identity.id)
              )
 
@@ -2202,7 +2202,9 @@ defmodule Opsonde.SignalIngressTest do
            }
 
     assert :ok =
-             Task.async(fn -> Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job) end)
+             Task.async(fn ->
+               Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(job)
+             end)
              |> Task.await()
 
     resumed = Cases.get_case!(waiting.id, actor: context.admin)
@@ -2235,7 +2237,7 @@ defmodule Opsonde.SignalIngressTest do
              "objective" => "Continue resolution after Target registration"
            }
 
-    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(job)
     assert length(Cases.list_resolution_runs!(actor: context.admin)) == 2
     assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
@@ -2257,13 +2259,13 @@ defmodule Opsonde.SignalIngressTest do
       Repo.one!(
         from(job in Oban.Job,
           where:
-            job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker" and
+            job.worker == "Opsonde.Cases.Case.TargetCatalogReconciliationWorker" and
               fragment("?->>'resource_id'", job.args) == ^target.id
         )
       )
 
     assert {:error, "Case still has an active Resolver Turn"} =
-             Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
+             Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(job)
 
     Cases.complete_turn!(
       first_turn.id,
@@ -2275,7 +2277,7 @@ defmodule Opsonde.SignalIngressTest do
       authorize?: false
     )
 
-    assert :ok = Opsonde.Cases.TargetCatalogReconciliationWorker.perform(job)
+    assert :ok = Opsonde.Cases.Case.TargetCatalogReconciliationWorker.perform(job)
     assert length(Cases.list_turns!(actor: context.admin)) == 2
   end
 
@@ -2286,7 +2288,7 @@ defmodule Opsonde.SignalIngressTest do
                Repo.query!("""
                CREATE FUNCTION reject_case_reconciliation_job() RETURNS trigger AS $$
                BEGIN
-                 IF NEW.worker = 'Opsonde.Cases.TargetCatalogReconciliationWorker' THEN
+                 IF NEW.worker = 'Opsonde.Cases.Case.TargetCatalogReconciliationWorker' THEN
                    RAISE EXCEPTION 'reconciliation job rejected';
                  END IF;
                  RETURN NEW;
@@ -2321,7 +2323,7 @@ defmodule Opsonde.SignalIngressTest do
 
     assert Repo.aggregate(
              from(job in Oban.Job,
-               where: job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker"
+               where: job.worker == "Opsonde.Cases.Case.TargetCatalogReconciliationWorker"
              ),
              :count
            ) == 0
@@ -2382,7 +2384,7 @@ defmodule Opsonde.SignalIngressTest do
   defp reconciliation_job!(identity_id) do
     Repo.all(
       from(job in Oban.Job,
-        where: job.worker == "Opsonde.Cases.TargetCatalogReconciliationWorker"
+        where: job.worker == "Opsonde.Cases.Case.TargetCatalogReconciliationWorker"
       )
     )
     |> Enum.find(fn job ->

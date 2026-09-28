@@ -54,7 +54,7 @@ defmodule OpsondeWeb.CaseChannelTest do
   end
 
   test "failed writes do not publish a Case change", context do
-    :ok = Opsonde.Cases.Realtime.subscribe(context.case.id)
+    :ok = Opsonde.Cases.Case.Realtime.subscribe(context.case.id)
 
     assert {:error, _error} =
              Cases.update_case_record(

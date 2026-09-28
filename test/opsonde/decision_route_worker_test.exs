@@ -2,7 +2,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Cases, Providers, Targets}
-  alias Opsonde.Cases.DecisionRouteWorker
+  alias Opsonde.Cases.Case.DecisionRouteWorker
 
   @password "correct horse battery staple"
 

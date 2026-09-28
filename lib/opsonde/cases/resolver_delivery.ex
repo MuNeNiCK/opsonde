@@ -431,7 +431,7 @@ defmodule Opsonde.Cases.ResolverDelivery do
 
   defp enqueue_route(turn_id) do
     %{"turn_id" => turn_id}
-    |> Opsonde.Cases.DecisionRouteWorker.new()
+    |> Opsonde.Cases.Case.DecisionRouteWorker.new()
     |> Oban.insert()
   end
 

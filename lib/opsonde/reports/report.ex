@@ -3,7 +3,7 @@ defmodule Opsonde.Reports.Report do
     otp_app: :opsonde,
     domain: Opsonde.Reports,
     authorizers: [Ash.Policy.Authorizer],
-    simple_notifiers: [Opsonde.Cases.RealtimeNotifier],
+    simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer
 
   postgres do

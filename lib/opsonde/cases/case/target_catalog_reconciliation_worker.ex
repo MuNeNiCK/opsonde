@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.TargetCatalogReconciliationWorker do
+defmodule Opsonde.Cases.Case.TargetCatalogReconciliationWorker do
   @moduledoc false
 
   use Oban.Worker,

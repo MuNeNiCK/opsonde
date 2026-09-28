@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Cases, Signals}
-  alias Opsonde.Cases.ReconnectSnapshot
+  alias Opsonde.Cases.Case.ReconnectSnapshot
   alias Opsonde.Cases.ConditionRecovery
   alias Opsonde.Reports
 

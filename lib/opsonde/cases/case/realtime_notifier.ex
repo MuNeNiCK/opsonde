@@ -1,9 +1,10 @@
-defmodule Opsonde.Cases.RealtimeNotifier do
+defmodule Opsonde.Cases.Case.RealtimeNotifier do
   @moduledoc false
 
   use Ash.Notifier
 
-  alias Opsonde.Cases.{Case, Realtime}
+  alias Opsonde.Cases.Case
+  alias Opsonde.Cases.Case.Realtime
 
   @impl true
   def notify(%Ash.Notifier.Notification{data: %Case{id: case_id}}),

@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.Realtime do
+defmodule Opsonde.Cases.Case.Realtime do
   @moduledoc false
 
   @pubsub Opsonde.PubSub

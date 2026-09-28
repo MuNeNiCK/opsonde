@@ -3,7 +3,7 @@ defmodule OpsondeWeb.CaseChannel do
 
   alias AshAuthentication.Plug.Helpers
   alias Opsonde.Cases
-  alias Opsonde.Cases.Realtime
+  alias Opsonde.Cases.Case.Realtime
 
   @max_token_bytes 16_384
 

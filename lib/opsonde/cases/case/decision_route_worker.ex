@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.DecisionRouteWorker do
+defmodule Opsonde.Cases.Case.DecisionRouteWorker do
   @moduledoc false
 
   use Oban.Worker,
