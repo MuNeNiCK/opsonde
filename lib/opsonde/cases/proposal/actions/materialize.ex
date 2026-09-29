@@ -11,7 +11,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Request, Clearance}
 
   @impl true
   def run(input, _opts, _context) do
@@ -48,7 +48,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
          reserved_operation_id <- Ash.UUID.generate(),
          operation_key <- Budget.key("proposal:operation", turn.id),
          request <-
-           policy_request(proposal.intent, incident, reserved_operation_id, operation_key),
+           target_request(proposal.intent, incident, reserved_operation_id, operation_key),
          {:ok, preflight} <- preflight(request, actor, proposal.request_tool),
          attrs <-
            attributes(
@@ -219,8 +219,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp valid_evidence(_kind, _ids, _incident, _run),
     do: {:error, "Proposal must cite Evidence"}
 
-  defp policy_request(intent, incident, operation_id, operation_key) do
-    %PolicyRequest{
+  defp target_request(intent, incident, operation_id, operation_key) do
+    %Request{
       kind: request_kind(intent),
       authority_mode: incident.authority_mode,
       target_id: intent["target_id"],
@@ -239,7 +239,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp preflight(request, actor, request_tool) do
     case Targets.clear_target_request(request, actor: actor) do
-      {:ok, %RequestClearance{} = clearance} ->
+      {:ok, %Clearance{} = clearance} ->
         if clearance.provider_id == request_tool["provider_id"] and
              clearance.provider_revision == request_tool["provider_revision"] do
           {:ok,
@@ -254,8 +254,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
       {:error, error} ->
         case find_error(error) do
-          %PolicyError{} = policy_error ->
-            {:ok, blocked(policy_error.category, policy_error.message, policy_error.policy_id)}
+          %RequestError{} = request_error ->
+            {:ok, blocked(request_error.category, request_error.message)}
 
           _other ->
             {:error, error}
@@ -268,18 +268,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       "clearance_digest" => Base.encode16(clearance.digest, case: :lower),
       "actor_id" => clearance.actor_id,
       "provider_id" => clearance.provider_id,
-      "provider_revision" => clearance.provider_revision,
-      "policy_revisions" =>
-        Enum.map(clearance.policy_revisions, fn {id, revision} ->
-          %{"id" => id, "revision" => revision}
-        end)
+      "provider_revision" => clearance.provider_revision
     }
   end
 
-  defp blocked(category, reason, policy_id \\ nil) do
+  defp blocked(category, reason) do
     %{
       status: :blocked,
-      context: %{"category" => to_string(category), "policy_id" => policy_id},
+      context: %{"category" => to_string(category)},
       reason: String.slice(reason, 0, 500)
     }
   end
@@ -399,7 +395,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
   defp positive?(value), do: is_integer(value) and value > 0
 
-  defp find_error(%PolicyError{} = error), do: error
+  defp find_error(%RequestError{} = error), do: error
 
   defp find_error(%{errors: errors}) when is_list(errors),
     do: Enum.find_value(errors, &find_error/1)

@@ -544,6 +544,7 @@ defmodule Opsonde.Providers.AI do
       :objective,
       :alert_state,
       :report_language,
+      :operating_instructions,
       :disclosure,
       :budget,
       :evidence,
@@ -579,7 +580,7 @@ defmodule Opsonde.Providers.AI do
       :case_id,
       :objective,
       :report_language,
-      :policy_summary,
+      :operating_instructions,
       :proposal,
       :source_evidence,
       :cited_evidence,
@@ -656,6 +657,7 @@ defmodule Opsonde.Providers.AI do
     encoded = %{
       context: %{
         objective: request.objective,
+        operating_instructions: request.operating_instructions,
         case_symptom: request.case_symptom,
         alert_state: request.alert_state,
         report_language: request.report_language,

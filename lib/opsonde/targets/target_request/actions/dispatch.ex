@@ -1,9 +1,9 @@
-defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
+defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyMatcher, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Request, Clearance}
 
   @authority_modes [:readonly, :ask, :auto, :full_access]
   @request_kinds [:observation, :effect, :verification]
@@ -18,17 +18,16 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     end
   end
 
-  defp clear(actor, %PolicyRequest{} = request) do
+  defp clear(actor, %Request{} = request) do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
-         :ok <- classify(request, context),
-         :ok <- evaluate(context.policies, request) do
+         :ok <- classify(request, context) do
       {:ok, build_clearance(current_actor, request, context)}
     end
   end
 
-  defp dispatch(operation, actor, %{clearance: %RequestClearance{} = clearance} = arguments) do
+  defp dispatch(operation, actor, %{clearance: %Clearance{} = clearance} = arguments) do
     with :ok <- expected_dispatch(operation, clearance.kind),
          :ok <- valid_digest(clearance),
          {:ok, current_actor} <- current_actor(actor),
@@ -37,16 +36,14 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
          :ok <- classify(request, context),
-         :ok <- evaluate(context.policies, request),
          :ok <- validate_authority(request),
-         :ok <- current_policy_set(context.policies, clearance.policy_revisions),
          :ok <- current_provider(context.access_method, clearance) do
       invoke(operation, current_actor, context.access_method, clearance, arguments.invocation)
     end
   end
 
   defp dispatch(_operation, _actor, _arguments),
-    do: {:error, policy_error(:invalid_clearance, "Policy clearance is invalid")}
+    do: {:error, request_error(:invalid_clearance, "Target request clearance is invalid")}
 
   defp resolve(request) do
     with {:ok, target} <- Targets.get_target(request.target_id, authorize?: false),
@@ -59,20 +56,18 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
              request.capability,
              authorize?: false
            ),
-         :ok <- same_target(access_method, target),
-         {:ok, policies} <- Targets.active_target_policies(target.id, authorize?: false) do
+         :ok <- same_target(access_method, target) do
       {:ok,
        %{
          target: target,
-         access_method: access_method,
-         policies: policies
+         access_method: access_method
        }}
     else
-      {:error, %PolicyError{} = error} ->
+      {:error, %RequestError{} = error} ->
         {:error, error}
 
       {:error, _error} ->
-        {:error, policy_error(:stale_context, "Target request context is unavailable")}
+        {:error, request_error(:stale_context, "Target request context is unavailable")}
     end
   end
 
@@ -94,53 +89,10 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
 
       {:ok, %ProviderTarget.RequestClassification{}} ->
         {:error,
-         policy_error(:denied, "Target request kind does not match Method classification")}
+         request_error(:denied, "Target request kind does not match Method classification")}
 
       {:error, _error} ->
-        {:error, policy_error(:denied, "Target Method request is invalid or unsupported")}
-    end
-  end
-
-  defp evaluate(policies, request) do
-    Enum.reduce_while(policies, :ok, fn policy, :ok ->
-      case policy_match(policy, request) do
-        :match ->
-          {:halt, {:error, policy_error(:denied, policy.reason, policy_id: policy.id)}}
-
-        :no_match ->
-          {:cont, :ok}
-
-        {:error, _reason} ->
-          {:halt,
-           {:error,
-            policy_error(:ambiguous_policy, "Target policy could not be evaluated safely",
-              policy_id: policy.id
-            )}}
-      end
-    end)
-  end
-
-  defp policy_match(policy, request) do
-    kind = policy_kind(request.kind)
-
-    cond do
-      kind not in policy.request_kinds ->
-        :no_match
-
-      policy.capabilities != [] and request.capability not in policy.capabilities ->
-        :no_match
-
-      policy.operations != [] and request.operation not in policy.operations ->
-        :no_match
-
-      true ->
-        with :match <- PolicyMatcher.match(policy.selector_match, request.selectors),
-             :match <- PolicyMatcher.match(policy.parameter_match, request.parameters) do
-          :match
-        else
-          :no_match -> :no_match
-          {:error, _reason} = error -> error
-        end
+        {:error, request_error(:denied, "Target Method request is invalid or unsupported")}
     end
   end
 
@@ -163,15 +115,14 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
       idempotency_key: request.idempotency_key,
       reference: request.reference,
       expected: request.expected,
-      max_attempts: request.max_attempts,
-      policy_revisions: policy_revisions(context.policies)
+      max_attempts: request.max_attempts
     }
 
-    struct!(RequestClearance, Map.put(attributes, :digest, digest(attributes)))
+    struct!(Clearance, Map.put(attributes, :digest, digest(attributes)))
   end
 
   defp request_from_clearance(clearance) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: clearance.kind,
       authority_mode: clearance.authority_mode,
       target_id: clearance.target_id,
@@ -261,7 +212,7 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     )
   end
 
-  defp validate_request(%PolicyRequest{} = request) do
+  defp validate_request(%Request{} = request) do
     cond do
       request.kind not in @request_kinds ->
         invalid_request()
@@ -316,43 +267,37 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     end
   end
 
-  defp validate_authority(%PolicyRequest{kind: :effect, authority_mode: :readonly}),
-    do: {:error, policy_error(:forbidden, "Readonly authority cannot execute Target effects")}
+  defp validate_authority(%Request{kind: :effect, authority_mode: :readonly}),
+    do: {:error, request_error(:forbidden, "Readonly authority cannot execute Target effects")}
 
-  defp validate_authority(%PolicyRequest{}), do: :ok
+  defp validate_authority(%Request{}), do: :ok
 
   defp current_actor(%{id: actor_id}) do
     case Accounts.get_user(actor_id, authorize?: false) do
       {:ok, %{role: role} = actor} when role in [:admin, :operator] -> {:ok, actor}
-      _other -> {:error, policy_error(:forbidden, "Actor is not authorized for Target requests")}
+      _other -> {:error, request_error(:forbidden, "Actor is not authorized for Target requests")}
     end
   end
 
   defp current_actor(_actor),
-    do: {:error, policy_error(:forbidden, "Actor is not authorized for Target requests")}
+    do: {:error, request_error(:forbidden, "Actor is not authorized for Target requests")}
 
   defp same_actor(%{id: id}, %{actor_id: id}), do: :ok
 
   defp same_actor(_actor, _clearance),
-    do: {:error, policy_error(:clearance_mismatch, "Policy clearance actor changed")}
+    do: {:error, request_error(:clearance_mismatch, "Target request clearance actor changed")}
 
   defp same_target(%{target_id: id}, %{id: id}), do: :ok
 
   defp same_target(_method, _target),
-    do: {:error, policy_error(:out_of_scope, "Access Method belongs to another Target")}
-
-  defp current_policy_set(policies, expected) do
-    if policy_revisions(policies) == expected,
-      do: :ok,
-      else: {:error, policy_error(:stale_policy, "Target policy set changed")}
-  end
+    do: {:error, request_error(:out_of_scope, "Access Method belongs to another Target")}
 
   defp current_provider(method, clearance) do
     if method.provider_id == clearance.provider_id and
          method.provider_revision == clearance.provider_revision do
       :ok
     else
-      {:error, policy_error(:stale_context, "Target Provider changed")}
+      {:error, request_error(:stale_context, "Target Provider changed")}
     end
   end
 
@@ -362,9 +307,10 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
 
   defp expected_dispatch(_operation, _kind),
     do:
-      {:error, policy_error(:invalid_clearance, "Policy clearance kind does not match dispatch")}
+      {:error,
+       request_error(:invalid_clearance, "Target request clearance kind does not match dispatch")}
 
-  defp valid_digest(%RequestClearance{} = clearance) do
+  defp valid_digest(%Clearance{} = clearance) do
     attributes = clearance |> Map.from_struct() |> Map.delete(:digest)
     expected = digest(attributes)
 
@@ -372,13 +318,9 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          :crypto.hash_equals(clearance.digest, expected) do
       :ok
     else
-      {:error, policy_error(:clearance_mismatch, "Policy clearance was modified")}
+      {:error, request_error(:clearance_mismatch, "Target request clearance was modified")}
     end
   end
-
-  defp policy_revisions(policies), do: Enum.map(policies, &{&1.id, &1.revision})
-  defp policy_kind(:verification), do: :observation
-  defp policy_kind(kind), do: kind
 
   defp digest(attributes) do
     key = Application.fetch_env!(:opsonde, :token_signing_secret)
@@ -389,10 +331,10 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
   defp current(value, value), do: :ok
 
   defp current(_actual, _expected),
-    do: {:error, policy_error(:stale_context, "Target revision changed")}
+    do: {:error, request_error(:stale_context, "Target revision changed")}
 
   defp active(true, _category), do: :ok
-  defp active(false, category), do: {:error, policy_error(category, "Target is inactive")}
+  defp active(false, category), do: {:error, request_error(category, "Target is inactive")}
 
   defp bounded_map?(map) when is_map(map) and map_size(map) <= @max_payload_items do
     case Jason.encode(map) do
@@ -408,13 +350,9 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
   defp nonempty_binary?(value), do: is_binary(value) and byte_size(value) > 0
 
   defp invalid_request(),
-    do: {:error, policy_error(:invalid_request, "Target request is invalid")}
+    do: {:error, request_error(:invalid_request, "Target request is invalid")}
 
-  defp policy_error(category, message, opts \\ []) do
-    PolicyError.exception(
-      category: category,
-      message: message,
-      policy_id: opts[:policy_id]
-    )
+  defp request_error(category, message) do
+    RequestError.exception(category: category, message: message)
   end
 end

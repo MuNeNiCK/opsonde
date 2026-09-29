@@ -8,11 +8,10 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   alias OpsondeWeb.API.V1.{TargetSchemas, TargetSetupJSON}
 
   @boundary_fields ~w(name kind facts)
-  @target_fields ~w(name kind type_id facts management_boundary_id)
+  @target_fields ~w(name kind type_id facts management_boundary_id operating_instructions)
   @identity_fields ~w(target_id source kind value)
   @access_method_fields ~w(target_id provider_id name method endpoint provider_revision priority capabilities)
   @relationship_fields ~w(source_target_id destination_target_id kind facts valid_until)
-  @policy_fields ~w(name request_kinds capabilities operations selector_match parameter_match reason)
 
   @list_errors Schemas.errors([
                  :unauthorized,
@@ -301,54 +300,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
            TargetSchemas.ref("TargetRelationshipResponse")}
       ] ++ @write_errors
 
-  operation :policies_index,
-    operation_id: "listTargetPolicies",
-    summary: "List Target policies",
-    parameters: Schemas.pagination_parameters(),
-    responses:
-      [ok: {"Target policy page", "application/json", TargetSchemas.ref("TargetPolicyPage")}] ++
-        @list_errors
-
-  operation :policies_create,
-    operation_id: "createTargetPolicy",
-    summary: "Create a Target policy",
-    request_body:
-      {"Target policy", "application/json", TargetSchemas.ref("CreateTargetPolicyRequest"),
-       required: true},
-    responses:
-      [
-        created:
-          {"Target policy created", "application/json", TargetSchemas.ref("TargetPolicyResponse")}
-      ] ++ @write_errors
-
-  operation :policies_update,
-    operation_id: "updateTargetPolicy",
-    summary: "Update a Target policy",
-    parameters: Schemas.id_parameter(),
-    request_body:
-      {"Target policy update", "application/json", TargetSchemas.ref("UpdateTargetPolicyRequest"),
-       required: true},
-    responses:
-      [
-        ok:
-          {"Target policy updated", "application/json", TargetSchemas.ref("TargetPolicyResponse")}
-      ] ++
-        @write_errors
-
-  operation :policies_deactivate,
-    operation_id: "deactivateTargetPolicy",
-    summary: "Deactivate a Target policy",
-    parameters: Schemas.id_parameter(),
-    request_body:
-      {"Target policy revision", "application/json",
-       TargetSchemas.ref("DeactivateTargetPolicyRequest"), required: true},
-    responses:
-      [
-        ok:
-          {"Target policy deactivated", "application/json",
-           TargetSchemas.ref("TargetPolicyResponse")}
-      ] ++ @write_errors
-
   def boundaries_index(conn, params) do
     page(conn, params, &Targets.page_management_boundaries/1, &TargetSetupJSON.boundary/1)
   end
@@ -606,56 +557,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   end
 
   def relationships_deactivate(_conn, _params), do: {:error, :bad_request}
-
-  def policies_index(conn, params) do
-    page(conn, params, &Targets.page_target_policies/1, &TargetSetupJSON.policy/1)
-  end
-
-  def policies_create(conn, %{"target_policy" => input}) do
-    with {:ok, policy} <-
-           Targets.create_target_policy(
-             input["target_id"],
-             input["name"],
-             input["request_kinds"],
-             input["capabilities"] || [],
-             input["operations"] || [],
-             input["selector_match"] || %{},
-             input["parameter_match"] || %{},
-             input["reason"],
-             actor: conn.assigns.current_user
-           ) do
-      Response.data(conn, TargetSetupJSON.policy(policy), :created)
-    end
-  end
-
-  def policies_create(_conn, _params), do: {:error, :bad_request}
-
-  def policies_update(conn, %{"id" => id, "target_policy" => input}) do
-    update_record(
-      conn,
-      id,
-      input,
-      @policy_fields,
-      &Targets.get_target_policy/2,
-      &Targets.update_target_policy/4,
-      &TargetSetupJSON.policy/1
-    )
-  end
-
-  def policies_update(_conn, _params), do: {:error, :bad_request}
-
-  def policies_deactivate(conn, %{"id" => id, "target_policy" => input}) do
-    deactivate_record(
-      conn,
-      id,
-      input,
-      &Targets.get_target_policy/2,
-      &Targets.deactivate_target_policy/3,
-      &TargetSetupJSON.policy/1
-    )
-  end
-
-  def policies_deactivate(_conn, _params), do: {:error, :bad_request}
 
   defp page(conn, params, action, serializer) do
     with {:ok, page} <- Pagination.parse(params),

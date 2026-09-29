@@ -12,10 +12,11 @@ defmodule Opsonde.Cases.Operation.Delivery do
   }
 
   alias Opsonde.Cases.Operation.Claim, as: OperationClaim
+  alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{Request, Clearance}
 
   @terminal [:applied, :failed, :partial, :unknown]
 
@@ -37,7 +38,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
 
   defp dispatch(operation, opts) do
     with {:ok, actor} <- current_actor(operation),
-         {:ok, %RequestClearance{} = clearance} <-
+         {:ok, %Clearance{} = clearance} <-
            Targets.clear_target_request(request(operation), actor: actor),
          :ok <- exact_clearance(clearance, operation) do
       invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
@@ -230,6 +231,54 @@ defmodule Opsonde.Cases.Operation.Delivery do
        else: {:error, "Stale Operation has no reassessment Turn"}
   end
 
+  defp continue_handoff(
+         %{outcome_category: "authorization_invalidated"} = operation,
+         _proposal,
+         _evidence,
+         incident
+       ) do
+    with {:ok, target} <- Targets.get_target(operation.target_id, authorize?: false),
+         true <- target.active and incident.selected_target_id == target.id,
+         {:ok, current} <- refresh_selected_target(incident, target),
+         {:ok, run} <- Cases.get_resolution_run(operation.resolution_run_id, authorize?: false),
+         {:ok, started} <-
+           Cases.start_turn(
+             current.id,
+             run.id,
+             Budget.key("operation:authorization-changed", operation.id),
+             %{
+               "objective" => "Reassess this Target under its current operating instructions",
+               "source_operation_id" => operation.id
+             },
+             %{"action" => "continue_resolution", "source_operation_id" => operation.id},
+             "Review Resolver limits",
+             authorize?: false
+           ) do
+      case started do
+        %{status: :exhausted} ->
+          :ok
+
+        %{status: status, case: updated, value: turn} when status in [:charged, :duplicate] ->
+          case Cases.handoff_case_operation(
+                 updated,
+                 updated.revision,
+                 operation.id,
+                 :stale_dispatch,
+                 turn.id,
+                 nil,
+                 nil,
+                 authorize?: false
+               ) do
+            {:ok, _case} -> :ok
+            {:error, _error} = error -> error
+          end
+      end
+    else
+      false -> {:error, "Target changed before Operation reassessment"}
+      {:error, _error} = error -> error
+    end
+  end
+
   defp continue_handoff(%{request_kind: :effect} = operation, _proposal, _evidence, incident) do
     pending = %{
       "action" => "verify_operation",
@@ -293,6 +342,21 @@ defmodule Opsonde.Cases.Operation.Delivery do
       {:ok, :ok} -> :ok
       {:error, _error} = error -> error
     end
+  end
+
+  defp refresh_selected_target(%{selected_target_revision: revision} = incident, %{
+         revision: revision
+       }),
+       do: {:ok, incident}
+
+  defp refresh_selected_target(incident, target) do
+    Cases.record_case_selected_target(
+      incident,
+      incident.revision,
+      target.id,
+      target.revision,
+      authorize?: false
+    )
   end
 
   defp observation_turn_intent(source_turn, evidence) do
@@ -403,7 +467,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
   end
 
   defp request(operation) do
-    %PolicyRequest{
+    %Request{
       kind: operation.request_kind,
       authority_mode: operation.authority_mode,
       target_id: operation.target_id,

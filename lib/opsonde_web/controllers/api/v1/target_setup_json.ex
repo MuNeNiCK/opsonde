@@ -21,6 +21,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
       kind: target.kind,
       type_id: target.type_id,
       facts: target.facts,
+      operating_instructions: target.operating_instructions,
       management_boundary_id: target.management_boundary_id,
       active: target.active,
       revision: target.revision,
@@ -73,24 +74,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
       revision: relationship.revision,
       inserted_at: relationship.inserted_at,
       updated_at: relationship.updated_at
-    }
-  end
-
-  def policy(policy) do
-    %{
-      id: policy.id,
-      target_id: policy.target_id,
-      name: policy.name,
-      request_kinds: policy.request_kinds,
-      capabilities: policy.capabilities,
-      operations: policy.operations,
-      selector_match: policy.selector_match,
-      parameter_match: policy.parameter_match,
-      reason: policy.reason,
-      enabled: policy.enabled,
-      revision: policy.revision,
-      inserted_at: policy.inserted_at,
-      updated_at: policy.updated_at
     }
   end
 end

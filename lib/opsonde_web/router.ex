@@ -82,11 +82,6 @@ defmodule OpsondeWeb.Router do
     patch "/target-relationships/:id", TargetSetupController, :relationships_update
     post "/target-relationships/:id/deactivate", TargetSetupController, :relationships_deactivate
 
-    get "/target-policies", TargetSetupController, :policies_index
-    post "/target-policies", TargetSetupController, :policies_create
-    patch "/target-policies/:id", TargetSetupController, :policies_update
-    post "/target-policies/:id/deactivate", TargetSetupController, :policies_deactivate
-
     get "/inventory-imports", InventoryImportController, :index
     post "/inventory-imports/manual-preview", InventoryImportController, :preview_manual
     post "/inventory-imports/provider-preview", InventoryImportController, :preview_provider

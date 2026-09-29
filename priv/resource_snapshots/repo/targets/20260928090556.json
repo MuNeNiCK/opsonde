@@ -62,6 +62,18 @@
     },
     {
       "allow_nil?": false,
+      "default": "\"\"",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "operating_instructions",
+      "type": "text"
+    },
+    {
+      "allow_nil?": false,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -184,7 +196,7 @@
   ],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "8FA48ADCE84CB84360BF40A39829F1E834E9D73473A9DBB253A216FB48B73187",
+  "hash": "E4F8725E70E950DCDD2105B209913074ECA79D4AA1EEB46CD045AF0991ADA0E2",
   "identities": [],
   "multitenancy": {
     "attribute": null,

@@ -32,7 +32,8 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
              proposal.target_id,
              Enum.map(evidence, & &1.id)
            ),
-         {:ok, target_relations} <- target_relations(incident, proposal) do
+         {:ok, target_relations} <- target_relations(incident, proposal),
+         {:ok, target} <- current_target(proposal) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,
         session_id: "reviewer:#{proposal.id}",
@@ -40,7 +41,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
         case_id: incident.id,
         objective: objective(incident),
         report_language: incident.report_language,
-        policy_summary: policy_summary(proposal),
+        operating_instructions: target.operating_instructions,
         proposal: review_proposal(proposal),
         conditions: conditions,
         source_evidence: source_evidence,
@@ -247,15 +248,15 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
     }
   end
 
-  defp policy_summary(proposal) do
-    category = proposal.preflight_context["category"] || "cleared"
-    revisions = Jason.encode!(proposal.preflight_context["policy_revisions"] || [])
+  defp current_target(proposal) do
+    case Targets.get_target(proposal.target_id, authorize?: false) do
+      {:ok, %{active: true, revision: revision} = target}
+      when revision == proposal.target_revision ->
+        {:ok, target}
 
-    String.slice(
-      "TargetPolicy preflight #{category}; revisions=#{revisions}; mode=#{proposal.authority_mode}; proposal=#{proposal.proposal_digest}",
-      0,
-      8_000
-    )
+      _changed ->
+        {:error, "Reviewer Target instructions or revision changed"}
+    end
   end
 
   defp budget(run) do

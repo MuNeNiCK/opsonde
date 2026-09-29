@@ -6,7 +6,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   alias Opsonde.Cases.{Operation, Proposal}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
-  alias Opsonde.Targets.TargetPolicy.RequestClearance
+  alias Opsonde.Targets.TargetRequest.Clearance
 
   @impl true
   def run(input, _opts, _context) do
@@ -64,8 +64,8 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
          {:ok, approval} <- Cases.approval_by_proposal(proposal.id, authorize?: false),
          :ok <- valid_approval(approval, proposal),
          {:ok, actor} <- current_actor(approval),
-         {:ok, %RequestClearance{} = clearance} <-
-           Targets.clear_target_request(Proposal.policy_request(proposal), actor: actor),
+         {:ok, %Clearance{} = clearance} <-
+           Targets.clear_target_request(Proposal.target_request(proposal), actor: actor),
          :ok <- exact_provider(clearance, proposal),
          {:ok, operation} <- create(proposal, approval, actor, clearance),
          {:ok, _job} <- enqueue(operation.id) do
@@ -166,12 +166,6 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         parameters: proposal.parameters,
         idempotency_key: proposal.operation_idempotency_key,
         authorization_digest: Base.encode16(clearance.digest, case: :lower),
-        policy_context: %{
-          "policy_revisions" =>
-            Enum.map(clearance.policy_revisions, fn {id, revision} ->
-              %{"id" => id, "revision" => revision}
-            end)
-        },
         accepted_at: DateTime.utc_now()
       },
       authorize?: false

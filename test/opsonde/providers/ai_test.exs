@@ -1717,6 +1717,7 @@ defmodule Opsonde.Providers.AITest do
       objective: "Restore service health",
       alert_state: :firing,
       report_language: :en,
+      operating_instructions: "Avoid modifying root",
       disclosure: %AI.Disclosure{
         allowed_target_ids: ["target-1", "target-2"],
         allowed_evidence_kinds: ["signal", "observation"],
@@ -1822,7 +1823,7 @@ defmodule Opsonde.Providers.AITest do
       case_id: "case-1",
       objective: "Restore service health",
       report_language: :en,
-      policy_summary: "Target policy permits this exact restart request",
+      operating_instructions: "Avoid modifying root",
       proposal: proposal(),
       source_evidence: [],
       cited_evidence: [evidence()],

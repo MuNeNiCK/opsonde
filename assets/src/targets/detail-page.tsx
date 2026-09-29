@@ -6,7 +6,7 @@ import {
   CircleAlert,
   Fingerprint,
   Link2,
-  ShieldBan,
+  FileText,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
@@ -85,7 +85,6 @@ export function TargetDetailPage() {
       item.active &&
       (item.source_target_id === target.id || item.destination_target_id === target.id),
   );
-  const policies = snapshot.policies.filter((item) => item.target_id === target.id && item.enabled);
   const boundary = snapshot.boundaries.find((item) => item.id === target.management_boundary_id);
   const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
 
@@ -253,17 +252,18 @@ export function TargetDetailPage() {
           })}
         </Section>
 
-        <Section icon={<ShieldBan />} title={t("targets.policies")} empty={t("targets.noPolicies")}>
-          {policies.map((policy) => (
-            <Record key={policy.id} title={policy.name}>
-              <p className="text-sm">{policy.reason}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {policy.request_kinds.join(", ")}
-                {policy.capabilities.length ? " · " + policy.capabilities.join(", ") : ""}
-                {policy.operations.length ? " · " + policy.operations.join(", ") : ""}
-              </p>
-            </Record>
-          ))}
+        <Section
+          icon={<FileText />}
+          title={t("targets.operatingInstructions")}
+          empty={t("targets.noInstructions")}
+        >
+          {target.operating_instructions
+            ? [
+                <p key="instructions" className="whitespace-pre-wrap text-sm">
+                  {target.operating_instructions}
+                </p>,
+              ]
+            : []}
         </Section>
       </div>
     </div>

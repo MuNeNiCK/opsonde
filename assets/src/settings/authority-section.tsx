@@ -136,7 +136,7 @@ export function AuthoritySetup({ setting, canManage, onRefresh, onError }: Props
       <Card>
         <CardHeader>
           <CardTitle>{t("setup.modeTitle")}</CardTitle>
-          <CardDescription>{t("setup.policyAlwaysApplies")}</CardDescription>
+          <CardDescription>{t("setup.instructionBoundary")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-6" onSubmit={submit}>

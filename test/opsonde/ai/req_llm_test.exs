@@ -1034,6 +1034,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     user_payload = user_payload(wire_request)
 
     assert user_payload["retry_context"] == request.retry_context
+    assert user_payload["operating_instructions"] == "Avoid modifying root"
 
     assert Enum.any?(body["messages"], fn message ->
              message["role"] == "system" and
@@ -1785,6 +1786,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert %{
              "report_language" => "ja",
+             "operating_instructions" => "Do not perform destructive actions",
              "validated_contract" => %{
                "access_method_current_and_authorized" => true,
                "input_matches_provider_schema" => true,
@@ -2666,6 +2668,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       objective: "Restore service health",
       alert_state: :firing,
       report_language: :en,
+      operating_instructions: "Avoid modifying root",
       disclosure: disclosure(),
       budget: budget(),
       evidence: [],
@@ -2685,7 +2688,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       case_id: "case-1",
       objective: "Restore service health",
       report_language: :ja,
-      policy_summary: "No destructive action",
+      operating_instructions: "Do not perform destructive actions",
       proposal: proposal(),
       source_evidence: [
         %AI.Evidence{

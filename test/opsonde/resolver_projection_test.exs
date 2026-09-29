@@ -76,6 +76,26 @@ defmodule Opsonde.ResolverProjectionTest do
     }
   end
 
+  test "selected Target operating instructions reach the Resolver", context do
+    target =
+      Targets.update_target!(
+        context.target,
+        context.target.revision,
+        %{operating_instructions: "Do not modify root"},
+        actor: context.admin
+      )
+
+    {incident, run} = open!("operator-instructions", context.operator, target)
+    started = start!(incident, run, "operator-instructions-turn")
+    capabilities = %Target.Capabilities{observations: [], effects: []}
+
+    assert {:ok, request} =
+             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+
+    assert request.operating_instructions == "Do not modify root"
+    assert request.selected_target_revision == target.revision
+  end
+
   test "selected Target projection exposes only the active method-operation intersection",
        context do
     other =

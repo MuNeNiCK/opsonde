@@ -66,7 +66,7 @@ defmodule Opsonde.Cases.Operation.AcceptanceWorker do
            Budget.key("operation:acceptance:failure", proposal_id),
            "Operation acceptance failed",
            incident.pending_intent,
-           "Review the current authority and Target policy, then resume the Case",
+           "Review the current authority and Target configuration, then resume the Case",
            authorize?: false
          ) do
       {:ok, _case} -> :ok

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Cable, Fingerprint, Link2, Plus, ShieldBan, X } from "lucide-react";
+import { Cable, Fingerprint, Link2, Plus, FileText, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
 import { FormSelect, type FormSelectOption } from "@/components/form-select";
@@ -8,10 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import { AccessMethodForm } from "@/targets/access-method-form";
 import type { Provider, Target, TargetTypeCatalog } from "@/targets/data";
 
-type Action = "identity" | "access" | "relationship" | "policy";
+type Action = "identity" | "access" | "relationship" | "instructions";
 
 export function TargetDetailActions({
   target,
@@ -67,9 +68,9 @@ export function TargetDetailActions({
           <Link2 />
           {t("targets.addRelationship")}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => setAction("policy")}>
-          <ShieldBan />
-          {t("targets.addPolicy")}
+        <Button size="sm" variant="outline" onClick={() => setAction("instructions")}>
+          <FileText />
+          {t("targets.editInstructions")}
         </Button>
       </div>
     );
@@ -171,65 +172,35 @@ export function TargetDetailActions({
             />
           </form>
         )}
-        {action === "policy" && (
+        {action === "instructions" && (
           <form
-            className="grid gap-4 md:grid-cols-2"
+            className="space-y-4"
             onSubmit={(event) =>
-              void submit(event, (form) => {
-                const requestKind = value(form, "request_kinds");
-                const requestKinds: Array<"observation" | "effect"> =
-                  requestKind === "both"
-                    ? ["observation", "effect"]
-                    : [requestKind === "effect" ? "effect" : "observation"];
-                return apiClient.POST("/api/v1/target-policies", {
+              void submit(event, (form) =>
+                apiClient.PATCH("/api/v1/targets/{id}", {
+                  params: { path: { id: target.id } },
                   body: {
-                    target_policy: {
-                      target_id: target.id,
-                      name: value(form, "name"),
-                      request_kinds: requestKinds,
-                      capabilities: values(value(form, "capabilities")),
-                      operations: values(value(form, "operations")),
-                      selector_match: {
-                        [value(form, "selector")]: { prefix: value(form, "prefix") },
-                      },
-                      parameter_match: {},
-                      reason: value(form, "reason"),
+                    target: {
+                      expected_revision: target.revision,
+                      operating_instructions: value(form, "operating_instructions"),
                     },
                   },
-                });
-              })
+                }),
+              )
             }
           >
-            <Field label={t("targets.name")} name="name" required />
-            <LabeledSelect
-              label={t("targets.requestKinds")}
-              name="request_kinds"
-              defaultValue="both"
-              options={[
-                { value: "both", label: t("targets.observationAndEffect") },
-                { value: "observation", label: "observation" },
-                { value: "effect", label: "effect" },
-              ]}
-            />
-            <Field
-              label={t("targets.capabilitiesOptional")}
-              name="capabilities"
-              placeholder="effect.interface"
-            />
-            <Field
-              label={t("targets.operationsOptional")}
-              name="operations"
-              placeholder="ios_xe.interface.admin_state.set"
-            />
-            <Field label={t("targets.selectorField")} name="selector" placeholder="path" required />
-            <Field
-              label={t("targets.forbiddenPrefix")}
-              name="prefix"
-              placeholder="/usr/credential"
-              required
-            />
-            <Field label={t("targets.reason")} name="reason" required />
-            <Submit pending={pending} label={t("targets.addPolicy")} />
+            <p className="text-sm text-muted-foreground">{t("targets.instructionsDescription")}</p>
+            <div className="space-y-2">
+              <Label htmlFor="operating_instructions">{t("targets.operatingInstructions")}</Label>
+              <Textarea
+                id="operating_instructions"
+                name="operating_instructions"
+                rows={6}
+                maxLength={4000}
+                defaultValue={target.operating_instructions}
+              />
+            </div>
+            <Submit pending={pending} label={t("targets.saveInstructions")} />
           </form>
         )}
       </CardContent>
@@ -240,13 +211,6 @@ export function TargetDetailActions({
 function value(form: FormData, name: string) {
   const entry = form.get(name);
   return typeof entry === "string" ? entry : "";
-}
-
-function values(input: string) {
-  return input
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function Field({

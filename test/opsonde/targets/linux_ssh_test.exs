@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.Linux.SSH, as: LinuxSSH
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
   alias Opsonde.Targets.ResourceScope
 
   @password "correct horse battery staple"
@@ -235,7 +235,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     unit = "discovered@42.service"
 
     effect =
-      policy_request(
+      target_request(
         context,
         :effect,
         "effect.service",
@@ -260,7 +260,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert command =~ "systemctl restart -- 'discovered@42.service'"
 
     verification =
-      policy_request(
+      target_request(
         context,
         :verification,
         "observe.service",
@@ -291,7 +291,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
   test "configured privilege applies to arbitrary Method effects", context do
     effect =
-      policy_request(
+      target_request(
         context,
         :effect,
         "request.ssh.effect",
@@ -313,7 +313,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
   test "raw SSH command cannot be cleared as an observation", context do
     request =
-      policy_request(
+      target_request(
         context,
         :observation,
         "request.ssh.effect",
@@ -345,7 +345,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
   test "invalid unit stops locally and post-dispatch timeout stays unknown", context do
     invalid =
-      policy_request(
+      target_request(
         context,
         :effect,
         "effect.service",
@@ -360,7 +360,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert commands(context) == []
 
     slow =
-      policy_request(
+      target_request(
         context,
         :effect,
         "effect.service",
@@ -379,12 +379,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
   end
 
   defp observe!(context, capability, operation, selectors, parameters) do
-    request = policy_request(context, :observation, capability, operation, selectors, parameters)
+    request = target_request(context, :observation, capability, operation, selectors, parameters)
     clearance = Targets.clear_target_request!(request, actor: context.operator)
     Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
   end
 
-  defp policy_request(
+  defp target_request(
          context,
          kind,
          capability,
@@ -393,7 +393,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
          parameters,
          expected \\ %{}
        ) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: :full_access,
       target_id: context.target.id,

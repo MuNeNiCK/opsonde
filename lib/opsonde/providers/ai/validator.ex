@@ -65,6 +65,7 @@ defmodule Opsonde.Providers.AI.Validator do
       nonempty?(request.case_id) and positive?(request.turn) and nonempty?(request.objective) and
       request.alert_state in [:firing, :recovered, :not_applicable] and
       request.report_language in [:en, :ja] and
+      valid_instructions?(request.operating_instructions) and
       valid_retry_context?(request.retry_context) and
       valid_budget?(request.budget) and
       valid_disclosure?(request.disclosure) and valid_selected_target?(request) and
@@ -97,7 +98,7 @@ defmodule Opsonde.Providers.AI.Validator do
         nonempty?(request.resolver_session_id) and
         request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
         nonempty?(request.objective) and request.report_language in [:en, :ja] and
-        nonempty?(request.policy_summary) and
+        valid_instructions?(request.operating_instructions) and
         valid_retry_context?(request.retry_context) and
         valid_budget?(request.budget) and unique?(source_ids) and unique?(evidence_ids) and
         unique?(context_ids) and
@@ -510,7 +511,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp review_size(request) do
     encoded = %{
       objective: request.objective,
-      policy_summary: request.policy_summary,
+      operating_instructions: request.operating_instructions,
       proposal: plain_value(request.proposal),
       conditions: Enum.map(request.conditions, &plain_value/1),
       source_evidence: Enum.map(request.source_evidence, &plain_value/1),
@@ -1068,6 +1069,9 @@ defmodule Opsonde.Providers.AI.Validator do
   defp positive?(value), do: is_integer(value) and value > 0
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
   defp nonempty_list?(value), do: is_list(value) and value != []
+
+  defp valid_instructions?(value),
+    do: is_binary(value) and byte_size(value) <= 16_000 and String.valid?(value)
 
   defp bounded_string?(value, max_bytes),
     do: nonempty?(value) and byte_size(value) <= max_bytes

@@ -315,23 +315,6 @@ export interface paths {
         patch: operations["updateManagementBoundary"];
         trace?: never;
     };
-    "/api/v1/target-policies/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update a Target policy */
-        patch: operations["updateTargetPolicy"];
-        trace?: never;
-    };
     "/api/v1/target-relationships": {
         parameters: {
             query?: never;
@@ -949,24 +932,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/target-policies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Target policies */
-        get: operations["listTargetPolicies"];
-        put?: never;
-        /** Create a Target policy */
-        post: operations["createTargetPolicy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/inventory-imports": {
         parameters: {
             query?: never;
@@ -1396,23 +1361,6 @@ export interface paths {
         head?: never;
         /** Update an external identity */
         patch: operations["updateExternalIdentity"];
-        trace?: never;
-    };
-    "/api/v1/target-policies/{id}/deactivate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Deactivate a Target policy */
-        post: operations["deactivateTargetPolicy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v1/session": {
@@ -2136,23 +2084,6 @@ export interface components {
             data: components["schemas"]["Target"][];
             page: components["schemas"]["Page"];
         };
-        CreateTargetPolicyRequest: {
-            target_policy: {
-                capabilities?: string[];
-                name: string;
-                operations?: string[];
-                parameter_match?: {
-                    [key: string]: unknown;
-                };
-                reason: string;
-                request_kinds: ("observation" | "effect")[];
-                selector_match?: {
-                    [key: string]: unknown;
-                };
-                /** Format: uuid */
-                target_id: string;
-            };
-        };
         ResolutionRun: {
             active: boolean;
             /** @enum {string} */
@@ -2271,22 +2202,6 @@ export interface components {
         ExternalIdentityResponse: {
             data: components["schemas"]["ExternalIdentity"];
         };
-        UpdateTargetPolicyRequest: {
-            target_policy: {
-                capabilities?: string[];
-                expected_revision: number;
-                name?: string;
-                operations?: string[];
-                parameter_match?: {
-                    [key: string]: unknown;
-                };
-                reason?: string;
-                request_kinds?: ("observation" | "effect")[];
-                selector_match?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         ReviewDecision: {
             /** Format: uuid */
             case_id: string;
@@ -2316,11 +2231,6 @@ export interface components {
         };
         ManagementBoundaryResponse: {
             data: components["schemas"]["ManagementBoundary"];
-        };
-        DeactivateTargetPolicyRequest: {
-            target_policy: {
-                expected_revision: number;
-            };
         };
         AuditRunResponse: {
             data: components["schemas"]["AuditRun"];
@@ -2383,6 +2293,7 @@ export interface components {
             /** Format: uuid */
             management_boundary_id: string | null;
             name: string;
+            operating_instructions: string;
             revision: number;
             type_id: string;
             /** Format: date-time */
@@ -2717,10 +2628,6 @@ export interface components {
                 issuer: string;
             };
         };
-        TargetPolicyPage: {
-            data: components["schemas"]["TargetPolicy"][];
-            page: components["schemas"]["Page"];
-        };
         Page: {
             next: string | null;
         };
@@ -2755,9 +2662,6 @@ export interface components {
                 /** Format: uuid */
                 owner_id: string;
             };
-        };
-        TargetPolicyResponse: {
-            data: components["schemas"]["TargetPolicy"];
         };
         AccountPage: {
             data: components["schemas"]["Account"][];
@@ -2835,29 +2739,6 @@ export interface components {
         InventoryImportRowPage: {
             data: components["schemas"]["InventoryImportRow"][];
             page: components["schemas"]["Page"];
-        };
-        TargetPolicy: {
-            capabilities: string[];
-            enabled: boolean;
-            /** Format: uuid */
-            id: string;
-            /** Format: date-time */
-            inserted_at: string;
-            name: string;
-            operations: string[];
-            parameter_match: {
-                [key: string]: unknown;
-            };
-            reason: string;
-            request_kinds: ("observation" | "effect")[];
-            revision: number;
-            selector_match: {
-                [key: string]: unknown;
-            };
-            /** Format: uuid */
-            target_id: string;
-            /** Format: date-time */
-            updated_at: string;
         };
         UpdateAuthoritySettingRequest: {
             authority_setting: {
@@ -3261,6 +3142,7 @@ export interface components {
                 /** Format: uuid */
                 management_boundary_id?: string | null;
                 name?: string;
+                operating_instructions?: string;
                 type_id?: string;
             };
         };
@@ -4965,96 +4847,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ManagementBoundaryResponse"];
-                };
-            };
-            /** @description Request body is invalid */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource was not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource state conflicts with the request */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    updateTargetPolicy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        /** @description Target policy update */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateTargetPolicyRequest"];
-            };
-        };
-        responses: {
-            /** @description Target policy updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TargetPolicyResponse"];
                 };
             };
             /** @description Request body is invalid */
@@ -8024,153 +7816,6 @@ export interface operations {
             };
         };
     };
-    listTargetPolicies: {
-        parameters: {
-            query?: {
-                limit?: number;
-                after?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Target policy page */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TargetPolicyPage"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    createTargetPolicy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Target policy */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateTargetPolicyRequest"];
-            };
-        };
-        responses: {
-            /** @description Target policy created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TargetPolicyResponse"];
-                };
-            };
-            /** @description Request body is invalid */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource was not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource state conflicts with the request */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     listInventoryImports: {
         parameters: {
             query?: {
@@ -10392,96 +10037,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExternalIdentityResponse"];
-                };
-            };
-            /** @description Request body is invalid */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication is required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The operation is not permitted */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource was not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource state conflicts with the request */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request could not be completed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    deactivateTargetPolicy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        /** @description Target policy revision */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeactivateTargetPolicyRequest"];
-            };
-        };
-        responses: {
-            /** @description Target policy deactivated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TargetPolicyResponse"];
                 };
             };
             /** @description Request body is invalid */

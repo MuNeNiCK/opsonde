@@ -500,6 +500,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       objective: objective(incident, turn, recent_recovery_review),
       alert_state: ConditionContext.projected_alert_state(incident, conditions),
       report_language: incident.report_language,
+      operating_instructions: if(target, do: target.operating_instructions, else: ""),
       disclosure: %AI.Disclosure{
         allowed_target_ids: selected_target_ids(target),
         allowed_evidence_kinds: [],

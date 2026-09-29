@@ -133,6 +133,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :kind, :text, null: false
       add :type_id, :text, null: false
       add :facts, :map, null: false, default: %{}
+      add :operating_instructions, :text, null: false, default: ""
       add :search_text, :text, null: false
       add :active, :boolean, null: false, default: true
       add :revision, :bigint, null: false, default: 1
@@ -927,41 +928,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
 
     create index(:authority_settings, [:changed_by_id])
 
-    create table(:target_policies, primary_key: false) do
-      add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
-      add :name, :text, null: false
-      add :request_kinds, {:array, :text}, null: false
-      add :capabilities, {:array, :text}, null: false, default: []
-      add :operations, {:array, :text}, null: false, default: []
-      add :selector_match, :map, null: false, default: %{}
-      add :parameter_match, :map, null: false, default: %{}
-      add :reason, :text, null: false
-      add :enabled, :boolean, null: false, default: true
-      add :revision, :bigint, null: false, default: 1
-
-      add :inserted_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :updated_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :target_id,
-          references(:targets,
-            column: :id,
-            name: "target_policies_target_id_fkey",
-            type: :uuid,
-            prefix: "public"
-          ), null: false
-    end
-
-    create unique_index(:target_policies, [:target_id, :name],
-             name: "target_policies_unique_target_name_index"
-           )
-
-    create index(:target_policies, [:target_id])
-
     create table(:verification_attempts, primary_key: false) do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :status, :text, null: false
@@ -979,7 +945,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :expected, :map, null: false
       add :operation_reference, :text
       add :authorization_digest, :text, null: false
-      add :policy_context, :map, null: false
       add :accepted_at, :utc_datetime_usec, null: false
       add :dispatch_started_at, :utc_datetime_usec
       add :outcome_category, :text
@@ -1994,7 +1959,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :parameters, :map, null: false
       add :idempotency_key, :text, null: false
       add :authorization_digest, :text, null: false
-      add :policy_context, :map, null: false
       add :accepted_at, :utc_datetime_usec, null: false
       add :dispatch_started_at, :utc_datetime_usec
       add :outcome_category, :text
@@ -2157,7 +2121,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       remove :outcome_category
       remove :dispatch_started_at
       remove :accepted_at
-      remove :policy_context
       remove :authorization_digest
       remove :idempotency_key
       remove :parameters
@@ -2753,16 +2716,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
 
     drop table(:verification_attempts)
 
-    drop_if_exists index(:target_policies, [:target_id])
-
-    drop constraint(:target_policies, "target_policies_target_id_fkey")
-
-    drop_if_exists unique_index(:target_policies, [:target_id, :name],
-                     name: "target_policies_unique_target_name_index"
-                   )
-
-    drop table(:target_policies)
-
     drop_if_exists index(:authority_settings, [:changed_by_id])
 
     drop constraint(:authority_settings, "authority_settings_changed_by_id_fkey")
@@ -3148,6 +3101,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       remove :revision
       remove :active
       remove :search_text
+      remove :operating_instructions
       remove :facts
       remove :type_id
       remove :kind

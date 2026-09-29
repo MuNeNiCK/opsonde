@@ -172,20 +172,15 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "Auto rejects an observation when a matching observation policy is added before authority",
+  test "Auto invalidates an observation when Target instructions change before authority",
        context do
     configure_mode!(:auto, context.admin)
     {incident, _run, proposal} = proposal!("observation-policy-change", context, :observation)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-api-inspection",
-      [:observation],
-      ["observe.service"],
-      ["service.inspect"],
-      %{},
-      %{},
-      "Inspection is now forbidden",
+    Targets.update_target!(
+      context.target,
+      context.target.revision,
+      %{operating_instructions: "Do not inspect this service"},
       actor: context.admin
     )
 
@@ -196,19 +191,17 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
   end
 
-  test "Auto permits an observation when a new policy denies only effects", context do
+  test "Auto permits an observation when another Target instructions change", context do
     configure_mode!(:auto, context.admin)
     {_incident, _run, proposal} = proposal!("effect-policy-observation", context, :observation)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-effects-only",
-      [:effect],
-      [],
-      [],
-      %{},
-      %{},
-      "Effects are forbidden",
+    other =
+      Targets.create_target!("other-target", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.update_target!(
+      other,
+      other.revision,
+      %{operating_instructions: "Do not change this other Target"},
       actor: context.admin
     )
 
@@ -560,8 +553,20 @@ defmodule Opsonde.ProposalAuthorityTest do
       actor: context.admin
     )
 
+    target =
+      Targets.update_target!(
+        context.target,
+        context.target.revision,
+        %{operating_instructions: "Do not modify root"},
+        actor: context.admin
+      )
+
     {incident, _run, proposal} =
-      proposal!("linked-target", Map.put(context, :initial_target, guest), :effect)
+      proposal!(
+        "linked-target",
+        %{context | target: target} |> Map.put(:initial_target, guest),
+        :effect
+      )
 
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
@@ -577,6 +582,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
     assert request.initial_target_id == guest.id
     assert request.proposal.target_id == context.target.id
+    assert request.operating_instructions == "Do not modify root"
     assert request.proposal.evidence_ids == Enum.map(request.cited_evidence, & &1.id)
 
     assert [%AI.TargetRelation{id: id, kind: "hosted_by"} = projected] =
@@ -1572,19 +1578,14 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "FullAccess cannot override a Target Policy added after Proposal creation", context do
+  test "FullAccess invalidates a Proposal when Target instructions change", context do
     configure_mode!(:full_access, context.admin)
     {incident, run, proposal} = proposal!("policy-change", context)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-api-restart",
-      [:effect],
-      ["effect.service"],
-      ["service.restart"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "API restart is now forbidden",
+    Targets.update_target!(
+      context.target,
+      context.target.revision,
+      %{operating_instructions: "Do not restart API"},
       actor: context.admin
     )
 

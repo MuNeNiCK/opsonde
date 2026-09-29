@@ -95,13 +95,11 @@ defmodule Opsonde.Cases.Operation do
         :parameters,
         :idempotency_key,
         :authorization_digest,
-        :policy_context,
         :accepted_at
       ]
 
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameters}
-      validate {Opsonde.Validations.BoundedMap, attribute: :policy_context}
       change Opsonde.Cases.Operation.Changes.SetResourceScope
     end
 
@@ -251,7 +249,6 @@ defmodule Opsonde.Cases.Operation do
       public?: true,
       constraints: [min_length: 64, max_length: 64]
 
-    attribute :policy_context, :map, allow_nil?: false, public?: true
     attribute :accepted_at, :utc_datetime_usec, allow_nil?: false, public?: true
 
     attribute :dispatch_started_at, :utc_datetime_usec, public?: true

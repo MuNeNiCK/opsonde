@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
   alias Opsonde.{Accounts, Cases, Targets}
   alias Opsonde.Cases.{Operation, Proposal, VerificationAttempt}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
-  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{Request, Clearance}
 
   @verifiable [:applied, :failed, :partial, :unknown]
 
@@ -56,7 +56,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
          :ok <- valid_proposal(proposal, operation),
          {:ok, actor} <- current_actor(operation),
          {:ok, request} <- request(operation, proposal),
-         {:ok, %RequestClearance{} = clearance} <-
+         {:ok, %Clearance{} = clearance} <-
            Targets.clear_target_request(request, actor: actor),
          :ok <- exact_provider(clearance, proposal.verification_tool),
          {:ok, attempt} <- create(operation, proposal, actor, clearance),
@@ -118,7 +118,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
 
     try do
       {:ok,
-       %PolicyRequest{
+       %Request{
          kind: :verification,
          authority_mode: operation.authority_mode,
          target_id: tool["target_id"],
@@ -175,12 +175,6 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
         expected: intent["expected_result"],
         operation_reference: operation.reference,
         authorization_digest: Base.encode16(clearance.digest, case: :lower),
-        policy_context: %{
-          "policy_revisions" =>
-            Enum.map(clearance.policy_revisions, fn {id, revision} ->
-              %{"id" => id, "revision" => revision}
-            end)
-        },
         accepted_at: DateTime.utc_now(),
         revision: 1
       },

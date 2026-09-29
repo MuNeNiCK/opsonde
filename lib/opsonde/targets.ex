@@ -101,29 +101,7 @@ defmodule Opsonde.Targets do
         args: [:target_id]
     end
 
-    resource Opsonde.Targets.TargetPolicy do
-      define :page_target_policies, action: :page
-      define :get_target_policy, action: :read, get_by: [:id]
-
-      define :active_target_policies,
-        action: :active_for_target,
-        args: [:target_id]
-
-      define :create_target_policy,
-        action: :create,
-        args: [
-          :target_id,
-          :name,
-          :request_kinds,
-          :capabilities,
-          :operations,
-          :selector_match,
-          :parameter_match,
-          :reason
-        ]
-
-      define :update_target_policy, action: :update, args: [:expected_revision]
-      define :deactivate_target_policy, action: :deactivate, args: [:expected_revision]
+    resource Opsonde.Targets.TargetRequest do
       define :clear_target_request, action: :clear_request, args: [:request]
 
       define :dispatch_target_observation,

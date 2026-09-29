@@ -69,7 +69,11 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
 
   defp stale_pending(changeset, operation) do
     if arg(changeset, :kind) == :stale_dispatch and
-         operation.outcome_category in ["source_context_changed", "target_effect_changed"] do
+         operation.outcome_category in [
+           "source_context_changed",
+           "target_effect_changed",
+           "authorization_invalidated"
+         ] do
       with :ok <- next_turn_current?(changeset, operation) do
         {:ok,
          %{

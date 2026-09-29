@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.HTTP
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Request}
 
   defmodule Stub do
     import Plug.Conn
@@ -218,7 +218,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
        context do
     parameters = %{"method" => "POST", "path" => "/api/action", "body" => "{}"}
 
-    proposal = %PolicyRequest{
+    proposal = %Request{
       kind: :observation,
       authority_mode: :auto,
       target_id: context.target.id,
@@ -233,7 +233,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert {:error, clearance_error} =
              Targets.clear_target_request(proposal, actor: context.operator)
 
-    assert Enum.any?(clearance_error.errors, &match?(%PolicyError{category: :denied}, &1))
+    assert Enum.any?(clearance_error.errors, &match?(%RequestError{category: :denied}, &1))
 
     dispatch_request = %{read_request(context, "POST", "/api/action") | parameters: parameters}
 

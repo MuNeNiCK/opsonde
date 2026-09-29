@@ -213,18 +213,6 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "policy_context",
-      "type": "map"
-    },
-    {
-      "allow_nil?": false,
-      "default": "nil",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
       "source": "accepted_at",
       "type": "utc_datetime_usec"
     },
@@ -705,7 +693,7 @@
   ],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "8801953B855DCF98E031232A14F0E3446D9D0DD544043A35C165B29185822E4B",
+  "hash": "E782E63EDC46EFEBB9EE7681C4413082490D80E066602A35BC2B73E6ECB5D31B",
   "identities": [
     {
       "all_tenants?": false,

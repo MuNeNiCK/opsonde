@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
   alias Opsonde.Targets.Profiles.IOSXE.SSH, as: IOSXESSH
 
   @password "correct horse battery staple"
@@ -656,7 +656,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
   end
 
   defp request(context, kind, capability, operation, selectors, parameters, expected \\ %{}) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: :full_access,
       target_id: context.target.id,

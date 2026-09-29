@@ -2634,77 +2634,6 @@
         ],
         "type": "object"
       },
-      "CreateTargetPolicyRequest": {
-        "properties": {
-          "target_policy": {
-            "properties": {
-              "capabilities": {
-                "items": {
-                  "maxLength": 120,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "maxItems": 100,
-                "type": "array"
-              },
-              "name": {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              "operations": {
-                "items": {
-                  "maxLength": 120,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "maxItems": 100,
-                "type": "array"
-              },
-              "parameter_match": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "reason": {
-                "maxLength": 500,
-                "minLength": 1,
-                "type": "string"
-              },
-              "request_kinds": {
-                "items": {
-                  "enum": [
-                    "observation",
-                    "effect"
-                  ],
-                  "type": "string"
-                },
-                "maxItems": 2,
-                "minItems": 1,
-                "type": "array"
-              },
-              "selector_match": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "target_id": {
-                "format": "uuid",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target_id",
-              "name",
-              "request_kinds",
-              "reason"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "target_policy"
-        ],
-        "type": "object"
-      },
       "ResolutionRun": {
         "additionalProperties": false,
         "properties": {
@@ -3112,75 +3041,6 @@
         ],
         "type": "object"
       },
-      "UpdateTargetPolicyRequest": {
-        "properties": {
-          "target_policy": {
-            "minProperties": 2,
-            "properties": {
-              "capabilities": {
-                "items": {
-                  "maxLength": 120,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "maxItems": 100,
-                "type": "array"
-              },
-              "expected_revision": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "name": {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              "operations": {
-                "items": {
-                  "maxLength": 120,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "maxItems": 100,
-                "type": "array"
-              },
-              "parameter_match": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "reason": {
-                "maxLength": 500,
-                "minLength": 1,
-                "type": "string"
-              },
-              "request_kinds": {
-                "items": {
-                  "enum": [
-                    "observation",
-                    "effect"
-                  ],
-                  "type": "string"
-                },
-                "maxItems": 2,
-                "minItems": 1,
-                "type": "array"
-              },
-              "selector_match": {
-                "additionalProperties": true,
-                "type": "object"
-              }
-            },
-            "required": [
-              "expected_revision"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "target_policy"
-        ],
-        "type": "object"
-      },
       "ReviewDecision": {
         "additionalProperties": false,
         "properties": {
@@ -3287,26 +3147,6 @@
         },
         "required": [
           "data"
-        ],
-        "type": "object"
-      },
-      "DeactivateTargetPolicyRequest": {
-        "properties": {
-          "target_policy": {
-            "properties": {
-              "expected_revision": {
-                "minimum": 1,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "expected_revision"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "target_policy"
         ],
         "type": "object"
       },
@@ -3512,6 +3352,11 @@
             "minLength": 1,
             "type": "string"
           },
+          "operating_instructions": {
+            "maxLength": 4000,
+            "minLength": 0,
+            "type": "string"
+          },
           "revision": {
             "minimum": 1,
             "type": "integer"
@@ -3535,6 +3380,7 @@
           "kind",
           "type_id",
           "facts",
+          "operating_instructions",
           "management_boundary_id",
           "active"
         ],
@@ -4850,25 +4696,6 @@
         ],
         "type": "object"
       },
-      "TargetPolicyPage": {
-        "additionalProperties": false,
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/TargetPolicy"
-            },
-            "type": "array"
-          },
-          "page": {
-            "$ref": "#/components/schemas/Page"
-          }
-        },
-        "required": [
-          "data",
-          "page"
-        ],
-        "type": "object"
-      },
       "Page": {
         "additionalProperties": false,
         "properties": {
@@ -4983,18 +4810,6 @@
         },
         "required": [
           "case"
-        ],
-        "type": "object"
-      },
-      "TargetPolicyResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/TargetPolicy"
-          }
-        },
-        "required": [
-          "data"
         ],
         "type": "object"
       },
@@ -5291,98 +5106,6 @@
         "required": [
           "data",
           "page"
-        ],
-        "type": "object"
-      },
-      "TargetPolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "capabilities": {
-            "items": {
-              "maxLength": 120,
-              "minLength": 1,
-              "type": "string"
-            },
-            "maxItems": 100,
-            "type": "array"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "inserted_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
-          },
-          "operations": {
-            "items": {
-              "maxLength": 120,
-              "minLength": 1,
-              "type": "string"
-            },
-            "maxItems": 100,
-            "type": "array"
-          },
-          "parameter_match": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "reason": {
-            "maxLength": 500,
-            "minLength": 1,
-            "type": "string"
-          },
-          "request_kinds": {
-            "items": {
-              "enum": [
-                "observation",
-                "effect"
-              ],
-              "type": "string"
-            },
-            "maxItems": 2,
-            "minItems": 1,
-            "type": "array"
-          },
-          "revision": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "selector_match": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "target_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "revision",
-          "inserted_at",
-          "updated_at",
-          "target_id",
-          "name",
-          "request_kinds",
-          "capabilities",
-          "operations",
-          "selector_match",
-          "parameter_match",
-          "reason",
-          "enabled"
         ],
         "type": "object"
       },
@@ -6985,6 +6708,11 @@
               "name": {
                 "maxLength": 120,
                 "minLength": 1,
+                "type": "string"
+              },
+              "operating_instructions": {
+                "maxLength": 4000,
+                "minLength": 0,
                 "type": "string"
               },
               "type_id": {
@@ -9318,121 +9046,6 @@
           }
         },
         "summary": "Update a management boundary",
-        "tags": [
-          "Targets"
-        ]
-      }
-    },
-    "/api/v1/target-policies/{id}": {
-      "patch": {
-        "callbacks": {},
-        "operationId": "updateTargetPolicy",
-        "parameters": [
-          {
-            "description": "",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateTargetPolicyRequest"
-              }
-            }
-          },
-          "description": "Target policy update",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TargetPolicyResponse"
-                }
-              }
-            },
-            "description": "Target policy updated"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request body is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource was not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource state conflicts with the request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "Update a Target policy",
         "tags": [
           "Targets"
         ]
@@ -13198,194 +12811,6 @@
         ]
       }
     },
-    "/api/v1/target-policies": {
-      "get": {
-        "callbacks": {},
-        "operationId": "listTargetPolicies",
-        "parameters": [
-          {
-            "description": "",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 100,
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "",
-            "in": "query",
-            "name": "after",
-            "required": false,
-            "schema": {
-              "maxLength": 16384,
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TargetPolicyPage"
-                }
-              }
-            },
-            "description": "Target policy page"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "List Target policies",
-        "tags": [
-          "Targets"
-        ]
-      },
-      "post": {
-        "callbacks": {},
-        "operationId": "createTargetPolicy",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTargetPolicyRequest"
-              }
-            }
-          },
-          "description": "Target policy",
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TargetPolicyResponse"
-                }
-              }
-            },
-            "description": "Target policy created"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request body is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource was not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource state conflicts with the request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "Create a Target policy",
-        "tags": [
-          "Targets"
-        ]
-      }
-    },
     "/api/v1/inventory-imports": {
       "get": {
         "callbacks": {},
@@ -16345,121 +15770,6 @@
           }
         },
         "summary": "Update an external identity",
-        "tags": [
-          "Targets"
-        ]
-      }
-    },
-    "/api/v1/target-policies/{id}/deactivate": {
-      "post": {
-        "callbacks": {},
-        "operationId": "deactivateTargetPolicy",
-        "parameters": [
-          {
-            "description": "",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeactivateTargetPolicyRequest"
-              }
-            }
-          },
-          "description": "Target policy revision",
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TargetPolicyResponse"
-                }
-              }
-            },
-            "description": "Target policy deactivated"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request body is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "The operation is not permitted"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource was not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource state conflicts with the request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request could not be completed"
-          }
-        },
-        "summary": "Deactivate a Target policy",
         "tags": [
           "Targets"
         ]

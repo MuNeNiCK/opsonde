@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.Kubernetes
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
 
   @password "correct horse battery staple"
   @namespace "bounded-namespace"
@@ -401,7 +401,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert get_in(observation.facts, ["response", "spec", "mode"]) == "idle"
 
     request =
-      policy_request(
+      target_request(
         context,
         :effect,
         "request.kubernetes.effect",
@@ -485,7 +485,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     for query <- [%{"namespace" => @namespace}, %{"unknown" => "value"}] do
       request =
-        policy_request(
+        target_request(
           context,
           :observation,
           "request.kubernetes.observe",
@@ -542,7 +542,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert get_in(fresh, ["spec", "replicas"]) == 2
 
     verification =
-      policy_request(
+      target_request(
         context,
         :verification,
         "request.kubernetes.observe",
@@ -623,7 +623,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     }
 
     create =
-      policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+      target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
         "action" => "create",
         "api_version" => "example.com/v1",
         "kind" => "Widget",
@@ -652,7 +652,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     updated = put_in(previous, ["spec", "mode"], "updated")
 
     update =
-      policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+      target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
         "action" => "update",
         "api_version" => "example.com/v1",
         "kind" => "Widget",
@@ -712,7 +712,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
   defp observe!(context, capability, operation, selectors, parameters) do
     request =
-      policy_request(context, :observation, capability, operation, selectors, parameters)
+      target_request(context, :observation, capability, operation, selectors, parameters)
 
     clearance = Targets.clear_target_request!(request, actor: context.operator)
     Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
@@ -733,7 +733,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   end
 
   defp deployment_patch(context, observed, replicas) do
-    policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+    target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
       "action" => "patch",
       "api_version" => "apps/v1",
       "kind" => "Deployment",
@@ -748,7 +748,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     })
   end
 
-  defp policy_request(
+  defp target_request(
          context,
          kind,
          capability,
@@ -757,7 +757,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
          parameters,
          expected \\ %{}
        ) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: :full_access,
       target_id: context.target.id,

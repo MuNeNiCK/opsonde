@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.TargetPolicy.RequestClearance do
+defmodule Opsonde.Targets.TargetRequest.Clearance do
   @moduledoc false
 
   @enforce_keys [
@@ -20,7 +20,6 @@ defmodule Opsonde.Targets.TargetPolicy.RequestClearance do
     :reference,
     :expected,
     :max_attempts,
-    :policy_revisions,
     :digest
   ]
 

@@ -57,7 +57,6 @@ defmodule Opsonde.Cases.VerificationAttempt do
         :expected,
         :operation_reference,
         :authorization_digest,
-        :policy_context,
         :accepted_at,
         :revision
       ]
@@ -65,7 +64,6 @@ defmodule Opsonde.Cases.VerificationAttempt do
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameters}
       validate {Opsonde.Validations.BoundedMap, attribute: :expected}
-      validate {Opsonde.Validations.BoundedMap, attribute: :policy_context}
     end
 
     update :mark_dispatching do
@@ -219,7 +217,6 @@ defmodule Opsonde.Cases.VerificationAttempt do
       public?: true,
       constraints: [min_length: 64, max_length: 64]
 
-    attribute :policy_context, :map, allow_nil?: false, public?: true
     attribute :accepted_at, :utc_datetime_usec, allow_nil?: false, public?: true
     attribute :dispatch_started_at, :utc_datetime_usec, public?: true
 

@@ -3,9 +3,8 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
   import OpenApiSpex.TestAssertions
 
-  alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.{Accounts, Providers}
   alias Opsonde.Providers.Registry
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
 
   @password "correct horse battery staple"
   @provider_secret "target-provider-secret"
@@ -277,43 +276,21 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert hosted_by["source_target_id"] == kubernetes["id"]
     assert managed_by["destination_target_id"] == bmc["id"]
 
-    policy =
-      post_data!(
-        "/api/v1/target-policies",
+    updated =
+      patch_json(
+        "/api/v1/targets/#{linux["id"]}",
         %{
-          "target_policy" => %{
-            "target_id" => linux["id"],
-            "name" => "protect-credentials",
-            "request_kinds" => ["observation", "effect"],
-            "capabilities" => [],
-            "operations" => [],
-            "selector_match" => %{"path" => %{"prefix" => "/usr/credential"}},
-            "parameter_match" => %{},
-            "reason" => "credential directory is forbidden"
+          "target" => %{
+            "expected_revision" => linux["revision"],
+            "operating_instructions" => "Do not modify root"
           }
         },
         context.admin_token
       )
+      |> json_response(200)
+      |> Map.fetch!("data")
 
-    assert policy["target_id"] == linux["id"]
-
-    blocked_request = %PolicyRequest{
-      kind: :observation,
-      authority_mode: :full_access,
-      target_id: linux["id"],
-      target_revision: linux["revision"],
-      access_method_id: linux_ssh["id"],
-      access_method_revision: linux_ssh["revision"],
-      capability: "observe.command",
-      operation: "filesystem.read",
-      selectors: %{"path" => "/usr/credential/service/token"}
-    }
-
-    assert {:error, error} =
-             Targets.clear_target_request(blocked_request, actor: context.operator)
-
-    assert %PolicyError{category: :denied, policy_id: policy_id} = policy_error(error)
-    assert policy_id == policy["id"]
+    assert updated["operating_instructions"] == "Do not modify root"
 
     target_page = get_json("/api/v1/targets?limit=3", context.viewer_token)
 
@@ -642,14 +619,4 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   defp dispatch_request(conn, :get, path, _body), do: get(conn, path)
   defp dispatch_request(conn, :post, path, body), do: post(conn, path, body)
   defp dispatch_request(conn, :patch, path, body), do: patch(conn, path, body)
-
-  defp policy_error(%{errors: errors}) do
-    Enum.find_value(errors, fn
-      %PolicyError{} = error -> error
-      nested when is_map(nested) -> policy_error(nested)
-      _other -> nil
-    end)
-  end
-
-  defp policy_error(_error), do: nil
 end

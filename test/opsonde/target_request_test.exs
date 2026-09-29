@@ -1,12 +1,11 @@
-defmodule Opsonde.TargetPolicyTest do
+defmodule Opsonde.TargetRequestTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Request, Clearance}
 
   @password "correct horse battery staple"
-  @modes [:readonly, :ask, :auto, :full_access]
 
   setup do
     admin = Accounts.bootstrap!("admin@example.com", @password, @password, authorize?: true)
@@ -36,58 +35,8 @@ defmodule Opsonde.TargetPolicyTest do
     }
   end
 
-  test "one Target deny rule blocks observations and effects through every method and mode",
+  test "cleared request dispatches the exact registered Method snapshot",
        context do
-    policy =
-      create_policy!(
-        context,
-        context.linux,
-        "protect-credentials",
-        [:observation, :effect],
-        [],
-        [],
-        %{"path" => %{"prefix" => "/usr/credential"}},
-        %{},
-        "credential directory is forbidden"
-      )
-
-    assert policy.target_id == context.linux.id
-
-    for mode <- @modes,
-        method <- [context.ssh, context.api],
-        kind <- [:observation, :effect] do
-      request =
-        request(context.linux, method, kind, mode,
-          capability: capability(kind),
-          operation: if(kind == :effect, do: "filesystem.delete", else: "filesystem.read"),
-          selectors: %{"path" => "/usr/credential/service/token"}
-        )
-
-      assert {:error, error} =
-               Targets.clear_target_request(request, actor: context.operator)
-
-      assert policy_error(error).category == :denied
-      assert policy_error(error).policy_id == policy.id
-    end
-
-    refute_receive {:observe, _, _}
-    refute_receive {:effect, _, _}
-  end
-
-  test "policy affects only its Target and cleared request dispatches the exact snapshot",
-       context do
-    create_policy!(
-      context,
-      context.linux,
-      "protect-credentials",
-      [:observation],
-      ["observe.command"],
-      ["filesystem.read"],
-      %{"path" => %{"prefix" => "/usr/credential"}},
-      %{},
-      "credential directory is forbidden"
-    )
-
     other = create_target!(context.admin, "linux-02", "host", "linux")
 
     other_method =
@@ -108,7 +57,7 @@ defmodule Opsonde.TargetPolicyTest do
         parameters: %{"command" => "cat /usr/credential/service/token"}
       )
 
-    assert %RequestClearance{} =
+    assert %Clearance{} =
              clearance = Targets.clear_target_request!(request, actor: context.operator)
 
     observation = %ProviderTarget.Observation{
@@ -170,139 +119,6 @@ defmodule Opsonde.TargetPolicyTest do
     refute_receive {:observe, _, _}
   end
 
-  test "canonical and generic rules deny Cisco port shutdown without blocking another port",
-       context do
-    ios = create_target!(context.admin, "edge-01", "network_device", "cisco_ios_xe")
-
-    netconf =
-      create_method!(
-        context.admin,
-        context.provider,
-        ios,
-        "netconf",
-        "netconf",
-        "ssh://192.0.2.20:830"
-      )
-
-    generic =
-      create_method!(
-        context.admin,
-        context.provider,
-        ios,
-        "ssh",
-        "ssh",
-        "ssh://192.0.2.20:22"
-      )
-
-    create_policy!(
-      context,
-      ios,
-      "keep-port-6-up",
-      [:effect],
-      ["effect.command"],
-      ["interface.shutdown"],
-      %{"interface" => %{"eq" => "GigabitEthernet1/0/6"}},
-      %{},
-      "port 6 must remain up"
-    )
-
-    blocked =
-      request(ios, netconf, :effect, :full_access,
-        capability: "effect.command",
-        operation: "interface.shutdown",
-        selectors: %{"interface" => "GigabitEthernet1/0/6"}
-      )
-
-    assert {:error, error} = Targets.clear_target_request(blocked, actor: context.admin)
-    assert policy_error(error).category == :denied
-
-    allowed =
-      request(ios, netconf, :effect, :auto,
-        capability: "effect.command",
-        operation: "interface.shutdown",
-        selectors: %{"interface" => "GigabitEthernet1/0/7"}
-      )
-
-    clearance = Targets.clear_target_request!(allowed, actor: context.admin)
-    result = %ProviderTarget.EffectResult{status: :applied}
-
-    assert {:error, %Ash.Error.Forbidden{}} =
-             Targets.dispatch_target_effect(clearance, invocation(result), actor: context.admin)
-
-    assert ^result =
-             Targets.dispatch_target_effect!(clearance, invocation(result),
-               actor: context.admin,
-               authorize?: false
-             )
-
-    assert_receive {:effect, _state, %{access_method_id: id} = dispatched_effect}
-    assert id == netconf.id
-    assert dispatched_effect.connection.endpoint == netconf.endpoint
-
-    create_policy!(
-      context,
-      ios,
-      "generic-command-guard",
-      [:effect],
-      ["effect.command"],
-      ["command.execute"],
-      %{},
-      %{"command" => %{"contains" => "shutdown interface GigabitEthernet1/0/6"}},
-      "generic command targets protected port"
-    )
-
-    raw =
-      request(ios, generic, :effect, :ask,
-        capability: "effect.command",
-        operation: "command.execute",
-        parameters: %{"command" => "configure; shutdown interface GigabitEthernet1/0/6"}
-      )
-
-    assert {:error, raw_error} = Targets.clear_target_request(raw, actor: context.admin)
-    assert policy_error(raw_error).category == :denied
-    refute_receive {:effect, _, _}
-  end
-
-  test "ambiguous match fails closed and invalid matcher cannot be stored", context do
-    create_policy!(
-      context,
-      context.linux,
-      "path-guard",
-      [:observation],
-      [],
-      [],
-      %{"path" => %{"prefix" => "/usr/credential"}},
-      %{},
-      "path must be evaluated"
-    )
-
-    ambiguous =
-      request(context.linux, context.ssh, :observation, :readonly,
-        capability: "observe.command",
-        operation: "filesystem.read",
-        selectors: %{"path" => 42}
-      )
-
-    assert {:error, error} = Targets.clear_target_request(ambiguous, actor: context.operator)
-    assert policy_error(error).category == :ambiguous_policy
-
-    assert {:error, invalid} =
-             Targets.create_target_policy(
-               context.linux.id,
-               "invalid",
-               [:effect],
-               [],
-               [],
-               %{},
-               %{"command" => %{"regex" => ".*"}},
-               "unsupported matcher",
-               actor: context.admin
-             )
-
-    assert Exception.message(invalid) =~ "operator map"
-    refute_receive {:observe, _, _}
-  end
-
   test "tampered or stale clearance and downgraded actors stop before dispatch", context do
     base =
       request(context.linux, context.ssh, :observation, :auto,
@@ -320,44 +136,26 @@ defmodule Opsonde.TargetPolicyTest do
                actor: context.operator
              )
 
-    assert policy_error(tampered_error).category == :clearance_mismatch
+    assert request_error(tampered_error).category == :clearance_mismatch
 
-    policy =
-      create_policy!(
-        context,
-        context.linux,
-        "nonmatching",
-        [:effect],
-        [],
-        ["service.restart"],
-        %{},
-        %{},
-        "unrelated effect"
-      )
+    Targets.update_target!(
+      context.linux,
+      context.linux.revision,
+      %{operating_instructions: "Do not modify root"},
+      actor: context.admin
+    )
 
-    assert {:error, policy_error_result} =
+    assert {:error, target_error} =
              Targets.dispatch_target_observation(
                clearance,
                invocation(flunk_response()),
                actor: context.operator
              )
 
-    assert policy_error(policy_error_result).category == :stale_policy
+    assert request_error(target_error).category == :stale_context
 
-    current_clearance = Targets.clear_target_request!(base, actor: context.operator)
-
-    Targets.update_target_policy!(policy, 1, %{reason: "changed policy"}, actor: context.admin)
-
-    assert {:error, changed_policy_error} =
-             Targets.dispatch_target_observation(
-               current_clearance,
-               invocation(flunk_response()),
-               actor: context.operator
-             )
-
-    assert policy_error(changed_policy_error).category == :stale_policy
-
-    current_clearance = Targets.clear_target_request!(base, actor: context.operator)
+    current_request = %{base | target_revision: context.linux.revision + 1}
+    current_clearance = Targets.clear_target_request!(current_request, actor: context.operator)
 
     Targets.update_access_method!(context.ssh, 1, %{priority: 10}, actor: context.admin)
 
@@ -368,9 +166,9 @@ defmodule Opsonde.TargetPolicyTest do
                actor: context.operator
              )
 
-    assert policy_error(method_error).category == :stale_context
+    assert request_error(method_error).category == :stale_context
 
-    current_request = %{base | access_method_revision: 2}
+    current_request = %{current_request | access_method_revision: 2}
     current_clearance = Targets.clear_target_request!(current_request, actor: context.operator)
 
     Providers.update_provider!(
@@ -387,7 +185,7 @@ defmodule Opsonde.TargetPolicyTest do
                actor: context.operator
              )
 
-    assert policy_error(provider_error).category == :stale_context
+    assert request_error(provider_error).category == :stale_context
     refute_receive {:observe, _, _}
   end
 
@@ -408,7 +206,7 @@ defmodule Opsonde.TargetPolicyTest do
                actor: context.operator
              )
 
-    assert policy_error(error).category == :forbidden
+    assert request_error(error).category == :forbidden
     refute_receive {:observe, _, _}
   end
 
@@ -419,7 +217,7 @@ defmodule Opsonde.TargetPolicyTest do
         operation: "system.inspect"
       )
 
-    assert %RequestClearance{} =
+    assert %Clearance{} =
              Targets.clear_target_request!(observation, actor: context.operator)
 
     effect =
@@ -437,12 +235,12 @@ defmodule Opsonde.TargetPolicyTest do
                authorize?: false
              )
 
-    assert policy_error(error).category == :forbidden
+    assert request_error(error).category == :forbidden
     refute_receive {:effect, _, _}
   end
 
   defp request(target, method, kind, mode, opts) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: mode,
       target_id: target.id,
@@ -455,30 +253,6 @@ defmodule Opsonde.TargetPolicyTest do
       parameters: Keyword.get(opts, :parameters, %{}),
       operation_id: if(kind in [:effect, :verification], do: "operation-1"),
       idempotency_key: if(kind == :effect, do: "idempotency-1")
-    )
-  end
-
-  defp create_policy!(
-         context,
-         target,
-         name,
-         kinds,
-         capabilities,
-         operations,
-         selectors,
-         parameters,
-         reason
-       ) do
-    Targets.create_target_policy!(
-      target.id,
-      name,
-      kinds,
-      capabilities,
-      operations,
-      selectors,
-      parameters,
-      reason,
-      actor: context.admin
     )
   end
 
@@ -515,9 +289,6 @@ defmodule Opsonde.TargetPolicyTest do
     Providers.enable_provider!(checked, checked.revision, actor: admin)
   end
 
-  defp capability(:effect), do: "effect.command"
-  defp capability(_kind), do: "observe.command"
-
   defp invocation(%_{} = response),
     do: %{test_pid: self(), respond: fn -> {:ok, response} end}
 
@@ -525,13 +296,13 @@ defmodule Opsonde.TargetPolicyTest do
 
   defp flunk_response, do: fn -> flunk("denied request reached adapter") end
 
-  defp policy_error(%{errors: errors}) do
+  defp request_error(%{errors: errors}) do
     Enum.find_value(errors, fn
-      %PolicyError{} = error -> error
-      nested when is_map(nested) -> policy_error(nested)
+      %RequestError{} = error -> error
+      nested when is_map(nested) -> request_error(nested)
       _other -> nil
     end)
   end
 
-  defp policy_error(_error), do: nil
+  defp request_error(_error), do: nil
 end

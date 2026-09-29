@@ -12,7 +12,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
 
   alias Opsonde.Cases.Proposal.ProposalExpirationWorker
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Clearance}
 
   @impl true
   def run(input, opts, context) do
@@ -71,7 +71,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
       proposal,
       incident,
       run,
-      proposal.preflight_reason || "Proposal is blocked by Target policy",
+      proposal.preflight_reason || "Target request could not be admitted",
       "review_blocked_proposal",
       "Review the blocked Proposal and resume the Case"
     )
@@ -307,7 +307,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
         run,
         actor,
         source,
-        "Target policy authorized the exact observation request"
+        "The registered Target Method admitted the exact observation request"
       )
     end
   end
@@ -651,8 +651,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   end
 
   defp revalidate(proposal, actor) do
-    case Targets.clear_target_request(Proposal.policy_request(proposal), actor: actor) do
-      {:ok, %RequestClearance{} = clearance} ->
+    case Targets.clear_target_request(Proposal.target_request(proposal), actor: actor) do
+      {:ok, %Clearance{} = clearance} ->
         if clearance.provider_id == proposal.provider_id and
              clearance.provider_revision == proposal.provider_revision do
           {:ok, clearance}
@@ -662,7 +662,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
       {:error, error} ->
         case find_error(error) do
-          %PolicyError{category: category, message: message} ->
+          %RequestError{category: category, message: message} ->
             {:blocked, category, message}
 
           _other ->
@@ -848,7 +848,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp clearance_digest(nil), do: nil
   defp clearance_digest(clearance), do: Base.encode16(clearance.digest, case: :lower)
 
-  defp find_error(%PolicyError{} = error), do: error
+  defp find_error(%RequestError{} = error), do: error
 
   defp find_error(%{errors: errors}) when is_list(errors),
     do: Enum.find_value(errors, &find_error/1)

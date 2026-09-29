@@ -77,34 +77,6 @@ defmodule Opsonde.ProposalMaterializationTest do
     refute_receive {:effect, _, _}
   end
 
-  test "TargetPolicy denial is a durable blocked Proposal under the Case mode", context do
-    Targets.create_target_policy!(
-      context.target.id,
-      "protect-api",
-      [:effect],
-      ["effect.service"],
-      ["service.restart"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "API restart is forbidden",
-      actor: context.admin
-    )
-
-    {incident, run, _evidence, turn, _intent} = proposal_turn!("denied", context)
-
-    assert {:ok, proposal} = Cases.materialize_proposal(turn.id, authorize?: false)
-    assert proposal.status == :blocked
-    assert proposal.preflight_status == :blocked
-    assert proposal.preflight_context["category"] == "denied"
-    assert proposal.preflight_reason == "API restart is forbidden"
-    assert {:ok, routed} = Cases.route_proposal_authority(proposal.id, authorize?: false)
-    assert routed.status == :blocked
-    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
-    refute_receive {:effect, _, _}
-  end
-
   test "foreign Evidence and revoked owner authority fail without a Proposal", context do
     {incident, run} = open_case!("foreign-source", context)
     {other_case, other_run} = open_case!("foreign-evidence", context)

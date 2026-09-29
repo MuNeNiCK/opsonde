@@ -37,7 +37,7 @@ defmodule Opsonde.Targets.Target do
 
     create :create do
       primary? true
-      accept [:name, :kind, :type_id, :facts, :management_boundary_id]
+      accept [:name, :kind, :type_id, :facts, :management_boundary_id, :operating_instructions]
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
       validate Opsonde.Targets.Target.Validations.Type
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :type_id, :facts]}
@@ -46,7 +46,7 @@ defmodule Opsonde.Targets.Target do
 
     update :update do
       primary? true
-      accept [:name, :kind, :type_id, :facts, :management_boundary_id]
+      accept [:name, :kind, :type_id, :facts, :management_boundary_id, :operating_instructions]
       require_atomic? false
 
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
@@ -137,6 +137,13 @@ defmodule Opsonde.Targets.Target do
       default %{}
     end
 
+    attribute :operating_instructions, :string do
+      allow_nil? false
+      public? true
+      default ""
+      constraints allow_empty?: true, max_length: 4_000
+    end
+
     attribute :search_text, :string do
       allow_nil? false
       public? false
@@ -166,7 +173,6 @@ defmodule Opsonde.Targets.Target do
 
     has_many :external_identities, Opsonde.Targets.ExternalIdentity
     has_many :access_methods, Opsonde.Targets.AccessMethod
-    has_many :target_policies, Opsonde.Targets.TargetPolicy
 
     has_many :outgoing_relationships, Opsonde.Targets.Relationship do
       destination_attribute :source_target_id

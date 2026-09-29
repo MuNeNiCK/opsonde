@@ -1,5 +1,5 @@
 defmodule Opsonde.Cases.Proposal do
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
 
   use Ash.Resource,
     otp_app: :opsonde,
@@ -399,8 +399,8 @@ defmodule Opsonde.Cases.Proposal do
     identity :unique_reserved_operation, [:reserved_operation_id]
   end
 
-  def policy_request(%__MODULE__{} = proposal) do
-    %PolicyRequest{
+  def target_request(%__MODULE__{} = proposal) do
+    %Request{
       kind: proposal.request_kind,
       authority_mode: proposal.authority_mode,
       target_id: proposal.target_id,

@@ -39,13 +39,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       "TargetRelationshipPage" => Schemas.page(ref("TargetRelationship")),
       "CreateTargetRelationshipRequest" => create_relationship_request(),
       "UpdateTargetRelationshipRequest" => update_relationship_request(),
-      "DeactivateTargetRelationshipRequest" => deactivate_request(:relationship),
-      "TargetPolicy" => policy(),
-      "TargetPolicyResponse" => Schemas.data(ref("TargetPolicy")),
-      "TargetPolicyPage" => Schemas.page(ref("TargetPolicy")),
-      "CreateTargetPolicyRequest" => create_policy_request(),
-      "UpdateTargetPolicyRequest" => update_policy_request(),
-      "DeactivateTargetPolicyRequest" => deactivate_request(:target_policy)
+      "DeactivateTargetRelationshipRequest" => deactivate_request(:relationship)
     }
   end
 
@@ -85,10 +79,11 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         kind: string(1, 80),
         type_id: string(1, 120),
         facts: map(),
+        operating_instructions: string(0, 4_000),
         management_boundary_id: nullable_uuid(),
         active: %Schema{type: :boolean}
       },
-      [:name, :kind, :type_id, :facts, :management_boundary_id, :active]
+      [:name, :kind, :type_id, :facts, :operating_instructions, :management_boundary_id, :active]
     )
   end
 
@@ -148,6 +143,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       kind: string(1, 80),
       type_id: string(1, 120),
       facts: map(),
+      operating_instructions: string(0, 4_000),
       management_boundary_id: nullable_uuid()
     })
   end
@@ -282,62 +278,6 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
     })
   end
 
-  defp policy do
-    resource(
-      %{
-        target_id: Schemas.uuid(),
-        name: string(1, 120),
-        request_kinds: request_kinds(),
-        capabilities: string_array(100, 120),
-        operations: string_array(100, 120),
-        selector_match: map(),
-        parameter_match: map(),
-        reason: string(1, 500),
-        enabled: %Schema{type: :boolean}
-      },
-      [
-        :target_id,
-        :name,
-        :request_kinds,
-        :capabilities,
-        :operations,
-        :selector_match,
-        :parameter_match,
-        :reason,
-        :enabled
-      ]
-    )
-  end
-
-  defp create_policy_request do
-    wrapped(
-      :target_policy,
-      %{
-        target_id: Schemas.uuid(),
-        name: string(1, 120),
-        request_kinds: request_kinds(),
-        capabilities: string_array(100, 120),
-        operations: string_array(100, 120),
-        selector_match: map(),
-        parameter_match: map(),
-        reason: string(1, 500)
-      },
-      [:target_id, :name, :request_kinds, :reason]
-    )
-  end
-
-  defp update_policy_request do
-    update_request(:target_policy, %{
-      name: string(1, 120),
-      request_kinds: request_kinds(),
-      capabilities: string_array(100, 120),
-      operations: string_array(100, 120),
-      selector_match: map(),
-      parameter_match: map(),
-      reason: string(1, 500)
-    })
-  end
-
   defp resource(properties, required) do
     object(
       Map.merge(
@@ -369,15 +309,6 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
 
   defp deactivate_request(name) do
     wrapped(name, %{expected_revision: positive_integer()}, [:expected_revision])
-  end
-
-  defp request_kinds do
-    %Schema{
-      type: :array,
-      minItems: 1,
-      maxItems: 2,
-      items: %Schema{type: :string, enum: ~w(observation effect)}
-    }
   end
 
   defp string_array(max_items, max_length) do

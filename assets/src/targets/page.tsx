@@ -249,16 +249,13 @@ export function TargetPage() {
                   <th className="px-4 py-3">{t("targets.typeId")}</th>
                   <th className="px-4 py-3 text-right">{t("targets.accessMethods")}</th>
                   <th className="px-4 py-3 text-right">{t("targets.layerRelationships")}</th>
-                  <th className="px-4 py-3 text-right">{t("targets.policies")}</th>
+                  <th className="px-4 py-3 text-right">{t("targets.operatingInstructions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {targets.map((target) => {
                   const methods = snapshot.methods.filter(
                     (item) => item.target_id === target.id && item.active,
-                  ).length;
-                  const policies = snapshot.policies.filter(
-                    (item) => item.target_id === target.id && item.enabled,
                   ).length;
                   const relationships = snapshot.relationships.filter(
                     (item) =>
@@ -282,7 +279,9 @@ export function TargetPage() {
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{methods}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{relationships}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{policies}</td>
+                      <td className="px-4 py-3 text-right">
+                        {target.operating_instructions ? "✓" : "—"}
+                      </td>
                     </tr>
                   );
                 })}

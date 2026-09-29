@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.NETCONF, as: GenericNETCONF
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
   alias Opsonde.Targets.Profiles.IOSXE.NETCONF, as: NETCONF
   alias Opsonde.Transports.SSH
 
@@ -485,7 +485,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     end
   end
 
-  test "Custom network device uses generic NETCONF through Provider and TargetPolicy", context do
+  test "Custom network device uses generic NETCONF through Provider and TargetRequest", context do
     context = generic_netconf_context(context)
     assert {:ok, _operations} = GenericNETCONF.capabilities(nil, %{})
 
@@ -1053,7 +1053,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
   end
 
   defp request(context, kind, capability, operation, selectors, parameters, expected \\ %{}) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: :full_access,
       target_id: context.target.id,

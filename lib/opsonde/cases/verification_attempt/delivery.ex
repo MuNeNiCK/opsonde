@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
   alias Opsonde.Cases.VerificationAttempt
   alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetPolicy.{PolicyRequest, RequestClearance}
+  alias Opsonde.Targets.TargetRequest.{Request, Clearance}
 
   @terminal [:verified, :not_verified, :unknown]
 
@@ -24,7 +24,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
 
   defp dispatch(attempt, opts) do
     with {:ok, actor} <- current_actor(attempt),
-         {:ok, %RequestClearance{} = clearance} <-
+         {:ok, %Clearance{} = clearance} <-
            Targets.clear_target_request(request(attempt), actor: actor),
          :ok <- exact_clearance(clearance, attempt) do
       invocation = invocation(attempt.case_id, Keyword.get(opts, :target_invocation, %{}))
@@ -195,7 +195,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
   end
 
   defp request(attempt) do
-    %PolicyRequest{
+    %Request{
       kind: :verification,
       authority_mode: attempt.authority_mode,
       target_id: attempt.target_id,

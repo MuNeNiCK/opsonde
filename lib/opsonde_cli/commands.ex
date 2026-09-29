@@ -66,11 +66,6 @@ defmodule OpsondeCLI.Commands do
       Route.new(:patch, "/target-relationships/:id", 1, "relationship"),
     {"relationship", "deactivate"} =>
       Route.new(:post, "/target-relationships/:id/deactivate", 1, "relationship"),
-    {"policy", "list"} => Route.page("/target-policies"),
-    {"policy", "create"} => Route.new(:post, "/target-policies", 0, "target_policy"),
-    {"policy", "update"} => Route.new(:patch, "/target-policies/:id", 1, "target_policy"),
-    {"policy", "deactivate"} =>
-      Route.new(:post, "/target-policies/:id/deactivate", 1, "target_policy"),
     {"inventory", "list"} => Route.page("/inventory-imports"),
     {"inventory", "show"} => Route.new(:get, "/inventory-imports/:id", 1),
     {"inventory", "rows"} => Route.page("/inventory-imports/:id/rows", 1),

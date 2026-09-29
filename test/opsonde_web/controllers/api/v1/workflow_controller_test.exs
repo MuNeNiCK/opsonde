@@ -832,7 +832,6 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     for response <- [operation_response, verification_response] do
       refute response.resp_body =~ "authorization_digest"
-      refute response.resp_body =~ "policy_context"
       refute response.resp_body =~ "idempotency_key"
       refute response.resp_body =~ "provider-secret"
     end

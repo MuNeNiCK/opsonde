@@ -393,18 +393,13 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
   end
 
-  test "a Target Policy added after approval prevents acceptance", context do
+  test "Target instructions changed after approval prevent acceptance", context do
     {_incident, run, proposal} = authorized_proposal!("policy-before-accept", context)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-operation-acceptance",
-      [:effect],
-      ["effect.service"],
-      ["service.restart"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "The API service must not be restarted",
+    Targets.update_target!(
+      context.target,
+      context.target.revision,
+      %{operating_instructions: "Do not restart the API service"},
       actor: context.admin
     )
 
@@ -820,80 +815,14 @@ defmodule Opsonde.OperationDeliveryTest do
            end) == progress_events
   end
 
-  test "denied observation returns its reason to Resolver without authorizing an Operation",
-       context do
-    configure_mode!(context.admin, :auto)
-
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-observation-input",
-      [:observation],
-      ["observe.service"],
-      ["service.inspect"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "This exact Target observation is unsupported",
-      actor: context.admin
-    )
-
-    {incident, run, proposal} =
-      authorized_proposal!("denied-observation-retry", context, request_kind: :observation)
-
-    assert proposal.status == :blocked
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    assert pending["action"] == "resolve_turn"
-    next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
-    assert next_turn.intent["rejection_reason"] == "This exact Target observation is unsupported"
-    assert next_turn.intent["rejected_operation"] == "service.inspect"
-    assert Cases.operations_for_case!(incident.id, authorize?: false) == []
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
-
-    assert Cases.route_proposal_authority!(proposal.id, authorize?: false).id == proposal.id
-    assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == 1
-    assert Cases.get_resolution_run!(run.id, authorize?: false).turn_count == 2
-
-    initial_result = Cases.get_turn!(proposal.source_turn_id, authorize?: false).result
-
-    for count <- [2, 3] do
-      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-      retry_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
-
-      completed =
-        Cases.complete_turn!(
-          retry_turn.id,
-          retry_turn.revision,
-          initial_result,
-          :observation_pending,
-          %{"action" => "route_resolver_decision", "turn_id" => retry_turn.id},
-          "Review the Resolver decision",
-          authorize?: false
-        ).value
-
-      Cases.route_downstream_decision!(completed.id, authorize?: false)
-      retry_proposal = Cases.proposal_by_source_turn!(completed.id, authorize?: false)
-      assert retry_proposal.status == :blocked
-      assert Cases.get_resolution_run!(run.id, authorize?: false).no_progress_turns == count
-    end
-
-    stopped = Cases.get_case!(incident.id, authorize?: false)
-    assert stopped.status == :needs_attention
-    assert stopped.stop_reason == "No-progress turn limit exhausted"
-    assert Cases.operations_for_case!(incident.id, authorize?: false) == []
-  end
-
   test "authorization changed after acceptance fails before Target dispatch", context do
-    {_incident, _run, proposal} = authorized_proposal!("policy-before-dispatch", context)
+    {incident, _run, proposal} = authorized_proposal!("instructions-before-dispatch", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-operation-dispatch",
-      [:effect],
-      ["effect.service"],
-      ["service.restart"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "The API service must not be restarted",
+    Targets.update_target!(
+      context.target,
+      context.target.revision,
+      %{operating_instructions: "Do not restart the API service"},
       actor: context.admin
     )
 
@@ -905,6 +834,10 @@ defmodule Opsonde.OperationDeliveryTest do
     invalidated = Cases.get_operation!(operation.id, authorize?: false)
     assert invalidated.status == :failed
     assert invalidated.outcome_category == "authorization_invalidated"
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+    assert current.selected_target_revision == context.target.revision + 1
+    assert current.pending_intent["action"] == "resolve_turn"
     refute_receive {:effect, _, _}
   end
 
@@ -1150,7 +1083,8 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
-  test "policy change after VerificationAttempt acceptance prevents Target dispatch", context do
+  test "Target instructions changed after VerificationAttempt acceptance prevent dispatch",
+       context do
     {_incident, _run, proposal} = authorized_proposal!("verification-policy", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -1162,15 +1096,10 @@ defmodule Opsonde.OperationDeliveryTest do
     assert_receive {:effect, _, _}
     attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
 
-    Targets.create_target_policy!(
-      context.target.id,
-      "deny-verification-dispatch",
-      [:observation],
-      ["observe.service"],
-      ["service.inspect"],
-      %{"service" => %{"eq" => "api"}},
-      %{},
-      "Fresh service verification is temporarily forbidden",
+    Targets.update_target!(
+      context.target,
+      context.target.revision,
+      %{operating_instructions: "Do not inspect this service"},
       actor: context.admin
     )
 

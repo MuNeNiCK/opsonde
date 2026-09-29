@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.TargetRequest.Request
 
   @password "correct horse battery staple"
   @capabilities ["observe.system", "observe.interface", "effect.interface"]
@@ -289,7 +289,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     count = length(requests(context))
 
     invalid =
-      policy_request(
+      target_request(
         context,
         :observation,
         "observe.interface",
@@ -325,13 +325,13 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
   end
 
   defp observe!(context, capability, operation, selectors) do
-    policy_request(context, :observation, capability, operation, selectors, %{})
+    target_request(context, :observation, capability, operation, selectors, %{})
     |> Targets.clear_target_request!(actor: context.operator)
     |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
   end
 
   defp effect!(context, operation, parameters) do
-    policy_request(
+    target_request(
       context,
       :effect,
       "effect.interface",
@@ -344,7 +344,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
   end
 
   defp verify!(context, expected) do
-    policy_request(
+    target_request(
       context,
       :verification,
       "observe.interface",
@@ -357,7 +357,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     |> Targets.dispatch_target_verification!(%{}, actor: context.operator)
   end
 
-  defp policy_request(
+  defp target_request(
          context,
          kind,
          capability,
@@ -366,7 +366,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
          parameters,
          expected \\ %{}
        ) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: :full_access,
       target_id: context.target.id,

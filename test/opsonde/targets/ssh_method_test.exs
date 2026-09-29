@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.SSH
-  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
+  alias Opsonde.Targets.TargetRequest.{RequestError, Request}
   alias Opsonde.Transports.SSH, as: Transport
 
   @password "correct horse battery staple"
@@ -233,7 +233,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
                  actor: operator
                )
 
-      assert policy_error(denied).category == :denied
+      assert request_error(denied).category == :denied
     end
 
     assert commands(context) == []
@@ -250,7 +250,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
                authorize?: false
              )
 
-    assert policy_error(readonly_error).category == :forbidden
+    assert request_error(readonly_error).category == :forbidden
 
     stale_clearance =
       Targets.clear_target_request!(
@@ -266,7 +266,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
                authorize?: false
              )
 
-    assert policy_error(stale_error).category == :stale_context
+    assert request_error(stale_error).category == :stale_context
     assert commands(context) == []
 
     effect_clearance =
@@ -337,7 +337,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
   end
 
   defp request(target, method, kind, mode, command) do
-    struct!(PolicyRequest,
+    struct!(Request,
       kind: kind,
       authority_mode: mode,
       target_id: target.id,
@@ -386,13 +386,13 @@ defmodule Opsonde.Targets.SSHMethodTest do
     :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, key)])
   end
 
-  defp policy_error(%{errors: errors}) do
+  defp request_error(%{errors: errors}) do
     Enum.find_value(errors, fn
-      %PolicyError{} = error -> error
-      nested when is_map(nested) -> policy_error(nested)
+      %RequestError{} = error -> error
+      nested when is_map(nested) -> request_error(nested)
       _other -> nil
     end)
   end
 
-  defp policy_error(_error), do: nil
+  defp request_error(_error), do: nil
 end
