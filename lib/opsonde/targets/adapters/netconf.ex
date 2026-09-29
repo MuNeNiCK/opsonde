@@ -106,7 +106,18 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
             "maxLength" => NETCONF.max_body_bytes()
           },
           "max_events" => %{"type" => "integer", "minimum" => 1, "maximum" => 20},
-          "wait_ms" => %{"type" => "integer", "minimum" => 100, "maximum" => 20_000}
+          "wait_ms" => %{"type" => "integer", "minimum" => 100, "maximum" => 20_000},
+          "rpcs" => %{
+            "type" => "array",
+            "maxItems" => 8,
+            "description" =>
+              "Optional same-session RPCs; ${subscription_id} inserts the ID returned by establish-subscription",
+            "items" => %{
+              "type" => "string",
+              "minLength" => 1,
+              "maxLength" => NETCONF.max_body_bytes()
+            }
+          }
         },
         "required" => ["body", "max_events", "wait_ms"],
         "additionalProperties" => false
@@ -141,7 +152,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
            capability: @effect,
            operation: "rpc.subscribe",
            description:
-             "Send an exact NETCONF subscription RPC and receive bounded notifications",
+             "Run a NETCONF subscription and optional same-session RPCs while receiving bounded notifications",
            input_schema: subscription_input
          }
        ]
@@ -150,7 +161,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
   @impl Opsonde.Providers.Target
   def classify_request(%SSH.Config{} = state, %{operation: "rpc.subscribe"} = request) do
-    with {:ok, _body, _max_events, wait_ms} <- subscription_request(request),
+    with {:ok, _body, _rpcs, _max_events, wait_ms} <- subscription_request(request),
          true <- wait_ms + 100 < state.operation_timeout do
       {:ok, :effect}
     else
@@ -194,28 +205,26 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
   @impl Opsonde.Providers.Target
   def effect(%SSH.Config{} = state, %{operation: "rpc.subscribe"} = request, invocation) do
-    with {:ok, body, max_events, wait_ms} <- subscription_request(request) do
+    with {:ok, body, rpcs, max_events, wait_ms} <- subscription_request(request) do
       case NETCONF.subscribe(
              state,
              request.connection.endpoint,
              body,
+             rpcs,
              max_events,
              wait_ms,
              cancelled?(invocation)
            ) do
-        {:ok, events, completion} ->
+        {:ok, progress, completion} ->
           {:ok,
            %Target.EffectResult{
              status: :applied,
-             details: %{
-               "events" => events,
-               "received" => length(events),
-               "completion" => Atom.to_string(completion)
-             }
+             details:
+               Map.put(subscription_details(progress), "completion", Atom.to_string(completion))
            }}
 
-        {:error, category, message, events} ->
-          subscription_error(category, message, events)
+        {:error, category, message, progress} ->
+          subscription_error(category, message, progress)
       end
     end
   end
@@ -319,31 +328,51 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
          parameters:
            %{"body" => body, "max_events" => max_events, "wait_ms" => wait_ms} = parameters
        })
-       when map_size(parameters) == 3 and is_integer(max_events) and max_events in 1..20 and
+       when map_size(parameters) in [3, 4] and is_integer(max_events) and max_events in 1..20 and
               is_integer(wait_ms) and wait_ms in 100..20_000 do
-    if NETCONF.subscription_body?(body),
-      do: {:ok, body, max_events, wait_ms},
-      else: {:error, :failed, "NETCONF subscription is invalid"}
+    kind = NETCONF.subscription_kind(body)
+    rpcs = Map.get(parameters, "rpcs", [])
+
+    if kind in [:legacy, :dynamic] and is_list(rpcs) and length(rpcs) <= 8 and
+         (kind == :dynamic or rpcs == []) and
+         Enum.all?(rpcs, &match?({:ok, _kind}, NETCONF.classify_body(&1))) do
+      {:ok, body, rpcs, max_events, wait_ms}
+    else
+      {:error, :failed, "NETCONF subscription is invalid"}
+    end
   end
 
   defp subscription_request(_request), do: {:error, :failed, "NETCONF subscription is invalid"}
 
-  defp subscription_error(category, message, events) do
+  defp subscription_error(category, message, progress) do
     if category in [
          :timeout_after_dispatch,
          :cancelled_after_dispatch,
          :disconnected_after_dispatch,
          :output_limit_after_dispatch,
          :unknown_after_dispatch
-       ] or events != [] do
+       ] or progress.events != [] or progress.subscription_id != nil do
       {:ok,
        %Target.EffectResult{
          status: :unknown,
-         details: %{"events" => events, "received" => length(events), "error" => message}
+         details: Map.put(subscription_details(progress), "error", message)
        }}
     else
       effect_error(category, message)
     end
+  end
+
+  defp subscription_details(progress) do
+    details = %{
+      "events" => progress.events,
+      "received" => length(progress.events),
+      "replies" => progress.replies,
+      "completed" => length(progress.replies)
+    }
+
+    if progress.subscription_id == nil,
+      do: details,
+      else: Map.put(details, "subscription_id", progress.subscription_id)
   end
 
   defp sequence_error(category, message, replies) do

@@ -62,7 +62,10 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
             )
 
           hello =
-            if Agent.get(state.agent, &(&1.mode == :no_notification_capability)) do
+            if Agent.get(
+                 state.agent,
+                 &(&1.mode == :no_notification_capability or dynamic_mode?(&1.mode))
+               ) do
               String.replace(
                 @server_hello,
                 "<capability>urn:ietf:params:netconf:capability:notification:1.0</capability>",
@@ -85,11 +88,37 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         {:ok, rpc, rest} ->
           {reply, delay_ms} = response(state.agent, state.session_id, rpc)
           Process.sleep(delay_ms)
-          :ok = :ssh_connection.send(state.connection, state.channel, frame(reply))
+
+          mode = Agent.get(state.agent, & &1.mode)
+
+          if dynamic_mode?(mode) and
+               (String.contains?(rpc, "<modify-subscription") or
+                  String.contains?(rpc, "<delete-subscription")) do
+            :ok =
+              :ssh_connection.send(
+                state.connection,
+                state.channel,
+                frame(dynamic_notification("before-reply"))
+              )
+          end
+
+          if mode == :dynamic_close_before_followup_reply and
+               String.contains?(rpc, "<modify-subscription") do
+            :ssh_connection.close(state.connection, state.channel)
+          else
+            :ok = :ssh_connection.send(state.connection, state.channel, frame(reply))
+          end
+
+          if dynamic_mode?(mode) and String.contains?(rpc, "<establish-subscription") do
+            :ok =
+              :ssh_connection.send(
+                state.connection,
+                state.channel,
+                frame(dynamic_notification("established"))
+              )
+          end
 
           if String.contains?(rpc, "<create-subscription") do
-            mode = Agent.get(state.agent, & &1.mode)
-
             events =
               case mode do
                 :drop_after_first_notification -> ["link-down"]
@@ -161,6 +190,18 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     defp chunk(_input), do: :more
     defp frame(xml), do: "\n##{byte_size(xml)}\n#{xml}\n##\n"
 
+    defp dynamic_notification(event) do
+      "<notification xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"><eventTime>2026-09-29T00:00:00Z</eventTime><#{event} xmlns=\"urn:vendor:events\"/></notification>"
+    end
+
+    defp dynamic_mode?(mode),
+      do:
+        mode in [
+          :dynamic_subscription,
+          :dynamic_wrong_followup_id,
+          :dynamic_close_before_followup_reply
+        ]
+
     defp response(agent, session_id, rpc) do
       Agent.get_and_update(agent, fn state ->
         state = %{state | rpcs: [rpc | state.rpcs], sessions: [session_id | state.sessions]}
@@ -173,6 +214,14 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
             _other ->
               reply
+          end
+
+        reply =
+          if state.mode == :dynamic_wrong_followup_id and
+               String.contains?(rpc, "<modify-subscription") do
+            Regex.replace(~r/message-id="[^"]+"/, reply, "message-id=\"wrong\"")
+          else
+            reply
           end
 
         {{reply, delay_ms}, state}
@@ -192,6 +241,17 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
         state.mode == :slow_subscription_ack and String.contains?(rpc, "<create-subscription") ->
           {system_reply("opsonde-1"), 250, state}
+
+        dynamic_mode?(state.mode) and String.contains?(rpc, "<establish-subscription") ->
+          {"<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><id xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\">22</id></rpc-reply>",
+           0, state}
+
+        dynamic_mode?(state.mode) and
+          (String.contains?(rpc, "<modify-subscription") or
+             String.contains?(rpc, "<delete-subscription")) and
+            not String.contains?(rpc, "<id>22</id>") ->
+          {"<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><rpc-error><error-tag>invalid-value</error-tag></rpc-error></rpc-reply>",
+           0, state}
 
         String.contains?(rpc, "<edit-config>") ->
           edit_response(rpc, state)
@@ -412,46 +472,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
   end
 
   test "Custom network device uses generic NETCONF through Provider and TargetPolicy", context do
-    provider =
-      Providers.create_provider!(
-        "generic-netconf",
-        :target,
-        "netconf",
-        configuration(context),
-        credentials(),
-        actor: context.admin
-      )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: context.admin
-        )
-      )
-      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
-
-    target =
-      Targets.create_target!(
-        "generic switch",
-        "network_device",
-        "custom-network-device",
-        %{},
-        nil,
-        actor: context.admin
-      )
-
-    method =
-      Targets.create_access_method!(
-        target.id,
-        provider.id,
-        "NETCONF",
-        "netconf",
-        context.endpoint,
-        provider.revision,
-        100,
-        ["request.netconf.observe", "request.netconf.effect"],
-        actor: context.admin
-      )
-
-    context = Map.merge(context, %{provider: provider, target: target, method: method})
+    context = generic_netconf_context(context)
     assert {:ok, _operations} = GenericNETCONF.capabilities(nil, %{})
 
     read =
@@ -713,6 +734,68 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
   end
 
+  test "dynamic NETCONF subscription interleaves notifications with same-session RPC replies",
+       context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | mode: :dynamic_subscription})
+
+    subscription =
+      dynamic_subscription_request(context, [
+        "<modify-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><id>${subscription_id}</id><stream>NETCONF</stream></modify-subscription>",
+        "<delete-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><id>${subscription_id}</id></delete-subscription>"
+      ])
+
+    assert %Target.EffectResult{
+             status: :applied,
+             details: %{
+               "subscription_id" => "22",
+               "events" => [first, second, third],
+               "received" => 3,
+               "completed" => 2,
+               "replies" => [_, _]
+             }
+           } = run_subscription!(context, subscription)
+
+    assert String.contains?(first, "established")
+    assert String.contains?(second, "before-reply")
+    assert String.contains?(third, "before-reply")
+
+    assert context.agent
+           |> Agent.get(&Enum.take(&1.sessions, 3))
+           |> Enum.uniq()
+           |> length() == 1
+  end
+
+  test "dynamic NETCONF subscription does not accept a mismatched follow-up reply", context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | mode: :dynamic_wrong_followup_id})
+
+    subscription =
+      dynamic_subscription_request(context, [
+        "<modify-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><id>${subscription_id}</id></modify-subscription>"
+      ])
+
+    assert %Target.EffectResult{
+             status: :unknown,
+             details: %{"subscription_id" => "22", "received" => 2, "completed" => 0}
+           } = run_subscription!(context, subscription)
+  end
+
+  test "dynamic NETCONF subscription retains events on interrupted follow-up", context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | mode: :dynamic_close_before_followup_reply})
+
+    subscription =
+      dynamic_subscription_request(context, [
+        "<modify-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><id>${subscription_id}</id></modify-subscription>"
+      ])
+
+    assert %Target.EffectResult{
+             status: :unknown,
+             details: %{"subscription_id" => "22", "received" => 2, "completed" => 0}
+           } = run_subscription!(context, subscription)
+  end
+
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do
     assert %Target.Capabilities{} =
              Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
@@ -911,6 +994,66 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     }
     |> Targets.clear_target_request!(actor: context.operator)
     |> Targets.dispatch_target_effect!(invocation, actor: context.operator, authorize?: false)
+  end
+
+  defp dynamic_subscription_request(context, rpcs) do
+    request(
+      context,
+      :effect,
+      "request.netconf.effect",
+      "rpc.subscribe",
+      %{},
+      %{
+        "body" =>
+          "<establish-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><stream>NETCONF</stream></establish-subscription>",
+        "rpcs" => rpcs,
+        "max_events" => 3,
+        "wait_ms" => 300
+      }
+    )
+  end
+
+  defp generic_netconf_context(context) do
+    provider =
+      Providers.create_provider!(
+        "generic-netconf",
+        :target,
+        "netconf",
+        configuration(context),
+        credentials(),
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!(
+        "generic switch",
+        "network_device",
+        "custom-network-device",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "NETCONF",
+        "netconf",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.netconf.observe", "request.netconf.effect"],
+        actor: context.admin
+      )
+
+    Map.merge(context, %{provider: provider, target: target, method: method})
   end
 
   defp configuration(context), do: configuration_for(context.endpoint, context.fingerprint)

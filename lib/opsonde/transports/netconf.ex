@@ -8,6 +8,8 @@ defmodule Opsonde.Transports.NETCONF do
   @base_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @notification_namespace "urn:ietf:params:xml:ns:netconf:notification:1.0"
   @notification_capability "urn:ietf:params:netconf:capability:notification:1.0"
+  @subscribed_notifications_namespace "urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications"
+  @subscription_id_reference "${subscription_id}"
   @message_id "opsonde-1"
   @max_message_bytes 60_000
   @max_sequence_replies_bytes 50_000
@@ -42,8 +44,12 @@ defmodule Opsonde.Transports.NETCONF do
 
   def classify_body(_body), do: {:error, :failed, "NETCONF RPC body is invalid"}
 
-  def subscription_body?(body) do
-    body_operation(body) == {:ok, @notification_namespace, "create-subscription"}
+  def subscription_kind(body) do
+    case body_operation(body) do
+      {:ok, @notification_namespace, "create-subscription"} -> :legacy
+      {:ok, @subscribed_notifications_namespace, "establish-subscription"} -> :dynamic
+      _other -> :invalid
+    end
   end
 
   defp body_operation(body) when is_binary(body) do
@@ -114,12 +120,23 @@ defmodule Opsonde.Transports.NETCONF do
   def execute_many(_config, _endpoint, _bodies, _cancelled?),
     do: {:error, :failed, "NETCONF sequence is invalid", []}
 
-  def subscribe(config, endpoint, body, max_events, wait_ms, cancelled? \\ fn -> false end)
-
-  def subscribe(%SSH.Config{} = config, endpoint, body, max_events, wait_ms, cancelled?)
+  def subscribe(
+        %SSH.Config{} = config,
+        endpoint,
+        body,
+        follow_ups,
+        max_events,
+        wait_ms,
+        cancelled?
+      )
       when is_integer(max_events) and max_events in 1..20 and is_integer(wait_ms) and
              wait_ms in 100..20_000 do
-    with true <- subscription_body?(body),
+    kind = subscription_kind(body)
+
+    with true <- kind in [:legacy, :dynamic],
+         true <- is_list(follow_ups) and length(follow_ups) <= 8,
+         true <- kind == :dynamic or follow_ups == [],
+         true <- Enum.all?(follow_ups, &match?({:ok, _kind}, classify_body(&1))),
          true <- wait_ms + 100 < config.operation_timeout do
       owner = self()
       reference = make_ref()
@@ -131,94 +148,274 @@ defmodule Opsonde.Transports.NETCONF do
           "netconf",
           fn channel ->
             with {:ok, session} <- open_session(channel),
-                 true <- @notification_capability in session.capabilities do
+                 true <- kind == :dynamic or @notification_capability in session.capabilities do
               subscribe_session(
                 channel,
                 session.framing,
                 body,
+                kind,
+                follow_ups,
                 max_events,
                 wait_ms,
                 {owner, reference}
               )
             else
-              false -> {:error, :capability, "NETCONF notifications are not advertised", []}
-              error -> error
+              false ->
+                {:error, :capability, "NETCONF notifications are not advertised",
+                 empty_subscription_progress()}
+
+              error ->
+                error
             end
           end,
           cancelled?
         )
 
-      progress = latest_progress(reference, [])
+      progress = latest_progress(reference, empty_subscription_progress())
 
       case result do
-        {:ok, events, completion} -> {:ok, events, completion}
-        {:error, category, message, events} -> {:error, category, message, events}
-        {:error, category, message} -> {:error, category, message, progress}
+        {:ok, progress, completion} ->
+          {:ok, progress, completion}
+
+        {:error, category, message, %{} = progress} ->
+          {:error, category, message, progress}
+
+        {:error, category, message} ->
+          {:error, category, message, progress}
       end
     else
-      _invalid -> {:error, :failed, "NETCONF subscription is invalid", []}
+      _invalid ->
+        {:error, :failed, "NETCONF subscription is invalid", empty_subscription_progress()}
     end
   end
 
-  def subscribe(_config, _endpoint, _body, _max_events, _wait_ms, _cancelled?),
-    do: {:error, :failed, "NETCONF subscription is invalid", []}
+  def subscribe(_config, _endpoint, _body, _follow_ups, _max_events, _wait_ms, _cancelled?),
+    do: {:error, :failed, "NETCONF subscription is invalid", empty_subscription_progress()}
 
-  defp subscribe_session(channel, framing, body, max_events, wait_ms, reporter) do
+  defp subscribe_session(channel, framing, body, kind, follow_ups, max_events, wait_ms, reporter) do
     with :ok <- SSH.channel_send(channel, frame(envelope(body), framing)),
          {:ok, reply, buffer} <- SSH.channel_receive(channel, <<>>, decoder(framing)),
          {:ok, root} <- parse(reply),
-         :ok <- valid_reply(root, @message_id) do
-      {owner, reference} = reporter
-      send(owner, {:opsonde_netconf_progress, reference, []})
+         :ok <- valid_reply(root, @message_id),
+         {:ok, subscription_id} <- subscription_id(kind, root) do
+      progress = %{empty_subscription_progress() | subscription_id: subscription_id}
+      report_subscription_progress(reporter, progress)
       now = System.monotonic_time(:millisecond)
 
       if channel.deadline - now >= wait_ms do
-        receive_notifications(
-          %{channel | deadline: now + wait_ms},
-          framing,
-          buffer,
-          max_events,
-          [],
-          reporter
-        )
+        channel = %{channel | deadline: now + wait_ms}
+
+        with {:ok, buffer, progress} <-
+               exchange_subscription_follow_ups(
+                 channel,
+                 framing,
+                 follow_ups,
+                 2,
+                 buffer,
+                 progress,
+                 max_events,
+                 reporter
+               ) do
+          receive_notifications(channel, framing, buffer, max_events, progress, reporter)
+        end
       else
-        {:error, :unknown_after_dispatch, "NETCONF notification window could not complete", []}
+        {:error, :unknown_after_dispatch, "NETCONF notification window could not complete",
+         progress}
       end
     else
-      {:error, :rejected, message} -> {:error, :rejected, message, []}
-      {:error, category, message} -> {:error, after_sequence_dispatch(category), message, []}
+      {:error, :rejected, message} ->
+        {:error, :rejected, message, empty_subscription_progress()}
+
+      {:error, category, message} ->
+        {:error, after_sequence_dispatch(category), message, empty_subscription_progress()}
     end
   end
 
-  defp receive_notifications(_channel, _framing, _buffer, 0, events, _reporter),
-    do: {:ok, Enum.reverse(events), :limit}
+  defp empty_subscription_progress, do: %{events: [], replies: [], subscription_id: nil}
 
-  defp receive_notifications(channel, framing, buffer, remaining, events, reporter) do
+  defp subscription_id(:legacy, _root), do: {:ok, nil}
+
+  defp subscription_id(:dynamic, {_name, attributes, children}) do
+    namespace = namespace_bindings(attributes, %{})
+
+    case Enum.find(children, fn
+           {name, attrs, _children} ->
+             qualified_name(name, attrs, namespace) ==
+               {:ok, @subscribed_notifications_namespace, "id"}
+
+           _other ->
+             false
+         end) do
+      {_name, _attributes, _children} = element ->
+        id = text(element)
+
+        case Integer.parse(id) do
+          {value, ""} when value > 0 -> {:ok, id}
+          _invalid -> {:error, :unknown_after_dispatch, "NETCONF subscription ID is invalid"}
+        end
+
+      _missing ->
+        {:error, :unknown_after_dispatch, "NETCONF subscription ID is missing"}
+    end
+  end
+
+  defp exchange_subscription_follow_ups(
+         _channel,
+         _framing,
+         [],
+         _index,
+         buffer,
+         progress,
+         _max_events,
+         _reporter
+       ),
+       do: {:ok, buffer, progress}
+
+  defp exchange_subscription_follow_ups(
+         channel,
+         framing,
+         [body | rest],
+         index,
+         buffer,
+         progress,
+         max_events,
+         reporter
+       ) do
+    body = String.replace(body, @subscription_id_reference, progress.subscription_id)
+    message_id = "opsonde-#{index}"
+
+    with {:ok, _kind} <- classify_body(body),
+         :ok <- SSH.channel_send(channel, frame(envelope(body, message_id), framing)) do
+      case receive_subscription_reply(
+             channel,
+             framing,
+             buffer,
+             message_id,
+             progress,
+             max_events,
+             reporter
+           ) do
+        {:ok, reply, buffer, updated} ->
+          if bounded_replies?([reply | updated.replies] ++ updated.events) do
+            updated = %{updated | replies: updated.replies ++ [reply]}
+            report_subscription_progress(reporter, updated)
+
+            exchange_subscription_follow_ups(
+              channel,
+              framing,
+              rest,
+              index + 1,
+              buffer,
+              updated,
+              max_events,
+              reporter
+            )
+          else
+            {:error, :unknown_after_dispatch, "NETCONF subscription output exceeded its limit",
+             updated}
+          end
+
+        {:error, category, message, updated} ->
+          {:error, category, message, updated}
+      end
+    else
+      {:error, category, message} ->
+        {:error, after_sequence_dispatch(category), message, progress}
+    end
+  end
+
+  defp receive_subscription_reply(
+         channel,
+         framing,
+         buffer,
+         message_id,
+         progress,
+         max_events,
+         reporter
+       ) do
     case SSH.channel_receive(channel, buffer, decoder(framing), :reject_partial_timeout) do
       {:ok, xml, rest} ->
-        with :ok <- valid_notification(xml),
-             true <- bounded_replies?([xml | events]) do
-          {owner, reference} = reporter
+        case parse(xml) do
+          {:ok, {name, attributes, _children} = root} ->
+            case qualified_name(name, attributes, %{}) do
+              {:ok, @notification_namespace, "notification"} ->
+                case record_subscription_event(xml, progress, max_events, reporter) do
+                  {:ok, progress} ->
+                    receive_subscription_reply(
+                      channel,
+                      framing,
+                      rest,
+                      message_id,
+                      progress,
+                      max_events,
+                      reporter
+                    )
 
-          send(
-            owner,
-            {:opsonde_netconf_progress, reference, Enum.reverse([xml | events])}
-          )
+                  error ->
+                    error
+                end
 
-          receive_notifications(channel, framing, rest, remaining - 1, [xml | events], reporter)
-        else
+              {:ok, @base_namespace, "rpc-reply"} ->
+                case valid_reply(root, message_id) do
+                  :ok -> {:ok, xml, rest, progress}
+                  {:error, category, message} -> {:error, category, message, progress}
+                end
+
+              _other ->
+                {:error, :unknown_after_dispatch, "NETCONF subscription frame is invalid",
+                 progress}
+            end
+
           _invalid ->
-            {:error, :unknown_after_dispatch, "NETCONF notification is invalid or oversized",
-             Enum.reverse(events)}
+            {:error, :unknown_after_dispatch, "NETCONF subscription frame is invalid", progress}
+        end
+
+      {:error, category, message} ->
+        {:error, category, message, progress}
+    end
+  end
+
+  defp receive_notifications(_channel, _framing, _buffer, max_events, progress, _reporter)
+       when length(progress.events) >= max_events,
+       do: {:ok, progress, :limit}
+
+  defp receive_notifications(channel, framing, buffer, max_events, progress, reporter) do
+    case SSH.channel_receive(channel, buffer, decoder(framing), :reject_partial_timeout) do
+      {:ok, xml, rest} ->
+        case record_subscription_event(xml, progress, max_events, reporter) do
+          {:ok, progress} ->
+            receive_notifications(channel, framing, rest, max_events, progress, reporter)
+
+          error ->
+            error
         end
 
       {:error, :timeout_after_dispatch, _message} ->
-        {:ok, Enum.reverse(events), :window}
+        {:ok, progress, :window}
 
       {:error, category, message} ->
-        {:error, category, message, Enum.reverse(events)}
+        {:error, category, message, progress}
     end
   end
+
+  defp record_subscription_event(xml, progress, max_events, reporter) do
+    events = progress.events ++ [xml]
+
+    with true <- length(events) <= max_events,
+         :ok <- valid_notification(xml),
+         true <- bounded_replies?(events ++ progress.replies) do
+      progress = %{progress | events: events}
+      report_subscription_progress(reporter, progress)
+      {:ok, progress}
+    else
+      _invalid ->
+        {:error, :unknown_after_dispatch, "NETCONF notification is invalid or oversized",
+         progress}
+    end
+  end
+
+  defp report_subscription_progress({owner, reference}, progress),
+    do: send(owner, {:opsonde_netconf_progress, reference, progress})
 
   defp valid_notification(xml) do
     with {:ok, {name, attributes, children}} <- parse(xml),
