@@ -108,11 +108,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       })
     end
 
-    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Native"} = conn, _agent) do
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Example"} = conn, _agent) do
       json(conn, 200, %{"Result" => "safe", "Password" => "fixture-secret"})
     end
 
-    defp route(%{method: "HEAD", request_path: "/redfish/v1/Oem/Native"} = conn, _agent) do
+    defp route(%{method: "HEAD", request_path: "/redfish/v1/Oem/Example"} = conn, _agent) do
       conn
       |> put_resp_header("etag", ~s("oem-1"))
       |> send_resp(200, "")
@@ -168,31 +168,31 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     end
   end
 
-  test "native Redfish effects validate URI and ETag and preserve uncertain results", context do
+  test "Redfish Method effects validate URI and ETag and preserve uncertain results", context do
     {:ok, state} = redfish_state(context.method.endpoint)
     {:ok, capabilities} = Redfish.capabilities(state, %{})
 
     assert Enum.any?(capabilities.effects, fn operation ->
-             operation.capability == "native.redfish.effect" and operation.native?
+             operation.capability == "request.redfish.effect"
            end)
 
-    assert "native.redfish.effect" in Redfish.access_method_profile().capabilities
+    assert "request.redfish.effect" in Redfish.access_method_profile().capabilities
 
-    request = native_effect_request(context, "PATCH", @system_path, %{"Name" => "native"})
+    request = method_effect_request(context, "PATCH", @system_path, %{"Name" => "requested"})
     request = %{request | selectors: %{"if_match" => ~s("rev-1")}}
 
     assert {:ok, %{status: :applied, details: %{"http_status" => 204}}} =
              Redfish.effect(state, request, %{})
 
-    assert Agent.get(context.agent, &{&1.name, &1.writes}) == {"native", 1}
+    assert Agent.get(context.agent, &{&1.name, &1.writes}) == {"requested", 1}
 
     for uri <- ["https://other.example/redfish/v1/Systems/1", "/redfish/v1/../Oem/Plain"] do
       assert {:error, :failed, _} =
-               Redfish.effect(state, native_effect_request(context, "POST", uri, %{}), %{})
+               Redfish.effect(state, method_effect_request(context, "POST", uri, %{}), %{})
     end
 
     oversized =
-      native_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{
+      method_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{
         "Value" => String.duplicate("x", 70_000)
       })
 
@@ -201,7 +201,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert {:ok, %{status: :applied, details: plain}} =
              Redfish.effect(
                state,
-               native_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{}),
+               method_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{}),
                %{}
              )
 
@@ -210,7 +210,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert {:ok, %{status: :unknown, details: async}} =
              Redfish.effect(
                state,
-               native_effect_request(context, "POST", "/redfish/v1/Oem/AsyncSafe", %{}),
+               method_effect_request(context, "POST", "/redfish/v1/Oem/AsyncSafe", %{}),
                %{}
              )
 
@@ -219,7 +219,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert {:ok, %{status: :unknown, details: lost}} =
              Redfish.effect(
                state,
-               native_effect_request(context, "POST", "/redfish/v1/Oem/Drop", %{}),
+               method_effect_request(context, "POST", "/redfish/v1/Oem/Drop", %{}),
                %{}
              )
 
@@ -227,7 +227,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.echo_calls) == 1
   end
 
-  defp native_effect_request(context, method, uri, body) do
+  defp method_effect_request(context, method, uri, body) do
     %Target.EffectRequest{
       provider_revision: 1,
       target_id: context.target.id,
@@ -235,7 +235,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       access_method_id: context.method.id,
       access_method_revision: context.method.revision,
       connection: %Target.Connection{endpoint: context.method.endpoint},
-      capability: "native.redfish.effect",
+      capability: "request.redfish.effect",
       operation: "request.execute",
       authorization_digest: "fixture",
       operation_id: Ecto.UUID.generate(),
@@ -244,16 +244,16 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     }
   end
 
-  test "native Redfish reads standard and OEM resources without operation registration",
+  test "Redfish Method reads standard and OEM resources without operation registration",
        context do
     {:ok, state} = redfish_state(context.method.endpoint)
     {:ok, capabilities} = Redfish.capabilities(state, %{})
 
     assert Enum.any?(capabilities.observations, fn operation ->
-             operation.capability == "native.redfish.observe" and operation.native?
+             operation.capability == "request.redfish.observe"
            end)
 
-    assert "native.redfish.observe" in Redfish.access_method_profile().capabilities
+    assert "request.redfish.observe" in Redfish.access_method_profile().capabilities
 
     assert %Target.Capabilities{} =
              Providers.target_capabilities!(
@@ -270,14 +270,14 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       access_method_id: context.method.id,
       access_method_revision: context.method.revision,
       connection: %Target.Connection{endpoint: context.method.endpoint},
-      capability: "native.redfish.observe",
+      capability: "request.redfish.observe",
       operation: "request.observe",
       authorization_digest: "fixture"
     }
 
     for {uri, expected} <- [
           {@system_path, "original"},
-          {"/redfish/v1/Oem/Native", "safe"}
+          {"/redfish/v1/Oem/Example", "safe"}
         ] do
       assert {:ok, observation} =
                Redfish.observe(
@@ -297,7 +297,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
                state,
                %{
                  request
-                 | parameters: %{"method" => "HEAD", "uri" => "/redfish/v1/Oem/Native"}
+                 | parameters: %{"method" => "HEAD", "uri" => "/redfish/v1/Oem/Example"}
                },
                %{}
              )
@@ -306,9 +306,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert [%{"etag" => ~s("oem-1")}] = Enum.map(head.evidence, &Map.take(&1, ["etag"]))
 
     for parameters <- [
-          %{"method" => "POST", "uri" => "/redfish/v1/Oem/Native"},
-          %{"method" => "GET", "uri" => "https://other.example/redfish/v1/Oem/Native"},
-          %{"method" => "GET", "uri" => "/redfish/v1/Oem/Native", "extra" => true}
+          %{"method" => "POST", "uri" => "/redfish/v1/Oem/Example"},
+          %{"method" => "GET", "uri" => "https://other.example/redfish/v1/Oem/Example"},
+          %{"method" => "GET", "uri" => "/redfish/v1/Oem/Example", "extra" => true}
         ] do
       assert {:error, :failed, _} =
                Redfish.observe(state, %{request | parameters: parameters}, %{})

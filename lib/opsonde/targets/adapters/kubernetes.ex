@@ -8,9 +8,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @configuration_keys ~w(namespace request_timeout_ms)
   @credential_keys ~w(kubeconfig)
 
-  @native_observation "native.kubernetes_api.observe"
-  @native_effect "native.kubernetes_api.effect"
-  @native_observation_query_keys %{
+  @method_observation "request.kubernetes.observe"
+  @method_effect "request.kubernetes.effect"
+  @method_observation_query_keys %{
     "continue" => :continue,
     "fieldSelector" => :fieldSelector,
     "limit" => :limit,
@@ -90,12 +90,12 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     do: {:error, :invalid_configuration, "Kubernetes check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, Profile.capabilities(native_operations())}
+  def capabilities(_state, _invocation), do: {:ok, Profile.capabilities(method_operations())}
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
+  def observe(%State{} = state, %{capability: @method_observation} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- native_observation_operation(state, request),
+         {:ok, operation} <- method_observation_operation(state, request),
          {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
       {:ok,
        %Target.Observation{
@@ -119,8 +119,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(%State{} = state, %{capability: @native_observation} = request) do
-    case native_observation_operation(state, request) do
+  def preflight(%State{} = state, %{capability: @method_observation} = request) do
+    case method_observation_operation(state, request) do
       {:ok, _operation} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -134,9 +134,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
+  def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- native_effect_operation(state, request),
+         {:ok, operation} <- method_effect_operation(state, request),
          result <- run(state, operation, cancelled?(invocation), :effect) do
       effect_result(result)
     else
@@ -155,9 +155,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, %{capability: @native_observation} = request, invocation) do
+  def verify(%State{} = state, %{capability: @method_observation} = request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- native_observation_operation(state, request),
+         {:ok, operation} <- method_observation_operation(state, request),
          {:ok, response} <- run(state, operation, cancelled?(invocation), :read) do
       facts = %{"response" => response}
 
@@ -190,11 +190,11 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  defp native_observation_operation(state, request) do
+  defp method_observation_operation(state, request) do
     with {:ok, action, api_version, kind, name, query, _body} <-
-           native_request(request, "request.observe"),
+           method_request(request, "request.observe"),
          true <- action in ["get", "list"],
-         {:ok, operation} <- native_read_operation(state, action, api_version, kind, name) do
+         {:ok, operation} <- method_read_operation(state, action, api_version, kind, name) do
       {:ok, add_query(operation, query)}
     else
       false -> invalid_request()
@@ -204,9 +204,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     _error -> invalid_request()
   end
 
-  defp native_effect_operation(state, request) do
+  defp method_effect_operation(state, request) do
     with {:ok, action, api_version, kind, name, _query, body} <-
-           native_request(request, "request.execute") do
+           method_request(request, "request.execute") do
       path = [namespace: state.namespace, name: name]
 
       case action do
@@ -230,13 +230,13 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     _error -> invalid_request()
   end
 
-  defp native_read_operation(state, "get", api_version, kind, name) when is_binary(name),
+  defp method_read_operation(state, "get", api_version, kind, name) when is_binary(name),
     do: {:ok, K8s.Client.get(api_version, kind, namespace: state.namespace, name: name)}
 
-  defp native_read_operation(state, "list", api_version, kind, nil),
+  defp method_read_operation(state, "list", api_version, kind, nil),
     do: {:ok, K8s.Client.list(api_version, kind, namespace: state.namespace)}
 
-  defp native_read_operation(_state, _action, _api_version, _kind, _name), do: invalid_request()
+  defp method_read_operation(_state, _action, _api_version, _kind, _name), do: invalid_request()
 
   defp add_query(operation, query) when is_list(query) do
     Enum.reduce(query, operation, fn {key, value}, current ->
@@ -244,9 +244,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end)
   end
 
-  defp native_request(request, operation) do
+  defp method_request(request, operation) do
     expected_capability =
-      if(operation == "request.observe", do: @native_observation, else: @native_effect)
+      if(operation == "request.observe", do: @method_observation, else: @method_effect)
 
     case request do
       %{
@@ -268,7 +268,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
         with true <- byte_size(api_version) in 1..120,
              true <- byte_size(kind) in 1..120,
              true <- is_nil(name) or (is_binary(name) and Profile.valid_name?(name)),
-             {:ok, query} <- native_query(operation, query),
+             {:ok, query} <- method_query(operation, query),
              true <- is_nil(body) or is_map(body) do
           {:ok, action, api_version, kind, name, query, body}
         else
@@ -280,7 +280,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  defp native_operations do
+  defp method_operations do
     output = %{
       "type" => "object",
       "properties" => %{"response" => %{"type" => "object"}},
@@ -289,28 +289,26 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     }
 
     observation = %Target.Operation{
-      capability: @native_observation,
+      capability: @method_observation,
       operation: "request.observe",
       description: "Run one exact Kubernetes get or list request",
-      input_schema: native_schema(["get", "list"], @native_observation_query_keys),
+      input_schema: method_schema(["get", "list"], @method_observation_query_keys),
       output_schema: output,
-      verification_schema: Map.put(output, "minProperties", 1),
-      native?: true
+      verification_schema: Map.put(output, "minProperties", 1)
     }
 
     effect = %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "request.execute",
       description:
         "Run one exact Kubernetes create, update, patch, or delete request after review",
-      input_schema: native_schema(["create", "update", "patch", "delete"], %{}),
-      native?: true
+      input_schema: method_schema(["create", "update", "patch", "delete"], %{})
     }
 
     {observation, effect}
   end
 
-  defp native_schema(actions, query_keys) do
+  defp method_schema(actions, query_keys) do
     %{
       "type" => "object",
       "properties" => %{
@@ -343,9 +341,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     }
   end
 
-  defp native_query("request.observe", query) when is_map(query) do
+  defp method_query("request.observe", query) when is_map(query) do
     Enum.reduce_while(query, {:ok, []}, fn {key, value}, {:ok, normalized} ->
-      case {@native_observation_query_keys[key], value} do
+      case {@method_observation_query_keys[key], value} do
         {atom, value}
         when not is_nil(atom) and is_atom(atom) and is_binary(value) and
                byte_size(value) <= 2_048 ->
@@ -357,8 +355,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end)
   end
 
-  defp native_query("request.execute", query) when query == %{}, do: {:ok, []}
-  defp native_query(_operation, _query), do: invalid_request()
+  defp method_query("request.execute", query) when query == %{}, do: {:ok, []}
+  defp method_query(_operation, _query), do: invalid_request()
 
   defp run_observation(state, operation, {:watch, max_events}, cancelled?) do
     run(

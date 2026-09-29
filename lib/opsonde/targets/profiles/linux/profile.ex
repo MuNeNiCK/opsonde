@@ -10,8 +10,8 @@ defmodule Opsonde.Targets.Profiles.Linux do
   @service_list {"observe.service", "linux.service.list"}
   @journal {"observe.journal", "linux.journal.read"}
   @restart {"effect.service", "linux.service.restart"}
-  @native_observation "native.ssh.observe"
-  @native_effect "native.ssh.effect"
+  @method_observation "request.ssh.observe"
+  @method_effect "request.ssh.effect"
   @unit_pattern ~r/^[A-Za-z0-9_.@:-]+\.service$/
   @digest_pattern ~r/^[a-f0-9]{64}$/
   @service_state_pattern ~r/^[a-z0-9_-]{1,64}$/
@@ -38,7 +38,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
             [@identity, @processes, @service, @service_list, @journal, @restart],
             &elem(&1, 0)
           ) ++
-            [@native_observation, @native_effect]
+            [@method_observation, @method_effect]
         )
     }
   end
@@ -55,11 +55,11 @@ defmodule Opsonde.Targets.Profiles.Linux do
   def resource_scope(_operation, _capability, _selectors), do: "target"
 
   def capabilities(privilege) do
-    {native_observation, native_effect} =
-      Command.operations(@native_observation, @native_effect, "Linux shell")
+    {method_observation, method_effect} =
+      Command.operations(@method_observation, @method_effect, "Linux shell")
 
-    native_observation = describe_privilege(native_observation, privilege)
-    native_effect = describe_privilege(native_effect, privilege)
+    method_observation = describe_privilege(method_observation, privilege)
+    method_effect = describe_privilege(method_effect, privilege)
 
     {:ok,
      %Target.Capabilities{
@@ -95,7 +95,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
            journal_schema(),
            journal_output_schema()
          ),
-         native_observation
+         method_observation
        ],
        effects: [
          %{
@@ -113,7 +113,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
                }
              ]
          },
-         native_effect
+         method_effect
        ]
      }}
   end

@@ -68,7 +68,7 @@ defmodule Opsonde.Targets.SSHExecTest do
     :ok
   end
 
-  test "native observation rejects command families with effect flags" do
+  test "Method observation rejects command families with effect flags" do
     for command <- [
           "rg --pre 'sh -c touch /tmp/unsafe' pattern .",
           "ethtool eth0 -s eth0 speed 100",
@@ -201,10 +201,10 @@ defmodule Opsonde.Targets.SSHExecTest do
     assert %Target.Capabilities{observations: [observation], effects: [tool]} =
              Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
 
-    assert observation.capability == "native.ssh.observe"
+    assert observation.capability == "request.ssh.observe"
     assert observation.operation == "command.observe"
     assert observation.description =~ "Allowed roots:"
-    assert tool.capability == "native.ssh.effect"
+    assert tool.capability == "request.ssh.effect"
     assert tool.operation == "command.execute"
 
     target =
@@ -221,7 +221,7 @@ defmodule Opsonde.Targets.SSHExecTest do
         context.endpoint,
         provider.revision,
         100,
-        ["native.ssh.observe", "native.ssh.effect"],
+        ["request.ssh.observe", "request.ssh.effect"],
         actor: admin
       )
 
@@ -271,7 +271,7 @@ defmodule Opsonde.Targets.SSHExecTest do
       Targets.update_access_method!(
         method,
         method.revision,
-        %{capabilities: ["native.ssh.observe"]},
+        %{capabilities: ["request.ssh.observe"]},
         actor: admin
       )
 
@@ -296,7 +296,7 @@ defmodule Opsonde.Targets.SSHExecTest do
       Targets.update_access_method!(
         method,
         method.revision,
-        %{capabilities: ["native.ssh.observe", "native.ssh.effect"]},
+        %{capabilities: ["request.ssh.observe", "request.ssh.effect"]},
         actor: admin
       )
 
@@ -321,7 +321,7 @@ defmodule Opsonde.Targets.SSHExecTest do
       target.id,
       "blocked-command",
       [:effect],
-      ["native.ssh.effect"],
+      ["request.ssh.effect"],
       ["command.execute"],
       %{},
       %{"command" => %{"eq" => "never-policy"}},
@@ -409,8 +409,8 @@ defmodule Opsonde.Targets.SSHExecTest do
       access_method_revision: method.revision,
       capability:
         if(kind in [:observation, :verification],
-          do: "native.ssh.observe",
-          else: "native.ssh.effect"
+          do: "request.ssh.observe",
+          else: "request.ssh.effect"
         ),
       operation:
         if(kind in [:observation, :verification], do: "command.observe", else: "command.execute"),

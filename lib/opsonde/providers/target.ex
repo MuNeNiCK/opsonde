@@ -20,8 +20,7 @@ defmodule Opsonde.Providers.Target do
                 [
                   output_schema: nil,
                   verification_schema: nil,
-                  evidence_requirements: [],
-                  native?: false
+                  evidence_requirements: []
                 ]
 
     @type t :: %__MODULE__{
@@ -31,8 +30,7 @@ defmodule Opsonde.Providers.Target do
             input_schema: map(),
             output_schema: map() | nil,
             verification_schema: map() | nil,
-            evidence_requirements: [EvidenceRequirement.t()],
-            native?: boolean()
+            evidence_requirements: [EvidenceRequirement.t()]
           }
   end
 

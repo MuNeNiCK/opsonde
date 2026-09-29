@@ -14,12 +14,12 @@ defmodule Opsonde.Targets.IPMIRequestTest do
              IPMI.capabilities(state, %{})
 
     assert Enum.any?(effects, fn operation ->
-             operation.capability == "native.ipmi.effect" and
-               operation.operation == "command.execute" and operation.native?
+             operation.capability == "request.ipmi.effect" and
+               operation.operation == "command.execute"
            end)
 
-    refute Enum.any?(observations, &(&1.capability == "native.ipmi.observe"))
-    assert "native.ipmi.effect" in IPMI.access_method_profile().capabilities
+    refute Enum.any?(observations, &(&1.capability == "request.ipmi.observe"))
+    assert "request.ipmi.effect" in IPMI.access_method_profile().capabilities
 
     request = request(%{"netfn" => 6, "command" => 1, "data_hex" => ""})
     cancelled = %{cancelled?: fn -> true end}
@@ -46,7 +46,7 @@ defmodule Opsonde.Targets.IPMIRequestTest do
                  access_method_id: "fixture",
                  access_method_revision: 1,
                  connection: %Target.Connection{endpoint: @endpoint},
-                 capability: "native.ipmi.observe",
+                 capability: "request.ipmi.observe",
                  operation: "command.observe",
                  authorization_digest: "fixture",
                  parameters: %{"netfn" => 6, "command" => 1}
@@ -63,7 +63,7 @@ defmodule Opsonde.Targets.IPMIRequestTest do
       access_method_id: "fixture",
       access_method_revision: 1,
       connection: %Target.Connection{endpoint: @endpoint},
-      capability: "native.ipmi.effect",
+      capability: "request.ipmi.effect",
       operation: "command.execute",
       authorization_digest: "fixture",
       operation_id: "fixture",

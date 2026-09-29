@@ -382,7 +382,7 @@ defmodule Opsonde.TargetsTest do
             {physical.id, "ssh", endpoint, ["observe.power"]},
             {physical.id, method, "#{endpoint}/other", ["observe.power"]},
             {physical.id, method, endpoint, ["effect.power"]},
-            {physical.id, method, endpoint, ["observe.power", "native.ssh.observe"]}
+            {physical.id, method, endpoint, ["observe.power", "request.ssh.observe"]}
           ] do
         assert {:error, error} =
                  create.(target_id, candidate_method, candidate_endpoint, capabilities)
@@ -463,11 +463,11 @@ defmodule Opsonde.TargetsTest do
       create_target!(context.admin, "profile-other", "network_device", "custom-network-device")
 
     for {type, target, method, capability, invalid_target} <- [
-          {"kubernetes-api", cluster, "api", "native.kubernetes_api.observe", linux},
-          {"ios-xe-ssh", switch, "ssh_cli", "native.cli.observe", linux},
-          {"ios-xe-netconf", switch, "netconf", "native.netconf.observe", linux},
-          {"ios-xe-restconf", switch, "restconf", "native.restconf.observe", linux},
-          {"ssh-exec", other, "ssh", "native.ssh.observe", nil}
+          {"kubernetes-api", cluster, "api", "request.kubernetes.observe", linux},
+          {"ios-xe-ssh", switch, "ssh_cli", "request.cli.observe", linux},
+          {"ios-xe-netconf", switch, "netconf", "request.netconf.observe", linux},
+          {"ios-xe-restconf", switch, "restconf", "request.restconf.observe", linux},
+          {"ssh-exec", other, "ssh", "request.ssh.observe", nil}
         ] do
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =

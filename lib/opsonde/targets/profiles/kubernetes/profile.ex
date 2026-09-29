@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
 
   @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
 
-  def capabilities({native_observation, native_effect}) do
+  def capabilities({method_observation, method_effect}) do
     %Target.Capabilities{
       observations: [
         operation(
@@ -43,7 +43,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
           watch_schema(),
           watch_output_schema()
         ),
-        native_observation
+        method_observation
       ],
       effects: [
         %{
@@ -66,7 +66,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
               }
             ]
         },
-        native_effect
+        method_effect
       ]
     }
   end

@@ -7,8 +7,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.HTTPS
 
-  @observe "native.http.observe"
-  @effect "native.http.effect"
+  @observe "request.http.observe"
+  @effect "request.http.effect"
   @read_methods %{"GET" => :get, "HEAD" => :head}
   @write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
   @max_preview_bytes 8_192
@@ -93,8 +93,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
            description: "Read one exact relative HTTP API path at the configured origin",
            input_schema: input_schema(Map.keys(@read_methods)),
            output_schema: output_schema(),
-           verification_schema: output_schema(),
-           native?: true
+           verification_schema: output_schema()
          }
        ],
        effects: [
@@ -102,8 +101,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
            capability: @effect,
            operation: "request.execute",
            description: "Send one exact relative HTTP API write after authority review",
-           input_schema: input_schema(Map.keys(@write_methods), true),
-           native?: true
+           input_schema: input_schema(Map.keys(@write_methods), true)
          }
        ]
      }}
@@ -111,7 +109,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   @impl Opsonde.Providers.Target
   def preflight(state, request) do
-    case native_request(state, request, :read) do
+    case method_request(state, request, :read) do
       {:ok, _method, _path, _headers, _body} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -119,7 +117,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
-    with {:ok, method, path, headers, body} <- native_request(state, request, :read),
+    with {:ok, method, path, headers, body} <- method_request(state, request, :read),
          :ok <- not_cancelled(invocation),
          {:ok, %Req.Response{} = response} <-
            request(state, method, path, headers, body, invocation),
@@ -132,7 +130,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, target_request, invocation) do
-    with {:ok, method, path, headers, body} <- native_request(state, target_request, :write),
+    with {:ok, method, path, headers, body} <- method_request(state, target_request, :write),
          :ok <- not_cancelled(invocation) do
       case request(state, method, path, headers, body, invocation) do
         {:ok, %Req.Response{status: status, body: response}}
@@ -183,7 +181,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, target_request, invocation) do
-    with {:ok, method, path, headers, body} <- native_request(state, target_request, :read),
+    with {:ok, method, path, headers, body} <- method_request(state, target_request, :read),
          :ok <- not_cancelled(invocation),
          {:ok, %Req.Response{} = response} <-
            request(state, method, path, headers, body, invocation) do
@@ -286,7 +284,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     |> Map.to_list()
   end
 
-  defp native_request(state, request, kind) do
+  defp method_request(state, request, kind) do
     methods = if kind == :read, do: @read_methods, else: @write_methods
     capability = if kind == :read, do: @observe, else: @effect
     operation = if kind == :read, do: "request.observe", else: "request.execute"
@@ -306,7 +304,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          {:ok, body} <- request_body(kind, method, Map.get(parameters, "body")) do
       {:ok, method, path, headers, body}
     else
-      _ -> {:error, :failed, "HTTP native request is invalid"}
+      _ -> {:error, :failed, "HTTP request is invalid"}
     end
   end
 

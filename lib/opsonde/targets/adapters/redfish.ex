@@ -18,8 +18,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   }
   @api_read_methods %{"GET" => :get, "HEAD" => :head}
   @api_write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
-  @native_read "native.redfish.observe"
-  @native_effect "native.redfish.effect"
+  @method_read "request.redfish.observe"
+  @method_effect "request.redfish.effect"
   @sensitive_names ~w(password passphrase secret token credential authorization apikey privatekey community)
   @max_collection_pages 8
 
@@ -38,7 +38,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     profile = BMC.access_method_profile("redfish")
-    %{profile | capabilities: [@native_read, @native_effect | profile.capabilities]}
+    %{profile | capabilities: [@method_read, @method_effect | profile.capabilities]}
   end
 
   @impl Opsonde.Providers.Adapter
@@ -106,8 +106,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
       {:ok,
        %Target.Capabilities{
-         observations: capabilities.observations ++ api.observations ++ [native_read_operation()],
-         effects: effects ++ api.effects ++ [native_effect_operation()]
+         observations: capabilities.observations ++ api.observations ++ [method_read_operation()],
+         effects: effects ++ api.effects ++ [method_effect_operation()]
        }}
     else
       {:error, category, message} -> read_error(category, message)
@@ -115,8 +115,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: @native_read} = request, invocation),
-    do: native_observe(state, request, invocation)
+  def observe(%State{} = state, %{capability: @method_read} = request, invocation),
+    do: method_observe(state, request, invocation)
 
   def observe(%State{} = state, %{capability: "observe.bmc_api"} = request, invocation),
     do: api_observe(state, request, invocation)
@@ -135,8 +135,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, %{capability: @native_effect} = request, invocation),
-    do: native_effect(state, request, invocation)
+  def effect(%State{} = state, %{capability: @method_effect} = request, invocation),
+    do: method_effect(state, request, invocation)
 
   def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
     do: api_effect(state, request, invocation)
@@ -244,8 +244,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     end
   end
 
-  defp native_observe(state, request, invocation) do
-    with {:ok, method, path} <- native_read_request(state, request),
+  defp method_observe(state, request, invocation) do
+    with {:ok, method, path} <- method_read_request(state, request),
          :ok <- not_cancelled(invocation),
          {:ok, _system} <- system(state),
          {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
@@ -270,7 +270,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     end
   end
 
-  defp native_read_operation do
+  defp method_read_operation do
     output = %{
       "type" => "object",
       "properties" => %{
@@ -282,28 +282,26 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     }
 
     %Target.Operation{
-      capability: @native_read,
+      capability: @method_read,
       operation: "request.observe",
       description: "Read one exact standard or OEM Redfish resource by relative URI",
-      input_schema: native_schema(["GET", "HEAD"]),
+      input_schema: method_schema(["GET", "HEAD"]),
       output_schema: output,
-      verification_schema: output,
-      native?: true
+      verification_schema: output
     }
   end
 
-  defp native_effect_operation do
+  defp method_effect_operation do
     %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "request.execute",
       description:
         "Send one exact standard or OEM Redfish write by relative URI after authority review",
-      input_schema: native_schema(Map.keys(@api_write_methods), true),
-      native?: true
+      input_schema: method_schema(Map.keys(@api_write_methods), true)
     }
   end
 
-  defp native_schema(methods, write? \\ false) do
+  defp method_schema(methods, write? \\ false) do
     selector_properties =
       if write?, do: %{"if_match" => %{"type" => "string", "maxLength" => 256}}, else: %{}
 
@@ -342,7 +340,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     }
   end
 
-  defp native_read_request(state, request) do
+  defp method_read_request(state, request) do
     with true <- request.operation == "request.observe",
          true <- request.connection.endpoint == state.endpoint,
          true <- request.selectors == %{} and request.secret_values == %{},
@@ -353,20 +351,20 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          {:ok, path} <- ResourceURI.relative(uri) do
       {:ok, verb, path}
     else
-      _ -> {:error, :failed, "Redfish native observation request is invalid"}
+      _ -> {:error, :failed, "Redfish read request is invalid"}
     end
   end
 
-  defp native_effect(state, target_request, invocation) do
+  defp method_effect(state, target_request, invocation) do
     with {:ok, method, path, body, headers, include_response?} <-
-           native_write_request(state, target_request),
+           method_write_request(state, target_request),
          :ok <- not_cancelled(invocation),
          {:ok, _system} <- system(state),
          :ok <- not_cancelled(invocation) do
       result = request(state, method, path, body, headers)
 
       effect_response(state, result, target_request.operation, fn status, reply ->
-        native_response_details(status, reply, include_response?)
+        method_response_details(status, reply, include_response?)
       end)
     else
       {:error, :cancelled, _message} = error -> error
@@ -374,7 +372,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     end
   end
 
-  defp native_write_request(state, request) do
+  defp method_write_request(state, request) do
     parameters = request.parameters
 
     with true <- request.operation == "request.execute",
@@ -387,14 +385,14 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          {:ok, headers} <- if_match_headers(request.selectors),
          include_response? when is_boolean(include_response?) <-
            Map.get(parameters, "include_response", false),
-         {:ok, body} <- native_body(verb, parameters) do
+         {:ok, body} <- method_body(verb, parameters) do
       {:ok, verb, path, body, headers, include_response?}
     else
-      _ -> {:error, :failed, "Redfish native effect request is invalid"}
+      _ -> {:error, :failed, "Redfish write request is invalid"}
     end
   end
 
-  defp native_body(verb, parameters) do
+  defp method_body(verb, parameters) do
     body = Map.get(parameters, "body")
 
     if (verb == :delete or is_map(body)) and (is_nil(body) or is_map(body)) do
@@ -409,13 +407,13 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     _ -> {:error, :failed, "Redfish request body is invalid"}
   end
 
-  defp native_response_details(status, reply, _include_response?) when map_size(reply) == 0,
+  defp method_response_details(status, reply, _include_response?) when map_size(reply) == 0,
     do: %{"http_status" => status}
 
-  defp native_response_details(status, reply, true),
+  defp method_response_details(status, reply, true),
     do: %{"http_status" => status, "response" => sanitize_response(reply)}
 
-  defp native_response_details(status, _reply, false),
+  defp method_response_details(status, _reply, false),
     do: %{"http_status" => status, "response_redacted" => true}
 
   defp api_effect(state, request, invocation) do

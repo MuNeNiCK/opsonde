@@ -8,8 +8,8 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   alias Opsonde.Targets.Profiles.IOSXE
   alias Opsonde.Transports.SSH, as: Transport
 
-  @native_observation "native.cli.observe"
-  @native_effect "native.cli.effect"
+  @method_observation "request.cli.observe"
+  @method_effect "request.cli.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-ssh"
@@ -19,7 +19,7 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
 
   @impl Opsonde.Providers.Target
   def access_method_profile,
-    do: IOSXE.access_method_profile("ssh_cli", @native_observation, @native_effect)
+    do: IOSXE.access_method_profile("ssh_cli", @method_observation, @method_effect)
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Transport.build(configuration, credentials)
@@ -44,18 +44,18 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ [native_observation()],
-         effects: capabilities.effects ++ [native_effect()]
+       | observations: capabilities.observations ++ [method_observation()],
+         effects: capabilities.effects ++ [method_effect()]
      }}
   end
 
   @impl Opsonde.Providers.Target
   def observe(
         %Transport.Config{} = state,
-        %{capability: @native_observation} = request,
+        %{capability: @method_observation} = request,
         invocation
       ) do
-    with {:ok, commands} <- native_commands(request, "cli.observe"),
+    with {:ok, commands} <- method_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
@@ -85,8 +85,8 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @native_observation} = request) do
-    with {:ok, commands} <- native_commands(request, "cli.observe"),
+  def preflight(_state, %{capability: @method_observation} = request) do
+    with {:ok, commands} <- method_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1) do
       :ok
     else
@@ -103,8 +103,8 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%Transport.Config{} = state, %{capability: @native_effect} = request, invocation) do
-    with {:ok, commands} <- native_commands(request, "cli.execute"),
+  def effect(%Transport.Config{} = state, %{capability: @method_effect} = request, invocation) do
+    with {:ok, commands} <- method_commands(request, "cli.execute"),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)),
          :ok <- IOSXE.ssh_command_accepted?(output) do
@@ -130,10 +130,10 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   @impl Opsonde.Providers.Target
   def verify(
         %Transport.Config{} = state,
-        %{capability: @native_observation} = request,
+        %{capability: @method_observation} = request,
         invocation
       ) do
-    with {:ok, commands} <- native_commands(request, "cli.observe"),
+    with {:ok, commands} <- method_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
@@ -224,9 +224,9 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
     end
   end
 
-  defp native_commands(request, operation) do
+  defp method_commands(request, operation) do
     expected_capability =
-      if(operation == "cli.observe", do: @native_observation, else: @native_effect)
+      if(operation == "cli.observe", do: @method_observation, else: @method_effect)
 
     case request do
       %{
@@ -241,11 +241,11 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
           else: {:error, :failed, "IOS XE CLI commands are invalid"}
 
       _request ->
-        {:error, :failed, "IOS XE native CLI request is invalid"}
+        {:error, :failed, "IOS XE CLI request is invalid"}
     end
   end
 
-  defp native_observation do
+  defp method_observation do
     output = %{
       "type" => "object",
       "properties" => %{"output" => %{"type" => "string", "maxLength" => 65_536}},
@@ -254,27 +254,25 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
     }
 
     %Target.Operation{
-      capability: @native_observation,
+      capability: @method_observation,
       operation: "cli.observe",
       description: "Run exact IOS XE show commands and return raw output",
-      input_schema: native_schema(),
+      input_schema: method_schema(),
       output_schema: output,
-      verification_schema: Map.put(output, "minProperties", 1),
-      native?: true
+      verification_schema: Map.put(output, "minProperties", 1)
     }
   end
 
-  defp native_effect do
+  defp method_effect do
     %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "cli.execute",
       description: "Run exact IOS XE CLI commands after authority review",
-      input_schema: native_schema(),
-      native?: true
+      input_schema: method_schema()
     }
   end
 
-  defp native_schema do
+  defp method_schema do
     %{
       "type" => "object",
       "properties" => %{

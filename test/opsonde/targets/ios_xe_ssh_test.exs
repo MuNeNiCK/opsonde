@@ -10,8 +10,8 @@ defmodule Opsonde.Targets.IOSXESSHTest do
     "observe.system",
     "observe.interface",
     "effect.interface",
-    "native.cli.observe",
-    "native.cli.effect"
+    "request.cli.observe",
+    "request.cli.effect"
   ]
 
   defmodule CLI do
@@ -259,18 +259,18 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              request(
                context,
                :observation,
-               "native.cli.observe",
+               "request.cli.observe",
                "cli.observe",
                %{},
                %{"commands" => ["configure terminal"]}
              )
              |> Targets.clear_target_request(actor: context.operator)
 
-    assert %Target.Observation{facts: %{"output" => native_output}} =
+    assert %Target.Observation{facts: %{"output" => method_output}} =
              request(
                context,
                :observation,
-               "native.cli.observe",
+               "request.cli.observe",
                "cli.observe",
                %{},
                %{"commands" => ["show version"]}
@@ -278,7 +278,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
 
-    assert native_output =~ "Cisco IOS XE Software, Version 17.15.01"
+    assert method_output =~ "Cisco IOS XE Software, Version 17.15.01"
 
     system = observe!(context, "observe.system", "ios_xe.system.inspect", %{})
     assert system.facts == %{"hostname" => "router-one", "version" => "17.15.01"}

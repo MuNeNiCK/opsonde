@@ -126,7 +126,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       "endpoint" => endpoint,
       "provider_revision" => provider.revision,
       "priority" => 100,
-      "capabilities" => ["native.http.observe", "native.http.effect"]
+      "capabilities" => ["request.http.observe", "request.http.effect"]
     }
 
     invalid =

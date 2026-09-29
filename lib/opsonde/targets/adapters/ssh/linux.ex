@@ -7,8 +7,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
   alias Opsonde.Targets.Adapters.SSH.Command
   alias Opsonde.Targets.Profiles.Linux, as: Profile
 
-  @native_observation "native.ssh.observe"
-  @native_effect "native.ssh.effect"
+  @method_observation "request.ssh.observe"
+  @method_effect "request.ssh.effect"
 
   defmodule State do
     @moduledoc false
@@ -61,7 +61,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native_observation do
+      when capability != @method_observation do
     with {:ok, command, decoder} <- Profile.observation_command(state.privilege, request),
          {:ok, result} <- execute(state, request, command, invocation),
          {:ok, facts} <- Profile.decode_observation(decoder, result) do
@@ -76,8 +76,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
     end
   end
 
-  def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
-    with {:ok, command} <- Command.observation_command(request, @native_observation),
+  def observe(%State{} = state, %{capability: @method_observation} = request, invocation) do
+    with {:ok, command} <- Command.observation_command(request, @method_observation),
          {:ok, result} <-
            execute(state, request, Profile.privileged(state.privilege, command), invocation) do
       {:ok,
@@ -92,8 +92,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @native_observation} = request) do
-    case Command.observation_command(request, @native_observation) do
+  def preflight(_state, %{capability: @method_observation} = request) do
+    case Command.observation_command(request, @method_observation) do
       {:ok, _command} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -108,7 +108,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native_effect do
+      when capability != @method_effect do
     with {:ok, command} <- Profile.restart_command(state.privilege, request),
          result <- execute_raw(state, request, command, invocation) do
       effect_result(result)
@@ -117,8 +117,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
     end
   end
 
-  def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
-    with {:ok, command} <- Command.effect_command(request, @native_effect) do
+  def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
+    with {:ok, command} <- Command.effect_command(request, @method_effect) do
       state
       |> execute_raw(request, Profile.privileged(state.privilege, command), invocation)
       |> effect_result()
@@ -129,7 +129,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
 
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @native_observation do
+      when capability != @method_observation do
     with {:ok, command, :service} <- Profile.observation_command(state.privilege, request),
          {:ok, expected} <- Profile.verification_expected(request.expected),
          {:ok, result} <- execute(state, request, command, invocation),
@@ -147,9 +147,9 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
     end
   end
 
-  def verify(%State{} = state, %{capability: @native_observation} = request, invocation) do
+  def verify(%State{} = state, %{capability: @method_observation} = request, invocation) do
     with {:ok, command} <-
-           Command.observation_command(request, @native_observation),
+           Command.observation_command(request, @method_observation),
          {:ok, result} <-
            execute(state, request, Profile.privileged(state.privilege, command), invocation),
          facts <- Command.facts(result) do

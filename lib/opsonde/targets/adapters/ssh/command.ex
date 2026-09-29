@@ -26,15 +26,13 @@ defmodule Opsonde.Targets.Adapters.SSH.Command do
             "is-active, is-enabled, is-failed. No chaining or redirection.",
         input_schema: schema,
         output_schema: output,
-        verification_schema: Map.put(output, "minProperties", 1),
-        native?: true
+        verification_schema: Map.put(output, "minProperties", 1)
       },
       %Target.Operation{
         capability: effect_capability,
         operation: "command.execute",
         description: "Run one exact #{description} command after authority review",
-        input_schema: schema,
-        native?: true
+        input_schema: schema
       }
     }
   end
@@ -64,7 +62,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Command do
         {:ok, command}
 
       _request ->
-        {:error, :failed, "Native SSH request is invalid"}
+        {:error, :failed, "SSH request is invalid"}
     end
   end
 

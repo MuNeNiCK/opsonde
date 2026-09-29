@@ -15,8 +15,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     "observe.service",
     "observe.journal",
     "effect.service",
-    "native.ssh.observe",
-    "native.ssh.effect"
+    "request.ssh.observe",
+    "request.ssh.effect"
   ]
 
   setup_all do
@@ -106,7 +106,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     })
   end
 
-  test "service operations lock the exact unit while native shell effects lock the Target",
+  test "service operations lock the exact unit while shell Method effects lock the Target",
        context do
     assert ResourceScope.key(
              context.method,
@@ -117,8 +117,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert ResourceScope.key(
              context.method,
-             "native.ssh.effect",
-             "native.ssh.effect",
+             "request.ssh.effect",
+             "request.ssh.effect",
              %{"unit" => "api.service"}
            ) == "target"
   end
@@ -165,7 +165,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert_schema_rejects!(service_tool.verification_schema, %{"active_state" => "inactive"})
 
-    [effect, _native_effect] = effects
+    [effect, _method_effect] = effects
     assert Enum.map(effects, & &1.operation) == ["linux.service.restart", "command.execute"]
 
     assert effect.evidence_requirements == [
@@ -176,16 +176,16 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              }
            ]
 
-    assert %Target.Observation{facts: %{"exit_status" => 0} = native_facts} =
+    assert %Target.Observation{facts: %{"exit_status" => 0} = method_facts} =
              observe!(
                context,
-               "native.ssh.observe",
+               "request.ssh.observe",
                "command.observe",
                %{},
                %{"command" => "uname -a"}
              )
 
-    assert native_facts["stdout"] == %{"encoding" => "utf-8", "value" => "Linux fixture\n"}
+    assert method_facts["stdout"] == %{"encoding" => "utf-8", "value" => "Linux fixture\n"}
     assert commands(context) == ["sudo -n uname -a"]
 
     assert get_in(effect.input_schema, [
@@ -303,12 +303,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
   end
 
-  test "configured privilege applies to native effects and verification", context do
+  test "configured privilege applies to Method effects and verification", context do
     effect =
       policy_request(
         context,
         :effect,
-        "native.ssh.effect",
+        "request.ssh.effect",
         "command.execute",
         %{},
         %{"command" => "systemctl restart opsonde-validation.service"}
@@ -326,7 +326,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       policy_request(
         context,
         :verification,
-        "native.ssh.observe",
+        "request.ssh.observe",
         "command.observe",
         %{},
         %{"command" => "uname -a"},
@@ -347,12 +347,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
            ]
   end
 
-  test "native observation rejects unsupported commands before clearance", context do
+  test "Method observation rejects unsupported commands before clearance", context do
     request =
       policy_request(
         context,
         :observation,
-        "native.ssh.observe",
+        "request.ssh.observe",
         "command.observe",
         %{},
         %{"command" => "curl http://127.0.0.1:18080/metrics"}
@@ -363,12 +363,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert commands(context) == []
   end
 
-  test "native commands remain unchanged when privilege is none", context do
+  test "Method commands remain unchanged when privilege is none", context do
     configuration = Map.put(configuration(context), "privilege", "none")
     assert {:ok, state} = LinuxSSH.build(configuration, credentials())
 
     request = %{
-      capability: "native.ssh.observe",
+      capability: "request.ssh.observe",
       operation: "command.observe",
       selectors: %{},
       parameters: %{"command" => "uname -a"},

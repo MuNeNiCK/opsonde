@@ -479,7 +479,7 @@ defmodule Opsonde.ResolverProjectionTest do
           "request_kind" => "effect",
           "target_id" => context.target.id,
           "access_method_id" => context.method.id,
-          "capability" => "native.ssh.effect",
+          "capability" => "request.ssh.effect",
           "operation" => "command.execute",
           "selectors" => %{},
           "parameters" => %{"command" => "systemctl start api.service"},

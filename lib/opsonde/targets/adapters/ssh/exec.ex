@@ -8,8 +8,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
   alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.Adapters.SSH.Command
 
-  @observation_capability "native.ssh.observe"
-  @effect_capability "native.ssh.effect"
+  @observation_capability "request.ssh.observe"
+  @effect_capability "request.ssh.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ssh-exec"

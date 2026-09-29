@@ -8,8 +8,8 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   alias Opsonde.Targets.Profiles.IOSXE
   alias Opsonde.Transports.HTTPS
 
-  @native_observation "native.restconf.observe"
-  @native_effect "native.restconf.effect"
+  @method_observation "request.restconf.observe"
+  @method_effect "request.restconf.effect"
 
   @configuration_keys ~w(ca_certificate connect_timeout_ms request_timeout_ms max_body_bytes)
   @credential_keys ~w(username password)
@@ -28,7 +28,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
 
   @impl Opsonde.Providers.Target
   def access_method_profile,
-    do: IOSXE.access_method_profile("restconf", @native_observation, @native_effect)
+    do: IOSXE.access_method_profile("restconf", @method_observation, @method_effect)
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
@@ -86,15 +86,15 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ [native_observation()],
-         effects: capabilities.effects ++ [native_effect()]
+       | observations: capabilities.observations ++ [method_observation()],
+         effects: capabilities.effects ++ [method_effect()]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: @native_observation} = target_request, invocation) do
+  def observe(%State{} = state, %{capability: @method_observation} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
-         {:ok, method, path, body} <- native_request(target_request, "request.observe"),
+         {:ok, method, path, body} <- method_request(target_request, "request.observe"),
          true <- method in [:get, :head],
          {:ok, response} <-
            request(state, endpoint, method, path, body, cancelled?(invocation), :read) do
@@ -116,8 +116,8 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @native_observation} = request) do
-    with {:ok, method, _path, _body} <- native_request(request, "request.observe"),
+  def preflight(_state, %{capability: @method_observation} = request) do
+    with {:ok, method, _path, _body} <- method_request(request, "request.observe"),
          true <- method in [:get, :head] do
       :ok
     else
@@ -134,9 +134,9 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%State{} = state, %{capability: @native_effect} = target_request, invocation) do
+  def effect(%State{} = state, %{capability: @method_effect} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
-         {:ok, method, path, body} <- native_request(target_request, "request.execute"),
+         {:ok, method, path, body} <- method_request(target_request, "request.execute"),
          true <- method in [:post, :put, :patch, :delete],
          {:ok, response} <-
            request(state, endpoint, method, path, body, cancelled?(invocation), :effect) do
@@ -157,9 +157,9 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, %{capability: @native_observation} = target_request, invocation) do
+  def verify(%State{} = state, %{capability: @method_observation} = target_request, invocation) do
     with {:ok, endpoint} <- endpoint(target_request.connection.endpoint),
-         {:ok, method, path, body} <- native_request(target_request, "request.observe"),
+         {:ok, method, path, body} <- method_request(target_request, "request.observe"),
          true <- method in [:get, :head],
          {:ok, response} <-
            request(state, endpoint, method, path, body, cancelled?(invocation), :read) do
@@ -393,9 +393,9 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   defp normalize_response(_response, _limit, phase),
     do: {:error, failure_category(phase), "IOS XE RESTCONF response is invalid"}
 
-  defp native_request(request, operation) do
+  defp method_request(request, operation) do
     expected_capability =
-      if(operation == "request.observe", do: @native_observation, else: @native_effect)
+      if(operation == "request.observe", do: @method_observation, else: @method_effect)
 
     case request do
       %{
@@ -408,48 +408,46 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
         method = method |> String.downcase() |> String.to_existing_atom()
         body = Map.get(parameters, "body")
 
-        if valid_native_path?(path) and method in [:get, :head, :post, :put, :patch, :delete] and
+        if valid_method_path?(path) and method in [:get, :head, :post, :put, :patch, :delete] and
              (is_nil(body) or is_map(body)),
            do: {:ok, method, path, body},
-           else: {:error, :failed, "RESTCONF native request is invalid"}
+           else: {:error, :failed, "RESTCONF request is invalid"}
 
       _request ->
-        {:error, :failed, "RESTCONF native request is invalid"}
+        {:error, :failed, "RESTCONF request is invalid"}
     end
   rescue
-    ArgumentError -> {:error, :failed, "RESTCONF native request method is invalid"}
+    ArgumentError -> {:error, :failed, "RESTCONF request method is invalid"}
   end
 
-  defp valid_native_path?(path),
+  defp valid_method_path?(path),
     do:
       byte_size(path) in 1..2_048 and String.starts_with?(path, "/restconf/") and
         not String.contains?(path, ["..", "#"])
 
-  defp native_observation do
-    output = native_output_schema()
+  defp method_observation do
+    output = method_output_schema()
 
     %Target.Operation{
-      capability: @native_observation,
+      capability: @method_observation,
       operation: "request.observe",
       description: "Send one exact non-mutating RESTCONF request and return its response",
-      input_schema: native_schema(["get", "head"]),
+      input_schema: method_schema(["get", "head"]),
       output_schema: output,
-      verification_schema: Map.put(output, "minProperties", 1),
-      native?: true
+      verification_schema: Map.put(output, "minProperties", 1)
     }
   end
 
-  defp native_effect do
+  defp method_effect do
     %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "request.execute",
       description: "Send one exact mutating RESTCONF request after authority review",
-      input_schema: native_schema(["post", "put", "patch", "delete"]),
-      native?: true
+      input_schema: method_schema(["post", "put", "patch", "delete"])
     }
   end
 
-  defp native_schema(methods) do
+  defp method_schema(methods) do
     %{
       "type" => "object",
       "properties" => %{
@@ -470,7 +468,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
     }
   end
 
-  defp native_output_schema do
+  defp method_output_schema do
     %{
       "type" => "object",
       "properties" => %{"response" => %{"type" => "object"}},

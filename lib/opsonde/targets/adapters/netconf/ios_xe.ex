@@ -11,8 +11,8 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   @message_id "opsonde-1"
   @max_message_bytes 60_000
   @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
-  @native_observation "native.netconf.observe"
-  @native_effect "native.netconf.effect"
+  @method_observation "request.netconf.observe"
+  @method_effect "request.netconf.effect"
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-netconf"
@@ -22,7 +22,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
 
   @impl Opsonde.Providers.Target
   def access_method_profile,
-    do: IOSXE.access_method_profile("netconf", @native_observation, @native_effect)
+    do: IOSXE.access_method_profile("netconf", @method_observation, @method_effect)
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) do
@@ -53,21 +53,21 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ [native_observation()],
-         effects: capabilities.effects ++ [native_effect()]
+       | observations: capabilities.observations ++ [method_observation()],
+         effects: capabilities.effects ++ [method_effect()]
      }}
   end
 
   @impl Opsonde.Providers.Target
   def observe(
         %SSH.Config{} = state,
-        %{capability: @native_observation} = target_request,
+        %{capability: @method_observation} = target_request,
         invocation
       ) do
-    with {:ok, body} <- native_body(target_request, "rpc.observe"),
+    with {:ok, body} <- method_body(target_request, "rpc.observe"),
          true <- readonly_rpc?(body),
          {:ok, reply} <-
-           native_rpc(
+           method_rpc(
              state,
              target_request.connection.endpoint,
              body,
@@ -96,8 +96,8 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @native_observation} = request) do
-    with {:ok, body} <- native_body(request, "rpc.observe"),
+  def preflight(_state, %{capability: @method_observation} = request) do
+    with {:ok, body} <- method_body(request, "rpc.observe"),
          true <- readonly_rpc?(body) do
       :ok
     else
@@ -114,10 +114,10 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   @impl Opsonde.Providers.Target
-  def effect(%SSH.Config{} = state, %{capability: @native_effect} = target_request, invocation) do
-    with {:ok, body} <- native_body(target_request, "rpc.execute"),
+  def effect(%SSH.Config{} = state, %{capability: @method_effect} = target_request, invocation) do
+    with {:ok, body} <- method_body(target_request, "rpc.execute"),
          {:ok, reply} <-
-           native_rpc(
+           method_rpc(
              state,
              target_request.connection.endpoint,
              body,
@@ -145,13 +145,13 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   @impl Opsonde.Providers.Target
   def verify(
         %SSH.Config{} = state,
-        %{capability: @native_observation} = target_request,
+        %{capability: @method_observation} = target_request,
         invocation
       ) do
-    with {:ok, body} <- native_body(target_request, "rpc.observe"),
+    with {:ok, body} <- method_body(target_request, "rpc.observe"),
          true <- readonly_rpc?(body),
          {:ok, reply} <-
-           native_rpc(
+           method_rpc(
              state,
              target_request.connection.endpoint,
              body,
@@ -184,9 +184,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
 
     with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
          {:ok, data} <- reply_data(root),
-         {:ok, native} <- child(data, "native"),
-         {:ok, hostname} <- child_text(native, "hostname"),
-         {:ok, version} <- child_text(native, "version") do
+         {:ok, system_element} <- child(data, "native"),
+         {:ok, hostname} <- child_text(system_element, "hostname"),
+         {:ok, version} <- child_text(system_element, "version") do
       {:ok, IOSXE.netconf_system_facts(hostname, version)}
     end
   end
@@ -245,7 +245,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
     end
   end
 
-  defp native_rpc(state, endpoint, body, cancelled?) do
+  defp method_rpc(state, endpoint, body, cancelled?) do
     with {:ok, %NETCONF.Result{reply: reply}} <-
            NETCONF.request(state, endpoint, rpc(body), cancelled?),
          {:ok, root} <- parse(reply),
@@ -254,9 +254,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
     end
   end
 
-  defp native_body(request, operation) do
+  defp method_body(request, operation) do
     expected_capability =
-      if(operation == "rpc.observe", do: @native_observation, else: @native_effect)
+      if(operation == "rpc.observe", do: @method_observation, else: @method_effect)
 
     case request do
       %{
@@ -269,7 +269,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
         {:ok, body}
 
       _request ->
-        {:error, :failed, "NETCONF native RPC request is invalid"}
+        {:error, :failed, "NETCONF RPC request is invalid"}
     end
   end
 
@@ -282,31 +282,29 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
     end
   end
 
-  defp native_observation do
-    output = native_output_schema()
+  defp method_observation do
+    output = method_output_schema()
 
     %Target.Operation{
-      capability: @native_observation,
+      capability: @method_observation,
       operation: "rpc.observe",
       description: "Send one exact non-mutating NETCONF RPC body and return the raw reply",
-      input_schema: native_schema(),
+      input_schema: method_schema(),
       output_schema: output,
-      verification_schema: Map.put(output, "minProperties", 1),
-      native?: true
+      verification_schema: Map.put(output, "minProperties", 1)
     }
   end
 
-  defp native_effect do
+  defp method_effect do
     %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "rpc.execute",
       description: "Send one exact NETCONF RPC body after authority review",
-      input_schema: native_schema(),
-      native?: true
+      input_schema: method_schema()
     }
   end
 
-  defp native_schema do
+  defp method_schema do
     %{
       "type" => "object",
       "properties" => %{
@@ -325,7 +323,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
     }
   end
 
-  defp native_output_schema do
+  defp method_output_schema do
     %{
       "type" => "object",
       "properties" => %{

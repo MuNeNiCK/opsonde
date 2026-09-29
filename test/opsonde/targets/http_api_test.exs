@@ -56,14 +56,14 @@ defmodule Opsonde.Targets.HTTPAPITest do
 
     admin =
       Accounts.bootstrap!(
-        "http-api-native-admin@example.invalid",
+        "http-api-method-admin@example.invalid",
         "test-only-password",
         "test-only-password"
       )
 
     operator =
       Accounts.create_user!(
-        "http-api-native-operator@example.invalid",
+        "http-api-method-operator@example.invalid",
         "test-only-password",
         :operator,
         actor: admin
@@ -71,7 +71,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
 
     provider =
       Providers.create_provider!(
-        "http-api-native",
+        "http-api-method",
         :target,
         "http-api",
         %{"endpoint" => endpoint},
@@ -102,7 +102,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
         endpoint,
         provider.revision,
         100,
-        ["native.http.observe", "native.http.effect"],
+        ["request.http.observe", "request.http.effect"],
         actor: admin
       )
 
@@ -126,8 +126,8 @@ defmodule Opsonde.Targets.HTTPAPITest do
                actor: context.operator
              )
 
-    assert Enum.any?(observations, &(&1.capability == "native.http.observe" and &1.native?))
-    assert Enum.any?(effects, &(&1.capability == "native.http.effect" and &1.native?))
+    assert Enum.any?(observations, &(&1.capability == "request.http.observe"))
+    assert Enum.any?(effects, &(&1.capability == "request.http.effect"))
 
     assert {:ok, observation} =
              HTTP.observe(context.state, read_request(context, "GET", "/api/status"), %{})
@@ -159,7 +159,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
       access_method_id: context.method.id,
       access_method_revision: context.method.revision,
       connection: %Target.Connection{endpoint: context.endpoint},
-      capability: "native.http.observe",
+      capability: "request.http.observe",
       operation: "request.observe",
       authorization_digest: "fixture",
       operation_id: "fixture",
@@ -228,7 +228,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
       access_method_id: context.method.id,
       access_method_revision: context.method.revision,
       connection: %Target.Connection{endpoint: context.endpoint},
-      capability: "native.http.observe",
+      capability: "request.http.observe",
       operation: "request.observe",
       authorization_digest: "fixture",
       parameters: %{"method" => method, "path" => path}
@@ -243,7 +243,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
       access_method_id: context.method.id,
       access_method_revision: context.method.revision,
       connection: %Target.Connection{endpoint: context.endpoint},
-      capability: "native.http.effect",
+      capability: "request.http.effect",
       operation: "request.execute",
       authorization_digest: "fixture",
       operation_id: "fixture",

@@ -10,7 +10,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   alias Opsonde.Targets.BMC.OutputProjection
 
   @max_data_bytes 2048
-  @native_effect "native.ipmi.effect"
+  @method_effect "request.ipmi.effect"
 
   defmodule State do
     @moduledoc false
@@ -28,7 +28,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     profile = BMC.access_method_profile("ipmi")
-    %{profile | capabilities: [@native_effect | profile.capabilities]}
+    %{profile | capabilities: [@method_effect | profile.capabilities]}
   end
 
   @impl Opsonde.Providers.Adapter
@@ -80,7 +80,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     {:ok,
      %Target.Capabilities{
        observations: capabilities.observations ++ api.observations,
-       effects: effects ++ api.effects ++ [native_effect_operation()]
+       effects: effects ++ api.effects ++ [method_effect_operation()]
      }}
   end
 
@@ -104,8 +104,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   def effect(%State{}, %{operation: "bmc.power.cycle"}, _invocation),
     do: {:error, :failed, "IPMI power cycle support cannot be verified for this BMC"}
 
-  def effect(%State{} = state, %{capability: @native_effect} = request, invocation),
-    do: native_effect(state, request, invocation)
+  def effect(%State{} = state, %{capability: @method_effect} = request, invocation),
+    do: method_effect(state, request, invocation)
 
   def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
     do: api_effect(state, request, invocation)
@@ -254,8 +254,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
-  defp native_effect(state, request, invocation) do
-    with {:ok, netfn, opcode, data, include_response?} <- native_request(state, request),
+  defp method_effect(state, request, invocation) do
+    with {:ok, netfn, opcode, data, include_response?} <- method_request(state, request),
          :ok <- not_cancelled(invocation) do
       case command(state, netfn, opcode, data) do
         {:ok, completion, response} ->
@@ -287,9 +287,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
-  defp native_effect_operation do
+  defp method_effect_operation do
     %Target.Operation{
-      capability: @native_effect,
+      capability: @method_effect,
       operation: "command.execute",
       description:
         "Send one exact IPMI command after authority review; opaque responses are redacted unless explicitly requested",
@@ -311,12 +311,11 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         },
         "required" => ["selectors", "parameters"],
         "additionalProperties" => false
-      },
-      native?: true
+      }
     }
   end
 
-  defp native_request(state, request) do
+  defp method_request(state, request) do
     parameters = request.parameters
 
     with true <- request.operation == "command.execute",
@@ -333,7 +332,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          {:ok, data} <- request_data(Map.take(parameters, ["data_hex"])) do
       {:ok, netfn, opcode, data, include_response?}
     else
-      _ -> {:error, :failed, "IPMI native command request is invalid"}
+      _ -> {:error, :failed, "IPMI command request is invalid"}
     end
   end
 
@@ -397,11 +396,11 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defp command(state, netfn, opcode, data) do
     with {:ok, address} <- resolve_address(state.host, state.port, state.timeout) do
-      native_command(state, address, netfn, opcode, data)
+      method_command(state, address, netfn, opcode, data)
     end
   end
 
-  defp native_command(state, address, netfn, opcode, data) do
+  defp method_command(state, address, netfn, opcode, data) do
     case RMCP.send_command(
            address,
            state.user,

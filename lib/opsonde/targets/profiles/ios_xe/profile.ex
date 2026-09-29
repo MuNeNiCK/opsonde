@@ -12,10 +12,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE do
   @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
   @ios_xe_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
 
-  def access_method_profile(method, native_observation, native_effect) do
+  def access_method_profile(method, method_observation, method_effect) do
     %Target.AccessMethodProfile{
       method: method,
-      capabilities: Target.capability_names(capabilities()) ++ [native_observation, native_effect]
+      capabilities: Target.capability_names(capabilities()) ++ [method_observation, method_effect]
     }
   end
 
