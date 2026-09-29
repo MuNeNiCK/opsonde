@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Adapters.SSH.Exec do
+defmodule Opsonde.Targets.Adapters.SSH do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter

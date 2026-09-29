@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.SSHExecTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Adapters.SSH.Exec
+  alias Opsonde.Targets.Adapters.SSH
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
   alias Opsonde.Transports.SSH, as: Transport
 
@@ -173,7 +173,7 @@ defmodule Opsonde.Targets.SSHExecTest do
       connection: %Target.Connection{endpoint: context.endpoint}
     }
 
-    assert {:ok, %Target.EffectResult{status: :unknown}} = Exec.effect(state, request, %{})
+    assert {:ok, %Target.EffectResult{status: :unknown}} = SSH.effect(state, request, %{})
     assert commands(context) == ["slow"]
   end
 
