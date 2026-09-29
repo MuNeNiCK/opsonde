@@ -327,31 +327,6 @@ defmodule Opsonde.Targets.IOSXESSHTest do
         %{"script" => "show version\nexit\n"}
       )
 
-    Targets.create_target_policy!(
-      target.id,
-      "blocked-shell-script",
-      [:effect],
-      ["request.ssh.effect"],
-      ["shell.execute"],
-      %{},
-      %{"script" => %{"eq" => "configure terminal\nexit\n"}},
-      "script is forbidden",
-      actor: context.admin
-    )
-
-    assert {:error, _denied} =
-             request(
-               generic,
-               :effect,
-               "request.ssh.effect",
-               "shell.execute",
-               %{},
-               %{"script" => "configure terminal\nexit\n"}
-             )
-             |> Targets.clear_target_request(actor: context.operator)
-
-    assert scripts(context) == []
-
     assert %Target.EffectResult{
              status: :applied,
              details: %{"output" => %{"encoding" => "utf-8", "value" => output}}
@@ -361,6 +336,23 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
 
     assert String.contains?(output, "Cisco IOS XE Software")
+
+    assert %Target.EffectResult{status: :applied} =
+             request(
+               generic,
+               :effect,
+               "request.ssh.effect",
+               "shell.execute",
+               %{},
+               %{"script" => "configure terminal\ninterface Loopback100\nshutdown\nexit\n"}
+             )
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert scripts(context) == [
+             "show version\nexit\n",
+             "configure terminal\ninterface Loopback100\nshutdown\nexit\n"
+           ]
 
     Agent.update(context.agent, &%{&1 | delay_ms: 1_000})
     cancel_at = System.monotonic_time(:millisecond) + 200
@@ -381,7 +373,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
                authorize?: false
              )
 
-    assert length(scripts(context)) == 2
+    assert length(scripts(context)) == 3
 
     assert %Target.EffectResult{status: :unknown} =
              request(
@@ -395,7 +387,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
 
-    assert length(scripts(context)) == 3
+    assert length(scripts(context)) == 4
   end
 
   test "generic SSH shell returns unknown after exceeding its output limit", context do

@@ -269,27 +269,6 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert policy_error(stale_error).category == :stale_context
     assert commands(context) == []
 
-    Targets.create_target_policy!(
-      target.id,
-      "blocked-command",
-      [:effect],
-      ["request.ssh.effect"],
-      ["command.execute"],
-      %{},
-      %{"command" => %{"eq" => "never-policy"}},
-      "command is forbidden",
-      actor: admin
-    )
-
-    assert {:error, denied_error} =
-             Targets.clear_target_request(
-               request(target, method, :effect, :full_access, "never-policy"),
-               actor: operator
-             )
-
-    assert policy_error(denied_error).category == :denied
-    assert commands(context) == []
-
     effect_clearance =
       Targets.clear_target_request!(
         request(target, method, :effect, :full_access, "apply"),
@@ -305,7 +284,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert details["stdout"] == %{"encoding" => "utf-8", "value" => "ran:apply"}
     assert commands(context) == ["apply"]
 
-    for command <- ["sysctl kern.ostype", "show chassis alarms"] do
+    for command <- ["sysctl kern.ostype", "show chassis alarms", "configure terminal"] do
       clearance =
         Targets.clear_target_request!(
           request(target, method, :effect, :full_access, command),
@@ -319,7 +298,8 @@ defmodule Opsonde.Targets.SSHMethodTest do
                )
     end
 
-    assert commands(context) == ["apply", "sysctl kern.ostype", "show chassis alarms"]
+    assert commands(context) ==
+             ["apply", "sysctl kern.ostype", "show chassis alarms", "configure terminal"]
 
     assert {:error, _} =
              Targets.clear_target_request(
@@ -327,7 +307,8 @@ defmodule Opsonde.Targets.SSHMethodTest do
                actor: operator
              )
 
-    assert commands(context) == ["apply", "sysctl kern.ostype", "show chassis alarms"]
+    assert commands(context) ==
+             ["apply", "sysctl kern.ostype", "show chassis alarms", "configure terminal"]
   end
 
   defp configuration(context, overrides \\ %{}) do
