@@ -104,7 +104,7 @@ config :opsonde,
     Opsonde.Targets.Profiles.IOSXE.RESTCONF,
     Opsonde.Targets.Profiles.IOSXE.SSH,
     Opsonde.Targets.Adapters.Kubernetes,
-    Opsonde.Targets.Adapters.SSH.Linux
+    Opsonde.Targets.Profiles.Linux.SSH
   ]
 
 config :phoenix, :filter_parameters, [

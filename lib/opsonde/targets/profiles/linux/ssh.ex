@@ -1,8 +1,13 @@
-defmodule Opsonde.Targets.Profiles.Linux do
+defmodule Opsonde.Targets.Profiles.Linux.SSH do
   @moduledoc false
+  @behaviour Opsonde.Providers.Adapter
+  @behaviour Opsonde.Providers.Target
   alias Opsonde.Providers.Target
+  alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.Adapters.SSH.Command
   alias Opsonde.Targets.ResourceScope
+
+  @method_effect "request.ssh.effect"
 
   @identity {"observe.identity", "linux.identity.inspect"}
   @processes {"observe.processes", "linux.process.list"}
@@ -10,7 +15,6 @@ defmodule Opsonde.Targets.Profiles.Linux do
   @service_list {"observe.service", "linux.service.list"}
   @journal {"observe.journal", "linux.journal.read"}
   @restart {"effect.service", "linux.service.restart"}
-  @method_effect "request.ssh.effect"
   @unit_pattern ~r/^[A-Za-z0-9_.@:-]+\.service$/
   @digest_pattern ~r/^[a-f0-9]{64}$/
   @service_state_pattern ~r/^[a-z0-9_-]{1,64}$/
@@ -28,6 +32,19 @@ defmodule Opsonde.Targets.Profiles.Linux do
     "DefinitionSHA256" => "definition_sha256"
   }
 
+  defmodule State do
+    @moduledoc false
+    @enforce_keys [:transport, :privilege]
+    defstruct @enforce_keys
+  end
+
+  @impl Opsonde.Providers.Adapter
+  def type, do: "linux-ssh"
+
+  @impl Opsonde.Providers.Adapter
+  def kind, do: :target
+
+  @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{
       method: "ssh",
@@ -42,6 +59,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
     }
   end
 
+  @impl Opsonde.Providers.Target
   def resource_scope(operation, capability, selectors)
       when operation in ["linux.service.restart", "linux.service.inspect"] and
              capability in ["effect.service", "observe.service"] and is_map(selectors) do
@@ -53,7 +71,179 @@ defmodule Opsonde.Targets.Profiles.Linux do
 
   def resource_scope(_operation, _capability, _selectors), do: "target"
 
-  def capabilities(privilege) do
+  @impl Opsonde.Providers.Adapter
+  def build(configuration, credentials) when is_map(configuration) do
+    {privilege, transport_configuration} = Map.pop(configuration, "privilege", "none")
+
+    with true <- privilege in ["none", "sudo"],
+         {:ok, transport} <- Transport.build(transport_configuration, credentials) do
+      {:ok, %State{transport: transport, privilege: privilege}}
+    else
+      _error -> {:error, :invalid_configuration}
+    end
+  end
+
+  def build(_configuration, _credentials), do: {:error, :invalid_configuration}
+
+  @impl Opsonde.Providers.Adapter
+  def check(%State{transport: transport}, %{"endpoint" => endpoint}) do
+    case Transport.check(transport, endpoint) do
+      :ok -> :ok
+      {:error, :authentication, message} -> {:error, :authentication, message}
+      {:error, :host_key, message} -> {:error, :authentication, message}
+      {:error, _category, message} -> {:error, :unreachable, message}
+    end
+  end
+
+  def check(_state, _input),
+    do: {:error, :invalid_configuration, "Linux SSH check requires an endpoint"}
+
+  @impl Opsonde.Providers.Target
+  def capabilities(%State{privilege: privilege}, _invocation), do: capabilities(privilege)
+
+  @impl Opsonde.Providers.Target
+  def observe(%State{} = state, request, invocation) do
+    with {:ok, command, decoder} <- observation_command(state.privilege, request),
+         {:ok, result} <- execute(state, request, command, invocation),
+         {:ok, facts} <- decode_observation(decoder, result) do
+      {:ok,
+       %Target.Observation{
+         facts: facts,
+         observed_at: DateTime.utc_now(),
+         evidence: [evidence(result)]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  @impl Opsonde.Providers.Target
+  def preflight(%State{} = state, request) do
+    case observation_command(state.privilege, request) do
+      {:ok, _command, _decoder} -> :ok
+      {:error, _category, _message} = error -> error
+    end
+  end
+
+  @impl Opsonde.Providers.Target
+  def effect(%State{} = state, %{capability: capability} = request, invocation)
+      when capability != @method_effect do
+    with {:ok, command} <- restart_command(state.privilege, request),
+         result <- execute_raw(state, request, command, invocation) do
+      effect_result(result)
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
+    with {:ok, command} <- Command.effect_command(request, @method_effect) do
+      state
+      |> execute_raw(request, privileged(state.privilege, command), invocation)
+      |> effect_result()
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  @impl Opsonde.Providers.Target
+  def verify(%State{} = state, request, invocation) do
+    with {:ok, command, :service} <- observation_command(state.privilege, request),
+         {:ok, expected} <- verification_expected(request.expected),
+         {:ok, result} <- execute(state, request, command, invocation),
+         {:ok, facts} <- decode_observation(:service, result) do
+      {:ok,
+       %Target.Verification{
+         status: expected_status(facts, expected),
+         observed_at: DateTime.utc_now(),
+         facts: facts,
+         evidence: [evidence(result)]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+      _error -> {:error, :failed, "Linux verification request is invalid"}
+    end
+  end
+
+  defp execute(state, request, command, invocation) do
+    case execute_raw(state, request, command, invocation) do
+      {:ok, %Transport.Result{exit_status: 0} = result} ->
+        {:ok, result}
+
+      {:ok, %Transport.Result{exit_status: status}} ->
+        {:error, :failed, "Linux observation exited with status #{status}"}
+
+      {:error, category, message} ->
+        {:error, category, message}
+    end
+  end
+
+  defp execute_raw(state, request, command, invocation) do
+    Transport.exec(
+      state.transport,
+      request.connection.endpoint,
+      command,
+      cancelled?(invocation)
+    )
+  end
+
+  defp effect_result({:ok, %Transport.Result{exit_status: 0} = result}) do
+    {:ok, %Target.EffectResult{status: :applied, details: evidence(result)}}
+  end
+
+  defp effect_result({:ok, %Transport.Result{exit_status: 65} = result}) do
+    {:ok,
+     %Target.EffectResult{
+       status: :failed,
+       details: Map.put(evidence(result), "category", "stale_definition")
+     }}
+  end
+
+  defp effect_result({:ok, %Transport.Result{} = result}) do
+    {:ok, %Target.EffectResult{status: :failed, details: evidence(result)}}
+  end
+
+  defp effect_result({:error, category, message})
+       when category in [
+              :timeout_after_dispatch,
+              :cancelled_after_dispatch,
+              :disconnected_after_dispatch,
+              :output_limit_after_dispatch
+            ],
+       do: {:ok, %Target.EffectResult{status: :unknown, details: %{"error" => message}}}
+
+  defp effect_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
+  defp effect_result({:error, _category, message}), do: {:error, :failed, message}
+
+  defp read_error(:cancelled, message), do: {:error, :cancelled, message}
+
+  defp read_error(category, message) when category in [:timeout, :timeout_after_dispatch],
+    do: {:error, :timeout, message}
+
+  defp read_error(category, message)
+       when category in [:unreachable, :disconnected, :disconnected_after_dispatch],
+       do: {:error, :retryable, message}
+
+  defp read_error(_category, message), do: {:error, :failed, message}
+
+  defp evidence(result) do
+    %{
+      "stdout" => encode(result.stdout),
+      "stderr" => encode(result.stderr),
+      "exit_status" => result.exit_status
+    }
+  end
+
+  defp encode(value) do
+    if String.valid?(value),
+      do: %{"encoding" => "utf-8", "value" => value},
+      else: %{"encoding" => "base64", "value" => Base.encode64(value)}
+  end
+
+  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
+  defp cancelled?(_invocation), do: fn -> false end
+
+  defp capabilities(privilege) do
     method_effect =
       Command.effect_operation(@method_effect, "Linux shell")
       |> describe_privilege(privilege)
@@ -114,15 +304,15 @@ defmodule Opsonde.Targets.Profiles.Linux do
      }}
   end
 
-  def expected_status(_facts, expected) when expected == %{}, do: :unknown
+  defp expected_status(_facts, expected) when expected == %{}, do: :unknown
 
-  def expected_status(facts, expected) when is_map(expected) do
+  defp expected_status(facts, expected) when is_map(expected) do
     if Enum.all?(expected, fn {key, value} -> facts[key] == value end),
       do: :verified,
       else: :not_verified
   end
 
-  def observation_command(privilege, request) do
+  defp observation_command(privilege, request) do
     case {request.capability, request.operation, request.selectors, request.parameters} do
       {capability, operation, selectors, parameters}
       when {capability, operation} == @identity and selectors == %{} and parameters == %{} ->
@@ -160,7 +350,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
     end
   end
 
-  def restart_command(privilege, request) do
+  defp restart_command(privilege, request) do
     case {request.capability, request.operation, request.selectors, request.parameters} do
       {capability, operation, %{"unit" => unit}, %{"expected_definition_sha256" => expected}}
       when {capability, operation} == @restart ->
@@ -223,7 +413,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
       privileged(privilege, "systemctl restart -- #{quoted}")
   end
 
-  def decode_observation(:identity, result) do
+  defp decode_observation(:identity, result) do
     facts = parse_pairs(result.stdout)
 
     case facts do
@@ -236,7 +426,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
     end
   end
 
-  def decode_observation(:processes, result) do
+  defp decode_observation(:processes, result) do
     processes =
       result.stdout
       |> String.split("\n", trim: true)
@@ -260,7 +450,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
     end
   end
 
-  def decode_observation(:service, result) do
+  defp decode_observation(:service, result) do
     facts =
       result.stdout
       |> parse_pairs()
@@ -277,7 +467,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
     end
   end
 
-  def decode_observation({:service_list, offset, limit}, result) do
+  defp decode_observation({:service_list, offset, limit}, result) do
     lines = String.split(result.stdout, "\n", trim: true)
 
     if length(lines) > limit + 1 do
@@ -315,17 +505,17 @@ defmodule Opsonde.Targets.Profiles.Linux do
     end
   end
 
-  def decode_observation({:journal, unit}, result) do
+  defp decode_observation({:journal, unit}, result) do
     {:ok, %{"unit" => unit, "entries" => String.split(result.stdout, "\n", trim: true)}}
   end
 
-  def verification_expected(expected) when is_map(expected) do
+  defp verification_expected(expected) when is_map(expected) do
     if expected == %{"active_state" => "active"},
       do: {:ok, expected},
       else: {:error, :failed, "Linux verification expectation is invalid"}
   end
 
-  def verification_expected(_expected),
+  defp verification_expected(_expected),
     do: {:error, :failed, "Linux verification expectation is invalid"}
 
   defp operation(
@@ -548,8 +738,8 @@ defmodule Opsonde.Targets.Profiles.Linux do
 
   defp describe_privilege(operation, "none"), do: operation
 
-  def privileged("sudo", command), do: "sudo -n " <> command
-  def privileged("none", command), do: command
+  defp privileged("sudo", command), do: "sudo -n " <> command
+  defp privileged("none", command), do: command
 
   defp valid_unit?(value),
     do: is_binary(value) and byte_size(value) <= 255 and Regex.match?(@unit_pattern, value)
