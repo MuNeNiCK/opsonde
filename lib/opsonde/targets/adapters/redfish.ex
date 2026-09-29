@@ -6,7 +6,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.PowerControl
-  alias Opsonde.Targets.Adapters.Redfish.ResourceURI
+  alias Opsonde.Targets.Adapters.RedfishURI
   alias Opsonde.Transports.HTTPS
 
   @reset_types %{
@@ -347,7 +347,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          %{"method" => method, "uri" => uri} = parameters <- request.parameters,
          true <- map_size(parameters) == 2,
          {:ok, verb} <- Map.fetch(@api_read_methods, method),
-         {:ok, path} <- ResourceURI.relative(uri) do
+         {:ok, path} <- RedfishURI.relative(uri) do
       {:ok, verb, path}
     else
       _ -> {:error, :failed, "Redfish read request is invalid"}
@@ -379,7 +379,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          %{"method" => method, "uri" => uri} <- parameters,
          true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri body include_response))),
          {:ok, verb} <- Map.fetch(@api_write_methods, method),
-         {:ok, path} <- ResourceURI.relative(uri),
+         {:ok, path} <- RedfishURI.relative(uri),
          {:ok, headers} <- if_match_headers(request.selectors),
          include_response? when is_boolean(include_response?) <-
            Map.get(parameters, "include_response", false),
@@ -476,7 +476,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
       link when is_binary(link) and pages < @max_collection_pages ->
         with :ok <- not_cancelled(invocation),
-             {:ok, next_path} <- ResourceURI.from_link(state.endpoint, link, path),
+             {:ok, next_path} <- RedfishURI.from_link(state.endpoint, link, path),
              false <- MapSet.member?(seen, next_path),
              {:ok, 200, _headers, next_body} <- request(state, :get, next_path, nil),
              first when is_list(first) <- body["Members"],
@@ -652,7 +652,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp action_path(_state, _target), do: {:error, :failed, "Redfish reset action is invalid"}
 
   defp resource_path(state, target) when is_binary(target) do
-    case ResourceURI.from_link(state.endpoint, target) do
+    case RedfishURI.from_link(state.endpoint, target) do
       {:ok, path} -> {:ok, path}
       {:error, _reason} -> {:error, :failed, "Redfish resource URI is outside the BMC origin"}
     end

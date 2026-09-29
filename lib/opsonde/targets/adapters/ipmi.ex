@@ -6,7 +6,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.PowerControl
-  alias Opsonde.Targets.Adapters.IPMI.RMCP
+  alias Opsonde.Transports.IPMI
 
   @max_data_bytes 2048
   @method_effect "request.ipmi.effect"
@@ -320,7 +320,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   defp method_command(state, address, netfn, opcode, data) do
-    case RMCP.send_command(
+    case IPMI.send_command(
            address,
            state.user,
            state.password,
