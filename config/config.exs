@@ -104,7 +104,7 @@ config :opsonde,
     Opsonde.Targets.Adapters.RESTCONF.IOSXE,
     Opsonde.Targets.Adapters.SSH.IOSXE,
     Opsonde.Targets.Kubernetes.API,
-    Opsonde.Targets.Linux.SSH
+    Opsonde.Targets.Adapters.SSH.Linux
   ]
 
 config :phoenix, :filter_parameters, ["bmc_secret", "client_secret", "credentials", "password", "token"]

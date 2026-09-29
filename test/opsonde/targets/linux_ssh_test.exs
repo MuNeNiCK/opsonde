@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Linux.SSH, as: LinuxSSH
+  alias Opsonde.Targets.Adapters.SSH.Linux, as: LinuxSSH
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
   alias Opsonde.Targets.ResourceScope
 
