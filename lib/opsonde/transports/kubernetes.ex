@@ -40,42 +40,79 @@ defmodule Opsonde.Transports.Kubernetes do
 
   def check(%State{} = state, %{"endpoint" => endpoint}) do
     with :ok <- endpoint(state, endpoint),
-         operation <-
-           K8s.Client.list("v1", "Pod", namespace: state.namespace)
-           |> K8s.Operation.put_query_param(:limit, "1"),
-         {:ok, _result} <- run(state, operation, fn -> false end, :read) do
-      :ok
+         operation <- %{
+           method: :get,
+           path: "/api",
+           query: [],
+           body: nil,
+           headers: [{"accept", "application/json"}]
+         },
+         {:ok, %{status: status}} <- run(state, operation, fn -> false end, :read) do
+      case status do
+        status when status in 200..299 -> :ok
+        401 -> {:error, :authentication, "Kubernetes authentication failed"}
+        403 -> {:error, :capability, "Kubernetes API discovery is forbidden"}
+        _ -> {:error, :capability, "Kubernetes API rejected the connection check"}
+      end
     else
       {:error, :authentication, message} -> {:error, :authentication, message}
       {:error, :forbidden, message} -> {:error, :capability, message}
       {:error, :invalid_configuration, message} -> {:error, :invalid_configuration, message}
       {:error, _category, message} -> {:error, :unreachable, message}
+      _ -> {:error, :capability, "Kubernetes API rejected the connection check"}
     end
   end
 
   def check(_state, _input),
     do: {:error, :invalid_configuration, "Kubernetes check requires an endpoint"}
 
-  def run_observation(state, operation, {:watch, max_events}, cancelled?) do
-    run(
-      state,
-      fn ->
-        with {:ok, stream} <- K8s.Client.stream(state.connection, operation) do
-          {:ok, Enum.take(stream, max_events)}
-        end
-      end,
-      cancelled?,
-      :read
-    )
+  defp request(state, operation) do
+    with {:ok, options} <- K8s.Conn.RequestOptions.generate(state.connection) do
+      host = URI.parse(state.endpoint).host
+
+      tls =
+        if state.connection.ca_cert,
+          do: Opsonde.Transports.HTTPS.custom_trust_options([state.connection.ca_cert], host),
+          else: [
+            customize_hostname_check: [
+              match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+            ]
+          ]
+
+      headers =
+        Enum.map(options.headers, fn {key, value} -> {String.downcase(to_string(key)), value} end)
+
+      Req.request(
+        method: operation.method,
+        url: state.endpoint <> operation.path,
+        params: operation.query,
+        body: operation.body,
+        headers: headers ++ operation.headers ++ [{"accept-encoding", "identity"}],
+        connect_options: [
+          timeout: state.request_timeout,
+          transport_opts: Keyword.merge(options.ssl_options, tls)
+        ],
+        receive_timeout: state.request_timeout,
+        retry: false,
+        redirect: false,
+        raw: true,
+        into: &collect/2
+      )
+    end
   end
 
-  def run_observation(state, operation, _decoder, cancelled?),
-    do: run(state, operation, cancelled?, :read)
+  defp collect({:data, data}, {request, response}) do
+    accumulated = if is_binary(response.body), do: response.body, else: ""
 
-  def run(state, %K8s.Operation{} = operation, cancelled?, phase),
-    do: run(state, fn -> K8s.Client.run(state.connection, operation) end, cancelled?, phase)
+    if byte_size(accumulated) + byte_size(data) <= 65_536,
+      do: {:cont, {request, %{response | body: accumulated <> data}}},
+      else: {:halt, {request, %{response | body: :too_large}}}
+  end
 
-  def run(state, operation, cancelled?, phase) when is_function(operation, 0) do
+  def run(state, operation, cancelled?, phase) when is_map(operation),
+    do: run_request(state, fn -> request(state, operation) end, cancelled?, phase)
+
+  defp run_request(state, operation, cancelled?, phase) do
     if cancelled?.() do
       {:error, :cancelled, "Kubernetes operation was cancelled"}
     else
@@ -113,22 +150,29 @@ defmodule Opsonde.Transports.Kubernetes do
     _kind, reason -> {:error, reason}
   end
 
-  defp normalize({:ok, result}, _phase), do: {:ok, result}
+  defp normalize({:ok, %Req.Response{body: :too_large}}, :effect),
+    do:
+      {:error, :unknown_after_dispatch,
+       "Kubernetes response exceeded the inline size limit after dispatch"}
 
-  defp normalize({:error, %K8s.Client.APIError{reason: "Conflict"}}, _phase),
-    do: {:error, :conflict, "Kubernetes resource changed"}
+  defp normalize({:ok, %Req.Response{body: :too_large}}, _phase),
+    do: {:error, :failed, "Kubernetes response exceeded the inline size limit"}
 
-  defp normalize({:error, %K8s.Client.APIError{reason: "Forbidden"}}, _phase),
-    do: {:error, :forbidden, "Kubernetes request is forbidden"}
+  defp normalize({:ok, %Req.Response{} = response}, phase) do
+    raw = response.body || ""
+    content_type = response |> Req.Response.get_header("content-type") |> List.first() || ""
+    content_type = content_type |> String.split(";") |> hd()
 
-  defp normalize({:error, %K8s.Client.APIError{reason: "Unauthorized"}}, _phase),
-    do: {:error, :authentication, "Kubernetes authentication failed"}
+    encoding = Req.Response.get_header(response, "content-encoding")
+    json? = String.ends_with?(String.downcase(content_type), ["/json", "+json"])
+    body = if json? and raw != "", do: Jason.decode(raw), else: {:ok, raw}
 
-  defp normalize({:error, %K8s.Client.APIError{reason: "NotFound"}}, _phase),
-    do: {:error, :not_found, "Kubernetes resource was not found"}
-
-  defp normalize({:error, %K8s.Client.APIError{}}, _phase),
-    do: {:error, :api_rejected, "Kubernetes request was rejected"}
+    if String.valid?(raw) and encoding in [[], ["identity"]] and match?({:ok, _}, body) do
+      {:ok, %{status: response.status, content_type: content_type, body: elem(body, 1)}}
+    else
+      invalid_inline_response(phase)
+    end
+  end
 
   defp normalize({:error, _error}, :effect),
     do: {:error, :unknown_after_dispatch, "Kubernetes effect result is unknown"}
@@ -141,6 +185,14 @@ defmodule Opsonde.Transports.Kubernetes do
 
   defp normalize(_result, _phase),
     do: {:error, :failed, "Kubernetes API response is invalid"}
+
+  defp invalid_inline_response(:effect),
+    do:
+      {:error, :unknown_after_dispatch,
+       "Kubernetes did not return a valid UTF-8 inline response after dispatch"}
+
+  defp invalid_inline_response(_phase),
+    do: {:error, :failed, "Kubernetes did not return a valid UTF-8 inline response"}
 
   defp operation_failure(:effect),
     do: {:error, :unknown_after_dispatch, "Kubernetes effect result is unknown"}
