@@ -84,7 +84,7 @@ defmodule Opsonde.TargetsTest do
       )
 
     ssh_exec =
-      create_method!(context, junos, "ssh-exec", "ssh", "ssh://192.0.2.20:22", [
+      create_method!(context, junos, "ssh", "ssh", "ssh://192.0.2.20:22", [
         "observe.command"
       ])
 
@@ -467,7 +467,7 @@ defmodule Opsonde.TargetsTest do
           {"ios-xe-ssh", switch, "ssh_cli", "request.cli.observe", linux},
           {"ios-xe-netconf", switch, "netconf", "request.netconf.observe", linux},
           {"ios-xe-restconf", switch, "restconf", "request.restconf.observe", linux},
-          {"ssh-exec", other, "ssh", "request.ssh.effect", nil}
+          {"ssh", other, "ssh", "request.ssh.effect", nil}
         ] do
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =

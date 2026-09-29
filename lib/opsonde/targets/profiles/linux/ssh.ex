@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   @behaviour Opsonde.Providers.Target
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
-  alias Opsonde.Targets.Adapters.SSH.Command
+  alias Opsonde.Targets.Adapters.SSH, as: SSHMethod
   alias Opsonde.Targets.ResourceScope
 
   @method_effect "request.ssh.effect"
@@ -121,7 +121,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   def classify_request(%State{} = state, request) do
     case request.capability do
       @method_effect ->
-        classify_effect(Command.effect_command(request, @method_effect))
+        classify_effect(SSHMethod.effect_command(request, @method_effect))
 
       "effect.service" ->
         classify_effect(restart_command(state.privilege, request))
@@ -151,7 +151,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   end
 
   def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
-    with {:ok, command} <- Command.effect_command(request, @method_effect) do
+    with {:ok, command} <- SSHMethod.effect_command(request, @method_effect) do
       state
       |> execute_raw(request, privileged(state.privilege, command), invocation)
       |> effect_result()
@@ -259,7 +259,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
 
   defp capabilities(privilege) do
     method_effect =
-      Command.effect_operation(@method_effect, "Linux shell")
+      SSHMethod.effect_operation(@method_effect, "Linux shell")
       |> describe_privilege(privilege)
 
     {:ok,

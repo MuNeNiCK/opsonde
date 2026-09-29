@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.SSHExecTest do
+defmodule Opsonde.Targets.SSHMethodTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
@@ -13,7 +13,7 @@ defmodule Opsonde.Targets.SSHExecTest do
     directory =
       Path.join(
         System.tmp_dir!(),
-        "opsonde-ssh-exec-test-#{System.unique_integer([:positive])}"
+        "opsonde-ssh-test-#{System.unique_integer([:positive])}"
       )
 
     File.mkdir_p!(directory)
@@ -179,16 +179,16 @@ defmodule Opsonde.Targets.SSHExecTest do
 
   test "SSH adapter exposes arbitrary commands only as reviewed effects",
        context do
-    admin = Accounts.bootstrap!("ssh-exec-admin@example.com", @password, @password)
+    admin = Accounts.bootstrap!("ssh-admin@example.com", @password, @password)
 
     operator =
-      Accounts.create_user!("ssh-exec-operator@example.com", @password, :operator, actor: admin)
+      Accounts.create_user!("ssh-operator@example.com", @password, :operator, actor: admin)
 
     provider =
       Providers.create_provider!(
-        "ssh-exec",
+        "ssh",
         :target,
-        "ssh-exec",
+        "ssh",
         configuration(context),
         password_credentials(),
         actor: admin
@@ -200,11 +200,13 @@ defmodule Opsonde.Targets.SSHExecTest do
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
-    assert %Target.Capabilities{observations: [], effects: [tool]} =
+    assert %Target.Capabilities{observations: [], effects: [tool, shell]} =
              Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
 
     assert tool.capability == "request.ssh.effect"
     assert tool.operation == "command.execute"
+    assert shell.capability == "request.ssh.effect"
+    assert shell.operation == "shell.execute"
 
     target =
       Targets.create_target!("future-router", "network_device", "custom-network-device", %{}, nil,
@@ -215,7 +217,7 @@ defmodule Opsonde.Targets.SSHExecTest do
       Targets.create_access_method!(
         target.id,
         provider.id,
-        "registered-ssh-exec",
+        "registered-ssh",
         "ssh",
         context.endpoint,
         provider.revision,

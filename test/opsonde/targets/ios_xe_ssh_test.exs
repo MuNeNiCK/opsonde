@@ -275,6 +275,184 @@ defmodule Opsonde.Targets.IOSXESSHTest do
     })
   end
 
+  test "Custom network device runs an exact generic SSH shell request", context do
+    provider =
+      Providers.create_provider!(
+        "generic-ssh",
+        :target,
+        "ssh",
+        configuration(context),
+        credentials(),
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!(
+        "unknown-router",
+        "network_device",
+        "custom-network-device",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "SSH",
+        "ssh",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.ssh.effect"],
+        actor: context.admin
+      )
+
+    generic = %{context | target: target, method: method}
+
+    shell =
+      request(
+        generic,
+        :effect,
+        "request.ssh.effect",
+        "shell.execute",
+        %{},
+        %{"script" => "show version\nexit\n"}
+      )
+
+    Targets.create_target_policy!(
+      target.id,
+      "blocked-shell-script",
+      [:effect],
+      ["request.ssh.effect"],
+      ["shell.execute"],
+      %{},
+      %{"script" => %{"eq" => "configure terminal\nexit\n"}},
+      "script is forbidden",
+      actor: context.admin
+    )
+
+    assert {:error, _denied} =
+             request(
+               generic,
+               :effect,
+               "request.ssh.effect",
+               "shell.execute",
+               %{},
+               %{"script" => "configure terminal\nexit\n"}
+             )
+             |> Targets.clear_target_request(actor: context.operator)
+
+    assert scripts(context) == []
+
+    assert %Target.EffectResult{
+             status: :applied,
+             details: %{"output" => %{"encoding" => "utf-8", "value" => output}}
+           } =
+             shell
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert String.contains?(output, "Cisco IOS XE Software")
+
+    Agent.update(context.agent, &%{&1 | delay_ms: 1_000})
+    cancel_at = System.monotonic_time(:millisecond) + 200
+
+    assert %Target.EffectResult{status: :unknown} =
+             request(
+               generic,
+               :effect,
+               "request.ssh.effect",
+               "shell.execute",
+               %{},
+               %{"script" => "show version\nexit\n"}
+             )
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(
+               %{cancelled?: fn -> System.monotonic_time(:millisecond) >= cancel_at end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert length(scripts(context)) == 2
+
+    assert %Target.EffectResult{status: :unknown} =
+             request(
+               generic,
+               :effect,
+               "request.ssh.effect",
+               "shell.execute",
+               %{},
+               %{"script" => "show version\nexit\n"}
+             )
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert length(scripts(context)) == 3
+  end
+
+  test "generic SSH shell returns unknown after exceeding its output limit", context do
+    provider =
+      Providers.create_provider!(
+        "limited-generic-ssh",
+        :target,
+        "ssh",
+        Map.put(configuration(context), "max_output_bytes", 8),
+        credentials(),
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!(
+        "limited-router",
+        "network_device",
+        "custom-network-device",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "SSH",
+        "ssh",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.ssh.effect"],
+        actor: context.admin
+      )
+
+    assert %Target.EffectResult{status: :unknown} =
+             request(
+               %{context | target: target, method: method},
+               :effect,
+               "request.ssh.effect",
+               "shell.execute",
+               %{},
+               %{"script" => "show version\nexit\n"}
+             )
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert length(scripts(context)) == 1
+  end
+
   test "public SSH route constructs CLI commands, observes, applies and freshly verifies",
        context do
     assert %Target.Capabilities{observations: observations, effects: effects} =

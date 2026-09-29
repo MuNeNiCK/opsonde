@@ -31,8 +31,8 @@ export const targetAdapterOptions = [
     family: "restconf",
   },
   {
-    type: "ssh-exec",
-    label: "SSH command",
+    type: "ssh",
+    label: "SSH",
     family: "ssh",
   },
   {
@@ -54,7 +54,7 @@ export const targetProviderChoices = [
     adapterTypes: ["ios-xe-ssh", "ios-xe-netconf", "ios-xe-restconf"],
   },
   { id: "kubernetes", adapterTypes: ["kubernetes-api"] },
-  { id: "protocol", adapterTypes: ["ssh-exec", "http-api"] },
+  { id: "protocol", adapterTypes: ["ssh", "http-api"] },
   { id: "netbox", adapterTypes: ["netbox-api"] },
 ] as const;
 

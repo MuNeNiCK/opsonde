@@ -40,7 +40,7 @@ defmodule Opsonde.Targets.TypeCatalog do
       label: "Custom physical server",
       category_id: "physical-server",
       kind: "physical_host",
-      access_method_types: ["ssh-exec", "http-api"]
+      access_method_types: ["ssh", "http-api"]
     },
     %{
       id: "cisco_ios_xe",
@@ -52,7 +52,7 @@ defmodule Opsonde.Targets.TypeCatalog do
         "ios-xe-netconf",
         "ios-xe-restconf",
         "netconf",
-        "ssh-exec",
+        "ssh",
         "http-api"
       ]
     },
@@ -61,35 +61,35 @@ defmodule Opsonde.Targets.TypeCatalog do
       label: "Custom network device",
       category_id: "network-device",
       kind: "network_device",
-      access_method_types: ["ssh-exec", "netconf", "http-api"]
+      access_method_types: ["ssh", "netconf", "http-api"]
     },
     %{
       id: "linux",
       label: "Linux",
       category_id: "os",
       kind: "host",
-      access_method_types: ["linux-ssh", "ssh-exec", "http-api"]
+      access_method_types: ["linux-ssh", "ssh", "http-api"]
     },
     %{
       id: "custom-os",
       label: "Custom operating system",
       category_id: "os",
       kind: "host",
-      access_method_types: ["ssh-exec", "http-api"]
+      access_method_types: ["ssh", "http-api"]
     },
     %{
       id: "custom-virtualization",
       label: "Custom virtualization platform",
       category_id: "virtualization",
       kind: "hypervisor",
-      access_method_types: ["ssh-exec", "http-api"]
+      access_method_types: ["ssh", "http-api"]
     },
     %{
       id: "custom-vm",
       label: "Custom virtual machine",
       category_id: "virtualization",
       kind: "virtual_machine",
-      access_method_types: ["ssh-exec", "http-api"]
+      access_method_types: ["ssh", "http-api"]
     },
     %{
       id: "kubernetes",

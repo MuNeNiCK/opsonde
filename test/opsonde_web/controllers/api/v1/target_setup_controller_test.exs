@@ -69,7 +69,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert by_id["custom-network-device"]["category_id"] == "network-device"
 
     assert by_id["custom-network-device"]["access_method_types"] == [
-             "ssh-exec",
+             "ssh",
              "netconf",
              "http-api"
            ]
@@ -245,7 +245,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       create_access_method!(
         context,
         junos,
-        "ssh-exec",
+        "ssh",
         "ssh",
         ["observe.command"]
       )
@@ -330,7 +330,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert_operation_response(method_page)
 
     assert Enum.sort(Enum.map(methods, & &1["name"])) ==
-             ~w(ios-netconf ios-ssh linux-ssh ssh-exec)
+             ~w(ios-netconf ios-ssh linux-ssh ssh)
 
     for response <- [target_page, method_page] do
       refute response.resp_body =~ @provider_secret
