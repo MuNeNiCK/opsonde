@@ -1,14 +1,13 @@
-defmodule Opsonde.Targets.Kubernetes.API do
+defmodule Opsonde.Targets.Adapters.Kubernetes.API do
   @moduledoc false
-
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
-
   alias Opsonde.Providers.Target
+  alias Opsonde.Targets.Profiles.Kubernetes, as: Profile
 
   @configuration_keys ~w(namespace request_timeout_ms)
   @credential_keys ~w(kubeconfig)
-  @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
+
   @native_observation "native.kubernetes_api.observe"
   @native_effect "native.kubernetes_api.effect"
   @native_observation_query_keys %{
@@ -91,75 +90,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
     do: {:error, :invalid_configuration, "Kubernetes check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation) do
-    {native_observation, native_effect} = native_operations()
-
-    {:ok,
-     %Target.Capabilities{
-       observations: [
-         operation(
-           "observe.workloads",
-           "kubernetes.pods.list",
-           "List bounded Pods",
-           pods_schema(),
-           pods_output_schema()
-         ),
-         operation(
-           "observe.workload",
-           "kubernetes.deployment.inspect",
-           "Inspect one Deployment",
-           name_schema(),
-           deployment_output_schema(),
-           deployment_verification_schema()
-         ),
-         operation(
-           "observe.logs",
-           "kubernetes.pod.logs",
-           "Read bounded logs from one Pod container",
-           logs_schema(),
-           logs_output_schema()
-         ),
-         operation(
-           "observe.events",
-           "kubernetes.events.list",
-           "List bounded namespace events",
-           events_schema(),
-           events_output_schema()
-         ),
-         operation(
-           "observe.workloads",
-           "kubernetes.pods.watch",
-           "Watch bounded Pod changes from a resource version",
-           watch_schema(),
-           watch_output_schema()
-         ),
-         native_observation
-       ],
-       effects: [
-         %{
-           operation(
-             "effect.workload",
-             "kubernetes.deployment.scale",
-             "Scale one Deployment with UID and resourceVersion preconditions",
-             scale_schema()
-           )
-           | evidence_requirements: [
-               %Target.EvidenceRequirement{
-                 parameter: "expected_uid",
-                 fact: "uid",
-                 observation: "kubernetes.deployment.inspect"
-               },
-               %Target.EvidenceRequirement{
-                 parameter: "expected_resource_version",
-                 fact: "resource_version",
-                 observation: "kubernetes.deployment.inspect"
-               }
-             ]
-         },
-         native_effect
-       ]
-     }}
-  end
+  def capabilities(_state, _invocation), do: {:ok, Profile.capabilities(native_operations())}
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
@@ -178,9 +109,9 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   def observe(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation, decoder} <- observation_operation(state, request),
+         {:ok, operation, decoder} <- Profile.observation_operation(state.namespace, request),
          {:ok, result} <- run_observation(state, operation, decoder, cancelled?(invocation)),
-         {:ok, facts} <- decode(decoder, result) do
+         {:ok, facts} <- Profile.decode(decoder, result) do
       {:ok, %Target.Observation{facts: facts, observed_at: DateTime.utc_now()}}
     else
       {:error, category, message} -> read_error(category, message)
@@ -196,7 +127,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
   end
 
   def preflight(%State{} = state, request) do
-    case observation_operation(state, request) do
+    case Profile.observation_operation(state.namespace, request) do
       {:ok, _operation, _decoder} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -215,7 +146,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   def effect(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- effect_operation(state, request),
+         {:ok, operation} <- Profile.effect_operation(state.namespace, request),
          result <- run(state, operation, cancelled?(invocation), :effect) do
       effect_result(result)
     else
@@ -232,7 +163,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
       {:ok,
        %Target.Verification{
-         status: expected_status(facts, request.expected),
+         status: Profile.expected_status(facts, request.expected),
          observed_at: DateTime.utc_now(),
          facts: facts
        }}
@@ -243,95 +174,19 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   def verify(%State{} = state, request, invocation) do
     with :ok <- endpoint(state, request.connection.endpoint),
-         {:ok, operation, :deployment} <- observation_operation(state, request),
-         {:ok, expected} <- verification_expected(request.expected),
+         {:ok, operation, :deployment} <- Profile.observation_operation(state.namespace, request),
+         {:ok, expected} <- Profile.verification_expected(request.expected),
          {:ok, result} <- run(state, operation, cancelled?(invocation), :read),
-         {:ok, facts} <- decode(:deployment, result) do
-      status =
-        cond do
-          map_size(expected) == 0 -> :unknown
-          Enum.all?(expected, fn {key, value} -> facts[key] == value end) -> :verified
-          true -> :not_verified
-        end
-
+         {:ok, facts} <- Profile.decode(:deployment, result) do
       {:ok,
        %Target.Verification{
-         status: status,
+         status: Profile.expected_status(facts, expected),
          observed_at: DateTime.utc_now(),
          facts: facts
        }}
     else
       {:error, category, message} -> read_error(category, message)
       _error -> {:error, :failed, "Kubernetes verification request is invalid"}
-    end
-  end
-
-  defp observation_operation(state, request) do
-    case {request.capability, request.operation, request.selectors, request.parameters} do
-      {"observe.workloads", "kubernetes.pods.list", selectors, parameters}
-      when selectors == %{} ->
-        with {:ok, limit, selector} <- list_parameters(parameters) do
-          operation =
-            K8s.Client.list("v1", "Pod", namespace: state.namespace)
-            |> K8s.Operation.put_query_param(:limit, Integer.to_string(limit))
-            |> put_selector(selector)
-
-          {:ok, operation, :pods}
-        end
-
-      {"observe.workload", "kubernetes.deployment.inspect", %{"name" => name} = selectors,
-       parameters}
-      when map_size(selectors) == 1 and parameters == %{} ->
-        if valid_name?(name),
-          do:
-            {:ok, K8s.Client.get("apps/v1", "Deployment", namespace: state.namespace, name: name),
-             :deployment},
-          else: invalid_request()
-
-      {"observe.logs", "kubernetes.pod.logs",
-       %{"name" => name, "container" => container} = selectors,
-       %{"tail_lines" => lines, "limit_bytes" => bytes} = parameters}
-      when map_size(selectors) == 2 and map_size(parameters) == 2 ->
-        if valid_name?(name) and valid_name?(container) and is_integer(lines) and
-             lines in 1..500 and is_integer(bytes) and bytes in 1..60_000 do
-          operation =
-            K8s.Client.get("v1", "pods/log", namespace: state.namespace, name: name)
-            |> K8s.Operation.put_query_param(
-              container: container,
-              tailLines: Integer.to_string(lines),
-              limitBytes: Integer.to_string(bytes)
-            )
-
-          {:ok, operation, {:logs, name, container, bytes}}
-        else
-          invalid_request()
-        end
-
-      {"observe.events", "kubernetes.events.list", selectors, %{"limit" => limit} = parameters}
-      when selectors == %{} and map_size(parameters) == 1 and is_integer(limit) and
-             limit in 1..200 ->
-        operation =
-          K8s.Client.list("v1", "Event", namespace: state.namespace)
-          |> K8s.Operation.put_query_param(:limit, Integer.to_string(limit))
-
-        {:ok, operation, :events}
-
-      {"observe.workloads", "kubernetes.pods.watch", selectors, parameters}
-      when selectors == %{} ->
-        with {:ok, version, seconds, max_events, selector} <- watch_parameters(parameters) do
-          operation =
-            K8s.Client.watch("v1", "Pod", namespace: state.namespace)
-            |> K8s.Operation.put_query_param(
-              resourceVersion: version,
-              timeoutSeconds: Integer.to_string(seconds)
-            )
-            |> put_selector(selector)
-
-          {:ok, operation, {:watch, max_events}}
-        end
-
-      _request ->
-        invalid_request()
     end
   end
 
@@ -412,7 +267,7 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
         with true <- byte_size(api_version) in 1..120,
              true <- byte_size(kind) in 1..120,
-             true <- is_nil(name) or (is_binary(name) and Regex.match?(@name_pattern, name)),
+             true <- is_nil(name) or (is_binary(name) and Profile.valid_name?(name)),
              {:ok, query} <- native_query(operation, query),
              true <- is_nil(body) or is_map(body) do
           {:ok, action, api_version, kind, name, query, body}
@@ -505,47 +360,6 @@ defmodule Opsonde.Targets.Kubernetes.API do
   defp native_query("request.execute", query) when query == %{}, do: {:ok, []}
   defp native_query(_operation, _query), do: invalid_request()
 
-  defp expected_status(_facts, expected) when expected == %{}, do: :unknown
-
-  defp expected_status(facts, expected) when is_map(expected) do
-    if Enum.all?(expected, fn {key, value} -> facts[key] == value end),
-      do: :verified,
-      else: :not_verified
-  end
-
-  defp effect_operation(state, request) do
-    case {request.capability, request.operation, request.selectors, request.parameters} do
-      {"effect.workload", "kubernetes.deployment.scale", %{"name" => name} = selectors,
-       %{
-         "replicas" => replicas,
-         "expected_uid" => uid,
-         "expected_resource_version" => version
-       } = parameters}
-      when map_size(selectors) == 1 and map_size(parameters) == 3 and is_integer(replicas) and
-             replicas in 0..100 ->
-        if valid_name?(name) and valid_identity?(uid) and valid_identity?(version) do
-          resource = %{
-            "apiVersion" => "apps/v1",
-            "kind" => "Deployment",
-            "metadata" => %{
-              "name" => name,
-              "namespace" => state.namespace,
-              "uid" => uid,
-              "resourceVersion" => version
-            },
-            "spec" => %{"replicas" => replicas}
-          }
-
-          {:ok, K8s.Client.patch(resource)}
-        else
-          invalid_request()
-        end
-
-      _request ->
-        invalid_request()
-    end
-  end
-
   defp run_observation(state, operation, {:watch, max_events}, cancelled?) do
     run(
       state,
@@ -637,84 +451,6 @@ defmodule Opsonde.Targets.Kubernetes.API do
 
   defp operation_failure(_phase), do: {:error, :failed, "Kubernetes operation failed"}
 
-  defp decode(:pods, %{"metadata" => metadata, "items" => items}) when is_list(items),
-    do:
-      {:ok,
-       %{"resource_version" => metadata["resourceVersion"], "pods" => Enum.map(items, &pod/1)}}
-
-  defp decode(:deployment, %{"metadata" => metadata, "spec" => spec} = deployment) do
-    status = Map.get(deployment, "status", %{})
-
-    {:ok,
-     %{
-       "name" => metadata["name"],
-       "namespace" => metadata["namespace"],
-       "uid" => metadata["uid"],
-       "resource_version" => metadata["resourceVersion"],
-       "generation" => metadata["generation"],
-       "replicas" => spec["replicas"],
-       "ready_replicas" => Map.get(status, "readyReplicas", 0),
-       "available_replicas" => Map.get(status, "availableReplicas", 0),
-       "observed_generation" => status["observedGeneration"]
-     }}
-  end
-
-  defp decode({:logs, pod, container, limit}, logs)
-       when is_binary(logs) and byte_size(logs) <= limit,
-       do: {:ok, %{"pod" => pod, "container" => container, "logs" => logs}}
-
-  defp decode(:events, %{"metadata" => metadata, "items" => items}) when is_list(items),
-    do:
-      {:ok,
-       %{"resource_version" => metadata["resourceVersion"], "events" => Enum.map(items, &event/1)}}
-
-  defp decode({:watch, _max}, items) when is_list(items) do
-    Enum.reduce_while(items, {:ok, []}, fn item, {:ok, events} ->
-      case watch_event(item) do
-        {:ok, event} -> {:cont, {:ok, [event | events]}}
-        :error -> {:halt, {:error, :failed, "Kubernetes watch response is invalid"}}
-      end
-    end)
-    |> case do
-      {:ok, events} -> {:ok, %{"events" => Enum.reverse(events)}}
-      error -> error
-    end
-  end
-
-  defp decode(_decoder, _result), do: {:error, :failed, "Kubernetes API response is invalid"}
-
-  defp pod(resource) do
-    metadata = resource["metadata"] || %{}
-    status = resource["status"] || %{}
-
-    %{
-      "name" => metadata["name"],
-      "uid" => metadata["uid"],
-      "resource_version" => metadata["resourceVersion"],
-      "phase" => status["phase"],
-      "node" => status["nodeName"]
-    }
-  end
-
-  defp event(resource) do
-    regarding = resource["regarding"] || resource["involvedObject"] || %{}
-
-    %{
-      "type" => resource["type"],
-      "reason" => resource["reason"],
-      "note" => resource["note"] || resource["message"],
-      "regarding_kind" => regarding["kind"],
-      "regarding_name" => regarding["name"],
-      "regarding_uid" => regarding["uid"]
-    }
-  end
-
-  defp watch_event(%{"type" => type, "object" => %{} = object})
-       when type in ["ADDED", "MODIFIED", "DELETED"],
-       do: {:ok, %{"type" => type, "object" => pod(object)}}
-
-  defp watch_event(_other), do: :error
-
   defp effect_result({:ok, result}) when is_map(result) do
     {:ok,
      %Target.EffectResult{
@@ -748,57 +484,6 @@ defmodule Opsonde.Targets.Kubernetes.API do
           }}
 
   defp effect_result({:error, _category, message}), do: {:error, :failed, message}
-
-  defp verification_expected(expected) when is_map(expected) do
-    case expected do
-      %{"replicas" => replicas}
-      when map_size(expected) == 1 and is_integer(replicas) and replicas in 0..100 ->
-        {:ok, expected}
-
-      _invalid ->
-        {:error, :failed, "Kubernetes verification expectation is invalid"}
-    end
-  end
-
-  defp verification_expected(_expected),
-    do: {:error, :failed, "Kubernetes verification expectation is invalid"}
-
-  defp list_parameters(%{"limit" => limit} = parameters)
-       when is_integer(limit) and limit in 1..100 and map_size(parameters) in 1..2 do
-    labels = Map.get(parameters, "labels", %{})
-
-    if exact_keys?(parameters, ~w(limit labels)) and valid_labels?(labels),
-      do: {:ok, limit, labels},
-      else: invalid_request()
-  end
-
-  defp list_parameters(_parameters), do: invalid_request()
-
-  defp watch_parameters(
-         %{
-           "resource_version" => version,
-           "timeout_seconds" => seconds,
-           "max_events" => max_events
-         } = parameters
-       )
-       when is_integer(seconds) and seconds in 1..30 and is_integer(max_events) and
-              max_events in 1..100 and map_size(parameters) in 3..4 do
-    labels = Map.get(parameters, "labels", %{})
-
-    if exact_keys?(parameters, ~w(resource_version timeout_seconds max_events labels)) and
-         valid_identity?(version) and valid_labels?(labels),
-       do: {:ok, version, seconds, max_events, labels},
-       else: invalid_request()
-  end
-
-  defp watch_parameters(_parameters), do: invalid_request()
-
-  defp put_selector(operation, labels) when map_size(labels) == 0, do: operation
-
-  defp put_selector(operation, labels) do
-    selector = K8s.Selector.parse(%{"matchLabels" => labels})
-    K8s.Operation.put_selector(operation, selector)
-  end
 
   defp endpoint(state, endpoint) when is_binary(endpoint) do
     if String.trim_trailing(endpoint, "/") == state.endpoint,
@@ -877,28 +562,14 @@ defmodule Opsonde.Targets.Kubernetes.API do
   defp required_name(map, key) do
     case Map.get(map, key) do
       value when is_binary(value) ->
-        if valid_name?(value), do: {:ok, value}, else: {:error, :invalid_name}
+        if Profile.valid_name?(value), do: {:ok, value}, else: {:error, :invalid_name}
 
       _value ->
         {:error, :invalid_name}
     end
   end
 
-  defp valid_name?(value),
-    do: is_binary(value) and byte_size(value) in 1..253 and Regex.match?(@name_pattern, value)
-
-  defp valid_identity?(value),
-    do:
-      is_binary(value) and byte_size(value) in 1..255 and
-        not String.contains?(value, ["\n", "\r", <<0>>])
-
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
-
-  defp valid_labels?(labels) when is_map(labels) and map_size(labels) <= 20 do
-    Enum.all?(labels, fn {key, value} -> valid_identity?(key) and valid_identity?(value) end)
-  end
-
-  defp valid_labels?(_labels), do: false
 
   defp after_dispatch(:effect, :cancelled), do: :cancelled_after_dispatch
   defp after_dispatch(:effect, :timeout), do: :timeout_after_dispatch
@@ -913,192 +584,6 @@ defmodule Opsonde.Targets.Kubernetes.API do
     do: {:error, :retryable, message}
 
   defp read_error(_category, message), do: {:error, :failed, message}
-
-  defp operation(
-         capability,
-         operation,
-         description,
-         schema,
-         output_schema \\ nil,
-         verification_schema \\ nil
-       ),
-       do: %Target.Operation{
-         capability: capability,
-         operation: operation,
-         description: description,
-         input_schema: schema,
-         output_schema: output_schema,
-         verification_schema: verification_schema
-       }
-
-  defp pods_output_schema,
-    do:
-      facts_schema(%{
-        "resource_version" => nullable("string"),
-        "pods" => %{"type" => "array", "maxItems" => 100, "items" => pod_output_schema()}
-      })
-
-  defp deployment_output_schema,
-    do:
-      facts_schema(%{
-        "name" => nullable("string"),
-        "namespace" => nullable("string"),
-        "uid" => nullable("string"),
-        "resource_version" => nullable("string"),
-        "generation" => nullable("integer"),
-        "replicas" => nullable("integer"),
-        "ready_replicas" => %{"type" => "integer"},
-        "available_replicas" => %{"type" => "integer"},
-        "observed_generation" => nullable("integer")
-      })
-
-  defp deployment_verification_schema do
-    %{
-      "type" => "object",
-      "properties" => %{"replicas" => integer(0, 100)},
-      "required" => ["replicas"],
-      "additionalProperties" => false
-    }
-  end
-
-  defp logs_output_schema,
-    do:
-      facts_schema(%{
-        "pod" => %{"type" => "string"},
-        "container" => %{"type" => "string"},
-        "logs" => %{"type" => "string", "maxLength" => 60_000}
-      })
-
-  defp events_output_schema,
-    do:
-      facts_schema(%{
-        "resource_version" => nullable("string"),
-        "events" => %{
-          "type" => "array",
-          "maxItems" => 200,
-          "items" =>
-            facts_schema(%{
-              "type" => nullable("string"),
-              "reason" => nullable("string"),
-              "note" => nullable("string"),
-              "regarding_kind" => nullable("string"),
-              "regarding_name" => nullable("string"),
-              "regarding_uid" => nullable("string")
-            })
-        }
-      })
-
-  defp watch_output_schema,
-    do:
-      facts_schema(%{
-        "events" => %{
-          "type" => "array",
-          "maxItems" => 100,
-          "items" =>
-            facts_schema(%{
-              "type" => %{"type" => "string", "enum" => ~w(ADDED MODIFIED DELETED)},
-              "object" => pod_output_schema()
-            })
-        }
-      })
-
-  defp pod_output_schema,
-    do:
-      facts_schema(%{
-        "name" => nullable("string"),
-        "uid" => nullable("string"),
-        "resource_version" => nullable("string"),
-        "phase" => nullable("string"),
-        "node" => nullable("string")
-      })
-
-  defp facts_schema(properties),
-    do: %{
-      "type" => "object",
-      "properties" => properties,
-      "additionalProperties" => false
-    }
-
-  defp nullable(type), do: %{"type" => [type, "null"]}
-
-  defp pods_schema,
-    do: schema(%{}, [], %{"limit" => integer(1, 100), "labels" => labels()}, ["limit"])
-
-  defp name_schema, do: schema(%{"name" => name()}, ["name"], %{}, [])
-
-  defp logs_schema,
-    do:
-      schema(
-        %{"name" => name(), "container" => name()},
-        ["name", "container"],
-        %{"tail_lines" => integer(1, 500), "limit_bytes" => integer(1, 60_000)},
-        ["tail_lines", "limit_bytes"]
-      )
-
-  defp events_schema, do: schema(%{}, [], %{"limit" => integer(1, 200)}, ["limit"])
-
-  defp watch_schema do
-    schema(
-      %{},
-      [],
-      %{
-        "resource_version" => string(255),
-        "timeout_seconds" => integer(1, 30),
-        "max_events" => integer(1, 100),
-        "labels" => labels()
-      },
-      ["resource_version", "timeout_seconds", "max_events"]
-    )
-  end
-
-  defp scale_schema do
-    schema(
-      %{"name" => name()},
-      ["name"],
-      %{
-        "replicas" => integer(0, 100),
-        "expected_uid" => string(255),
-        "expected_resource_version" => string(255)
-      },
-      ["replicas", "expected_uid", "expected_resource_version"]
-    )
-  end
-
-  defp schema(selectors, selector_required, parameters, parameter_required) do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "selectors" => object(selectors, selector_required),
-        "parameters" => object(parameters, parameter_required)
-      },
-      "required" => ["selectors", "parameters"],
-      "additionalProperties" => false
-    }
-  end
-
-  defp object(properties, required),
-    do: %{
-      "type" => "object",
-      "properties" => properties,
-      "required" => required,
-      "additionalProperties" => false
-    }
-
-  defp name,
-    do: %{
-      "type" => "string",
-      "minLength" => 1,
-      "maxLength" => 253,
-      "pattern" => "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
-    }
-
-  defp string(maximum), do: %{"type" => "string", "minLength" => 1, "maxLength" => maximum}
-
-  defp labels,
-    do: %{"type" => "object", "maxProperties" => 20, "additionalProperties" => string(255)}
-
-  defp integer(minimum, maximum),
-    do: %{"type" => "integer", "minimum" => minimum, "maximum" => maximum}
 
   defp invalid_request, do: {:error, :failed, "Kubernetes API request is invalid"}
 end
