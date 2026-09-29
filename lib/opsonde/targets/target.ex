@@ -17,6 +17,10 @@ defmodule Opsonde.Targets.Target do
   actions do
     defaults [:read]
 
+    action :type_catalog, :map do
+      run fn _input, _context -> {:ok, Opsonde.Targets.TypeCatalog.snapshot()} end
+    end
+
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(sort: [inserted_at: :asc, id: :asc])
@@ -78,6 +82,12 @@ defmodule Opsonde.Targets.Target do
   end
 
   policies do
+    policy action(:type_catalog) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
+      authorize_if actor_attribute_equals(:role, :viewer)
+    end
+
     policy action([:create, :update, :deactivate]) do
       authorize_if actor_attribute_equals(:role, :admin)
     end

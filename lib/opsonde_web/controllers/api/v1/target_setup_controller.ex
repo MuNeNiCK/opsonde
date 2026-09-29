@@ -100,6 +100,17 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       [ok: {"Target page", "application/json", TargetSchemas.ref("TargetPage")}] ++
         @list_errors
 
+  operation :target_types,
+    operation_id: "listTargetTypes",
+    summary: "List supported Target types and categories",
+    responses:
+      [
+        ok:
+          {"Target type catalog", "application/json",
+           TargetSchemas.ref("TargetTypeCatalogResponse")}
+      ] ++
+        @list_errors
+
   operation :targets_show,
     operation_id: "getTarget",
     summary: "Get a Target",
@@ -382,6 +393,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
 
   def targets_index(conn, params) do
     page(conn, params, &Targets.page_targets/1, &TargetSetupJSON.target/1)
+  end
+
+  def target_types(conn, _params) do
+    with {:ok, catalog} <- Targets.list_target_types(actor: conn.assigns.current_user) do
+      Response.data(conn, catalog)
+    end
   end
 
   def targets_show(conn, %{"id" => id}) do

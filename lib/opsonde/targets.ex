@@ -12,6 +12,7 @@ defmodule Opsonde.Targets do
     end
 
     resource Opsonde.Targets.Target do
+      define :list_target_types, action: :type_catalog
       define :list_targets, action: :read
       define :page_targets, action: :page
       define :get_target, action: :read, get_by: [:id]

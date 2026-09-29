@@ -54,6 +54,24 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     }
   end
 
+  test "Target type catalog publishes custom choices per supported category", context do
+    response = get_json("/api/v1/target-types", context.viewer_token)
+    assert_operation_response(response)
+    %{"data" => %{"categories" => categories, "types" => types}} = json_response(response, 200)
+
+    assert length(categories) == 9
+    assert Enum.any?(categories, &(&1["id"] == "storage"))
+
+    by_id = Map.new(types, &{&1["id"], &1})
+    refute Map.has_key?(by_id, "generic")
+
+    assert by_id["custom-network-device"]["category_id"] == "network-device"
+    assert by_id["custom-network-device"]["access_method_types"] == ["ssh-exec", "http-api"]
+    assert by_id["custom-os"]["category_id"] == "os"
+    assert by_id["bmc"]["access_method_types"] == ["bmc-redfish", "bmc-ipmi"]
+    assert by_id["cisco-ios-xe"]["category_id"] == "network-device"
+  end
+
   test "Access Method API rejects a Provider mismatch and accepts its declared binding",
        context do
     endpoint = "https://example.test"

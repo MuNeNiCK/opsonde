@@ -13,6 +13,10 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       "UpdateManagementBoundaryRequest" => update_management_boundary_request(),
       "DeactivateManagementBoundaryRequest" => deactivate_request(:management_boundary),
       "Target" => target(),
+      "TargetCategory" => target_category(),
+      "TargetType" => target_type(),
+      "TargetTypeCatalog" => target_type_catalog(),
+      "TargetTypeCatalogResponse" => Schemas.data(ref("TargetTypeCatalog")),
       "TargetResponse" => Schemas.data(ref("Target")),
       "TargetPage" => Schemas.page(ref("Target")),
       "CreateTargetRequest" => create_target_request(),
@@ -86,6 +90,42 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       },
       [:name, :kind, :type_id, :facts, :management_boundary_id, :active]
     )
+  end
+
+  defp target_category do
+    %Schema{
+      type: :object,
+      properties: %{id: string(1, 80), label: string(1, 120)},
+      required: [:id, :label],
+      additionalProperties: false
+    }
+  end
+
+  defp target_type do
+    %Schema{
+      type: :object,
+      properties: %{
+        id: string(1, 120),
+        label: string(1, 120),
+        category_id: string(1, 80),
+        kind: string(1, 80),
+        access_method_types: %Schema{type: :array, items: string(1, 120)}
+      },
+      required: [:id, :label, :category_id, :kind, :access_method_types],
+      additionalProperties: false
+    }
+  end
+
+  defp target_type_catalog do
+    %Schema{
+      type: :object,
+      properties: %{
+        categories: %Schema{type: :array, items: ref("TargetCategory")},
+        types: %Schema{type: :array, items: ref("TargetType")}
+      },
+      required: [:categories, :types],
+      additionalProperties: false
+    }
   end
 
   defp create_target_request do

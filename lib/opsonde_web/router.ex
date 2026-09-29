@@ -60,6 +60,7 @@ defmodule OpsondeWeb.Router do
     patch "/management-boundaries/:id", TargetSetupController, :boundaries_update
     post "/management-boundaries/:id/deactivate", TargetSetupController, :boundaries_deactivate
 
+    get "/target-types", TargetSetupController, :target_types
     get "/targets", TargetSetupController, :targets_index
     post "/targets", TargetSetupController, :targets_create
     get "/targets/:id", TargetSetupController, :targets_show

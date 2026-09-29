@@ -454,6 +454,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/target-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List supported Target types and categories */
+        get: operations["listTargetTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/accounts": {
         parameters: {
             query?: never;
@@ -2011,6 +2028,10 @@ export interface components {
                 expected_case_revision: number;
             };
         };
+        TargetCategory: {
+            id: string;
+            label: string;
+        };
         SignalEvent: {
             /** Format: uuid */
             case_id: string | null;
@@ -2328,6 +2349,10 @@ export interface components {
                 password: string;
                 password_confirmation: string;
             };
+        };
+        TargetTypeCatalog: {
+            categories: components["schemas"]["TargetCategory"][];
+            types: components["schemas"]["TargetType"][];
         };
         SignalWebhookPayload: {
             [key: string]: unknown;
@@ -3286,6 +3311,13 @@ export interface components {
                 expected_revision: number;
             };
         };
+        TargetType: {
+            access_method_types: string[];
+            category_id: string;
+            id: string;
+            kind: string;
+            label: string;
+        };
         TargetCapabilitiesResponse: {
             data: {
                 effects: {
@@ -3392,6 +3424,9 @@ export interface components {
                 value: string;
             };
             title: string;
+        };
+        TargetTypeCatalogResponse: {
+            data: components["schemas"]["TargetTypeCatalog"];
         };
         CLISessionDenialResponse: {
             data: {
@@ -6041,6 +6076,62 @@ export interface operations {
             };
             /** @description Authentication is required */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listTargetTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Target type catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetTypeCatalogResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

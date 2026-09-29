@@ -1814,6 +1814,26 @@
         ],
         "type": "object"
       },
+      "TargetCategory": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
       "SignalEvent": {
         "additionalProperties": false,
         "properties": {
@@ -3031,6 +3051,28 @@
         },
         "required": [
           "account"
+        ],
+        "type": "object"
+      },
+      "TargetTypeCatalog": {
+        "additionalProperties": false,
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/TargetCategory"
+            },
+            "type": "array"
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/TargetType"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "categories",
+          "types"
         ],
         "type": "object"
       },
@@ -6664,6 +6706,47 @@
         ],
         "type": "object"
       },
+      "TargetType": {
+        "additionalProperties": false,
+        "properties": {
+          "access_method_types": {
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "category_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "category_id",
+          "kind",
+          "access_method_types"
+        ],
+        "type": "object"
+      },
       "TargetCapabilitiesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7087,6 +7170,18 @@
           "state",
           "occurred_at",
           "title"
+        ],
+        "type": "object"
+      },
+      "TargetTypeCatalogResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TargetTypeCatalog"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -10708,6 +10803,69 @@
         "summary": "List AI generation services",
         "tags": [
           "Providers"
+        ]
+      }
+    },
+    "/api/v1/target-types": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listTargetTypes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetTypeCatalogResponse"
+                }
+              }
+            },
+            "description": "Target type catalog"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List supported Target types and categories",
+        "tags": [
+          "Targets"
         ]
       }
     },
