@@ -77,6 +77,25 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
       "additionalProperties" => false
     }
 
+    sequence_input =
+      put_in(input, ["properties", "parameters"], %{
+        "type" => "object",
+        "properties" => %{
+          "rpcs" => %{
+            "type" => "array",
+            "minItems" => 1,
+            "maxItems" => 8,
+            "items" => %{
+              "type" => "string",
+              "minLength" => 1,
+              "maxLength" => NETCONF.max_body_bytes()
+            }
+          }
+        },
+        "required" => ["rpcs"],
+        "additionalProperties" => false
+      })
+
     {:ok,
      %Target.Capabilities{
        observations: [
@@ -95,12 +114,25 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
            operation: "rpc.execute",
            description: "Execute one exact NETCONF RPC after authority review",
            input_schema: input
+         },
+         %Target.Operation{
+           capability: @effect,
+           operation: "rpc.sequence",
+           description: "Execute exact NETCONF RPCs in one session after authority review",
+           input_schema: sequence_input
          }
        ]
      }}
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(_state, %{operation: "rpc.sequence"} = request) do
+    case sequence_bodies(request) do
+      {:ok, _bodies} -> {:ok, :effect}
+      error -> error
+    end
+  end
+
   def classify_request(_state, request) do
     case request_body(request) do
       {:ok, body} ->
@@ -129,6 +161,34 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%SSH.Config{} = state, %{operation: "rpc.sequence"} = request, invocation) do
+    with {:ok, bodies} <- sequence_bodies(request) do
+      case NETCONF.execute_many(
+             state,
+             request.connection.endpoint,
+             bodies,
+             cancelled?(invocation)
+           ) do
+        {:ok, replies} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :applied,
+             details: %{"completed" => length(replies), "replies" => replies}
+           }}
+
+        {:error, :rejected, message, replies} ->
+          {:ok,
+           %Target.EffectResult{
+             status: if(replies == [], do: :failed, else: :partial),
+             details: %{"completed" => length(replies), "replies" => replies, "error" => message}
+           }}
+
+        {:error, category, message, replies} ->
+          sequence_error(category, message, replies)
+      end
+    end
+  end
+
   def effect(%SSH.Config{} = state, request, invocation) do
     with true <- request.capability == @effect,
          {:ok, body} <- request_body(request),
@@ -178,6 +238,38 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
        do: {:ok, body}
 
   defp request_body(_request), do: {:error, :failed, "NETCONF RPC request is invalid"}
+
+  defp sequence_bodies(%{
+         capability: @effect,
+         operation: "rpc.sequence",
+         selectors: %{},
+         parameters: %{"rpcs" => bodies} = parameters
+       })
+       when map_size(parameters) == 1 and is_list(bodies) and length(bodies) in 1..8 do
+    if Enum.all?(bodies, &match?({:ok, _kind}, NETCONF.classify_body(&1))),
+      do: {:ok, bodies},
+      else: {:error, :failed, "NETCONF sequence is invalid"}
+  end
+
+  defp sequence_bodies(_request), do: {:error, :failed, "NETCONF sequence is invalid"}
+
+  defp sequence_error(category, message, replies) do
+    if category in [
+         :timeout_after_dispatch,
+         :cancelled_after_dispatch,
+         :disconnected_after_dispatch,
+         :output_limit_after_dispatch,
+         :unknown_after_dispatch
+       ] or replies != [] do
+      {:ok,
+       %Target.EffectResult{
+         status: :unknown,
+         details: %{"completed" => length(replies), "replies" => replies, "error" => message}
+       }}
+    else
+      effect_error(category, message)
+    end
+  end
 
   defp read_error(:cancelled, message), do: {:error, :cancelled, message}
 

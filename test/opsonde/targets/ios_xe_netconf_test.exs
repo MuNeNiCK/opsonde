@@ -21,7 +21,16 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     @impl true
     def init([agent]),
-      do: {:ok, %{agent: agent, connection: nil, channel: nil, phase: :hello, input: ""}}
+      do:
+        {:ok,
+         %{
+           agent: agent,
+           session_id: System.unique_integer([:positive]),
+           connection: nil,
+           channel: nil,
+           phase: :hello,
+           input: ""
+         }}
 
     @impl true
     def handle_msg({:ssh_channel_up, channel, connection}, state),
@@ -63,7 +72,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     defp consume(%{phase: :rpc} = state) do
       case chunk(state.input) do
         {:ok, rpc, rest} ->
-          {reply, delay_ms} = response(state.agent, rpc)
+          {reply, delay_ms} = response(state.agent, state.session_id, rpc)
           Process.sleep(delay_ms)
           :ok = :ssh_connection.send(state.connection, state.channel, frame(reply))
           consume(%{state | input: rest})
@@ -97,10 +106,20 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     defp chunk(_input), do: :more
     defp frame(xml), do: "\n##{byte_size(xml)}\n#{xml}\n##\n"
 
-    defp response(agent, rpc) do
+    defp response(agent, session_id, rpc) do
       Agent.get_and_update(agent, fn state ->
-        state = %{state | rpcs: [rpc | state.rpcs]}
+        state = %{state | rpcs: [rpc | state.rpcs], sessions: [session_id | state.sessions]}
         {reply, delay_ms, state} = rpc_response(rpc, state)
+
+        reply =
+          case Regex.run(~r/message-id="([^"]+)"/, rpc) do
+            [_, message_id] when message_id != "opsonde-1" ->
+              String.replace(reply, "message-id=\"opsonde-1\"", "message-id=\"#{message_id}\"")
+
+            _other ->
+              reply
+          end
+
         {{reply, delay_ms}, state}
       end)
     end
@@ -111,6 +130,9 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
           {"not xml", 0, %{state | mode: :normal}}
 
         state.mode == :wrong_message_id ->
+          {system_reply("wrong"), 0, %{state | mode: :normal}}
+
+        state.mode == :wrong_second_message_id and String.contains?(rpc, "<edit-config>") ->
           {system_reply("wrong"), 0, %{state | mode: :normal}}
 
         String.contains?(rpc, "<edit-config>") ->
@@ -406,7 +428,55 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
 
+    sequence = %{
+      effect
+      | operation: "rpc.sequence",
+        parameters: %{
+          "rpcs" => [
+            "<lock><target><running/></target></lock>",
+            "<edit-config><target><running/></target><config><interfaces><interface><name>Loopback100</name><description>in session</description></interface></interfaces></config></edit-config>",
+            "<commit/>"
+          ]
+        }
+    }
+
+    assert %Target.EffectResult{status: :applied, details: %{"completed" => 3}} =
+             sequence
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert context.agent
+           |> Agent.get(&Enum.take(&1.sessions, 3))
+           |> Enum.uniq()
+           |> length() == 1
+
+    Agent.update(context.agent, &%{&1 | mode: :rpc_error})
+
+    assert %Target.EffectResult{status: :partial, details: %{"completed" => 1}} =
+             %{
+               sequence
+               | operation_id: Ecto.UUID.generate(),
+                 idempotency_key: Ecto.UUID.generate()
+             }
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | mode: :wrong_second_message_id})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"completed" => 1}} =
+             %{
+               sequence
+               | operation_id: Ecto.UUID.generate(),
+                 idempotency_key: Ecto.UUID.generate()
+             }
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
     before_reject = length(rpcs(context))
+
+    assert {:error, _error} =
+             %{sequence | parameters: %{"rpcs" => ["<lock/>", "<get>"]}}
+             |> Targets.clear_target_request(actor: context.operator)
 
     for body <- [
           "<get xmlns=\"urn:vendor:ops\"/>",
@@ -455,6 +525,32 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              edit
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | delay_edit_ms: 1_000})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"completed" => 1}} =
+             %{
+               sequence
+               | operation_id: Ecto.UUID.generate(),
+                 idempotency_key: Ecto.UUID.generate()
+             }
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | edit_received?: false})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"completed" => 1}} =
+             %{
+               sequence
+               | operation_id: Ecto.UUID.generate(),
+                 idempotency_key: Ecto.UUID.generate()
+             }
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(
+               %{cancelled?: fn -> Agent.get(context.agent, & &1.edit_received?) end},
+               actor: context.operator,
+               authorize?: false
+             )
 
     Agent.update(context.agent, &%{&1 | delay_edit_ms: 1_000})
 
@@ -593,6 +689,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
   defp initial_peer_state do
     %{
       rpcs: [],
+      sessions: [],
       mode: :normal,
       delay_edit_ms: 0,
       edit_received?: false,

@@ -8,6 +8,7 @@ defmodule Opsonde.Transports.NETCONF do
   @base_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @message_id "opsonde-1"
   @max_message_bytes 60_000
+  @max_sequence_replies_bytes 50_000
   @hello """
   <?xml version="1.0" encoding="UTF-8"?>
   <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities></hello>
@@ -25,11 +26,11 @@ defmodule Opsonde.Transports.NETCONF do
     defstruct @enforce_keys
   end
 
-  def max_body_bytes, do: @max_message_bytes - byte_size(envelope(""))
+  def max_body_bytes, do: @max_message_bytes - byte_size(envelope("")) - 16
 
   def classify_body(body) when is_binary(body) do
-    with true <- String.valid?(body) and byte_size(body) > 0,
-         true <- byte_size(envelope(body)) <= @max_message_bytes,
+    with true <- byte_size(body) in 1..max_body_bytes(),
+         true <- String.valid?(body),
          {:ok, {"rpc", _attributes, children}} <- parse(envelope(body)),
          [{name, attributes, _children}] <- Enum.reject(children, &is_binary/1),
          true <- Enum.all?(children, &(not is_binary(&1) or String.trim(&1) == "")),
@@ -49,7 +50,7 @@ defmodule Opsonde.Transports.NETCONF do
          {:ok, %Result{} = result} <- request(config, endpoint, envelope(body), cancelled?) do
       case parse(result.reply) do
         {:ok, root} ->
-          case valid_reply(root) do
+          case valid_reply(root, @message_id) do
             :ok -> {:ok, %Result{result | root: root}}
             {:error, :failed, message} -> {:error, :unknown_after_dispatch, message}
             error -> error
@@ -58,6 +59,89 @@ defmodule Opsonde.Transports.NETCONF do
         {:error, :failed, message} ->
           {:error, :unknown_after_dispatch, message}
       end
+    end
+  end
+
+  def execute_many(config, endpoint, bodies, cancelled? \\ fn -> false end)
+
+  def execute_many(%SSH.Config{} = config, endpoint, bodies, cancelled?)
+      when is_list(bodies) and length(bodies) in 1..8 do
+    if Enum.all?(bodies, &match?({:ok, _kind}, classify_body(&1))) do
+      owner = self()
+      reference = make_ref()
+
+      result =
+        SSH.subsystem(
+          config,
+          endpoint,
+          "netconf",
+          fn channel ->
+            with {:ok, session} <- open_session(channel) do
+              exchange_many(channel, session.framing, bodies, 1, <<>>, [], {owner, reference})
+            end
+          end,
+          cancelled?
+        )
+
+      progress = latest_progress(reference, [])
+
+      case result do
+        {:ok, replies} -> {:ok, replies}
+        {:error, category, message, replies} -> {:error, category, message, replies}
+        {:error, category, message} -> {:error, category, message, progress}
+      end
+    else
+      {:error, :failed, "NETCONF sequence is invalid", []}
+    end
+  end
+
+  def execute_many(_config, _endpoint, _bodies, _cancelled?),
+    do: {:error, :failed, "NETCONF sequence is invalid", []}
+
+  defp exchange_many(_channel, _framing, [], _index, _buffer, replies, _reporter),
+    do: {:ok, Enum.reverse(replies)}
+
+  defp exchange_many(channel, framing, [body | rest], index, buffer, replies, reporter) do
+    message_id = "opsonde-#{index}"
+
+    with :ok <- SSH.channel_send(channel, frame(envelope(body, message_id), framing)),
+         {:ok, reply, remaining} <- SSH.channel_receive(channel, buffer, decoder(framing)),
+         {:ok, root} <- parse(reply),
+         :ok <- valid_reply(root, message_id),
+         true <- bounded_replies?([reply | replies]) do
+      {owner, reference} = reporter
+      send(owner, {:opsonde_netconf_progress, reference, Enum.reverse([reply | replies])})
+      exchange_many(channel, framing, rest, index + 1, remaining, [reply | replies], reporter)
+    else
+      {:error, :rejected, message} ->
+        {:error, :rejected, message, Enum.reverse(replies)}
+
+      {:error, category, message} ->
+        {:error, after_sequence_dispatch(category), message, Enum.reverse(replies)}
+
+      false ->
+        {:error, :unknown_after_dispatch, "NETCONF sequence replies exceeded their limit",
+         Enum.reverse(replies)}
+    end
+  end
+
+  defp after_sequence_dispatch(category) when category in [:cancelled, :failed],
+    do: :unknown_after_dispatch
+
+  defp after_sequence_dispatch(category), do: category
+
+  defp bounded_replies?(replies) do
+    case Jason.encode(replies) do
+      {:ok, encoded} -> byte_size(encoded) <= @max_sequence_replies_bytes
+      {:error, _reason} -> false
+    end
+  end
+
+  defp latest_progress(reference, known) do
+    receive do
+      {:opsonde_netconf_progress, ^reference, replies} -> latest_progress(reference, replies)
+    after
+      0 -> known
     end
   end
 
@@ -87,9 +171,9 @@ defmodule Opsonde.Transports.NETCONF do
   defp request(_config, _endpoint, _rpc, _cancelled?),
     do: {:error, :failed, "NETCONF request is invalid"}
 
-  defp valid_reply({name, attributes, children}) do
+  defp valid_reply({name, attributes, children}, message_id) do
     with {:ok, @base_namespace, "rpc-reply"} <- qualified_name(name, attributes, %{}),
-         true <- List.keyfind(attributes, "message-id", 0) == {"message-id", @message_id},
+         true <- List.keyfind(attributes, "message-id", 0) == {"message-id", message_id},
          false <- Enum.any?(children, &rpc_error?(&1, namespace_bindings(attributes, %{}))) do
       :ok
     else
@@ -139,8 +223,10 @@ defmodule Opsonde.Transports.NETCONF do
     end
   end
 
-  defp envelope(body),
-    do: "<rpc xmlns=\"#{@base_namespace}\" message-id=\"#{@message_id}\">#{body}</rpc>"
+  defp envelope(body), do: envelope(body, @message_id)
+
+  defp envelope(body, message_id),
+    do: "<rpc xmlns=\"#{@base_namespace}\" message-id=\"#{message_id}\">#{body}</rpc>"
 
   defp open_session(channel) do
     with :ok <- SSH.channel_send(channel, @hello <> @delimiter, false),
