@@ -222,16 +222,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
-  defp retry_context([]), do: nil
-
-  defp retry_context(failures) do
-    failure = Enum.find(failures, &(&1.failure_code == "schema_validation")) || hd(failures)
-
-    %{
-      "category" => "invalid_output",
-      "rejection_code" => failure.failure_code || "invalid_output"
-    }
-  end
+  defp retry_context(failures), do: AIInvocation.retry_context(failures)
 
   defp stop_after_invalid_if_no_alternate(proposal, error, excluded, opts) do
     case Providers.eligible_ai_usage_role_assignments(:reviewer, authorize?: false) do
@@ -524,7 +515,8 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
                output_tokens: if(accounting.usage, do: accounting.usage.output_tokens, else: 0),
                usage: accounting.usage,
                category: category,
-               failure_code: failure_code
+               failure_code: failure_code,
+               rejection_path: AIInvocation.rejection_path(Map.get(accounting, :ai_error))
              ) do
         recorded
       end
@@ -546,6 +538,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         finish_reason: if(usage, do: usage.finish_reason),
         category: Keyword.get(attrs, :category),
         failure_code: Keyword.get(attrs, :failure_code),
+        rejection_path: Keyword.get(attrs, :rejection_path),
         result_digest: Keyword.get(attrs, :result_digest),
         completed_at: DateTime.utc_now()
       },

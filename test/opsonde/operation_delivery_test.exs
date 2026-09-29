@@ -1923,14 +1923,8 @@ defmodule Opsonde.OperationDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn _request ->
-                   {:error,
-                    %AI.Error{
-                      category: :invalid_output,
-                      message: "Reviewer response does not match schema",
-                      failure_code: "schema_validation",
-                      dispatched?: true,
-                      usage: %AI.Usage{input_tokens: 5, output_tokens: 2}
-                    }}
+                   {:error, :invalid_output, "Reviewer response does not match schema",
+                    %AI.Usage{input_tokens: 5, output_tokens: 2}, "schema_validation", "/reason"}
                  end
                }
              )
@@ -4220,7 +4214,14 @@ defmodule Opsonde.OperationDeliveryTest do
                        assert request.conclusion.evidence_ids != []
 
                        if delivery_opts != [],
-                         do: assert(request.retry_context["category"] == "invalid_output")
+                         do:
+                           assert(
+                             request.retry_context == %{
+                               "category" => "invalid_output",
+                               "rejection_code" => "schema_validation",
+                               "rejection_path" => "/reason"
+                             }
+                           )
 
                        assessment =
                          if request.case_symptom do

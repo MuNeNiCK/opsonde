@@ -903,7 +903,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
              output_tokens: if(usage, do: usage.output_tokens, else: 0),
              usage: usage,
              category: category,
-             failure_code: rejection_code(error)
+             failure_code: rejection_code(error),
+             rejection_path: rejection_path(error)
            ) do
       {:ok, recorded}
     end
@@ -924,6 +925,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         finish_reason: if(usage, do: usage.finish_reason),
         category: Keyword.get(attrs, :category),
         failure_code: Keyword.get(attrs, :failure_code),
+        rejection_path: Keyword.get(attrs, :rejection_path),
         result_digest: Keyword.get(attrs, :result_digest),
         completed_at: DateTime.utc_now()
       },
@@ -970,15 +972,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     end
   end
 
-  defp rejection_path(error) do
-    case find_error(error) do
-      %AI.Error{failure_path: path} when is_binary(path) and byte_size(path) <= 200 ->
-        path
-
-      _other ->
-        nil
-    end
-  end
+  defp rejection_path(error), do: AIInvocation.rejection_path(error)
 
   defp turn_completed?(turn_id) do
     match?({:ok, %{status: :completed}}, Cases.get_turn(turn_id, authorize?: false))

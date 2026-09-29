@@ -1212,8 +1212,8 @@ defmodule Opsonde.ProposalAuthorityTest do
       respond: fn request ->
         assert request.retry_context == nil
 
-        {:error, :invalid_output, "AI provider output is not valid JSON",
-         %AI.Usage{input_tokens: 11, output_tokens: 7}}
+        {:error, :invalid_output, "AI provider output does not match schema",
+         %AI.Usage{input_tokens: 11, output_tokens: 7}, "schema_validation", "/reason"}
       end
     }
 
@@ -1253,7 +1253,8 @@ defmodule Opsonde.ProposalAuthorityTest do
                  respond: fn request ->
                    assert request.retry_context == %{
                             "category" => "invalid_output",
-                            "rejection_code" => "invalid_output"
+                            "rejection_code" => "schema_validation",
+                            "rejection_path" => "/reason"
                           }
 
                    {:ok, response}
@@ -1274,10 +1275,78 @@ defmodule Opsonde.ProposalAuthorityTest do
              first
 
     assert first.provider_id == context.reviewer_provider.id
+    assert first.rejection_path == "/reason"
     assert %{status: :completed, input_tokens: 3, output_tokens: 2} = second
     assert second.provider_id == context.reviewer_provider.id
     refute second.provider_id == backup.id
     refute_receive {:effect, _, _}
+  end
+
+  test "AI attempt result rejects invalid schema paths and cannot rewrite terminal diagnostics",
+       context do
+    {_incident, run, proposal} = proposal!("review-path-bounds", context)
+    selection = Providers.select_reviewer_ai!([], authorize?: false)
+    key = "review-path-bounds:attempt"
+
+    invocation =
+      Cases.create_ai_invocation_record!(
+        %{
+          case_id: proposal.case_id,
+          resolution_run_id: run.id,
+          proposal_id: proposal.id,
+          provider_id: selection.provider_id,
+          assignment_id: selection.assignment_id,
+          role: :reviewer,
+          idempotency_key: key,
+          request_digest: Opsonde.Cases.AIInvocation.request_digest(%{}),
+          provider_revision: selection.provider_revision,
+          assignment_revision: selection.assignment_revision,
+          selection_source: selection.source,
+          reserved_units: 65_536,
+          dispatch_started_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+
+    attrs = %{
+      status: :failed,
+      category: "invalid_output",
+      failure_code: "schema_validation",
+      input_tokens: 7,
+      output_tokens: 5,
+      completed_at: DateTime.utc_now()
+    }
+
+    for path <- ["not-a-pointer", "/" <> String.duplicate("x", 200)] do
+      assert {:error, _error} =
+               Cases.record_ai_invocation_outcome(
+                 invocation,
+                 invocation.revision,
+                 Map.put(attrs, :rejection_path, path),
+                 authorize?: false
+               )
+
+      assert Cases.ai_invocation_by_idempotency!(key, authorize?: false).status == :dispatching
+    end
+
+    stored =
+      Cases.record_ai_invocation_outcome!(
+        invocation,
+        invocation.revision,
+        Map.put(attrs, :rejection_path, "/reason"),
+        authorize?: false
+      )
+
+    assert {:error, _error} =
+             Cases.record_ai_invocation_outcome(
+               stored,
+               stored.revision,
+               Map.put(attrs, :rejection_path, "/verdict"),
+               authorize?: false
+             )
+
+    assert %{rejection_path: "/reason", input_tokens: 7, output_tokens: 5} =
+             Cases.ai_invocation_by_idempotency!(key, authorize?: false)
   end
 
   test "Reviewer repeated schema rejection stops after two paid calls without an alternate AI",

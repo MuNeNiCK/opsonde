@@ -1852,6 +1852,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :finish_reason, :text
       add :category, :text
       add :failure_code, :text
+      add :rejection_path, :text
       add :result_digest, :text
       add :dispatch_started_at, :utc_datetime_usec, null: false
       add :completed_at, :utc_datetime_usec

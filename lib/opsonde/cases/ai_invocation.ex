@@ -60,14 +60,15 @@ defmodule Opsonde.Cases.AIInvocation do
         :finish_reason,
         :category,
         :failure_code,
+        :rejection_path,
         :result_digest,
         :completed_at
       ]
 
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      filter expr(status == :dispatching)
       validate Opsonde.Validations.CurrentRevision
+      validate changing(:status, from: :dispatching)
       validate attribute_in(:status, [:completed, :failed, :unknown])
       validate present(:completed_at)
       change optimistic_lock(:revision)
@@ -145,6 +146,10 @@ defmodule Opsonde.Cases.AIInvocation do
     attribute :finish_reason, :string, constraints: [min_length: 1, max_length: 40]
     attribute :category, :string, constraints: [min_length: 1, max_length: 120]
     attribute :failure_code, :string, constraints: [min_length: 1, max_length: 120]
+
+    attribute :rejection_path, :string,
+      constraints: [max_length: 200, length_count: :bytes, match: ~r/\A\//, trim?: false]
+
     attribute :result_digest, :string, constraints: [min_length: 64, max_length: 64]
     attribute :dispatch_started_at, :utc_datetime_usec, allow_nil?: false
     attribute :completed_at, :utc_datetime_usec
@@ -170,6 +175,28 @@ defmodule Opsonde.Cases.AIInvocation do
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
+  end
+
+  def rejection_path(error) do
+    case find_ai_error(error) do
+      %AI.Error{failure_path: path} when is_binary(path) -> path
+      _other -> nil
+    end
+  end
+
+  def retry_context([]), do: nil
+
+  def retry_context(failures) do
+    latest = Enum.max_by(failures, & &1.completed_at, DateTime)
+
+    context = %{
+      "category" => "invalid_output",
+      "rejection_code" => latest.failure_code || "invalid_output"
+    }
+
+    if latest.rejection_path,
+      do: Map.put(context, "rejection_path", latest.rejection_path),
+      else: context
   end
 
   def failure_accounting(error, reserved_units) do

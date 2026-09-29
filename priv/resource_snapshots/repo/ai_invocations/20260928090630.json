@@ -201,6 +201,18 @@
       "references": null,
       "scale": null,
       "size": null,
+      "source": "rejection_path",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
       "source": "result_digest",
       "type": "text"
     },
@@ -562,7 +574,7 @@
   ],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "B3A38CEF1BE6B911553C8C68C687BA0AA8E8B884609C27990D92979404209A7B",
+  "hash": "0D9AE796AB19BAF357FC4122C4BAAD51D4D7F47AB036B220389C5B652C811502",
   "identities": [
     {
       "all_tenants?": false,

@@ -292,6 +292,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
                         finish_reason: if(usage, do: usage.finish_reason),
                         category: category,
                         failure_code: code,
+                        rejection_path: AIInvocation.rejection_path(ai_error),
                         completed_at: DateTime.utc_now()
                       },
                       authorize?: false
@@ -324,13 +325,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         {:ok, nil}
 
       {:ok, failures} ->
-        latest = Enum.max_by(failures, & &1.completed_at, DateTime)
-
-        {:ok,
-         %{
-           "category" => "invalid_output",
-           "rejection_code" => latest.failure_code || "invalid_output"
-         }}
+        {:ok, AIInvocation.retry_context(failures)}
 
       {:error, _error} = error ->
         error

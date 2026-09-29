@@ -282,6 +282,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert successor.intent["category"] == "invalid_output"
     assert successor.intent["rejection_code"] == "schema_validation"
     assert successor.intent["rejection_path"] == "/intent/type"
+    assert [%{rejection_path: "/intent/type"}] = Cases.list_ai_invocations!(authorize?: false)
 
     before_retry = Cases.get_case!(successor.case_id, authorize?: false)
     turn_count = length(Cases.list_turns!(authorize?: false))
