@@ -10,7 +10,6 @@ defmodule Opsonde.Targets.Profiles.Linux do
   @service_list {"observe.service", "linux.service.list"}
   @journal {"observe.journal", "linux.journal.read"}
   @restart {"effect.service", "linux.service.restart"}
-  @method_observation "request.ssh.observe"
   @method_effect "request.ssh.effect"
   @unit_pattern ~r/^[A-Za-z0-9_.@:-]+\.service$/
   @digest_pattern ~r/^[a-f0-9]{64}$/
@@ -38,7 +37,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
             [@identity, @processes, @service, @service_list, @journal, @restart],
             &elem(&1, 0)
           ) ++
-            [@method_observation, @method_effect]
+            [@method_effect]
         )
     }
   end
@@ -55,11 +54,9 @@ defmodule Opsonde.Targets.Profiles.Linux do
   def resource_scope(_operation, _capability, _selectors), do: "target"
 
   def capabilities(privilege) do
-    {method_observation, method_effect} =
-      Command.operations(@method_observation, @method_effect, "Linux shell")
-
-    method_observation = describe_privilege(method_observation, privilege)
-    method_effect = describe_privilege(method_effect, privilege)
+    method_effect =
+      Command.effect_operation(@method_effect, "Linux shell")
+      |> describe_privilege(privilege)
 
     {:ok,
      %Target.Capabilities{
@@ -94,8 +91,7 @@ defmodule Opsonde.Targets.Profiles.Linux do
            "Read bounded recent journal entries for one systemd service",
            journal_schema(),
            journal_output_schema()
-         ),
-         method_observation
+         )
        ],
        effects: [
          %{

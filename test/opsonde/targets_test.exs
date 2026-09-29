@@ -382,7 +382,7 @@ defmodule Opsonde.TargetsTest do
             {physical.id, "ssh", endpoint, ["observe.power"]},
             {physical.id, method, "#{endpoint}/other", ["observe.power"]},
             {physical.id, method, endpoint, ["effect.power"]},
-            {physical.id, method, endpoint, ["observe.power", "request.ssh.observe"]}
+            {physical.id, method, endpoint, ["observe.power", "request.ssh.effect"]}
           ] do
         assert {:error, error} =
                  create.(target_id, candidate_method, candidate_endpoint, capabilities)
@@ -467,7 +467,7 @@ defmodule Opsonde.TargetsTest do
           {"ios-xe-ssh", switch, "ssh_cli", "request.cli.observe", linux},
           {"ios-xe-netconf", switch, "netconf", "request.netconf.observe", linux},
           {"ios-xe-restconf", switch, "restconf", "request.restconf.observe", linux},
-          {"ssh-exec", other, "ssh", "request.ssh.observe", nil}
+          {"ssh-exec", other, "ssh", "request.ssh.effect", nil}
         ] do
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =

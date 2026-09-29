@@ -7,7 +7,6 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
   alias Opsonde.Targets.Adapters.SSH.Command
   alias Opsonde.Targets.Profiles.Linux, as: Profile
 
-  @method_observation "request.ssh.observe"
   @method_effect "request.ssh.effect"
 
   defmodule State do
@@ -60,8 +59,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
   def capabilities(%State{privilege: privilege}, _invocation), do: Profile.capabilities(privilege)
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @method_observation do
+  def observe(%State{} = state, request, invocation) do
     with {:ok, command, decoder} <- Profile.observation_command(state.privilege, request),
          {:ok, result} <- execute(state, request, command, invocation),
          {:ok, facts} <- Profile.decode_observation(decoder, result) do
@@ -76,29 +74,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
     end
   end
 
-  def observe(%State{} = state, %{capability: @method_observation} = request, invocation) do
-    with {:ok, command} <- Command.observation_command(request, @method_observation),
-         {:ok, result} <-
-           execute(state, request, Profile.privileged(state.privilege, command), invocation) do
-      {:ok,
-       %Target.Observation{
-         facts: Command.facts(result),
-         observed_at: DateTime.utc_now(),
-         evidence: [evidence(result)]
-       }}
-    else
-      {:error, category, message} -> read_error(category, message)
-    end
-  end
-
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @method_observation} = request) do
-    case Command.observation_command(request, @method_observation) do
-      {:ok, _command} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
-
   def preflight(%State{} = state, request) do
     case Profile.observation_command(state.privilege, request) do
       {:ok, _command, _decoder} -> :ok
@@ -128,8 +104,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @method_observation do
+  def verify(%State{} = state, request, invocation) do
     with {:ok, command, :service} <- Profile.observation_command(state.privilege, request),
          {:ok, expected} <- Profile.verification_expected(request.expected),
          {:ok, result} <- execute(state, request, command, invocation),
@@ -144,24 +119,6 @@ defmodule Opsonde.Targets.Adapters.SSH.Linux do
     else
       {:error, category, message} -> read_error(category, message)
       _error -> {:error, :failed, "Linux verification request is invalid"}
-    end
-  end
-
-  def verify(%State{} = state, %{capability: @method_observation} = request, invocation) do
-    with {:ok, command} <-
-           Command.observation_command(request, @method_observation),
-         {:ok, result} <-
-           execute(state, request, Profile.privileged(state.privilege, command), invocation),
-         facts <- Command.facts(result) do
-      {:ok,
-       %Target.Verification{
-         status: Profile.expected_status(facts, request.expected),
-         observed_at: DateTime.utc_now(),
-         facts: facts,
-         evidence: [evidence(result)]
-       }}
-    else
-      {:error, category, message} -> read_error(category, message)
     end
   end
 

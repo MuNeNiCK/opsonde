@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.SSHExecTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Adapters.SSH.Command
+  alias Opsonde.Targets.Adapters.SSH.Exec
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
   alias Opsonde.Transports.SSH, as: Transport
 
@@ -66,23 +66,6 @@ defmodule Opsonde.Targets.SSHExecTest do
   setup context do
     Agent.update(context.commands, fn _commands -> [] end)
     :ok
-  end
-
-  test "Method observation rejects command families with effect flags" do
-    for command <- [
-          "rg --pre 'sh -c touch /tmp/unsafe' pattern .",
-          "ethtool eth0 -s eth0 speed 100",
-          "find /tmp -exec touch /tmp/unsafe \\;",
-          "ip netns exec namespace touch /tmp/unsafe",
-          "journalctl --rotate",
-          "dmesg --read-clear",
-          "ss -K dst 192.0.2.1"
-        ] do
-      refute Command.readonly?(command)
-    end
-
-    assert Command.readonly?("systemctl list-unit-files --type=service --no-pager")
-    assert Command.readonly?("uname -a")
   end
 
   test "transport supports pinned password and in-memory public-key authentication", context do
@@ -175,7 +158,26 @@ defmodule Opsonde.Targets.SSHExecTest do
              )
   end
 
-  test "SSH adapter exposes reviewed observation and effect requests through one method",
+  test "an SSH effect with a lost response has an unknown outcome", context do
+    assert {:ok, state} =
+             Transport.build(
+               configuration(context, %{"operation_timeout_ms" => 500}),
+               password_credentials()
+             )
+
+    request = %{
+      capability: "request.ssh.effect",
+      operation: "command.execute",
+      selectors: %{},
+      parameters: %{"command" => "slow"},
+      connection: %Target.Connection{endpoint: context.endpoint}
+    }
+
+    assert {:ok, %Target.EffectResult{status: :unknown}} = Exec.effect(state, request, %{})
+    assert commands(context) == ["slow"]
+  end
+
+  test "SSH adapter exposes arbitrary commands only as reviewed effects",
        context do
     admin = Accounts.bootstrap!("ssh-exec-admin@example.com", @password, @password)
 
@@ -198,12 +200,9 @@ defmodule Opsonde.Targets.SSHExecTest do
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
-    assert %Target.Capabilities{observations: [observation], effects: [tool]} =
+    assert %Target.Capabilities{observations: [], effects: [tool]} =
              Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
 
-    assert observation.capability == "request.ssh.observe"
-    assert observation.operation == "command.observe"
-    assert observation.description =~ "Allowed roots:"
     assert tool.capability == "request.ssh.effect"
     assert tool.operation == "command.execute"
 
@@ -221,11 +220,11 @@ defmodule Opsonde.Targets.SSHExecTest do
         context.endpoint,
         provider.revision,
         100,
-        ["request.ssh.observe", "request.ssh.effect"],
+        ["request.ssh.effect"],
         actor: admin
       )
 
-    for command <- ["systemctl restart sshd.service", "uname -a; touch /tmp/unsafe"] do
+    for command <- ["uname -a", "systemctl restart sshd.service", "uname -a; touch /tmp/unsafe"] do
       assert {:error, denied} =
                Targets.clear_target_request(
                  request(target, method, :observation, :auto, command),
@@ -251,55 +250,6 @@ defmodule Opsonde.Targets.SSHExecTest do
 
     assert policy_error(readonly_error).category == :forbidden
 
-    observation_clearance =
-      Targets.clear_target_request!(
-        request(target, method, :observation, :readonly, "uname -a"),
-        actor: operator
-      )
-
-    assert %Target.Observation{facts: observation_facts} =
-             Targets.dispatch_target_observation!(observation_clearance, %{}, actor: operator)
-
-    assert observation_facts["stdout"] == %{
-             "encoding" => "utf-8",
-             "value" => "ran:uname -a"
-           }
-
-    assert commands(context) == ["uname -a"]
-
-    method =
-      Targets.update_access_method!(
-        method,
-        method.revision,
-        %{capabilities: ["request.ssh.observe"]},
-        actor: admin
-      )
-
-    assert {:error, _} =
-             Targets.clear_target_request(
-               request(target, method, :effect, :full_access, "never-ungranted"),
-               actor: operator
-             )
-
-    observation_clearance =
-      Targets.clear_target_request!(
-        request(target, method, :observation, :readonly, "uname -a"),
-        actor: operator
-      )
-
-    assert %Target.Observation{} =
-             Targets.dispatch_target_observation!(observation_clearance, %{}, actor: operator)
-
-    assert commands(context) == ["uname -a", "uname -a"]
-
-    method =
-      Targets.update_access_method!(
-        method,
-        method.revision,
-        %{capabilities: ["request.ssh.observe", "request.ssh.effect"]},
-        actor: admin
-      )
-
     stale_clearance =
       Targets.clear_target_request!(
         request(target, method, :effect, :full_access, "never-stale"),
@@ -315,7 +265,7 @@ defmodule Opsonde.Targets.SSHExecTest do
              )
 
     assert policy_error(stale_error).category == :stale_context
-    assert commands(context) == ["uname -a", "uname -a"]
+    assert commands(context) == []
 
     Targets.create_target_policy!(
       target.id,
@@ -336,7 +286,7 @@ defmodule Opsonde.Targets.SSHExecTest do
              )
 
     assert policy_error(denied_error).category == :denied
-    assert commands(context) == ["uname -a", "uname -a"]
+    assert commands(context) == []
 
     effect_clearance =
       Targets.clear_target_request!(
@@ -351,27 +301,31 @@ defmodule Opsonde.Targets.SSHExecTest do
              )
 
     assert details["stdout"] == %{"encoding" => "utf-8", "value" => "ran:apply"}
-    assert commands(context) == ["uname -a", "uname -a", "apply"]
+    assert commands(context) == ["apply"]
 
-    verification_clearance =
-      Targets.clear_target_request!(
-        request(target, method, :verification, :full_access, "uname -a"),
-        actor: operator
-      )
+    for command <- ["sysctl kern.ostype", "show chassis alarms"] do
+      clearance =
+        Targets.clear_target_request!(
+          request(target, method, :effect, :full_access, command),
+          actor: operator
+        )
 
-    assert %Target.Verification{status: :unknown, facts: facts} =
-             Targets.dispatch_target_verification!(verification_clearance, %{}, actor: operator)
+      assert %Target.EffectResult{status: :applied} =
+               Targets.dispatch_target_effect!(clearance, %{},
+                 actor: operator,
+                 authorize?: false
+               )
+    end
 
-    assert facts["stdout"] == %{"encoding" => "utf-8", "value" => "ran:uname -a"}
-    assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
+    assert commands(context) == ["apply", "sysctl kern.ostype", "show chassis alarms"]
 
     assert {:error, _} =
              Targets.clear_target_request(
-               request(target, method, :verification, :full_access, "touch /tmp/unsafe"),
+               request(target, method, :verification, :full_access, "uname -a"),
                actor: operator
              )
 
-    assert commands(context) == ["uname -a", "uname -a", "apply", "uname -a"]
+    assert commands(context) == ["apply", "sysctl kern.ostype", "show chassis alarms"]
   end
 
   defp configuration(context, overrides \\ %{}) do
@@ -407,13 +361,8 @@ defmodule Opsonde.Targets.SSHExecTest do
       target_revision: target.revision,
       access_method_id: method.id,
       access_method_revision: method.revision,
-      capability:
-        if(kind in [:observation, :verification],
-          do: "request.ssh.observe",
-          else: "request.ssh.effect"
-        ),
-      operation:
-        if(kind in [:observation, :verification], do: "command.observe", else: "command.execute"),
+      capability: "request.ssh.effect",
+      operation: "command.execute",
       selectors: %{},
       parameters: %{"command" => command},
       operation_id: if(kind in [:effect, :verification], do: "operation-#{command}"),

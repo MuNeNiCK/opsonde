@@ -8,7 +8,6 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
   alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.Adapters.SSH.Command
 
-  @observation_capability "request.ssh.observe"
   @effect_capability "request.ssh.effect"
 
   @impl Opsonde.Providers.Adapter
@@ -21,7 +20,7 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
   def access_method_profile do
     %Target.AccessMethodProfile{
       method: "ssh",
-      capabilities: [@observation_capability, @effect_capability]
+      capabilities: [@effect_capability]
     }
   end
 
@@ -43,39 +42,20 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
-    {observation, effect} =
-      Command.operations(@observation_capability, @effect_capability, "SSH")
-
     {:ok,
      %Target.Capabilities{
-       observations: [observation],
-       effects: [effect]
+       observations: [],
+       effects: [Command.effect_operation(@effect_capability, "SSH")]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @observation_capability} = request) do
-    case Command.observation_command(request, @observation_capability) do
-      {:ok, _command} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
-
   def preflight(_state, _request),
-    do: {:error, :failed, "SSH observation is unsupported"}
+    do: {:error, :failed, "Raw SSH commands require effect authority"}
 
   @impl Opsonde.Providers.Target
-  def observe(state, request, invocation) do
-    with {:ok, command} <- Command.observation_command(request, @observation_capability),
-         {:ok, result} <-
-           Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
-      {:ok,
-       %Target.Observation{
-         facts: Command.facts(result),
-         observed_at: DateTime.utc_now()
-       }}
-    end
-  end
+  def observe(_state, _request, _invocation),
+    do: {:error, :failed, "Raw SSH commands require effect authority"}
 
   @impl Opsonde.Providers.Target
   def effect(state, request, invocation) do
@@ -87,14 +67,8 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(state, request, invocation) do
-    with {:ok, command} <-
-           Command.observation_command(request, @observation_capability),
-         result <-
-           Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
-      verification_result(result)
-    end
-  end
+  def verify(_state, _request, _invocation),
+    do: {:error, :failed, "Raw SSH commands cannot verify an effect"}
 
   defp effect_result({:ok, result}) do
     {:ok,
@@ -115,27 +89,6 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
 
   defp effect_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
   defp effect_result({:error, _category, message}), do: {:error, :failed, message}
-
-  defp verification_result({:ok, result}) do
-    {:ok,
-     %Target.Verification{
-       status: :unknown,
-       observed_at: DateTime.utc_now(),
-       facts: Command.facts(result)
-     }}
-  end
-
-  defp verification_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
-
-  defp verification_result({:error, category, message})
-       when category in [:timeout, :timeout_after_dispatch],
-       do: {:error, :timeout, message}
-
-  defp verification_result({:error, category, message})
-       when category in [:unreachable, :disconnected, :disconnected_after_dispatch],
-       do: {:error, :retryable, message}
-
-  defp verification_result({:error, _category, message}), do: {:error, :failed, message}
 
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end

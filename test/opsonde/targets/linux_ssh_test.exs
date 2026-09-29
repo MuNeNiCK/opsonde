@@ -15,7 +15,6 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     "observe.service",
     "observe.journal",
     "effect.service",
-    "request.ssh.observe",
     "request.ssh.effect"
   ]
 
@@ -137,8 +136,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              "linux.process.list",
              "linux.service.list",
              "linux.service.inspect",
-             "linux.journal.read",
-             "command.observe"
+             "linux.journal.read"
            ]
 
     tools = Map.new(observations, &{&1.operation, &1})
@@ -175,18 +173,6 @@ defmodule Opsonde.Targets.LinuxSSHTest do
                observation: "linux.service.inspect"
              }
            ]
-
-    assert %Target.Observation{facts: %{"exit_status" => 0} = method_facts} =
-             observe!(
-               context,
-               "request.ssh.observe",
-               "command.observe",
-               %{},
-               %{"command" => "uname -a"}
-             )
-
-    assert method_facts["stdout"] == %{"encoding" => "utf-8", "value" => "Linux fixture\n"}
-    assert commands(context) == ["sudo -n uname -a"]
 
     assert get_in(effect.input_schema, [
              "properties",
@@ -303,7 +289,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
   end
 
-  test "configured privilege applies to Method effects and verification", context do
+  test "configured privilege applies to arbitrary Method effects", context do
     effect =
       policy_request(
         context,
@@ -322,60 +308,38 @@ defmodule Opsonde.Targets.LinuxSSHTest do
                authorize?: false
              )
 
-    verification =
-      policy_request(
-        context,
-        :verification,
-        "request.ssh.observe",
-        "command.observe",
-        %{},
-        %{"command" => "uname -a"},
-        %{"exit_status" => 0}
-      )
-
-    verification_clearance =
-      Targets.clear_target_request!(verification, actor: context.operator)
-
-    assert %Target.Verification{status: :verified} =
-             Targets.dispatch_target_verification!(verification_clearance, %{},
-               actor: context.operator
-             )
-
-    assert commands(context) == [
-             "sudo -n systemctl restart opsonde-validation.service",
-             "sudo -n uname -a"
-           ]
+    assert commands(context) == ["sudo -n systemctl restart opsonde-validation.service"]
   end
 
-  test "Method observation rejects unsupported commands before clearance", context do
+  test "raw SSH command cannot be cleared as an observation", context do
     request =
       policy_request(
         context,
         :observation,
-        "request.ssh.observe",
-        "command.observe",
+        "request.ssh.effect",
+        "command.execute",
         %{},
         %{"command" => "curl http://127.0.0.1:18080/metrics"}
       )
 
     assert {:error, error} = Targets.clear_target_request(request, actor: context.operator)
-    assert Exception.message(error) =~ "not provably non-mutating"
+    assert Exception.message(error) =~ "invalid"
     assert commands(context) == []
   end
 
-  test "Method commands remain unchanged when privilege is none", context do
+  test "arbitrary Method effect remains unchanged when privilege is none", context do
     configuration = Map.put(configuration(context), "privilege", "none")
     assert {:ok, state} = LinuxSSH.build(configuration, credentials())
 
     request = %{
-      capability: "request.ssh.observe",
-      operation: "command.observe",
+      capability: "request.ssh.effect",
+      operation: "command.execute",
       selectors: %{},
       parameters: %{"command" => "uname -a"},
       connection: %{endpoint: context.endpoint}
     }
 
-    assert {:ok, %Target.Observation{}} = LinuxSSH.observe(state, request, %{})
+    assert {:ok, %Target.EffectResult{status: :applied}} = LinuxSSH.effect(state, request, %{})
     assert commands(context) == ["uname -a"]
   end
 
