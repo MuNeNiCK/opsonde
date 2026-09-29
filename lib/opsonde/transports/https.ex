@@ -22,6 +22,62 @@ defmodule Opsonde.Transports.HTTPS do
 
   def transport_options(_ca_certificate, _host), do: {:error, :invalid_ca_certificate}
 
+  def parse_ca_certificate(pem) when is_binary(pem), do: certificates(pem)
+  def parse_ca_certificate(_pem), do: {:error, :invalid_ca_certificate}
+
+  def custom_trust_options(certificates, host)
+      when is_list(certificates) and certificates != [] and is_binary(host) and host != "" do
+    [
+      verify: :verify_peer,
+      cacerts: certificates,
+      server_name_indication: String.to_charlist(host),
+      partial_chain: fn chain ->
+        case Enum.find(chain, &(&1 in certificates)) do
+          nil -> :unknown_ca
+          certificate -> {:trusted_ca, certificate}
+        end
+      end,
+      verify_fun: verify_fun(certificates, host)
+    ]
+  end
+
+  defp verify_fun(trusted, host) do
+    callback = fn
+      certificate, {:bad_cert, :selfsigned_peer}, state ->
+        der = :public_key.pkix_encode(:OTPCertificate, certificate, :otp)
+
+        if der in state.trusted and valid_hostname?(certificate, state.host),
+          do: {:valid, state},
+          else: {:fail, :selfsigned_peer}
+
+      _certificate, {:bad_cert, reason}, _state ->
+        {:fail, reason}
+
+      _certificate, {:extension, _extension}, state ->
+        {:unknown, state}
+
+      _certificate, :valid, state ->
+        {:valid, state}
+
+      certificate, :valid_peer, state ->
+        if valid_hostname?(certificate, state.host),
+          do: {:valid, state},
+          else: {:fail, :hostname_check_failed}
+    end
+
+    {callback, %{trusted: trusted, host: host}}
+  end
+
+  defp valid_hostname?(certificate, host) do
+    references =
+      case :inet.parse_address(String.to_charlist(host)) do
+        {:ok, address} -> [{:ip, address}]
+        {:error, _reason} -> [{:dns_id, String.to_charlist(host)}]
+      end
+
+    :public_key.pkix_verify_hostname(certificate, references)
+  end
+
   defp certificates(nil), do: {:ok, []}
 
   defp certificates(pem) when byte_size(pem) <= @max_ca_bytes do

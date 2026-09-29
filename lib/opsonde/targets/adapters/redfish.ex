@@ -8,6 +8,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   alias Opsonde.Targets.Profiles.BMC
   alias Opsonde.Targets.BMC.OutputProjection
   alias Opsonde.Targets.Adapters.Redfish.ResourceURI
+  alias Opsonde.Transports.HTTPS
 
   @reset_types %{
     "bmc.power.on" => "On",
@@ -52,7 +53,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          {:ok, username} <- required_string(credentials["username"], 255),
          false <- String.contains?(username, ":"),
          {:ok, password} <- required_string(credentials["password"], 4_096),
-         {:ok, certificates} <- certificates(configuration["ca_certificate"]),
+         {:ok, certificates} <- HTTPS.parse_ca_certificate(configuration["ca_certificate"]),
          timeout when is_integer(timeout) and timeout in 100..60_000 <-
            Map.get(configuration, "timeout_ms", 10_000) do
       {:ok,
@@ -724,11 +725,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         [{"accept", "application/json"}, {"content-type", "application/json"}] ++ extra_headers,
       connect_options: [
         timeout: state.timeout,
-        transport_opts: [
-          verify: :verify_peer,
-          cacerts: state.cacerts,
-          verify_fun: verify_fun(state.cacerts, host)
-        ]
+        transport_opts: HTTPS.custom_trust_options(state.cacerts, host)
       ],
       receive_timeout: state.timeout,
       retry: false,
@@ -780,43 +777,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     _ -> {:error, :transport, "Redfish request failed"}
   end
 
-  defp verify_fun(trusted, host) do
-    callback = fn
-      cert, {:bad_cert, :selfsigned_peer}, state ->
-        der = :public_key.pkix_encode(:OTPCertificate, cert, :otp)
-
-        if der in state.trusted and valid_hostname?(cert, state.host),
-          do: {:valid, state},
-          else: {:fail, :selfsigned_peer}
-
-      _cert, {:bad_cert, reason}, _state ->
-        {:fail, reason}
-
-      _cert, {:extension, _extension}, state ->
-        {:unknown, state}
-
-      _cert, :valid, state ->
-        {:valid, state}
-
-      cert, :valid_peer, state ->
-        if valid_hostname?(cert, state.host),
-          do: {:valid, state},
-          else: {:fail, :hostname_check_failed}
-    end
-
-    {callback, %{trusted: trusted, host: host}}
-  end
-
-  defp valid_hostname?(certificate, host) do
-    references =
-      case :inet.parse_address(String.to_charlist(host)) do
-        {:ok, address} -> [{:ip, address}]
-        {:error, :einval} -> [{:dns_id, String.to_charlist(host)}]
-      end
-
-    :public_key.pkix_verify_hostname(certificate, references)
-  end
-
   defp endpoint(value) when is_binary(value) and byte_size(value) <= 255 do
     case URI.parse(value) do
       %URI{scheme: "https", host: host, path: path, userinfo: nil, query: nil, fragment: nil} =
@@ -839,22 +799,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   defp system_path(_path), do: {:error, :invalid_system_path}
-
-  defp certificates(pem) when is_binary(pem) and byte_size(pem) <= 65_536 do
-    certs =
-      pem
-      |> :public_key.pem_decode()
-      |> Enum.flat_map(fn
-        {:Certificate, der, :not_encrypted} -> [der]
-        _ -> []
-      end)
-
-    if certs == [], do: {:error, :invalid_ca}, else: {:ok, certs}
-  rescue
-    _ -> {:error, :invalid_ca}
-  end
-
-  defp certificates(_pem), do: {:error, :invalid_ca}
 
   defp required_string(value, max) when is_binary(value) do
     if byte_size(value) in 1..max, do: {:ok, value}, else: {:error, :invalid_string}

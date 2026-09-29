@@ -6,6 +6,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.IOSXE
+  alias Opsonde.Transports.HTTPS
 
   @native_observation "native.restconf.observe"
   @native_effect "native.restconf.effect"
@@ -36,7 +37,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
          {:ok, username} <- required_string(credentials, "username", 255),
          false <- String.contains?(username, ":"),
          {:ok, password} <- required_string(credentials, "password", 4_096),
-         {:ok, cacerts} <- certificates(configuration),
+         {:ok, cacerts} <- HTTPS.parse_ca_certificate(configuration["ca_certificate"]),
          {:ok, connect_timeout} <- timeout(configuration, "connect_timeout_ms", 10_000),
          {:ok, request_timeout} <- timeout(configuration, "request_timeout_ms", 30_000),
          {:ok, max_body_bytes} <- body_limit(configuration) do
@@ -291,12 +292,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
         ],
         connect_options: [
           timeout: state.connect_timeout,
-          transport_opts: [
-            verify: :verify_peer,
-            cacerts: state.cacerts,
-            partial_chain: partial_chain(state.cacerts),
-            verify_fun: verify_fun(state.cacerts, host)
-          ]
+          transport_opts: HTTPS.custom_trust_options(state.cacerts, host)
         ],
         receive_timeout: state.request_timeout,
         retry: false,
@@ -497,68 +493,6 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp endpoint(_value), do: invalid_endpoint()
-
-  defp certificates(configuration) do
-    with {:ok, pem} <- required_string(configuration, "ca_certificate", 65_536),
-         entries when is_list(entries) and entries != [] <- :public_key.pem_decode(pem),
-         certificates when certificates != [] <-
-           Enum.flat_map(entries, fn
-             {:Certificate, der, :not_encrypted} -> [der]
-             _entry -> []
-           end) do
-      {:ok, certificates}
-    else
-      _error -> {:error, :invalid_ca_certificate}
-    end
-  rescue
-    _error -> {:error, :invalid_ca_certificate}
-  end
-
-  defp partial_chain(trusted) do
-    fn chain ->
-      case Enum.find(chain, &(&1 in trusted)) do
-        nil -> :unknown_ca
-        certificate -> {:trusted_ca, certificate}
-      end
-    end
-  end
-
-  defp verify_fun(trusted, host) do
-    callback = fn
-      certificate, {:bad_cert, :selfsigned_peer}, state ->
-        der = :public_key.pkix_encode(:OTPCertificate, certificate, :otp)
-
-        if der in state.trusted and valid_hostname?(certificate, state.host),
-          do: {:valid, state},
-          else: {:fail, :selfsigned_peer}
-
-      _certificate, {:bad_cert, reason}, _state ->
-        {:fail, reason}
-
-      _certificate, {:extension, _extension}, state ->
-        {:unknown, state}
-
-      _certificate, :valid, state ->
-        {:valid, state}
-
-      certificate, :valid_peer, state ->
-        if valid_hostname?(certificate, state.host),
-          do: {:valid, state},
-          else: {:fail, :hostname_check_failed}
-    end
-
-    {callback, %{trusted: trusted, host: host}}
-  end
-
-  defp valid_hostname?(certificate, host) do
-    references =
-      case :inet.parse_address(String.to_charlist(host)) do
-        {:ok, address} -> [{:ip, address}]
-        {:error, :einval} -> [{:dns_id, String.to_charlist(host)}]
-      end
-
-    :public_key.pkix_verify_hostname(certificate, references)
-  end
 
   defp timeout(configuration, key, default) do
     case Map.get(configuration, key, default) do
