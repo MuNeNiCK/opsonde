@@ -1,8 +1,7 @@
 defmodule Opsonde.Targets.Profiles.Kubernetes do
   @moduledoc false
   alias Opsonde.Providers.Target
-
-  @name_pattern ~r/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
+  alias Opsonde.Transports.Kubernetes, as: Client
 
   def capabilities({method_observation, method_effect}) do
     %Target.Capabilities{
@@ -87,7 +86,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
       {"observe.workload", "kubernetes.deployment.inspect", %{"name" => name} = selectors,
        parameters}
       when map_size(selectors) == 1 and parameters == %{} ->
-        if valid_name?(name),
+        if Client.valid_name?(name),
           do:
             {:ok, K8s.Client.get("apps/v1", "Deployment", namespace: namespace, name: name),
              :deployment},
@@ -97,7 +96,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
        %{"name" => name, "container" => container} = selectors,
        %{"tail_lines" => lines, "limit_bytes" => bytes} = parameters}
       when map_size(selectors) == 2 and map_size(parameters) == 2 ->
-        if valid_name?(name) and valid_name?(container) and is_integer(lines) and
+        if Client.valid_name?(name) and Client.valid_name?(container) and is_integer(lines) and
              lines in 1..500 and is_integer(bytes) and bytes in 1..60_000 do
           operation =
             K8s.Client.get("v1", "pods/log", namespace: namespace, name: name)
@@ -158,7 +157,7 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
        } = parameters}
       when map_size(selectors) == 1 and map_size(parameters) == 3 and is_integer(replicas) and
              replicas in 0..100 ->
-        if valid_name?(name) and valid_identity?(uid) and valid_identity?(version) do
+        if Client.valid_name?(name) and valid_identity?(uid) and valid_identity?(version) do
           resource = %{
             "apiVersion" => "apps/v1",
             "kind" => "Deployment",
@@ -312,9 +311,6 @@ defmodule Opsonde.Targets.Profiles.Kubernetes do
 
   defp exact_keys?(map, allowed),
     do: Enum.all?(Map.keys(map), &(is_binary(&1) and &1 in allowed))
-
-  def valid_name?(value),
-    do: is_binary(value) and byte_size(value) in 1..253 and Regex.match?(@name_pattern, value)
 
   defp valid_identity?(value),
     do:
