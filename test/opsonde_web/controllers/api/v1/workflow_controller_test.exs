@@ -1061,7 +1061,6 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         target.id,
         provider.id,
         "workflow-ssh",
-        "linux",
         "ssh",
         "ssh://workflow-linux",
         provider.revision,

@@ -193,7 +193,6 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         target_id: Schemas.uuid(),
         provider_id: Schemas.uuid(),
         name: string(1, 120),
-        platform: string(1, 120),
         method: string(1, 120),
         endpoint: string(1, 1_024),
         provider_revision: positive_integer(),
@@ -205,7 +204,6 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         :target_id,
         :provider_id,
         :name,
-        :platform,
         :method,
         :endpoint,
         :provider_revision,
@@ -223,14 +221,13 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         target_id: Schemas.uuid(),
         provider_id: Schemas.uuid(),
         name: string(1, 120),
-        platform: string(1, 120),
         method: string(1, 120),
         endpoint: string(1, 1_024),
         provider_revision: positive_integer(),
         priority: priority(),
         capabilities: string_array(100, 120)
       },
-      [:target_id, :provider_id, :name, :platform, :method, :endpoint, :provider_revision]
+      [:target_id, :provider_id, :name, :method, :endpoint, :provider_revision]
     )
   end
 
@@ -239,7 +236,6 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       target_id: Schemas.uuid(),
       provider_id: Schemas.uuid(),
       name: string(1, 120),
-      platform: string(1, 120),
       method: string(1, 120),
       endpoint: string(1, 1_024),
       provider_revision: positive_integer(),

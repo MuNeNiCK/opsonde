@@ -20,10 +20,10 @@ defmodule Opsonde.TargetPolicyTest do
     linux = create_target!(admin, "linux-01", "host", "linux")
 
     ssh =
-      create_method!(admin, provider, linux, "ssh", "linux", "ssh", "ssh://192.0.2.10:22")
+      create_method!(admin, provider, linux, "ssh", "ssh", "ssh://192.0.2.10:22")
 
     api =
-      create_method!(admin, provider, linux, "api", "linux", "agent", "https://192.0.2.10")
+      create_method!(admin, provider, linux, "api", "agent", "https://192.0.2.10")
 
     %{
       admin: admin,
@@ -96,7 +96,6 @@ defmodule Opsonde.TargetPolicyTest do
         context.provider,
         other,
         "ssh",
-        "generic",
         "ssh",
         "ssh://192.0.2.11:22"
       )
@@ -181,7 +180,6 @@ defmodule Opsonde.TargetPolicyTest do
         context.provider,
         ios,
         "netconf",
-        "cisco_ios_xe",
         "netconf",
         "ssh://192.0.2.20:830"
       )
@@ -192,7 +190,6 @@ defmodule Opsonde.TargetPolicyTest do
         context.provider,
         ios,
         "ssh-exec",
-        "generic",
         "ssh",
         "ssh://192.0.2.20:22"
       )
@@ -485,16 +482,15 @@ defmodule Opsonde.TargetPolicyTest do
     )
   end
 
-  defp create_target!(admin, name, kind, platform) do
-    Targets.create_target!(name, kind, platform, %{}, nil, actor: admin)
+  defp create_target!(admin, name, kind, type_id) do
+    Targets.create_target!(name, kind, type_id, %{}, nil, actor: admin)
   end
 
-  defp create_method!(admin, provider, target, name, platform, method, endpoint) do
+  defp create_method!(admin, provider, target, name, method, endpoint) do
     Targets.create_access_method!(
       target.id,
       provider.id,
       name,
-      platform,
       method,
       endpoint,
       provider.revision,

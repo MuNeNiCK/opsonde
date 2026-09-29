@@ -20,7 +20,6 @@ defmodule Opsonde.Targets.Adapters.SSH.Exec do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{
-      platform: "ssh",
       method: "ssh",
       capabilities: [@observation_capability, @effect_capability]
     }

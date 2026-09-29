@@ -32,7 +32,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{
-      platform: "http",
       method: "http",
       configuration_endpoint?: true,
       capabilities: [@observe, @effect]

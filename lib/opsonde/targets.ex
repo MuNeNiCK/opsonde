@@ -58,7 +58,6 @@ defmodule Opsonde.Targets do
           :target_id,
           :provider_id,
           :name,
-          :platform,
           :method,
           :endpoint,
           :provider_revision,

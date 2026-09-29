@@ -177,7 +177,6 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
         target.id,
         provider.id,
         "RESTCONF",
-        "cisco_ios_xe",
         "restconf",
         endpoint,
         provider.revision,

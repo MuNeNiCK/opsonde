@@ -52,7 +52,7 @@ defmodule Opsonde.Providers.Target do
 
   defmodule AccessMethodProfile do
     @moduledoc false
-    @enforce_keys [:platform, :method, :capabilities]
+    @enforce_keys [:method, :capabilities]
     defstruct @enforce_keys ++
                 [
                   configuration_endpoint?: false,
@@ -60,7 +60,6 @@ defmodule Opsonde.Providers.Target do
                 ]
 
     @type t :: %__MODULE__{
-            platform: String.t(),
             method: String.t(),
             capabilities: [String.t()],
             configuration_endpoint?: boolean(),

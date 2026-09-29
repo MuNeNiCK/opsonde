@@ -38,7 +38,6 @@ defmodule Opsonde.Targets.Kubernetes.API do
     {:ok, operations} = capabilities(nil, %{})
 
     %Target.AccessMethodProfile{
-      platform: "kubernetes",
       method: "api",
       capabilities: Target.capability_names(operations)
     }

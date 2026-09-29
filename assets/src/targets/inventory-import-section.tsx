@@ -187,7 +187,7 @@ export function InventoryImportSection({
                     rows={8}
                     required
                     placeholder={
-                      'external_id,identity_kind,name,kind,platform,facts_json\nserver-1,linux,server-1,host,linux,"{}"'
+                      'external_id,identity_kind,name,kind,type_id,facts_json\nserver-1,linux,server-1,host,linux,"{}"'
                     }
                   />
                 </div>

@@ -221,7 +221,6 @@ defmodule Opsonde.Targets.IOSXESSHTest do
         target.id,
         provider.id,
         "SSH CLI",
-        "cisco_ios_xe",
         "ssh_cli",
         context.endpoint,
         provider.revision,

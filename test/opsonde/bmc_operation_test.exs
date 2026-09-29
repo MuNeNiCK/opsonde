@@ -417,7 +417,6 @@ defmodule Opsonde.BMCOperationTest do
       target.id,
       enabled.id,
       method,
-      "bare_metal",
       method,
       endpoint,
       enabled.revision,

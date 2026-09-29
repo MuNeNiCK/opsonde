@@ -13,7 +13,6 @@ defmodule Opsonde.Targets.BMC do
 
   def access_method_profile(method) when method in ["redfish", "ipmi"] do
     %Target.AccessMethodProfile{
-      platform: "bare_metal",
       method: method,
       configuration_endpoint?: true,
       required_capabilities: ["observe.power"],

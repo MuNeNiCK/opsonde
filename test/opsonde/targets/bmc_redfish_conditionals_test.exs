@@ -397,7 +397,6 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         target.id,
         provider.id,
         "Redfish",
-        "bare_metal",
         "redfish",
         endpoint,
         provider.revision,

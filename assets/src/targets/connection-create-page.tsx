@@ -17,14 +17,14 @@ import { targetAdapter, targetProviderChoice, targetProviderChoices } from "@/ta
 
 const presentations = {
   linux: { icon: Server, title: "Linux", description: "targets.choiceLinux" },
-  "physical-host": {
+  bmc: {
     icon: Server,
-    title: "Physical host BMC",
-    description: "targets.choicePhysicalHost",
+    title: "BMC",
+    description: "targets.choiceBMC",
   },
   "cisco-ios-xe": { icon: Network, title: "Cisco IOS XE", description: "targets.choiceCisco" },
   kubernetes: { icon: Boxes, title: "Kubernetes", description: "targets.choiceKubernetes" },
-  protocol: { icon: Cable, title: "Protocol access", description: "targets.choiceGeneric" },
+  protocol: { icon: Cable, title: "Protocol access", description: "targets.choiceProtocol" },
   netbox: { icon: Database, title: "NetBox", description: "targets.choiceNetBox" },
 } as const;
 

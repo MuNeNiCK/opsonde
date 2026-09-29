@@ -557,14 +557,13 @@ defmodule Opsonde.RelatedTargetRouteTest do
     |> Enum.find(&(&1.turn_id == turn_id and &1.kind == "relationship_traversal_error"))
   end
 
-  defp target!(admin, provider, name, kind, platform, method_name) do
-    target = Targets.create_target!(name, kind, platform, %{}, nil, actor: admin)
+  defp target!(admin, provider, name, kind, type_id, method_name) do
+    target = Targets.create_target!(name, kind, type_id, %{}, nil, actor: admin)
 
     Targets.create_access_method!(
       target.id,
       provider.id,
       method_name,
-      platform,
       method_name,
       "fixture://#{name}",
       provider.revision,

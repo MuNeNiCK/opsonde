@@ -87,7 +87,6 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         target.id,
         provider.id,
         "linux-ssh",
-        "linux",
         "ssh",
         context.endpoint,
         provider.revision,

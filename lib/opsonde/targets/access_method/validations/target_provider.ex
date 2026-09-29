@@ -54,8 +54,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
     capabilities = Ash.Changeset.get_attribute(changeset, :capabilities)
     endpoint = Ash.Changeset.get_attribute(changeset, :endpoint)
 
-    with true <- Ash.Changeset.get_attribute(changeset, :platform) == profile.platform,
-         true <- Ash.Changeset.get_attribute(changeset, :method) == profile.method,
+    with true <- Ash.Changeset.get_attribute(changeset, :method) == profile.method,
          true <-
            not profile.configuration_endpoint? or endpoint == provider.configuration["endpoint"],
          true <- is_list(capabilities) and capabilities != [],

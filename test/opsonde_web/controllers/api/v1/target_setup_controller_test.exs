@@ -122,7 +122,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       "target_id" => target["id"],
       "provider_id" => provider.id,
       "name" => "http-api",
-      "platform" => "http",
       "method" => "http",
       "endpoint" => endpoint,
       "provider_revision" => provider.revision,
@@ -138,6 +137,15 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       )
 
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+
+    unknown_field =
+      post_json(
+        "/api/v1/access-methods",
+        %{"access_method" => Map.put(method, "unexpected_property", "ignored")},
+        context.admin_token
+      )
+
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(unknown_field, 400)
 
     bmc = create_target!(context.admin_token, "bmc-http-mismatch", "management_plane", "bmc", nil)
 
@@ -223,7 +231,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         context,
         linux,
         "linux-ssh",
-        "linux",
         "ssh",
         ["observe.command", "effect.command"]
       )
@@ -234,7 +241,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         junos,
         "ssh-exec",
         "ssh",
-        "ssh",
         ["observe.command"]
       )
 
@@ -243,7 +249,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         context,
         ios_xe,
         "ios-ssh",
-        "cisco_ios_xe",
         "ssh_cli",
         ["observe.command", "effect.command"]
       )
@@ -253,12 +258,11 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         context,
         ios_xe,
         "ios-netconf",
-        "cisco_ios_xe",
         "netconf",
         ["observe.config", "effect.config"]
       )
 
-    assert ssh_exec["platform"] == "ssh"
+    assert ssh_exec["method"] == "ssh"
     assert Enum.sort([ios_ssh["method"], ios_netconf["method"]]) == ["netconf", "ssh_cli"]
     assert linux_ssh["provider_id"] == context.target_provider.id
 
@@ -562,7 +566,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     )
   end
 
-  defp create_access_method!(context, target, name, platform, method, capabilities) do
+  defp create_access_method!(context, target, name, method, capabilities) do
     post_data!(
       "/api/v1/access-methods",
       %{
@@ -570,7 +574,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
           "target_id" => target["id"],
           "provider_id" => context.target_provider.id,
           "name" => name,
-          "platform" => platform,
           "method" => method,
           "endpoint" => "ssh://192.0.2.10:22",
           "provider_revision" => context.target_provider.revision,

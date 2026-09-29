@@ -49,7 +49,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
       target_id: method.target_id,
       provider_id: method.provider_id,
       name: method.name,
-      platform: method.platform,
       method: method.method,
       endpoint: method.endpoint,
       provider_revision: method.provider_revision,

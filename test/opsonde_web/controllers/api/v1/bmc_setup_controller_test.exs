@@ -56,7 +56,6 @@ defmodule OpsondeWeb.API.V1.BMCSetupControllerTest do
             target.id,
             enabled.id,
             method,
-            "bare_metal",
             method,
             endpoint,
             enabled.revision,

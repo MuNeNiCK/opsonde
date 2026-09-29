@@ -31,7 +31,6 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         target.id,
         provider.id,
         "route-ssh",
-        "linux",
         "ssh",
         "ssh://route-effect-linux",
         provider.revision,

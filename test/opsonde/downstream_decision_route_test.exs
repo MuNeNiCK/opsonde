@@ -32,7 +32,6 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
         target.id,
         provider.id,
         "downstream-ssh",
-        "linux",
         "ssh",
         "ssh://downstream-linux",
         provider.revision,

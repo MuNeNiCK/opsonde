@@ -218,7 +218,6 @@ defmodule Opsonde.Targets.SSHExecTest do
         provider.id,
         "registered-ssh-exec",
         "ssh",
-        "ssh",
         context.endpoint,
         provider.revision,
         100,

@@ -1666,7 +1666,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
 
     alter table(:access_methods) do
       add :name, :text, null: false
-      add :platform, :text, null: false
       add :method, :text, null: false
       add :endpoint, :text, null: false
       add :provider_revision, :bigint, null: false
@@ -2491,7 +2490,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       remove :provider_revision
       remove :endpoint
       remove :method
-      remove :platform
       remove :name
     end
 

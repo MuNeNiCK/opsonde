@@ -81,7 +81,6 @@ defmodule Opsonde.Targets.AccessMethod do
         :target_id,
         :provider_id,
         :name,
-        :platform,
         :method,
         :endpoint,
         :provider_revision,
@@ -100,7 +99,6 @@ defmodule Opsonde.Targets.AccessMethod do
         :target_id,
         :provider_id,
         :name,
-        :platform,
         :method,
         :endpoint,
         :provider_revision,
@@ -144,12 +142,6 @@ defmodule Opsonde.Targets.AccessMethod do
     uuid_primary_key :id
 
     attribute :name, :string do
-      allow_nil? false
-      public? true
-      constraints min_length: 1, max_length: 120
-    end
-
-    attribute :platform, :string do
       allow_nil? false
       public? true
       constraints min_length: 1, max_length: 120

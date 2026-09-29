@@ -89,14 +89,15 @@ defmodule Opsonde.Targets.HTTPAPITest do
         "network_device",
         "custom-network-device",
         %{},
-        nil, actor: admin)
+        nil,
+        actor: admin
+      )
 
     method =
       Targets.create_access_method!(
         target.id,
         provider.id,
         "HTTP API",
-        "http",
         "http",
         endpoint,
         provider.revision,

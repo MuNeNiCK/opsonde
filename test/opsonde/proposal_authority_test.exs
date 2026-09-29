@@ -44,7 +44,6 @@ defmodule Opsonde.ProposalAuthorityTest do
         target.id,
         provider.id,
         "authority-ssh",
-        "linux",
         "ssh",
         "ssh://authority-linux",
         provider.revision,

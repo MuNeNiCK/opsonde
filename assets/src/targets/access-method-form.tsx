@@ -111,7 +111,6 @@ export function AccessMethodForm({
                 ...values,
                 target_id: target.id,
                 provider_id: provider.id,
-                platform: provider.access_method_profile.platform,
                 method: provider.access_method_profile.method,
               },
             },

@@ -238,7 +238,6 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         target.id,
         provider.id,
         "NETCONF",
-        "cisco_ios_xe",
         "netconf",
         context.endpoint,
         provider.revision,

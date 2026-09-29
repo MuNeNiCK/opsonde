@@ -49,10 +49,10 @@ defmodule Opsonde.TargetsTest do
     common_endpoint = "ssh://192.0.2.10:22"
 
     linux_ssh =
-      create_method!(context, linux, "ssh", "linux", "ssh", common_endpoint, ["observe.command"])
+      create_method!(context, linux, "ssh", "ssh", common_endpoint, ["observe.command"])
 
     ios_ssh =
-      create_method!(context, ios_xe, "ssh", "cisco_ios_xe", "ssh_cli", common_endpoint, [
+      create_method!(context, ios_xe, "ssh", "ssh_cli", common_endpoint, [
         "observe.command",
         "effect.command"
       ])
@@ -62,7 +62,6 @@ defmodule Opsonde.TargetsTest do
         context,
         ios_xe,
         "netconf",
-        "cisco_ios_xe",
         "netconf",
         "ssh://192.0.2.10:830",
         [
@@ -76,7 +75,6 @@ defmodule Opsonde.TargetsTest do
         context,
         ios_xe,
         "restconf",
-        "cisco_ios_xe",
         "restconf",
         "https://192.0.2.10",
         [
@@ -86,13 +84,13 @@ defmodule Opsonde.TargetsTest do
       )
 
     ssh_exec =
-      create_method!(context, junos, "ssh-exec", "ssh", "ssh", "ssh://192.0.2.20:22", [
+      create_method!(context, junos, "ssh-exec", "ssh", "ssh://192.0.2.20:22", [
         "observe.command"
       ])
 
     assert linux.id != ios_xe.id
     assert linux_ssh.endpoint == ios_ssh.endpoint
-    assert ssh_exec.platform == "ssh"
+    assert ssh_exec.method == "ssh"
 
     assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.type_id)) ==
              Enum.sort(
@@ -206,7 +204,7 @@ defmodule Opsonde.TargetsTest do
     destination = create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization")
 
     method =
-      create_method!(context, source, "ssh", "ssh", "ssh", "ssh://192.0.2.30:22", [
+      create_method!(context, source, "ssh", "ssh", "ssh://192.0.2.30:22", [
         "observe.command"
       ])
 
@@ -364,7 +362,6 @@ defmodule Opsonde.TargetsTest do
           target_id,
           enabled.id,
           "#{method}-management",
-          "bare_metal",
           candidate_method,
           candidate_endpoint,
           enabled.revision,
@@ -423,7 +420,6 @@ defmodule Opsonde.TargetsTest do
                linux.id,
                provider.id,
                "wrong-method",
-               "bare_metal",
                "ipmi",
                endpoint,
                provider.revision,
@@ -439,7 +435,6 @@ defmodule Opsonde.TargetsTest do
         linux.id,
         provider.id,
         "linux-management",
-        "linux",
         "ssh",
         endpoint,
         provider.revision,
@@ -467,14 +462,12 @@ defmodule Opsonde.TargetsTest do
     other =
       create_target!(context.admin, "profile-other", "network_device", "custom-network-device")
 
-    for {type, target, platform, method, capability, invalid_target} <- [
-          {"kubernetes-api", cluster, "kubernetes", "api", "native.kubernetes_api.observe",
-           linux},
-          {"ios-xe-ssh", switch, "cisco_ios_xe", "ssh_cli", "native.cli.observe", linux},
-          {"ios-xe-netconf", switch, "cisco_ios_xe", "netconf", "native.netconf.observe", linux},
-          {"ios-xe-restconf", switch, "cisco_ios_xe", "restconf", "native.restconf.observe",
-           linux},
-          {"ssh-exec", other, "ssh", "ssh", "native.ssh.observe", nil}
+    for {type, target, method, capability, invalid_target} <- [
+          {"kubernetes-api", cluster, "api", "native.kubernetes_api.observe", linux},
+          {"ios-xe-ssh", switch, "ssh_cli", "native.cli.observe", linux},
+          {"ios-xe-netconf", switch, "netconf", "native.netconf.observe", linux},
+          {"ios-xe-restconf", switch, "restconf", "native.restconf.observe", linux},
+          {"ssh-exec", other, "ssh", "native.ssh.observe", nil}
         ] do
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =
@@ -491,7 +484,6 @@ defmodule Opsonde.TargetsTest do
           selected_target.id,
           provider.id,
           type,
-          platform,
           candidate_method,
           endpoint,
           provider.revision,
@@ -517,12 +509,11 @@ defmodule Opsonde.TargetsTest do
     Targets.create_target!(name, kind, type_id, %{}, boundary_id, actor: admin)
   end
 
-  defp create_method!(context, target, name, platform, method, endpoint, capabilities) do
+  defp create_method!(context, target, name, method, endpoint, capabilities) do
     Targets.create_access_method!(
       target.id,
       context.provider.id,
       name,
-      platform,
       method,
       endpoint,
       context.provider.revision,

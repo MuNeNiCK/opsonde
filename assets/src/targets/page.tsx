@@ -246,7 +246,7 @@ export function TargetPage() {
                 <tr>
                   <th className="px-4 py-3">{t("targets.name")}</th>
                   <th className="px-4 py-3">{t("targets.kind")}</th>
-                  <th className="px-4 py-3">{t("targets.platform")}</th>
+                  <th className="px-4 py-3">{t("targets.typeId")}</th>
                   <th className="px-4 py-3 text-right">{t("targets.accessMethods")}</th>
                   <th className="px-4 py-3 text-right">{t("targets.layerRelationships")}</th>
                   <th className="px-4 py-3 text-right">{t("targets.policies")}</th>

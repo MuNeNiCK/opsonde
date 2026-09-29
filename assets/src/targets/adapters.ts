@@ -47,7 +47,7 @@ export function targetAdapter(type: string) {
 }
 
 export const targetProviderChoices = [
-  { id: "physical-host", adapterTypes: ["bmc-redfish", "bmc-ipmi"] },
+  { id: "bmc", adapterTypes: ["bmc-redfish", "bmc-ipmi"] },
   { id: "linux", adapterTypes: ["linux-ssh", "http-api"] },
   {
     id: "cisco-ios-xe",

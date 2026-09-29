@@ -116,6 +116,51 @@ defmodule OpsondeCLI.CLITest do
     assert output =~ "target-1"
   end
 
+  test "creates an Access Method with its Provider profile method", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "POST"
+      assert conn.request_path == "/api/v1/access-methods"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+      {:ok, encoded, conn} = read_body(conn)
+
+      assert Jason.decode!(encoded) == %{
+               "access_method" => %{
+                 "target_id" => "target-1",
+                 "provider_id" => "provider-1",
+                 "name" => "Redfish",
+                 "method" => "redfish",
+                 "endpoint" => "https://bmc.example.test/redfish/v1",
+                 "provider_revision" => 1,
+                 "capabilities" => ["observe.power"]
+               }
+             }
+
+      conn
+      |> put_status(201)
+      |> Req.Test.json(%{data: %{id: "method-1", revision: 1}})
+    end)
+
+    input =
+      Jason.encode!(%{
+        name: "Redfish",
+        target_id: "target-1",
+        provider_id: "provider-1",
+        method: "redfish",
+        endpoint: "https://bmc.example.test/redfish/v1",
+        provider_revision: 1,
+        capabilities: ["observe.power"]
+      })
+
+    output =
+      capture_io(input, fn ->
+        assert CLI.run(["access-method", "create", "--input", "-"], runtime(context)) == 0
+      end)
+
+    assert output =~ "method-1"
+  end
+
   test "BMC operation and secret commands use the authenticated method API", context do
     save_session(context)
 

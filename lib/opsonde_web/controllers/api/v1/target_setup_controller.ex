@@ -10,7 +10,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   @boundary_fields ~w(name kind facts)
   @target_fields ~w(name kind type_id facts management_boundary_id)
   @identity_fields ~w(target_id source kind value)
-  @access_method_fields ~w(target_id provider_id name platform method endpoint provider_revision priority capabilities)
+  @access_method_fields ~w(target_id provider_id name method endpoint provider_revision priority capabilities)
   @relationship_fields ~w(source_target_id destination_target_id kind facts valid_until)
   @policy_fields ~w(name request_kinds capabilities operations selector_match parameter_match reason)
 
@@ -501,12 +501,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   end
 
   def access_methods_create(conn, %{"access_method" => input}) do
-    with {:ok, method} <-
+    with :ok <- validate_access_method_fields(input, :create),
+         {:ok, method} <-
            Targets.create_access_method(
              input["target_id"],
              input["provider_id"],
              input["name"],
-             input["platform"],
              input["method"],
              input["endpoint"],
              input["provider_revision"],
@@ -521,18 +521,31 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   def access_methods_create(_conn, _params), do: {:error, :bad_request}
 
   def access_methods_update(conn, %{"id" => id, "access_method" => input}) do
-    update_record(
-      conn,
-      id,
-      input,
-      @access_method_fields,
-      &Targets.get_access_method/2,
-      &Targets.update_access_method/4,
-      &TargetSetupJSON.access_method/1
-    )
+    with :ok <- validate_access_method_fields(input, :update) do
+      update_record(
+        conn,
+        id,
+        input,
+        @access_method_fields,
+        &Targets.get_access_method/2,
+        &Targets.update_access_method/4,
+        &TargetSetupJSON.access_method/1
+      )
+    end
   end
 
   def access_methods_update(_conn, _params), do: {:error, :bad_request}
+
+  defp validate_access_method_fields(input, action) when is_map(input) do
+    allowed =
+      if action == :update,
+        do: ["expected_revision" | @access_method_fields],
+        else: @access_method_fields
+
+    if Enum.all?(Map.keys(input), &(&1 in allowed)), do: :ok, else: {:error, :bad_request}
+  end
+
+  defp validate_access_method_fields(_input, _action), do: {:error, :bad_request}
 
   def access_methods_deactivate(conn, %{"id" => id, "access_method" => input}) do
     deactivate_record(

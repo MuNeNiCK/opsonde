@@ -88,7 +88,6 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{
              "data" => %{
                "access_method_profile" => %{
-                 "platform" => "http",
                  "method" => "http"
                }
              }

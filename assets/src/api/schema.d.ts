@@ -1848,7 +1848,6 @@ export interface components {
         Provider: {
             access_method_profile?: {
                 method: string;
-                platform: string;
             };
             adapter_type: string;
             check: {
@@ -3225,7 +3224,6 @@ export interface components {
                 endpoint: string;
                 method: string;
                 name: string;
-                platform: string;
                 priority?: number;
                 /** Format: uuid */
                 provider_id: string;
@@ -3270,7 +3268,6 @@ export interface components {
             inserted_at: string;
             method: string;
             name: string;
-            platform: string;
             priority: number;
             /** Format: uuid */
             provider_id: string;
@@ -3356,7 +3353,6 @@ export interface components {
                 expected_revision: number;
                 method?: string;
                 name?: string;
-                platform?: string;
                 priority?: number;
                 /** Format: uuid */
                 provider_id?: string;

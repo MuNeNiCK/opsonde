@@ -350,7 +350,7 @@ defmodule Opsonde.AI.ReqLLMTest do
           revision: 1,
           name: "node-#{index}",
           kind: "network_device",
-          type_id: "generic",
+          type_id: "custom-network-device",
           facts: %{}
         }
       end
@@ -729,7 +729,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: request.proposal.target_revision,
       name: "physical-host-r8",
       kind: "physical_host",
-      type_id: "bare_metal",
+      type_id: "custom-physical-server",
       facts: %{}
     }
 
@@ -2205,7 +2205,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 4,
       name: "controller",
       kind: "host",
-      type_id: "generic",
+      type_id: "custom-os",
       facts: %{}
     }
 

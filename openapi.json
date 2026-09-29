@@ -1111,13 +1111,9 @@
             "properties": {
               "method": {
                 "type": "string"
-              },
-              "platform": {
-                "type": "string"
               }
             },
             "required": [
-              "platform",
               "method"
             ],
             "type": "object"
@@ -6374,11 +6370,6 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "platform": {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
               "priority": {
                 "maximum": 10000,
                 "minimum": 0,
@@ -6401,7 +6392,6 @@
               "target_id",
               "provider_id",
               "name",
-              "platform",
               "method",
               "endpoint",
               "provider_revision"
@@ -6540,11 +6530,6 @@
             "minLength": 1,
             "type": "string"
           },
-          "platform": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
-          },
           "priority": {
             "maximum": 10000,
             "minimum": 0,
@@ -6579,7 +6564,6 @@
           "target_id",
           "provider_id",
           "name",
-          "platform",
           "method",
           "endpoint",
           "provider_revision",
@@ -6886,11 +6870,6 @@
                 "type": "string"
               },
               "name": {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              "platform": {
                 "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
