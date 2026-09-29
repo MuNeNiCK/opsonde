@@ -113,7 +113,7 @@ export function TargetDetailPage() {
         </Button>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">{target.name}</h1>
-          <Badge variant="outline">{target.platform}</Badge>
+          <Badge variant="outline">{target.type_id}</Badge>
         </div>
         <p className="mt-2 text-muted-foreground">
           {target.kind}

@@ -1833,7 +1833,7 @@ export interface components {
                 method: string;
                 platform: string;
                 target_kind: string | null;
-                target_platform: string | null;
+                target_type_id: string | null;
             };
             adapter_type: string;
             check: {
@@ -2117,7 +2117,7 @@ export interface components {
                 /** Format: uuid */
                 management_boundary_id?: string | null;
                 name: string;
-                platform: string;
+                type_id: string;
             };
         };
         ManagementBoundary: {
@@ -2504,8 +2504,8 @@ export interface components {
             /** Format: uuid */
             management_boundary_id: string | null;
             name: string;
-            platform: string;
             revision: number;
+            type_id: string;
             /** Format: date-time */
             updated_at: string;
         };
@@ -3475,7 +3475,7 @@ export interface components {
                 /** Format: uuid */
                 management_boundary_id?: string | null;
                 name?: string;
-                platform?: string;
+                type_id?: string;
             };
         };
         OperationResponse: {

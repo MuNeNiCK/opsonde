@@ -62,7 +62,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
          true <- Enum.all?(capabilities, &(&1 in profile.capabilities)),
          true <- Enum.all?(profile.required_capabilities, &(&1 in capabilities)),
          {:ok, %{active: true} = target} <- Targets.get_target(target_id, authorize?: false),
-         true <- is_nil(profile.target_platform) or target.platform == profile.target_platform,
+         true <- is_nil(profile.target_type_id) or target.type_id == profile.target_type_id,
          true <- is_nil(profile.target_kind) or target.kind == profile.target_kind do
       :ok
     else

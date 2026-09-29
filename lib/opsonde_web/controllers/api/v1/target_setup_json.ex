@@ -19,7 +19,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
       id: target.id,
       name: target.name,
       kind: target.kind,
-      platform: target.platform,
+      type_id: target.type_id,
       facts: target.facts,
       management_boundary_id: target.management_boundary_id,
       active: target.active,

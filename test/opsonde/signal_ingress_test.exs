@@ -2177,7 +2177,7 @@ defmodule Opsonde.SignalIngressTest do
     target =
       api_post_data!(
         "/api/v1/targets",
-        %{"target" => %{"name" => "late-linux", "kind" => "host", "platform" => "linux"}},
+        %{"target" => %{"name" => "late-linux", "kind" => "host", "type_id" => "linux"}},
         token
       )
 

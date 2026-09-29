@@ -55,7 +55,7 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:platform, :method, :capabilities]
     defstruct @enforce_keys ++
                 [
-                  target_platform: nil,
+                  target_type_id: nil,
                   target_kind: nil,
                   configuration_endpoint?: false,
                   required_capabilities: []
@@ -65,7 +65,7 @@ defmodule Opsonde.Providers.Target do
             platform: String.t(),
             method: String.t(),
             capabilities: [String.t()],
-            target_platform: String.t() | nil,
+            target_type_id: String.t() | nil,
             target_kind: String.t() | nil,
             configuration_endpoint?: boolean(),
             required_capabilities: [String.t()]

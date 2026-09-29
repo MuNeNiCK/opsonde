@@ -247,7 +247,7 @@ defmodule Opsonde.Providers.AI do
 
   defmodule TargetCandidate do
     @moduledoc false
-    @enforce_keys [:id, :revision, :name, :kind, :platform, :facts]
+    @enforce_keys [:id, :revision, :name, :kind, :type_id, :facts]
     defstruct @enforce_keys
     @type t :: %__MODULE__{}
   end

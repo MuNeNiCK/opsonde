@@ -8,7 +8,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   alias OpsondeWeb.API.V1.{TargetSchemas, TargetSetupJSON}
 
   @boundary_fields ~w(name kind facts)
-  @target_fields ~w(name kind platform facts management_boundary_id)
+  @target_fields ~w(name kind type_id facts management_boundary_id)
   @identity_fields ~w(target_id source kind value)
   @access_method_fields ~w(target_id provider_id name platform method endpoint provider_revision priority capabilities)
   @relationship_fields ~w(source_target_id destination_target_id kind facts valid_until)
@@ -395,7 +395,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
            Targets.create_target(
              input["name"],
              input["kind"],
-             input["platform"],
+             input["type_id"],
              input["facts"] || %{},
              input["management_boundary_id"],
              actor: conn.assigns.current_user

@@ -5,7 +5,7 @@ defmodule Opsonde.InventoryImportTest do
   alias Opsonde.Providers.Inventory
 
   @password "correct horse battery staple"
-  @headers ~w(external_id identity_kind name kind platform facts_json)
+  @headers ~w(external_id identity_kind name kind type_id facts_json)
 
   setup do
     admin =
@@ -89,7 +89,7 @@ defmodule Opsonde.InventoryImportTest do
     refreshed = Targets.get_target!(existing.id, actor: context.admin)
     assert refreshed.name == "manual-name"
     assert refreshed.kind == "host"
-    assert refreshed.platform == "linux"
+    assert refreshed.type_id == "linux"
     assert refreshed.facts["owner"] == "operations"
     assert refreshed.facts["ip"] == "192.0.2.10"
     assert refreshed.facts["inventory"]["netbox"] == %{"ip" => "192.0.2.99", "cpu" => 8}
@@ -310,7 +310,7 @@ defmodule Opsonde.InventoryImportTest do
       external_id: id,
       kind: :linux,
       source_ref: "inventory:#{id}",
-      attributes: %{name: id, kind: "host", platform: "linux", ip: "192.0.2.30"}
+      attributes: %{name: id, kind: "host", type_id: "linux", ip: "192.0.2.30"}
     }
   end
 end

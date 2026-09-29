@@ -350,7 +350,7 @@ defmodule Opsonde.AI.ReqLLMTest do
           revision: 1,
           name: "node-#{index}",
           kind: "network_device",
-          platform: "generic",
+          type_id: "generic",
           facts: %{}
         }
       end
@@ -720,7 +720,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 1,
       name: "linux-r8",
       kind: "host",
-      platform: "linux",
+      type_id: "linux",
       facts: %{}
     }
 
@@ -729,7 +729,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: request.proposal.target_revision,
       name: "physical-host-r8",
       kind: "physical_host",
-      platform: "bare_metal",
+      type_id: "bare_metal",
       facts: %{}
     }
 
@@ -791,7 +791,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 1,
       name: "cluster",
       kind: "cluster",
-      platform: "kubernetes",
+      type_id: "kubernetes",
       facts: %{}
     }
 
@@ -800,7 +800,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 1,
       name: "host",
       kind: "host",
-      platform: "linux",
+      type_id: "linux",
       facts: %{}
     }
 
@@ -862,7 +862,7 @@ defmodule Opsonde.AI.ReqLLMTest do
                "next_target_id" => "target-2",
                "next_target_name" => "host",
                "next_target_kind" => "host",
-               "next_target_platform" => "linux"
+               "next_target_type_id" => "linux"
              }
            ]
 
@@ -2205,7 +2205,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 4,
       name: "controller",
       kind: "host",
-      platform: "generic",
+      type_id: "generic",
       facts: %{}
     }
 
@@ -2214,7 +2214,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       revision: 2,
       name: "guest",
       kind: "host",
-      platform: "linux",
+      type_id: "linux",
       facts: %{}
     }
 

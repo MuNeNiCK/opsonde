@@ -67,7 +67,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Apply do
            Targets.create_target(
              row.candidate["name"],
              row.candidate["kind"],
-             row.candidate["platform"],
+             row.candidate["type_id"],
              imported_facts(row),
              nil,
              actor: actor,

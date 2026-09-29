@@ -414,7 +414,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_candidate?(%AI.TargetCandidate{} = candidate),
     do:
       nonempty?(candidate.id) and positive?(candidate.revision) and nonempty?(candidate.name) and
-        nonempty?(candidate.kind) and nonempty?(candidate.platform) and is_map(candidate.facts)
+        nonempty?(candidate.kind) and nonempty?(candidate.type_id) and is_map(candidate.facts)
 
   defp valid_candidate?(_candidate), do: false
 

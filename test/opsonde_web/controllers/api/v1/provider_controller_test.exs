@@ -90,7 +90,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
                "access_method_profile" => %{
                  "platform" => "http",
                  "method" => "http",
-                 "target_platform" => nil,
+                 "target_type_id" => nil,
                  "target_kind" => nil
                }
              }

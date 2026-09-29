@@ -119,7 +119,7 @@ function TargetNodeCard({ data }: NodeProps<TargetNode>) {
         <span className="flex items-start justify-between gap-2">
           <span className="min-w-0 break-words text-sm font-semibold">{data.target.name}</span>
           <Badge variant="outline" className="shrink-0">
-            {data.target.platform}
+            {data.target.type_id}
           </Badge>
         </span>
         <span className="mt-1 block text-xs text-muted-foreground">{data.target.kind}</span>

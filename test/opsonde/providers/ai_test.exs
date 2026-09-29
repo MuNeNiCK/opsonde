@@ -930,7 +930,7 @@ defmodule Opsonde.Providers.AITest do
       revision: 3,
       name: "linux-01",
       kind: "host",
-      platform: "linux",
+      type_id: "linux",
       facts: %{"environment" => "production"}
     }
 
@@ -1839,13 +1839,13 @@ defmodule Opsonde.Providers.AITest do
     }
   end
 
-  defp target_candidate(id, platform) do
+  defp target_candidate(id, type_id) do
     %AI.TargetCandidate{
       id: id,
       revision: 1,
       name: id,
       kind: "host",
-      platform: platform,
+      type_id: type_id,
       facts: %{}
     }
   end

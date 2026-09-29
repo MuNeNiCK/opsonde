@@ -52,7 +52,7 @@ export function TargetPage() {
       .filter(
         (target) =>
           !search ||
-          [target.name, target.kind, target.platform].some((value) =>
+          [target.name, target.kind, target.type_id].some((value) =>
             value.toLocaleLowerCase().includes(search),
           ),
       )
@@ -278,7 +278,7 @@ export function TargetPage() {
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{target.kind}</td>
                       <td className="px-4 py-3">
-                        <Badge variant="outline">{target.platform}</Badge>
+                        <Badge variant="outline">{target.type_id}</Badge>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">{methods}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{relationships}</td>

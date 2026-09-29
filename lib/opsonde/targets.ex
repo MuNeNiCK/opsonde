@@ -18,7 +18,7 @@ defmodule Opsonde.Targets do
 
       define :create_target,
         action: :create,
-        args: [:name, :kind, :platform, :facts, :management_boundary_id]
+        args: [:name, :kind, :type_id, :facts, :management_boundary_id]
 
       define :update_target, action: :update, args: [:expected_revision]
       define :deactivate_target, action: :deactivate, args: [:expected_revision]

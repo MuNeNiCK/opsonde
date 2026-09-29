@@ -35,8 +35,8 @@ export function AccessMethodForm({
       provider.check.status === "passed" &&
       provider.check.checked_revision === provider.revision &&
       provider.access_method_profile &&
-      (!provider.access_method_profile.target_platform ||
-        provider.access_method_profile.target_platform === target.platform) &&
+      (!provider.access_method_profile.target_type_id ||
+        provider.access_method_profile.target_type_id === target.type_id) &&
       (!provider.access_method_profile.target_kind ||
         provider.access_method_profile.target_kind === target.kind),
   );

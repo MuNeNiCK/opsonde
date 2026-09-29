@@ -79,12 +79,12 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       %{
         name: string(1, 120),
         kind: string(1, 80),
-        platform: string(1, 120),
+        type_id: string(1, 120),
         facts: map(),
         management_boundary_id: nullable_uuid(),
         active: %Schema{type: :boolean}
       },
-      [:name, :kind, :platform, :facts, :management_boundary_id, :active]
+      [:name, :kind, :type_id, :facts, :management_boundary_id, :active]
     )
   end
 
@@ -94,11 +94,11 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       %{
         name: string(1, 120),
         kind: string(1, 80),
-        platform: string(1, 120),
+        type_id: string(1, 120),
         facts: map(),
         management_boundary_id: nullable_uuid()
       },
-      [:name, :kind, :platform]
+      [:name, :kind, :type_id]
     )
   end
 
@@ -106,7 +106,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
     update_request(:target, %{
       name: string(1, 120),
       kind: string(1, 80),
-      platform: string(1, 120),
+      type_id: string(1, 120),
       facts: map(),
       management_boundary_id: nullable_uuid()
     })

@@ -88,7 +88,7 @@ defmodule Opsonde.TargetsTest do
     assert linux_ssh.endpoint == ios_ssh.endpoint
     assert ssh_exec.platform == "ssh"
 
-    assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.platform)) ==
+    assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.type_id)) ==
              Enum.sort(~w(cisco_ios_xe kubernetes linux redfish vmware_esxi vmware_vm junos))
 
     assert Enum.map(
@@ -502,8 +502,8 @@ defmodule Opsonde.TargetsTest do
 
   defp target_ids(%Targets.SearchResult{targets: targets}), do: Enum.map(targets, & &1.id)
 
-  defp create_target!(admin, name, kind, platform, boundary_id \\ nil) do
-    Targets.create_target!(name, kind, platform, %{}, boundary_id, actor: admin)
+  defp create_target!(admin, name, kind, type_id, boundary_id \\ nil) do
+    Targets.create_target!(name, kind, type_id, %{}, boundary_id, actor: admin)
   end
 
   defp create_method!(context, target, name, platform, method, endpoint, capabilities) do

@@ -287,7 +287,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       revision: target.revision,
       name: target.name,
       kind: target.kind,
-      platform: target.platform,
+      type_id: target.type_id,
       facts: target.facts
     }
   end
@@ -767,19 +767,19 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         "revision" => revision,
         "name" => name,
         "kind" => kind,
-        "platform" => platform,
+        "type_id" => type_id,
         "facts" => facts
       },
       loaded
       when is_binary(id) and is_integer(revision) and revision > 0 and is_binary(name) and
-             is_binary(kind) and is_binary(platform) and is_map(facts) ->
+             is_binary(kind) and is_binary(type_id) and is_map(facts) ->
         [
           %AI.TargetCandidate{
             id: id,
             revision: revision,
             name: name,
             kind: kind,
-            platform: platform,
+            type_id: type_id,
             facts: facts
           }
           | loaded

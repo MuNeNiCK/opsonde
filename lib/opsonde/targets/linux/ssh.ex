@@ -51,7 +51,7 @@ defmodule Opsonde.Targets.Linux.SSH do
     %Target.AccessMethodProfile{
       platform: "linux",
       method: "ssh",
-      target_platform: "linux",
+      target_type_id: "linux",
       target_kind: nil,
       capabilities:
         Enum.uniq(

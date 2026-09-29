@@ -1583,7 +1583,7 @@ defmodule Opsonde.AI.ReqLLM do
               "next_target_id" => next_target.id,
               "next_target_name" => next_target.name,
               "next_target_kind" => next_target.kind,
-              "next_target_platform" => next_target.platform
+              "next_target_type_id" => next_target.type_id
             }
           ]
 

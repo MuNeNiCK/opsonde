@@ -77,10 +77,10 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       %{
         platform: %Schema{type: :string},
         method: %Schema{type: :string},
-        target_platform: %Schema{type: :string, nullable: true},
+        target_type_id: %Schema{type: :string, nullable: true},
         target_kind: %Schema{type: :string, nullable: true}
       },
-      [:platform, :method, :target_platform, :target_kind],
+      [:platform, :method, :target_type_id, :target_kind],
       false
     )
   end

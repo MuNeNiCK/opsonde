@@ -392,7 +392,7 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
         kind: "target",
         icon: Server,
         title: target?.name ?? targetId,
-        subtitle: target ? `${target.kind} · ${target.platform}` : undefined,
+        subtitle: target ? `${target.kind} · ${target.type_id}` : undefined,
         badges: methodNames,
         activities,
         active: !attention && !resolved && targetId === lastTargetId,

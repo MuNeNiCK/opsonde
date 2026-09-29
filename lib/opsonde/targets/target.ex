@@ -33,22 +33,22 @@ defmodule Opsonde.Targets.Target do
 
     create :create do
       primary? true
-      accept [:name, :kind, :platform, :facts, :management_boundary_id]
+      accept [:name, :kind, :type_id, :facts, :management_boundary_id]
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
-      change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :platform, :facts]}
+      change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :type_id, :facts]}
       change Opsonde.Targets.Changes.EnqueueCaseReconciliation
     end
 
     update :update do
       primary? true
-      accept [:name, :kind, :platform, :facts, :management_boundary_id]
+      accept [:name, :kind, :type_id, :facts, :management_boundary_id]
       require_atomic? false
 
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
 
       validate Opsonde.Validations.CurrentRevision
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
-      change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :platform, :facts]}
+      change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :type_id, :facts]}
       change Opsonde.Targets.Changes.EnqueueCaseReconciliation
       change optimistic_lock(:revision)
     end
@@ -113,7 +113,7 @@ defmodule Opsonde.Targets.Target do
       constraints min_length: 1, max_length: 80
     end
 
-    attribute :platform, :string do
+    attribute :type_id, :string do
       allow_nil? false
       public? true
       constraints min_length: 1, max_length: 120

@@ -321,7 +321,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
             "target" => %{
               "name" => "forbidden",
               "kind" => "host",
-              "platform" => "linux",
+              "type_id" => "linux",
               "facts" => %{}
             }
           },
@@ -341,7 +341,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   test "manual and Provider inventory previews expose rows and apply only the accepted digest",
        context do
     csv =
-      "external_id,identity_kind,name,kind,platform,facts_json\r\n" <>
+      "external_id,identity_kind,name,kind,type_id,facts_json\r\n" <>
         "server-1,linux,linux-imported,host,linux,\"{\"\"cpu\"\":8}\"\r\n"
 
     preview =
@@ -491,14 +491,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert_operation_response(invalid_preview)
   end
 
-  defp create_target!(token, name, kind, platform, boundary_id) do
+  defp create_target!(token, name, kind, type_id, boundary_id) do
     post_data!(
       "/api/v1/targets",
       %{
         "target" => %{
           "name" => name,
           "kind" => kind,
-          "platform" => platform,
+          "type_id" => type_id,
           "facts" => %{},
           "management_boundary_id" => boundary_id
         }

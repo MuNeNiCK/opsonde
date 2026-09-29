@@ -14,7 +14,7 @@ defmodule Opsonde.Targets.IOSXE do
     %Target.AccessMethodProfile{
       platform: "cisco_ios_xe",
       method: method,
-      target_platform: "cisco_ios_xe",
+      target_type_id: "cisco_ios_xe",
       capabilities: Target.capability_names(capabilities()) ++ [native_observation, native_effect]
     }
   end

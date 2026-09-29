@@ -200,7 +200,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
       revision: target.revision,
       name: target.name,
       kind: target.kind,
-      platform: target.platform,
+      type_id: target.type_id,
       facts: target.facts
     }
   end

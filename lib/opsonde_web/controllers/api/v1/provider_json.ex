@@ -37,7 +37,7 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
       %{
         platform: profile.platform,
         method: profile.method,
-        target_platform: profile.target_platform,
+        target_type_id: profile.target_type_id,
         target_kind: profile.target_kind
       }
     else

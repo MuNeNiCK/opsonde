@@ -45,7 +45,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "platform",
+      "source": "type_id",
       "type": "text"
     },
     {

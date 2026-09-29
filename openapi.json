@@ -1119,7 +1119,7 @@
                 "nullable": true,
                 "type": "string"
               },
-              "target_platform": {
+              "target_type_id": {
                 "nullable": true,
                 "type": "string"
               }
@@ -1127,7 +1127,7 @@
             "required": [
               "platform",
               "method",
-              "target_platform",
+              "target_type_id",
               "target_kind"
             ],
             "type": "object"
@@ -2205,7 +2205,7 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "platform": {
+              "type_id": {
                 "maxLength": 120,
                 "minLength": 1,
                 "type": "string"
@@ -2214,7 +2214,7 @@
             "required": [
               "name",
               "kind",
-              "platform"
+              "type_id"
             ],
             "type": "object"
           }
@@ -3633,14 +3633,14 @@
             "minLength": 1,
             "type": "string"
           },
-          "platform": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
-          },
           "revision": {
             "minimum": 1,
             "type": "integer"
+          },
+          "type_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -3654,7 +3654,7 @@
           "updated_at",
           "name",
           "kind",
-          "platform",
+          "type_id",
           "facts",
           "management_boundary_id",
           "active"
@@ -7352,7 +7352,7 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "platform": {
+              "type_id": {
                 "maxLength": 120,
                 "minLength": 1,
                 "type": "string"

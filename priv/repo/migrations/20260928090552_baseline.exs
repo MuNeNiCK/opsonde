@@ -131,7 +131,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
     alter table(:targets) do
       add :name, :text, null: false
       add :kind, :text, null: false
-      add :platform, :text, null: false
+      add :type_id, :text, null: false
       add :facts, :map, null: false, default: %{}
       add :search_text, :text, null: false
       add :active, :boolean, null: false, default: true
@@ -3247,7 +3247,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       remove :active
       remove :search_text
       remove :facts
-      remove :platform
+      remove :type_id
       remove :kind
       remove :name
     end

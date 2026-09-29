@@ -20,35 +20,35 @@ const targetChoices = {
   linux: {
     title: "Linux",
     kind: "host",
-    platform: "linux",
+    typeId: "linux",
     icon: Server,
     description: "targets.targetChoiceLinux",
   },
   "physical-host": {
     title: "Physical host",
     kind: "physical_host",
-    platform: "bare_metal",
+    typeId: "bare_metal",
     icon: Server,
     description: "targets.targetChoicePhysicalHost",
   },
   "cisco-ios-xe": {
     title: "Cisco IOS XE",
     kind: "network_device",
-    platform: "cisco_ios_xe",
+    typeId: "cisco_ios_xe",
     icon: Network,
     description: "targets.targetChoiceCisco",
   },
   kubernetes: {
     title: "Kubernetes",
     kind: "cluster",
-    platform: "kubernetes",
+    typeId: "kubernetes",
     icon: Boxes,
     description: "targets.targetChoiceKubernetes",
   },
   generic: {
     title: "Generic",
     kind: null,
-    platform: null,
+    typeId: null,
     icon: Cable,
     description: "targets.targetChoiceGeneric",
   },
@@ -62,7 +62,7 @@ export function TargetCreatePage() {
   const [boundaries, setBoundaries] = useState<Boundary[] | null>(null);
   const [creatingBoundary, setCreatingBoundary] = useState(false);
   const [targetKind, setTargetKind] = useState("host");
-  const [targetPlatform, setTargetPlatform] = useState("generic");
+  const [targetTypeId, setTargetTypeId] = useState("generic");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -118,18 +118,18 @@ export function TargetCreatePage() {
       const targetKindValue =
         choice?.kind ??
         (value(form, "kind") === "custom" ? value(form, "custom_kind") : value(form, "kind"));
-      const targetPlatformValue =
-        choice?.platform ??
-        (value(form, "platform") === "custom"
-          ? value(form, "custom_platform")
-          : value(form, "platform"));
+      const targetTypeIdValue =
+        choice?.typeId ??
+        (value(form, "type_id") === "custom"
+          ? value(form, "custom_type_id")
+          : value(form, "type_id"));
       const response = apiData(
         await apiClient.POST("/api/v1/targets", {
           body: {
             target: {
               name: value(form, "name"),
               kind: targetKindValue,
-              platform: targetPlatformValue,
+              type_id: targetTypeIdValue,
               facts: {},
               management_boundary_id: value(form, "management_boundary_id") || null,
             },
@@ -257,14 +257,14 @@ export function TargetCreatePage() {
               {choice.kind === null && targetKind === "custom" && (
                 <Field label={t("targets.customKind")} name="custom_kind" required maxLength={80} />
               )}
-              {choice.platform === null && (
+              {choice.typeId === null && (
                 <div className="space-y-2">
-                  <Label htmlFor="target-create-platform">{t("targets.platform")}</Label>
+                  <Label htmlFor="target-create-type_id">{t("targets.platform")}</Label>
                   <FormSelect
-                    id="target-create-platform"
-                    name="platform"
-                    value={targetPlatform}
-                    onValueChange={(next) => next && setTargetPlatform(next)}
+                    id="target-create-type_id"
+                    name="type_id"
+                    value={targetTypeId}
+                    onValueChange={(next) => next && setTargetTypeId(next)}
                     required
                     options={[
                       { value: "linux", label: "linux" },
@@ -276,10 +276,10 @@ export function TargetCreatePage() {
                   />
                 </div>
               )}
-              {choice.platform === null && targetPlatform === "custom" && (
+              {choice.typeId === null && targetTypeId === "custom" && (
                 <Field
                   label={t("targets.customPlatform")}
-                  name="custom_platform"
+                  name="custom_type_id"
                   required
                   maxLength={120}
                 />

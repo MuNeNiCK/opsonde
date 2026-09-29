@@ -7,7 +7,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
   alias Opsonde.Targets.{InventoryImport, InventoryImportRow}
   alias Opsonde.Targets.InventoryImport.Digest
 
-  @headers ~w(external_id identity_kind name kind platform facts_json)
+  @headers ~w(external_id identity_kind name kind type_id facts_json)
   @max_rows 100_000
   @max_candidate_fields 100
   @max_candidate_bytes 65_536
@@ -74,7 +74,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
       identity_kind: to_string(record.kind),
       name: value(record.attributes, "name", record.external_id),
       kind: value(record.attributes, "kind", to_string(record.kind)),
-      platform: value(record.attributes, "platform", to_string(record.kind)),
+      type_id: value(record.attributes, "type_id", to_string(record.kind)),
       facts: facts,
       provenance: %{"source_ref" => record.source_ref},
       errors: errors
@@ -101,7 +101,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
     end
   end
 
-  defp csv_record([external_id, identity_kind, name, kind, platform, facts_json], position) do
+  defp csv_record([external_id, identity_kind, name, kind, type_id, facts_json], position) do
     {facts, errors} = decode_facts(facts_json)
 
     %{
@@ -110,7 +110,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
       identity_kind: identity_kind,
       name: name,
       kind: kind,
-      platform: platform,
+      type_id: type_id,
       facts: facts,
       provenance: %{"row" => position},
       errors: errors
@@ -124,7 +124,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
       identity_kind: "invalid",
       name: "",
       kind: "",
-      platform: "",
+      type_id: "",
       facts: %{},
       provenance: %{"row" => position},
       errors: ["row must contain six columns"]
@@ -250,7 +250,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
       {:identity_kind, "identity_kind is required"},
       {:name, "name is required"},
       {:kind, "kind is required"},
-      {:platform, "platform is required"}
+      {:type_id, "type_id is required"}
     ]
     |> Enum.flat_map(fn {field, message} ->
       if clean(Map.get(record, field)) == "", do: [message], else: []
@@ -258,7 +258,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
   end
 
   defp field_length_errors(record) do
-    [external_id: 500, identity_kind: 80, name: 120, kind: 80, platform: 120]
+    [external_id: 500, identity_kind: 80, name: 120, kind: 80, type_id: 120]
     |> Enum.flat_map(fn {field, limit} ->
       if String.length(clean(Map.get(record, field))) > limit,
         do: ["#{field} exceeds #{limit} characters"],
@@ -270,7 +270,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
     %{
       "name" => clean(record.name),
       "kind" => clean(record.kind),
-      "platform" => clean(record.platform),
+      "type_id" => clean(record.type_id),
       "facts" => json_map(record.facts)
     }
   end
@@ -291,7 +291,7 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
     candidate
     |> Map.update!("name", &bounded_value(&1, "invalid", 120))
     |> Map.update!("kind", &bounded_value(&1, "invalid", 80))
-    |> Map.update!("platform", &bounded_value(&1, "invalid", 120))
+    |> Map.update!("type_id", &bounded_value(&1, "invalid", 120))
     |> then(fn bounded ->
       if "candidate exceeds 64 KiB" in errors, do: Map.put(bounded, "facts", %{}), else: bounded
     end)
@@ -306,8 +306,8 @@ defmodule Opsonde.Targets.InventoryImport.Actions.Preview do
   defp value(attributes, "kind", default),
     do: Map.get(attributes, "kind", Map.get(attributes, :kind, default))
 
-  defp value(attributes, "platform", default),
-    do: Map.get(attributes, "platform", Map.get(attributes, :platform, default))
+  defp value(attributes, "type_id", default),
+    do: Map.get(attributes, "type_id", Map.get(attributes, :type_id, default))
 
   defp clean(value) when is_binary(value), do: String.trim(value)
   defp clean(value) when is_atom(value), do: Atom.to_string(value)
