@@ -11,8 +11,6 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   @message_id "opsonde-1"
   @max_message_bytes 60_000
   @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
-  @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
-  @native_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
   @native_observation "native.netconf.observe"
   @native_effect "native.netconf.effect"
 
@@ -182,48 +180,39 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
-    rpc =
-      rpc("""
-      <get><filter type="subtree"><native xmlns="#{@native_namespace}"><hostname/><version/></native></filter></get>
-      """)
+    rpc = rpc(IOSXE.netconf_system_filter())
 
     with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, native} <- child(data, "native"),
          {:ok, hostname} <- child_text(native, "hostname"),
          {:ok, version} <- child_text(native, "version") do
-      {:ok, %{"hostname" => hostname, "version" => version}}
+      {:ok, IOSXE.netconf_system_facts(hostname, version)}
     end
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    escaped = xml_escape(name)
-
-    rpc =
-      rpc("""
-      <get><filter type="subtree"><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces><interfaces-state xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces-state></filter></get>
-      """)
+    rpc = rpc(IOSXE.netconf_interface_filter(name))
 
     with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, configuration} <- data |> child("interfaces") |> interface(name),
          {:ok, operational} <- data |> child("interfaces-state") |> interface(name) do
       {:ok,
-       %{
-         "name" => name,
+       IOSXE.netconf_interface_facts(name, %{
          "description" => optional_child_text(configuration, "description"),
-         "enabled" => boolean(optional_child_text(configuration, "enabled"), true),
+         "enabled" => optional_child_text(configuration, "enabled"),
          "admin_status" => optional_child_text(operational, "admin-status"),
          "oper_status" => optional_child_text(operational, "oper-status"),
          "input_errors" => statistic(operational, "in-errors"),
          "output_errors" => statistic(operational, "out-errors")
-       }}
+       })}
     end
   end
 
   defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
     with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["description"], expected, "description"),
+         :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
          {:ok, _root} <- edit_interface(state, endpoint, name, "description", desired, cancelled?) do
       IOSXE.applied(%{"interface" => name, "description" => desired})
     else
@@ -234,7 +223,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
 
   defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
     with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["enabled"], expected, "enabled"),
+         :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, _root} <-
            edit_interface(state, endpoint, name, "enabled", to_string(desired), cancelled?) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired})
@@ -245,11 +234,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   defp edit_interface(state, endpoint, name, field, value, cancelled?) do
-    body = """
-    <edit-config><target><running/></target><default-operation>merge</default-operation><error-option>rollback-on-error</error-option><config><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{xml_escape(name)}</name><#{field}>#{xml_escape(value)}</#{field}></interface></interfaces></config></edit-config>
-    """
-
-    request(state, endpoint, rpc(body), cancelled?)
+    request(state, endpoint, rpc(IOSXE.netconf_interface_edit(name, field, value)), cancelled?)
   end
 
   defp request(state, endpoint, rpc, cancelled?) do
@@ -397,7 +382,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
 
   defp statistic(interface, field) do
     case child(interface, "statistics") do
-      {:ok, statistics} -> integer(optional_child_text(statistics, field))
+      {:ok, statistics} -> optional_child_text(statistics, field)
       _error -> nil
     end
   end
@@ -459,31 +444,6 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   defp rpc(body),
     do: "<rpc xmlns=\"#{@netconf_namespace}\" message-id=\"#{@message_id}\">#{body}</rpc>"
 
-  defp xml_escape(value) when is_boolean(value), do: to_string(value)
-
-  defp xml_escape(value) when is_binary(value) do
-    value
-    |> String.replace("&", "&amp;")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace("\"", "&quot;")
-    |> String.replace("'", "&apos;")
-  end
-
-  defp boolean("true", _default), do: true
-  defp boolean("false", _default), do: false
-  defp boolean(_value, default), do: default
-
-  defp integer(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {number, ""} -> number
-      _error -> nil
-    end
-  end
-
-  defp integer(_value), do: nil
-  defp matches(observed, expected, _field) when observed == expected, do: :ok
-  defp matches(observed, _expected, field), do: {:stale, observed, field}
   defp local_name(name), do: name |> String.split(":") |> List.last()
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end

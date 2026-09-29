@@ -9,6 +9,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE do
   @admin_state {"effect.interface", "ios_xe.interface.admin_state.set"}
   @interface_pattern ~r/^[A-Za-z][A-Za-z0-9._\/-]{0,127}$/
   @verification_fields ~w(name description enabled admin_status oper_status input_errors output_errors)
+  @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
+  @ios_xe_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
 
   def access_method_profile(method, native_observation, native_effect) do
     %Target.AccessMethodProfile{
@@ -284,6 +286,116 @@ defmodule Opsonde.Targets.Profiles.IOSXE do
     command = command |> String.trim() |> String.downcase()
     String.starts_with?(command, "show ") or command == "show"
   end
+
+  def restconf_system_paths do
+    {
+      "/restconf/data/Cisco-IOS-XE-native:native/hostname",
+      "/restconf/data/Cisco-IOS-XE-native:native/version"
+    }
+  end
+
+  def restconf_system_facts(
+        %{"Cisco-IOS-XE-native:hostname" => hostname},
+        %{"Cisco-IOS-XE-native:version" => version}
+      ),
+      do: {:ok, %{"hostname" => hostname, "version" => version}}
+
+  def restconf_system_facts(_hostname, _version),
+    do: {:error, :failed, "IOS XE RESTCONF system response is invalid"}
+
+  def restconf_interface_paths(name) do
+    key = URI.encode_www_form(name)
+
+    {
+      "/restconf/data/ietf-interfaces:interfaces/interface=#{key}",
+      "/restconf/data/ietf-interfaces:interfaces-state/interface=#{key}"
+    }
+  end
+
+  def restconf_interface_body(name, values),
+    do: %{"ietf-interfaces:interface" => Map.put(values, "name", name)}
+
+  def restconf_interface_facts(
+        name,
+        %{"ietf-interfaces:interface" => configuration},
+        %{"ietf-interfaces:interface" => operational}
+      ) do
+    {:ok,
+     %{
+       "name" => name,
+       "description" => configuration["description"],
+       "enabled" => Map.get(configuration, "enabled", true),
+       "admin_status" => operational["admin-status"],
+       "oper_status" => operational["oper-status"],
+       "input_errors" => get_in(operational, ["statistics", "in-errors"]),
+       "output_errors" => get_in(operational, ["statistics", "out-errors"])
+     }}
+  end
+
+  def restconf_interface_facts(_name, _configuration, _operational),
+    do: {:error, :failed, "IOS XE RESTCONF interface response is invalid"}
+
+  def match_expected(observed, expected, _field) when observed == expected, do: :ok
+  def match_expected(observed, _expected, field), do: {:stale, observed, field}
+
+  def netconf_system_filter do
+    """
+    <get><filter type="subtree"><native xmlns="#{@ios_xe_namespace}"><hostname/><version/></native></filter></get>
+    """
+  end
+
+  def netconf_system_facts(hostname, version),
+    do: %{"hostname" => hostname, "version" => version}
+
+  def netconf_interface_filter(name) do
+    escaped = xml_escape(name)
+
+    """
+    <get><filter type="subtree"><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces><interfaces-state xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces-state></filter></get>
+    """
+  end
+
+  def netconf_interface_edit(name, field, value) when field in ["description", "enabled"] do
+    """
+    <edit-config><target><running/></target><default-operation>merge</default-operation><error-option>rollback-on-error</error-option><config><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{xml_escape(name)}</name><#{field}>#{xml_escape(value)}</#{field}></interface></interfaces></config></edit-config>
+    """
+  end
+
+  def netconf_interface_facts(name, raw) do
+    %{
+      "name" => name,
+      "description" => raw["description"],
+      "enabled" => netconf_boolean(raw["enabled"], true),
+      "admin_status" => raw["admin_status"],
+      "oper_status" => raw["oper_status"],
+      "input_errors" => netconf_integer(raw["input_errors"]),
+      "output_errors" => netconf_integer(raw["output_errors"])
+    }
+  end
+
+  defp xml_escape(value) when is_boolean(value), do: to_string(value)
+
+  defp xml_escape(value) when is_binary(value) do
+    value
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&apos;")
+  end
+
+  defp netconf_boolean("true", _default), do: true
+  defp netconf_boolean("false", _default), do: false
+  defp netconf_boolean(_value, default), do: default
+
+  defp netconf_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {number, ""} -> number
+      _error -> nil
+    end
+  end
+
+  defp netconf_integer(_value), do: nil
 
   defp ssh_running_description(name, output) do
     pattern =

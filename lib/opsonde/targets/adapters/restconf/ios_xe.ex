@@ -181,12 +181,14 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
+    {hostname_path, version_path} = IOSXE.restconf_system_paths()
+
     with {:ok, hostname} <-
            request(
              state,
              endpoint,
              :get,
-             "/restconf/data/Cisco-IOS-XE-native:native/hostname",
+             hostname_path,
              nil,
              cancelled?,
              :read
@@ -196,29 +198,27 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
              state,
              endpoint,
              :get,
-             "/restconf/data/Cisco-IOS-XE-native:native/version",
+             version_path,
              nil,
              cancelled?,
              :read
            ),
-         %{"Cisco-IOS-XE-native:hostname" => hostname} <- hostname,
-         %{"Cisco-IOS-XE-native:version" => version} <- version do
-      {:ok, %{"hostname" => hostname, "version" => version}}
+         {:ok, facts} <- IOSXE.restconf_system_facts(hostname, version) do
+      {:ok, facts}
     else
       {:error, _category, _message} = error -> error
-      _response -> {:error, :failed, "IOS XE RESTCONF system response is invalid"}
     end
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    key = URI.encode_www_form(name)
+    {configuration_path, operational_path} = IOSXE.restconf_interface_paths(name)
 
     with {:ok, configuration} <-
            request(
              state,
              endpoint,
              :get,
-             "/restconf/data/ietf-interfaces:interfaces/interface=#{key}",
+             configuration_path,
              nil,
              cancelled?,
              :read
@@ -228,19 +228,19 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
              state,
              endpoint,
              :get,
-             "/restconf/data/ietf-interfaces:interfaces-state/interface=#{key}",
+             operational_path,
              nil,
              cancelled?,
              :read
            ),
-         {:ok, facts} <- interface_facts(name, configuration, operational) do
+         {:ok, facts} <- IOSXE.restconf_interface_facts(name, configuration, operational) do
       {:ok, facts}
     end
   end
 
   defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
     with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["description"], expected, "description"),
+         :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
          {:ok, _body} <-
            patch_interface(state, endpoint, name, %{"description" => desired}, cancelled?) do
       IOSXE.applied(%{"interface" => name, "description" => desired})
@@ -252,7 +252,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
 
   defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
     with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["enabled"], expected, "enabled"),
+         :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, _body} <-
            patch_interface(state, endpoint, name, %{"enabled" => desired}, cancelled?) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired})
@@ -263,14 +263,14 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp patch_interface(state, endpoint, name, values, cancelled?) do
-    key = URI.encode_www_form(name)
-    body = %{"ietf-interfaces:interface" => Map.put(values, "name", name)}
+    {path, _operational_path} = IOSXE.restconf_interface_paths(name)
+    body = IOSXE.restconf_interface_body(name, values)
 
     request(
       state,
       endpoint,
       :patch,
-      "/restconf/data/ietf-interfaces:interfaces/interface=#{key}",
+      path,
       body,
       cancelled?,
       :effect
@@ -396,29 +396,6 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
 
   defp normalize_response(_response, _limit, phase),
     do: {:error, failure_category(phase), "IOS XE RESTCONF response is invalid"}
-
-  defp interface_facts(
-         name,
-         %{"ietf-interfaces:interface" => configuration},
-         %{"ietf-interfaces:interface" => operational}
-       ) do
-    {:ok,
-     %{
-       "name" => name,
-       "description" => configuration["description"],
-       "enabled" => Map.get(configuration, "enabled", true),
-       "admin_status" => operational["admin-status"],
-       "oper_status" => operational["oper-status"],
-       "input_errors" => get_in(operational, ["statistics", "in-errors"]),
-       "output_errors" => get_in(operational, ["statistics", "out-errors"])
-     }}
-  end
-
-  defp interface_facts(_name, _configuration, _operational),
-    do: {:error, :failed, "IOS XE RESTCONF interface response is invalid"}
-
-  defp matches(observed, expected, _field) when observed == expected, do: :ok
-  defp matches(observed, _expected, field), do: {:stale, observed, field}
 
   defp native_request(request, operation) do
     expected_capability =
