@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Profiles.BMC do
+defmodule Opsonde.Targets.PowerControl do
   @moduledoc false
 
   alias Opsonde.Providers.Target
@@ -10,15 +10,6 @@ defmodule Opsonde.Targets.Profiles.BMC do
     "bmc.power.cycle" => "on",
     "bmc.power.reset" => "on"
   }
-
-  def access_method_profile(method) when method in ["redfish", "ipmi"] do
-    %Target.AccessMethodProfile{
-      method: method,
-      configuration_endpoint?: true,
-      required_capabilities: ["observe.power"],
-      capabilities: Target.capability_names(capabilities())
-    }
-  end
 
   def capabilities do
     observation = %Target.Operation{

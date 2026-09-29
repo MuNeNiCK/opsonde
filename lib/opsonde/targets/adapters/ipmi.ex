@@ -5,7 +5,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Profiles.BMC
+  alias Opsonde.Targets.PowerControl
   alias Opsonde.Targets.Adapters.IPMI.RMCP
 
   @max_data_bytes 2048
@@ -26,8 +26,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   @impl Opsonde.Providers.Target
   def access_method_profile do
-    profile = BMC.access_method_profile("ipmi")
-    %{profile | capabilities: [@method_effect | profile.capabilities]}
+    %Target.AccessMethodProfile{
+      method: "ipmi",
+      configuration_endpoint?: true,
+      required_capabilities: ["observe.power"],
+      capabilities: [@method_effect | Target.capability_names(PowerControl.capabilities())]
+    }
   end
 
   @impl Opsonde.Providers.Adapter
@@ -72,7 +76,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
-    capabilities = BMC.capabilities()
+    capabilities = PowerControl.capabilities()
     effects = Enum.reject(capabilities.effects, &(&1.operation == "bmc.power.cycle"))
 
     {:ok,
@@ -84,11 +88,11 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
-    with true <- BMC.inspect_request?(request),
+    with true <- PowerControl.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
          :ok <- not_cancelled(invocation),
          {:ok, power} <- read_power(state) do
-      {:ok, BMC.observation(power, state.endpoint, "ipmi")}
+      {:ok, PowerControl.observation(power, state.endpoint, "ipmi")}
     else
       false -> {:error, :failed, "IPMI observation request is invalid"}
       {:error, category, message} -> read_error(category, message)
@@ -104,10 +108,10 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
-         {:ok, intent} <- BMC.effect_request(request),
+         {:ok, intent} <- PowerControl.effect_request(request),
          :ok <- not_cancelled(invocation),
          {:ok, observed} <- read_power(state),
-         :ok <- BMC.expected_state(intent.expected, observed),
+         :ok <- PowerControl.expected_state(intent.expected, observed),
          :ok <- not_cancelled(invocation) do
       data =
         case intent.operation do
@@ -143,10 +147,10 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
-         true <- BMC.inspect_request?(request),
+         true <- PowerControl.inspect_request?(request),
          :ok <- not_cancelled(invocation),
          {:ok, power} <- read_power(state) do
-      verification = BMC.verification(power, state.endpoint, "ipmi", request.expected)
+      verification = PowerControl.verification(power, state.endpoint, "ipmi", request.expected)
 
       verification =
         if request.reference in ["bmc.power.cycle", "bmc.power.reset"],

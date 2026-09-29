@@ -5,7 +5,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Profiles.BMC
+  alias Opsonde.Targets.PowerControl
   alias Opsonde.Targets.Adapters.Redfish.ResourceURI
   alias Opsonde.Transports.HTTPS
 
@@ -36,8 +36,15 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   @impl Opsonde.Providers.Target
   def access_method_profile do
-    profile = BMC.access_method_profile("redfish")
-    %{profile | capabilities: [@method_read, @method_effect | profile.capabilities]}
+    %Target.AccessMethodProfile{
+      method: "redfish",
+      configuration_endpoint?: true,
+      required_capabilities: ["observe.power"],
+      capabilities: [
+        @method_read,
+        @method_effect | Target.capability_names(PowerControl.capabilities())
+      ]
+    }
   end
 
   @impl Opsonde.Providers.Adapter
@@ -88,7 +95,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
     with {:ok, system} <- system(state) do
-      capabilities = BMC.capabilities()
+      capabilities = PowerControl.capabilities()
 
       effects =
         case reset_action(state, system) do
@@ -116,12 +123,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     do: method_observe(state, request, invocation)
 
   def observe(%State{} = state, request, invocation) do
-    with true <- BMC.inspect_request?(request),
+    with true <- PowerControl.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
          :ok <- not_cancelled(invocation),
          {:ok, system} <- system(state),
          {:ok, power} <- power_state(system) do
-      {:ok, BMC.observation(power, state.expected_uuid, "redfish")}
+      {:ok, PowerControl.observation(power, state.expected_uuid, "redfish")}
     else
       false -> {:error, :failed, "Redfish observation request is invalid"}
       {:error, category, message} -> read_error(category, message)
@@ -134,11 +141,11 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
-         {:ok, intent} <- BMC.effect_request(request),
+         {:ok, intent} <- PowerControl.effect_request(request),
          :ok <- not_cancelled(invocation),
          {:ok, system} <- system(state),
          {:ok, observed} <- power_state(system),
-         :ok <- BMC.expected_state(intent.expected, observed),
+         :ok <- PowerControl.expected_state(intent.expected, observed),
          {:ok, action_path, allowed} <- reset_action(state, system),
          reset_type when is_binary(reset_type) <- @reset_types[intent.operation],
          true <- reset_type in allowed,
@@ -186,11 +193,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
-         true <- BMC.inspect_request?(request),
+         true <- PowerControl.inspect_request?(request),
          :ok <- not_cancelled(invocation),
          {:ok, system} <- system(state),
          {:ok, power} <- power_state(system) do
-      verification = BMC.verification(power, state.expected_uuid, "redfish", request.expected)
+      verification =
+        PowerControl.verification(power, state.expected_uuid, "redfish", request.expected)
 
       verification =
         if request.reference in ["bmc.power.cycle", "bmc.power.reset"],
