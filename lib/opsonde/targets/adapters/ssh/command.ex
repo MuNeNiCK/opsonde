@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.NativeShell do
+defmodule Opsonde.Targets.Adapters.SSH.Command do
   @moduledoc false
 
   alias Opsonde.Providers.Target

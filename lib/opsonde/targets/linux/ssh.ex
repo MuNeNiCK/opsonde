@@ -6,7 +6,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
-  alias Opsonde.Targets.NativeShell
+  alias Opsonde.Targets.Adapters.SSH.Command
   alias Opsonde.Targets.ResourceScope
 
   @identity {"observe.identity", "linux.identity.inspect"}
@@ -106,7 +106,7 @@ defmodule Opsonde.Targets.Linux.SSH do
   @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
     {native_observation, native_effect} =
-      NativeShell.operations(@native_observation, @native_effect, "Linux shell")
+      Command.operations(@native_observation, @native_effect, "Linux shell")
 
     native_observation = describe_privilege(native_observation, state)
     native_effect = describe_privilege(native_effect, state)
@@ -186,11 +186,11 @@ defmodule Opsonde.Targets.Linux.SSH do
   end
 
   def observe(%State{} = state, %{capability: @native_observation} = request, invocation) do
-    with {:ok, command} <- NativeShell.observation_command(request, @native_observation),
+    with {:ok, command} <- Command.observation_command(request, @native_observation),
          {:ok, result} <- execute(state, request, native_command(state, command), invocation) do
       {:ok,
        %Target.Observation{
-         facts: NativeShell.facts(result),
+         facts: Command.facts(result),
          observed_at: DateTime.utc_now(),
          evidence: [evidence(result)]
        }}
@@ -201,7 +201,7 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def preflight(_state, %{capability: @native_observation} = request) do
-    case NativeShell.observation_command(request, @native_observation) do
+    case Command.observation_command(request, @native_observation) do
       {:ok, _command} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -226,7 +226,7 @@ defmodule Opsonde.Targets.Linux.SSH do
   end
 
   def effect(%State{} = state, %{capability: @native_effect} = request, invocation) do
-    with {:ok, command} <- NativeShell.effect_command(request, @native_effect) do
+    with {:ok, command} <- Command.effect_command(request, @native_effect) do
       state
       |> execute_raw(request, native_command(state, command), invocation)
       |> effect_result()
@@ -264,9 +264,9 @@ defmodule Opsonde.Targets.Linux.SSH do
 
   def verify(%State{} = state, %{capability: @native_observation} = request, invocation) do
     with {:ok, command} <-
-           NativeShell.observation_command(request, @native_observation),
+           Command.observation_command(request, @native_observation),
          {:ok, result} <- execute(state, request, native_command(state, command), invocation),
-         facts <- NativeShell.facts(result) do
+         facts <- Command.facts(result) do
       {:ok,
        %Target.Verification{
          status: expected_status(facts, request.expected),

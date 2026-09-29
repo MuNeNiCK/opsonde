@@ -6,7 +6,7 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
-  alias Opsonde.Targets.NativeShell
+  alias Opsonde.Targets.Adapters.SSH.Command
 
   @observation_capability "native.ssh.observe"
   @effect_capability "native.ssh.effect"
@@ -45,7 +45,7 @@ defmodule Opsonde.Targets.Generic.SSH do
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     {observation, effect} =
-      NativeShell.operations(@observation_capability, @effect_capability, "SSH")
+      Command.operations(@observation_capability, @effect_capability, "SSH")
 
     {:ok,
      %Target.Capabilities{
@@ -56,7 +56,7 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def preflight(_state, %{capability: @observation_capability} = request) do
-    case NativeShell.observation_command(request, @observation_capability) do
+    case Command.observation_command(request, @observation_capability) do
       {:ok, _command} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -67,12 +67,12 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def observe(state, request, invocation) do
-    with {:ok, command} <- NativeShell.observation_command(request, @observation_capability),
+    with {:ok, command} <- Command.observation_command(request, @observation_capability),
          {:ok, result} <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       {:ok,
        %Target.Observation{
-         facts: NativeShell.facts(result),
+         facts: Command.facts(result),
          observed_at: DateTime.utc_now()
        }}
     end
@@ -80,7 +80,7 @@ defmodule Opsonde.Targets.Generic.SSH do
 
   @impl Opsonde.Providers.Target
   def effect(state, request, invocation) do
-    with {:ok, command} <- NativeShell.effect_command(request, @effect_capability),
+    with {:ok, command} <- Command.effect_command(request, @effect_capability),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       effect_result(result)
@@ -90,7 +90,7 @@ defmodule Opsonde.Targets.Generic.SSH do
   @impl Opsonde.Providers.Target
   def verify(state, request, invocation) do
     with {:ok, command} <-
-           NativeShell.observation_command(request, @observation_capability),
+           Command.observation_command(request, @observation_capability),
          result <-
            Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
       verification_result(result)
@@ -101,7 +101,7 @@ defmodule Opsonde.Targets.Generic.SSH do
     {:ok,
      %Target.EffectResult{
        status: if(result.exit_status == 0, do: :applied, else: :failed),
-       details: NativeShell.facts(result)
+       details: Command.facts(result)
      }}
   end
 
@@ -122,7 +122,7 @@ defmodule Opsonde.Targets.Generic.SSH do
      %Target.Verification{
        status: :unknown,
        observed_at: DateTime.utc_now(),
-       facts: NativeShell.facts(result)
+       facts: Command.facts(result)
      }}
   end
 

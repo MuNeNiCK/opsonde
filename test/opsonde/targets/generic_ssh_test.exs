@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.NativeShell
+  alias Opsonde.Targets.Adapters.SSH.Command
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
   alias Opsonde.Transports.SSH, as: Transport
 
@@ -78,11 +78,11 @@ defmodule Opsonde.Targets.GenericSSHTest do
           "dmesg --read-clear",
           "ss -K dst 192.0.2.1"
         ] do
-      refute NativeShell.readonly?(command)
+      refute Command.readonly?(command)
     end
 
-    assert NativeShell.readonly?("systemctl list-unit-files --type=service --no-pager")
-    assert NativeShell.readonly?("uname -a")
+    assert Command.readonly?("systemctl list-unit-files --type=service --no-pager")
+    assert Command.readonly?("uname -a")
   end
 
   test "transport supports pinned password and in-memory public-key authentication", context do
