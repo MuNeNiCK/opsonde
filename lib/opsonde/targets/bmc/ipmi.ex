@@ -10,6 +10,7 @@ defmodule Opsonde.Targets.BMC.IPMI do
   alias Opsonde.Targets.BMC.OutputProjection
 
   @max_data_bytes 2048
+  @native_effect "native.ipmi.effect"
 
   defmodule State do
     @moduledoc false
@@ -25,7 +26,10 @@ defmodule Opsonde.Targets.BMC.IPMI do
   def kind, do: :target
 
   @impl Opsonde.Providers.Target
-  def access_method_profile, do: BMC.access_method_profile("ipmi")
+  def access_method_profile do
+    profile = BMC.access_method_profile("ipmi")
+    %{profile | capabilities: [@native_effect | profile.capabilities]}
+  end
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
@@ -76,7 +80,7 @@ defmodule Opsonde.Targets.BMC.IPMI do
     {:ok,
      %Target.Capabilities{
        observations: capabilities.observations ++ api.observations,
-       effects: effects ++ api.effects
+       effects: effects ++ api.effects ++ [native_effect_operation()]
      }}
   end
 
@@ -99,6 +103,9 @@ defmodule Opsonde.Targets.BMC.IPMI do
   @impl Opsonde.Providers.Target
   def effect(%State{}, %{operation: "bmc.power.cycle"}, _invocation),
     do: {:error, :failed, "IPMI power cycle support cannot be verified for this BMC"}
+
+  def effect(%State{} = state, %{capability: @native_effect} = request, invocation),
+    do: native_effect(state, request, invocation)
 
   def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
     do: api_effect(state, request, invocation)
@@ -244,6 +251,89 @@ defmodule Opsonde.Targets.BMC.IPMI do
       end
     else
       {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  defp native_effect(state, request, invocation) do
+    with {:ok, netfn, opcode, data, include_response?} <- native_request(state, request),
+         :ok <- not_cancelled(invocation) do
+      case command(state, netfn, opcode, data) do
+        {:ok, completion, response} ->
+          details = %{"netfn" => netfn, "command" => opcode, "completion_code" => completion}
+
+          details =
+            if include_response? do
+              maybe_response(details, response, false)
+            else
+              Map.put(details, "response_redacted", true)
+            end
+
+          {:ok,
+           %Target.EffectResult{
+             status: if(completion == 0, do: :applied, else: :failed),
+             reference: request.operation,
+             details: details
+           }}
+
+        {:error, :outcome_unknown, _message} ->
+          unknown_effect(request.operation, "IPMI command response was lost after dispatch")
+
+        {:error, _category, message} ->
+          {:error, :failed, message}
+      end
+    else
+      {:error, :cancelled, _message} = error -> error
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  defp native_effect_operation do
+    %Target.Operation{
+      capability: @native_effect,
+      operation: "command.execute",
+      description:
+        "Send one exact IPMI command after authority review; opaque responses are redacted unless explicitly requested",
+      input_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "selectors" => %{"type" => "object", "additionalProperties" => false},
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "netfn" => %{"type" => "integer", "minimum" => 0, "maximum" => 62},
+              "command" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
+              "data_hex" => %{"type" => "string", "maxLength" => @max_data_bytes * 2},
+              "include_response" => %{"type" => "boolean"}
+            },
+            "required" => ["netfn", "command"],
+            "additionalProperties" => false
+          }
+        },
+        "required" => ["selectors", "parameters"],
+        "additionalProperties" => false
+      },
+      native?: true
+    }
+  end
+
+  defp native_request(state, request) do
+    parameters = request.parameters
+
+    with true <- request.operation == "command.execute",
+         true <- request.connection.endpoint == state.endpoint,
+         true <- request.selectors == %{} and is_nil(request.protocol_request),
+         true <- request.secret_values == %{},
+         %{"netfn" => netfn, "command" => opcode} <- parameters,
+         true <-
+           Enum.all?(Map.keys(parameters), &(&1 in ~w(netfn command data_hex include_response))),
+         true <- is_integer(netfn) and netfn in 0..62 and rem(netfn, 2) == 0,
+         true <- is_integer(opcode) and opcode in 0..255,
+         include_response? when is_boolean(include_response?) <-
+           Map.get(parameters, "include_response", false),
+         {:ok, data} <- request_data(Map.take(parameters, ["data_hex"])) do
+      {:ok, netfn, opcode, data, include_response?}
+    else
+      _ -> {:error, :failed, "IPMI native command request is invalid"}
     end
   end
 
