@@ -3,7 +3,6 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Adapters.Kubernetes.Resources, as: Resources
   alias Opsonde.Transports.Kubernetes, as: Client
   alias Opsonde.Transports.Kubernetes.State
 
@@ -42,7 +41,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   def check(state, input), do: Client.check(state, input)
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, Resources.capabilities(method_operations())}
+  def capabilities(_state, _invocation) do
+    {observation, effect} = method_operations()
+    {:ok, %Target.Capabilities{observations: [observation], effects: [effect]}}
+  end
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: @method_observation} = request, invocation) do
@@ -59,17 +61,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  def observe(%State{} = state, request, invocation) do
-    with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation, decoder} <- Resources.observation_operation(state.namespace, request),
-         {:ok, result} <-
-           Client.run_observation(state, operation, decoder, cancelled?(invocation)),
-         {:ok, facts} <- Resources.decode(decoder, result) do
-      {:ok, %Target.Observation{facts: facts, observed_at: DateTime.utc_now()}}
-    else
-      {:error, category, message} -> read_error(category, message)
-    end
-  end
+  def observe(_state, _request, _invocation), do: invalid_request()
 
   @impl Opsonde.Providers.Target
   def preflight(%State{} = state, %{capability: @method_observation} = request) do
@@ -79,12 +71,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  def preflight(%State{} = state, request) do
-    case Resources.observation_operation(state.namespace, request) do
-      {:ok, _operation, _decoder} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
+  def preflight(_state, _request), do: invalid_request()
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
@@ -97,15 +84,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  def effect(%State{} = state, request, invocation) do
-    with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- Resources.effect_operation(state.namespace, request),
-         result <- Client.run(state, operation, cancelled?(invocation), :effect) do
-      effect_result(result)
-    else
-      {:error, _category, message} -> {:error, :failed, message}
-    end
-  end
+  def effect(_state, _request, _invocation), do: invalid_request()
 
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, %{capability: @method_observation} = request, invocation) do
@@ -116,7 +95,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
       {:ok,
        %Target.Verification{
-         status: Resources.expected_status(facts, request.expected),
+         status: expected_status(facts, request.expected),
          observed_at: DateTime.utc_now(),
          facts: facts
        }}
@@ -125,23 +104,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     end
   end
 
-  def verify(%State{} = state, request, invocation) do
-    with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation, :deployment} <-
-           Resources.observation_operation(state.namespace, request),
-         {:ok, expected} <- Resources.verification_expected(request.expected),
-         {:ok, result} <- Client.run(state, operation, cancelled?(invocation), :read),
-         {:ok, facts} <- Resources.decode(:deployment, result) do
-      {:ok,
-       %Target.Verification{
-         status: Resources.expected_status(facts, expected),
-         observed_at: DateTime.utc_now(),
-         facts: facts
-       }}
-    else
-      {:error, category, message} -> read_error(category, message)
-      _error -> {:error, :failed, "Kubernetes verification request is invalid"}
-    end
+  def verify(_state, _request, _invocation), do: invalid_request()
+
+  defp expected_status(_facts, expected) when expected == %{}, do: :unknown
+
+  defp expected_status(facts, expected) when is_map(expected) do
+    if Enum.all?(expected, fn {key, value} -> facts[key] == value end),
+      do: :verified,
+      else: :not_verified
   end
 
   defp method_observation_operation(state, request) do
@@ -160,15 +130,16 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   defp method_effect_operation(state, request) do
     with {:ok, action, api_version, kind, name, _query, body} <-
-           method_request(request, "request.execute") do
+           method_request(request, "request.execute"),
+         :ok <- validate_effect_body(state, action, api_version, kind, name, body) do
       path = [namespace: state.namespace, name: name]
 
       case action do
         "create" when is_map(body) ->
-          {:ok, K8s.Client.create(body)}
+          {:ok, K8s.Client.create(api_version, kind, [namespace: state.namespace], body)}
 
-        "update" when is_map(body) ->
-          {:ok, K8s.Client.update(body)}
+        "update" when is_binary(name) and is_map(body) ->
+          {:ok, K8s.Client.update(api_version, kind, path, body)}
 
         "patch" when is_binary(name) and is_map(body) ->
           {:ok, K8s.Client.patch(api_version, kind, path, body, :merge)}
@@ -183,6 +154,26 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   rescue
     _error -> invalid_request()
   end
+
+  defp validate_effect_body(_state, "delete", _version, _kind, _name, nil), do: :ok
+
+  defp validate_effect_body(state, action, version, kind, name, body)
+       when action in ["create", "update", "patch"] and is_map(body) do
+    metadata = Map.get(body, "metadata", %{})
+
+    if is_map(metadata) and
+         Map.get(metadata, "namespace", state.namespace) == state.namespace and
+         (is_nil(name) or Map.get(metadata, "name", name) == name) and
+         Map.get(body, "apiVersion", version) == version and
+         Map.get(body, "kind", kind) == kind do
+      :ok
+    else
+      invalid_request()
+    end
+  end
+
+  defp validate_effect_body(_state, _action, _version, _kind, _name, _body),
+    do: invalid_request()
 
   defp method_read_operation(state, "get", api_version, kind, name) when is_binary(name),
     do: {:ok, K8s.Client.get(api_version, kind, namespace: state.namespace, name: name)}

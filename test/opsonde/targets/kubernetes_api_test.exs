@@ -8,15 +8,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
   @password "correct horse battery staple"
   @namespace "bounded-namespace"
-  @capabilities [
-    "observe.workloads",
-    "observe.workload",
-    "observe.logs",
-    "observe.events",
-    "effect.workload",
-    "request.kubernetes.observe",
-    "request.kubernetes.effect"
-  ]
+  @capabilities ["request.kubernetes.observe", "request.kubernetes.effect"]
 
   defmodule KubernetesStub do
     import Plug.Conn
@@ -73,8 +65,34 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         "apiVersion" => "v1",
         "groupVersion" => "example.com/v1",
         "kind" => "APIResourceList",
-        "resources" => [resource("widgets", "Widget", ~w(get list patch))]
+        "resources" => [resource("widgets", "Widget", ~w(get list create update patch))]
       })
+    end
+
+    defp route(
+           %{
+             method: "POST",
+             request_path: "/apis/example.com/v1/namespaces/#{@namespace}/widgets"
+           } = conn,
+           agent,
+           %{body: body}
+         ) do
+      widget = Jason.decode!(body)
+      Agent.update(agent, &Map.put(&1, :created_widget, widget))
+      json(conn, 201, widget)
+    end
+
+    defp route(
+           %{
+             method: "PUT",
+             request_path: "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one"
+           } = conn,
+           agent,
+           %{body: body}
+         ) do
+      widget = Jason.decode!(body)
+      Agent.update(agent, &Map.put(&1, :widget, widget))
+      json(conn, 200, widget)
     end
 
     defp route(
@@ -115,20 +133,6 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     defp route(
            %{method: "GET", request_path: "/api/v1/namespaces/#{@namespace}/pods"} = conn,
-           agent,
-           %{query: %{"watch" => watch}}
-         )
-         when watch in ["1", "true"] do
-      Process.sleep(Agent.get(agent, & &1.watch_delay_ms))
-      event = %{"type" => "MODIFIED", "object" => pod("pod-one", "23")}
-
-      conn
-      |> put_resp_content_type("application/json")
-      |> send_resp(200, Jason.encode!(event) <> "\n")
-    end
-
-    defp route(
-           %{method: "GET", request_path: "/api/v1/namespaces/#{@namespace}/pods"} = conn,
            _agent,
            _request
          ) do
@@ -138,19 +142,6 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         "metadata" => %{"resourceVersion" => "22"},
         "items" => [pod("pod-one", "22")]
       })
-    end
-
-    defp route(
-           %{
-             method: "GET",
-             request_path: "/api/v1/namespaces/#{@namespace}/pods/pod-one/log"
-           } = conn,
-           _agent,
-           _request
-         ) do
-      conn
-      |> put_resp_content_type("text/plain")
-      |> send_resp(200, "line one\nline two\n")
     end
 
     defp route(
@@ -324,7 +315,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
              requests: [],
              deployment: deployment,
              widget: widget,
-             watch_delay_ms: 0,
+             created_widget: nil,
              patch_delay_ms: 0
            }
          end}
@@ -438,8 +429,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert Enum.any?(requests(context), &(&1.path == "/apis/example.com/v1"))
   end
 
-  test "public Provider path exposes bounded namespace operations and observations", context do
-    assert %Target.Capabilities{observations: observations, effects: effects} =
+  test "one generic Method observes built-in resources without fixed capabilities", context do
+    assert %Target.Capabilities{observations: [observation], effects: [effect]} =
              Providers.target_capabilities!(
                context.provider.id,
                context.provider.revision,
@@ -447,150 +438,49 @@ defmodule Opsonde.Targets.KubernetesAPITest do
                actor: context.operator
              )
 
-    assert Enum.map(observations, & &1.operation) == [
-             "kubernetes.pods.list",
-             "kubernetes.deployment.inspect",
-             "kubernetes.pod.logs",
-             "kubernetes.events.list",
-             "kubernetes.pods.watch",
-             "request.observe"
-           ]
+    assert observation.capability == "request.kubernetes.observe"
+    assert observation.operation == "request.observe"
+    assert effect.capability == "request.kubernetes.effect"
+    assert effect.operation == "request.execute"
 
-    tools = Map.new(observations, &{&1.operation, &1})
-    deployment_tool = tools["kubernetes.deployment.inspect"]
-    method_tool = tools["request.observe"]
-
-    assert Map.keys(deployment_tool.verification_schema["properties"]) == ["replicas"]
-    assert deployment_tool.verification_schema["required"] == ["replicas"]
-    assert_schema_accepts!(deployment_tool.verification_schema, %{"replicas" => 1})
-
-    assert_schema_rejects!(deployment_tool.verification_schema, %{
-      "replicas" => 1,
-      "ready_replicas" => 1
-    })
-
-    assert_schema_rejects!(deployment_tool.verification_schema, %{
-      "replicas" => 1,
-      "available_replicas" => 1
-    })
-
-    method_parameters = %{
-      "action" => "get",
-      "api_version" => "v1",
-      "kind" => "Pod",
-      "name" => "pod-one",
-      "query" => %{"pretty" => "true"}
-    }
-
-    assert_schema_accepts!(method_tool.input_schema, %{
-      "selectors" => %{},
-      "parameters" => method_parameters
-    })
-
-    assert_schema_rejects!(method_tool.input_schema, %{
-      "selectors" => %{},
-      "parameters" => put_in(method_parameters, ["query"], %{"namespace" => @namespace})
-    })
-
-    [effect, method_effect] = effects
-    assert effect.operation == "kubernetes.deployment.scale"
-    assert method_effect.operation == "request.execute"
-
-    assert effect.evidence_requirements == [
-             %Target.EvidenceRequirement{
-               parameter: "expected_uid",
-               fact: "uid",
-               observation: "kubernetes.deployment.inspect"
-             },
-             %Target.EvidenceRequirement{
-               parameter: "expected_resource_version",
-               fact: "resource_version",
-               observation: "kubernetes.deployment.inspect"
-             }
-           ]
-
-    pods = observe!(context, "observe.workloads", "kubernetes.pods.list", %{}, %{"limit" => 10})
-    assert_schema_accepts!(tools["kubernetes.pods.list"].output_schema, pods.facts)
-    assert pods.facts["resource_version"] == "22"
-    assert [%{"name" => "pod-one", "phase" => "Running"}] = pods.facts["pods"]
-
-    logs =
-      observe!(
-        context,
-        "observe.logs",
-        "kubernetes.pod.logs",
-        %{"name" => "pod-one", "container" => "app"},
-        %{"tail_lines" => 20, "limit_bytes" => 2_048}
-      )
-
-    assert_schema_accepts!(tools["kubernetes.pod.logs"].output_schema, logs.facts)
-    assert logs.facts["logs"] == "line one\nline two\n"
-
-    events =
-      observe!(context, "observe.events", "kubernetes.events.list", %{}, %{"limit" => 10})
-
-    assert_schema_accepts!(tools["kubernetes.events.list"].output_schema, events.facts)
-
-    assert [%{"reason" => "Unhealthy", "regarding_name" => "pod-one"}] =
-             events.facts["events"]
-
-    watch =
-      observe!(context, "observe.workloads", "kubernetes.pods.watch", %{}, %{
-        "resource_version" => "22",
-        "timeout_seconds" => 5,
-        "max_events" => 1,
-        "labels" => %{"app" => "fixture"}
+    pod =
+      observe!(context, observation.capability, observation.operation, %{}, %{
+        "action" => "get",
+        "api_version" => "v1",
+        "kind" => "Pod",
+        "name" => "pod-one",
+        "query" => %{"pretty" => "true"}
       })
 
-    assert_schema_accepts!(tools["kubernetes.pods.watch"].output_schema, watch.facts)
+    assert get_in(pod.facts, ["response", "metadata", "name"]) == "pod-one"
+    assert_schema_accepts!(observation.output_schema, pod.facts)
 
-    assert [%{"type" => "MODIFIED", "object" => %{"resource_version" => "23"}}] =
-             watch.facts["events"]
+    for {api_version, kind, expected_kind} <- [
+          {"v1", "Pod", "PodList"},
+          {"v1", "Event", "EventList"}
+        ] do
+      result =
+        observe!(context, observation.capability, observation.operation, %{}, %{
+          "action" => "list",
+          "api_version" => api_version,
+          "kind" => kind
+        })
 
-    deployment =
-      observe!(
-        context,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
-        %{}
-      )
+      assert get_in(result.facts, ["response", "kind"]) == expected_kind
+    end
 
-    assert_schema_accepts!(deployment_tool.output_schema, deployment.facts)
-
-    method_observation =
-      observe!(
-        context,
-        "request.kubernetes.observe",
-        "request.observe",
-        %{},
-        method_parameters
-      )
-
-    assert %{"response" => %{"metadata" => %{"name" => "pod-one"}}} = method_observation.facts
+    deployment = deployment_observation!(context)
+    assert get_in(deployment, ["response", "spec", "replicas"]) == 1
 
     assert Enum.all?(requests(context), fn request ->
              request.authorized? and
                (request.path in ["/api/v1", "/apis/apps/v1"] or
                   String.contains?(request.path, "/namespaces/#{@namespace}/"))
            end)
-
-    log_request = Enum.find(requests(context), &String.ends_with?(&1.path, "/log"))
-    assert log_request.query["limitBytes"] == "2048"
-    assert log_request.query["tailLines"] == "20"
-
-    watch_request = Enum.find(requests(context), &(&1.query["watch"] in ["1", "true"]))
-    assert watch_request.query["labelSelector"] == "app=fixture"
-
-    method_request =
-      Enum.find(requests(context), fn request ->
-        request.path == "/api/v1/namespaces/#{@namespace}/pods/pod-one"
-      end)
-
-    assert method_request.query == %{"pretty" => "true"}
   end
 
-  test "Method observation rejects path scope and unknown query keys without dispatch", context do
+  test "generic observations reject scope and unsupported query parameters before dispatch",
+       context do
     request_count = length(requests(context))
 
     for query <- [%{"namespace" => @namespace}, %{"unknown" => "value"}] do
@@ -610,26 +500,36 @@ defmodule Opsonde.Targets.KubernetesAPITest do
           }
         )
 
-      assert {:error, error} =
-               Targets.clear_target_request(request, actor: context.operator)
-
-      assert Exception.message(error) =~ "Kubernetes API request is invalid"
+      assert {:error, _error} = Targets.clear_target_request(request, actor: context.operator)
     end
+
+    assert length(requests(context)) == request_count
+
+    {:ok, state} =
+      Kubernetes.build(configuration(), %{"kubeconfig" => kubeconfig(context.endpoint)})
+
+    wrong_endpoint = %{
+      capability: "request.kubernetes.observe",
+      operation: "request.observe",
+      connection: %{endpoint: "https://127.0.0.1:1"},
+      selectors: %{},
+      parameters: %{
+        "action" => "get",
+        "api_version" => "v1",
+        "kind" => "Pod",
+        "name" => "pod-one"
+      }
+    }
+
+    assert {:error, :failed, _message} = Kubernetes.observe(state, wrong_endpoint, %{})
 
     assert length(requests(context)) == request_count
   end
 
-  test "approved scale is preconditioned and followed by fresh verification", context do
-    before =
-      observe!(
-        context,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
-        %{}
-      )
-
-    effect = scale_request(context, before.facts["uid"], before.facts["resource_version"], 2)
+  test "generic write preserves conflict and unknown outcomes with independent observation",
+       context do
+    before = deployment_observation!(context)["response"]
+    effect = deployment_patch(context, before, 2)
     clearance = Targets.clear_target_request!(effect, actor: context.operator)
 
     assert %Target.EffectResult{status: :applied, reference: "18"} =
@@ -638,179 +538,144 @@ defmodule Opsonde.Targets.KubernetesAPITest do
                authorize?: false
              )
 
+    fresh = deployment_observation!(context)["response"]
+    assert get_in(fresh, ["spec", "replicas"]) == 2
+
     verification =
       policy_request(
         context,
         :verification,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
+        "request.kubernetes.observe",
+        "request.observe",
         %{},
-        %{"replicas" => 2}
+        deployment_get_parameters(),
+        %{"response" => fresh}
       )
 
-    verification_clearance =
-      Targets.clear_target_request!(verification, actor: context.operator)
+    verified = Targets.clear_target_request!(verification, actor: context.operator)
 
-    assert %Target.Verification{status: :verified, facts: %{"resource_version" => "18"}} =
-             Targets.dispatch_target_verification!(verification_clearance, %{},
-               actor: context.operator
-             )
+    assert %Target.Verification{status: :verified} =
+             Targets.dispatch_target_verification!(verified, %{}, actor: context.operator)
 
-    request_count = length(requests(context))
+    stale =
+      Targets.clear_target_request!(deployment_patch(context, before, 0), actor: context.operator)
 
-    invalid_verification =
-      policy_request(
-        context,
-        :verification,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
-        %{},
-        %{"replicas" => 2, "ready_replicas" => 2}
-      )
-
-    invalid_clearance =
-      Targets.clear_target_request!(invalid_verification, actor: context.operator)
-
-    assert {:error, _error} =
-             Targets.dispatch_target_verification(invalid_clearance, %{}, actor: context.operator)
-
-    assert length(requests(context)) == request_count
-
-    stale = scale_request(context, before.facts["uid"], before.facts["resource_version"], 0)
-    stale_clearance = Targets.clear_target_request!(stale, actor: context.operator)
-
-    assert %Target.EffectResult{
-             status: :failed,
-             details: %{"category" => "conflict"}
-           } =
-             Targets.dispatch_target_effect!(stale_clearance, %{},
+    assert %Target.EffectResult{status: :failed, details: %{"category" => "conflict"}} =
+             Targets.dispatch_target_effect!(stale, %{},
                actor: context.operator,
                authorize?: false
              )
 
-    current =
-      observe!(
-        context,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
-        %{}
-      )
-
     Agent.update(context.agent, &%{&1 | patch_delay_ms: 1_000})
 
-    lost_response =
-      scale_request(context, current.facts["uid"], current.facts["resource_version"], 3)
-
-    lost_clearance = Targets.clear_target_request!(lost_response, actor: context.operator)
+    lost =
+      Targets.clear_target_request!(deployment_patch(context, fresh, 3), actor: context.operator)
 
     assert %Target.EffectResult{status: :unknown} =
-             Targets.dispatch_target_effect!(lost_clearance, %{},
+             Targets.dispatch_target_effect!(lost, %{},
                actor: context.operator,
                authorize?: false
              )
 
     Agent.update(context.agent, &%{&1 | patch_delay_ms: 0})
-
-    reconciled =
-      policy_request(
-        context,
-        :verification,
-        "observe.workload",
-        "kubernetes.deployment.inspect",
-        %{"name" => "app"},
-        %{},
-        %{"replicas" => 3}
-      )
-
-    reconciled_clearance = Targets.clear_target_request!(reconciled, actor: context.operator)
-
-    assert %Target.Verification{status: :verified, facts: %{"resource_version" => "19"}} =
-             Targets.dispatch_target_verification!(reconciled_clearance, %{},
-               actor: context.operator
-             )
-
-    patch_requests = Enum.filter(requests(context), &(&1.method == "PATCH"))
-    assert length(patch_requests) == 3
+    reconciled = deployment_observation!(context)["response"]
+    assert get_in(reconciled, ["spec", "replicas"]) == 3
+    assert length(Enum.filter(requests(context), &(&1.method == "PATCH"))) == 3
   end
 
-  test "namespace escape stops locally and an interrupted watch stays bounded", context do
-    request_count = length(requests(context))
+  test "generic create and update cannot select a different namespace", context do
+    {:ok, state} =
+      Kubernetes.build(configuration(), %{"kubeconfig" => kubeconfig(context.endpoint)})
 
-    escaped =
-      policy_request(
-        context,
-        :observation,
-        "observe.workloads",
-        "kubernetes.pods.list",
-        %{"namespace" => "kube-system"},
-        %{"limit" => 10}
-      )
+    count = length(requests(context))
 
-    assert {:error, _error} =
-             Targets.clear_target_request(escaped, actor: context.operator)
+    for action <- ["create", "update"] do
+      request = %{
+        capability: "request.kubernetes.effect",
+        operation: "request.execute",
+        connection: %{endpoint: context.endpoint},
+        selectors: %{},
+        parameters: %{
+          "action" => action,
+          "api_version" => "apps/v1",
+          "kind" => "Deployment",
+          "name" => "app",
+          "body" => %{
+            "apiVersion" => "apps/v1",
+            "kind" => "Deployment",
+            "metadata" => %{"name" => "app", "namespace" => "kube-system"}
+          }
+        }
+      }
 
-    assert length(requests(context)) == request_count
+      assert {:error, :failed, _message} = Kubernetes.effect(state, request, %{})
+    end
 
-    wrong_method =
-      Targets.create_access_method!(
-        context.target.id,
-        context.provider.id,
-        "wrong Kubernetes endpoint",
-        "api",
-        "https://127.0.0.1:1",
-        context.provider.revision,
-        200,
-        ["observe.workloads"],
-        actor: context.admin
-      )
+    assert length(requests(context)) == count
+  end
 
-    wrong_context = %{context | method: wrong_method}
+  test "generic create and update use the configured namespace", context do
+    created = %{
+      "apiVersion" => "example.com/v1",
+      "kind" => "Widget",
+      "metadata" => %{"name" => "widget-two", "namespace" => @namespace},
+      "spec" => %{"mode" => "active"}
+    }
 
-    wrong_endpoint =
-      policy_request(
-        wrong_context,
-        :observation,
-        "observe.workloads",
-        "kubernetes.pods.list",
-        %{},
-        %{"limit" => 1}
-      )
+    create =
+      policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+        "action" => "create",
+        "api_version" => "example.com/v1",
+        "kind" => "Widget",
+        "name" => "widget-two",
+        "body" => created
+      })
 
-    wrong_clearance = Targets.clear_target_request!(wrong_endpoint, actor: context.operator)
+    clearance = Targets.clear_target_request!(create, actor: context.operator)
 
-    assert {:error, _error} =
-             Targets.dispatch_target_observation(wrong_clearance, %{}, actor: context.operator)
+    assert %Target.EffectResult{status: :applied} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
 
-    assert length(requests(context)) == request_count
+    assert Agent.get(context.agent, & &1.created_widget) == created
 
-    Agent.update(context.agent, &%{&1 | watch_delay_ms: 2_000})
+    previous =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "action" => "get",
+        "api_version" => "example.com/v1",
+        "kind" => "Widget",
+        "name" => "widget-one"
+      }).facts["response"]
 
-    watch =
-      policy_request(
-        context,
-        :observation,
-        "observe.workloads",
-        "kubernetes.pods.watch",
-        %{},
-        %{"resource_version" => "22", "timeout_seconds" => 5, "max_events" => 1}
-      )
+    updated = put_in(previous, ["spec", "mode"], "updated")
 
-    watch_clearance = Targets.clear_target_request!(watch, actor: context.operator)
+    update =
+      policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+        "action" => "update",
+        "api_version" => "example.com/v1",
+        "kind" => "Widget",
+        "name" => "widget-one",
+        "body" => updated
+      })
 
-    assert {:error, error} =
-             Targets.dispatch_target_observation(watch_clearance, %{}, actor: context.operator)
+    clearance = Targets.clear_target_request!(update, actor: context.operator)
 
-    assert target_error(error).category == :timeout
+    assert %Target.EffectResult{status: :applied} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
 
-    assert Enum.any?(requests(context), fn request ->
-             request.path == "/api/v1/namespaces/#{@namespace}/pods" and
-               request.query["watch"] in ["1", "true"]
-           end)
+    assert Agent.get(context.agent, & &1.widget) == updated
 
-    refute Enum.any?(requests(context), &String.contains?(&1.path, "kube-system"))
+    assert Enum.all?(
+             Enum.filter(requests(context), &(&1.method in ["POST", "PUT"])),
+             fn request ->
+               String.contains?(request.path, "/namespaces/#{@namespace}/")
+             end
+           )
   end
 
   test "kubeconfig cannot execute helpers, read credential paths or disable TLS", context do
@@ -853,19 +718,34 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
   end
 
-  defp scale_request(context, uid, resource_version, replicas) do
-    policy_request(
+  defp deployment_get_parameters do
+    %{"action" => "get", "api_version" => "apps/v1", "kind" => "Deployment", "name" => "app"}
+  end
+
+  defp deployment_observation!(context) do
+    observe!(
       context,
-      :effect,
-      "effect.workload",
-      "kubernetes.deployment.scale",
-      %{"name" => "app"},
-      %{
-        "replicas" => replicas,
-        "expected_uid" => uid,
-        "expected_resource_version" => resource_version
+      "request.kubernetes.observe",
+      "request.observe",
+      %{},
+      deployment_get_parameters()
+    ).facts
+  end
+
+  defp deployment_patch(context, observed, replicas) do
+    policy_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+      "action" => "patch",
+      "api_version" => "apps/v1",
+      "kind" => "Deployment",
+      "name" => "app",
+      "body" => %{
+        "metadata" => %{
+          "uid" => get_in(observed, ["metadata", "uid"]),
+          "resourceVersion" => get_in(observed, ["metadata", "resourceVersion"])
+        },
+        "spec" => %{"replicas" => replicas}
       }
-    )
+    })
   end
 
   defp policy_request(
@@ -934,19 +814,4 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert {:ok, root} = JSV.build(schema, warnings: :silent)
     assert {:ok, _validated} = JSV.validate(facts, root, cast: false)
   end
-
-  defp assert_schema_rejects!(schema, facts) do
-    assert {:ok, root} = JSV.build(schema, warnings: :silent)
-    assert {:error, _error} = JSV.validate(facts, root, cast: false)
-  end
-
-  defp target_error(%{errors: errors}) do
-    Enum.find_value(errors, fn
-      %Target.Error{} = error -> error
-      %{errors: nested} -> target_error(%{errors: nested})
-      _error -> nil
-    end)
-  end
-
-  defp target_error(_error), do: nil
 end
