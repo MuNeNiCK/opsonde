@@ -9,6 +9,7 @@ export type AccessMethod = components["schemas"]["AccessMethod"];
 export type TargetRelationship = components["schemas"]["TargetRelationship"];
 export type TargetPolicy = components["schemas"]["TargetPolicy"];
 export type InventoryImport = components["schemas"]["InventoryImport"];
+export type TargetTypeCatalog = components["schemas"]["TargetTypeCatalog"];
 
 export type TargetSnapshot = {
   providers: Provider[];
@@ -19,65 +20,89 @@ export type TargetSnapshot = {
   relationships: TargetRelationship[];
   policies: TargetPolicy[];
   imports: InventoryImport[];
+  catalog: TargetTypeCatalog;
 };
 
 export async function loadTargetSnapshot(): Promise<TargetSnapshot> {
-  const [providers, boundaries, targets, identities, methods, relationships, policies, imports] =
-    await Promise.all([
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/providers", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/management-boundaries", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/external-identities", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/access-methods", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/target-relationships", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/target-policies", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      collectPages((after) =>
-        apiClient
-          .GET("/api/v1/inventory-imports", {
-            params: { query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-    ]);
-  return { providers, boundaries, targets, identities, methods, relationships, policies, imports };
+  const [
+    providers,
+    boundaries,
+    targets,
+    identities,
+    methods,
+    relationships,
+    policies,
+    imports,
+    catalog,
+  ] = await Promise.all([
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/providers", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/management-boundaries", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/external-identities", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/access-methods", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/target-relationships", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/target-policies", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    collectPages((after) =>
+      apiClient
+        .GET("/api/v1/inventory-imports", {
+          params: { query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    apiClient
+      .GET("/api/v1/target-types")
+      .then(apiData)
+      .then((response) => response.data),
+  ]);
+  return {
+    providers,
+    boundaries,
+    targets,
+    identities,
+    methods,
+    relationships,
+    policies,
+    imports,
+    catalog,
+  };
 }

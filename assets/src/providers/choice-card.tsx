@@ -2,16 +2,19 @@ import type { LucideIcon } from "lucide-react";
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 export function ProviderChoiceCard({
   to,
   title,
   description,
+  badge,
   icon: Icon,
 }: {
   to: string;
   title: string;
   description: string;
+  badge?: string;
   icon: LucideIcon;
 }) {
   return (
@@ -30,6 +33,11 @@ export function ProviderChoiceCard({
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {badge && (
+            <Badge variant="secondary" className="mb-3">
+              {badge}
+            </Badge>
+          )}
           <CardDescription className="leading-relaxed">{description}</CardDescription>
         </CardContent>
       </Card>

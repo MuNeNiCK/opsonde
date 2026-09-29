@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { AccessMethodForm } from "@/targets/access-method-form";
-import type { Provider, Target } from "@/targets/data";
+import type { Provider, Target, TargetTypeCatalog } from "@/targets/data";
 
 type Action = "identity" | "access" | "relationship" | "policy";
 
@@ -17,6 +17,7 @@ export function TargetDetailActions({
   target,
   targets,
   providers,
+  catalog,
   initialAction,
   onComplete,
   onError,
@@ -24,6 +25,7 @@ export function TargetDetailActions({
   target: Target;
   targets: Target[];
   providers: Provider[];
+  catalog: TargetTypeCatalog;
   initialAction?: Action;
   onComplete: (message: string) => Promise<void>;
   onError: (message: string) => void;
@@ -120,6 +122,7 @@ export function TargetDetailActions({
           <AccessMethodForm
             target={target}
             providers={providers}
+            catalog={catalog}
             onSaved={async () => {
               await onComplete(t("targets.changeSaved"));
               setAction(null);

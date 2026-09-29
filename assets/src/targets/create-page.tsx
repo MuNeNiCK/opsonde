@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Boxes, Cable, Network, Plus, Server } from "lucide-react";
+import { ArrowLeft, Plus, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -15,74 +15,55 @@ import { Spinner } from "@/components/ui/spinner";
 import { ProviderChoiceCard } from "@/providers/choice-card";
 
 type Boundary = components["schemas"]["ManagementBoundary"];
-
-const targetChoices = {
-  linux: {
-    title: "Linux",
-    kind: "host",
-    typeId: "linux",
-    icon: Server,
-    description: "targets.targetChoiceLinux",
-  },
-  "physical-host": {
-    title: "Physical host",
-    kind: "physical_host",
-    typeId: "bare_metal",
-    icon: Server,
-    description: "targets.targetChoicePhysicalHost",
-  },
-  "cisco-ios-xe": {
-    title: "Cisco IOS XE",
-    kind: "network_device",
-    typeId: "cisco_ios_xe",
-    icon: Network,
-    description: "targets.targetChoiceCisco",
-  },
-  kubernetes: {
-    title: "Kubernetes",
-    kind: "cluster",
-    typeId: "kubernetes",
-    icon: Boxes,
-    description: "targets.targetChoiceKubernetes",
-  },
-  generic: {
-    title: "Generic",
-    kind: null,
-    typeId: null,
-    icon: Cable,
-    description: "targets.targetChoiceGeneric",
-  },
-} as const;
+type Catalog = components["schemas"]["TargetTypeCatalog"];
 
 export function TargetCreatePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { targetType } = useParams();
   const { account } = useAuthentication();
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [boundaries, setBoundaries] = useState<Boundary[] | null>(null);
   const [creatingBoundary, setCreatingBoundary] = useState(false);
-  const [targetKind, setTargetKind] = useState("host");
-  const [targetTypeId, setTargetTypeId] = useState("generic");
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const canManage = account?.role === "admin";
-  const choice =
-    targetType && targetType in targetChoices
-      ? targetChoices[targetType as keyof typeof targetChoices]
-      : undefined;
+  const choice = catalog?.types.find((item) => item.id === targetType);
+  const categoryLabels = new Map(
+    catalog?.categories.map((item) => [
+      item.id,
+      t(`targets.categoryLabels.${item.id}`, { defaultValue: item.label }),
+    ]),
+  );
+  const visibleTypes = (catalog?.types ?? []).filter((item) => {
+    const label = t(`targets.typeLabels.${item.id}`, { defaultValue: item.label });
+    return (
+      (category === "all" || item.category_id === category) &&
+      `${label} ${item.label} ${categoryLabels.get(item.category_id) ?? ""}`
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase())
+    );
+  });
 
   useEffect(() => {
     let active = true;
-    loadBoundaries()
-      .then((items) => active && setBoundaries(items))
+    Promise.all([loadBoundaries(), apiClient.GET("/api/v1/target-types").then(apiData)])
+      .then(([items, response]) => {
+        if (active) {
+          setBoundaries(items);
+          setCatalog(response.data);
+        }
+      })
       .catch(() => active && setError(t("targets.requestFailed")));
     return () => {
       active = false;
     };
   }, [t]);
 
-  if (targetType && !choice) return <Navigate to="/targets/new" replace />;
+  if (catalog && targetType && !choice) return <Navigate to="/targets/new" replace />;
 
   async function createBoundary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,21 +96,14 @@ export function TargetCreatePage() {
     setPending(true);
     setError("");
     try {
-      const targetKindValue =
-        choice?.kind ??
-        (value(form, "kind") === "custom" ? value(form, "custom_kind") : value(form, "kind"));
-      const targetTypeIdValue =
-        choice?.typeId ??
-        (value(form, "type_id") === "custom"
-          ? value(form, "custom_type_id")
-          : value(form, "type_id"));
+      if (!choice) return;
       const response = apiData(
         await apiClient.POST("/api/v1/targets", {
           body: {
             target: {
               name: value(form, "name"),
-              kind: targetKindValue,
-              type_id: targetTypeIdValue,
+              kind: choice.kind,
+              type_id: choice.id,
               facts: {},
               management_boundary_id: value(form, "management_boundary_id") || null,
             },
@@ -157,7 +131,7 @@ export function TargetCreatePage() {
             {creatingBoundary
               ? t("targets.addBoundary")
               : choice
-                ? choice.title
+                ? t(`targets.typeLabels.${choice.id}`, { defaultValue: choice.label })
                 : t("targets.chooseTargetType")}
           </h1>
           {canManage && choice && (
@@ -173,7 +147,11 @@ export function TargetCreatePage() {
           )}
         </div>
         <p className="mt-2 text-muted-foreground">
-          {t(choice ? choice.description : "targets.chooseTargetTypeDescription")}
+          {choice
+            ? t(`targets.typeDescriptions.${choice.id}`, {
+                defaultValue: t("targets.targetCreateGuidance"),
+              })
+            : t("targets.chooseTargetTypeDescription")}
         </p>
       </div>
       {error && (
@@ -190,17 +168,47 @@ export function TargetCreatePage() {
         <Alert>
           <AlertDescription>{t("targets.readOnly")}</AlertDescription>
         </Alert>
+      ) : !catalog ? (
+        !error && <Spinner />
       ) : !choice ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Object.entries(targetChoices).map(([id, item]) => (
-            <ProviderChoiceCard
-              key={id}
-              to={`/targets/new/${id}`}
-              title={item.title}
-              description={t(item.description)}
-              icon={item.icon}
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-3">
+            <Input
+              className="max-w-sm"
+              aria-label={t("targets.searchTargetTypes")}
+              placeholder={t("targets.searchTargetTypes")}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
             />
-          ))}
+            <FormSelect
+              id="target-type-category"
+              ariaLabel={t("targets.filterCategory")}
+              value={category}
+              onValueChange={(next) => setCategory(next ?? "all")}
+              options={[
+                { value: "all", label: t("targets.allCategories") },
+                ...catalog.categories.map((item) => ({
+                  value: item.id,
+                  label: categoryLabels.get(item.id) ?? item.label,
+                })),
+              ]}
+            />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {visibleTypes.map((item) => (
+              <ProviderChoiceCard
+                key={item.id}
+                to={`/targets/new/${item.id}`}
+                title={t(`targets.typeLabels.${item.id}`, { defaultValue: item.label })}
+                description={t(`targets.typeDescriptions.${item.id}`, {
+                  defaultValue: t("targets.targetCreateGuidance"),
+                })}
+                badge={categoryLabels.get(item.category_id)}
+                icon={Server}
+              />
+            ))}
+          </div>
+          {visibleTypes.length === 0 && <p>{t("targets.noTargetTypes")}</p>}
         </div>
       ) : creatingBoundary ? (
         <Card>
@@ -234,56 +242,6 @@ export function TargetCreatePage() {
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
               <Field label={t("targets.name")} name="name" required maxLength={120} />
-              {choice.kind === null && (
-                <div className="space-y-2">
-                  <Label htmlFor="target-create-kind">{t("targets.kind")}</Label>
-                  <FormSelect
-                    id="target-create-kind"
-                    name="kind"
-                    value={targetKind}
-                    onValueChange={(next) => next && setTargetKind(next)}
-                    required
-                    options={[
-                      { value: "host", label: "host" },
-                      { value: "cluster", label: "cluster" },
-                      { value: "network_device", label: "network_device" },
-                      { value: "bmc", label: "bmc" },
-                      { value: "virtualization", label: "virtualization" },
-                      { value: "custom", label: t("targets.custom") },
-                    ]}
-                  />
-                </div>
-              )}
-              {choice.kind === null && targetKind === "custom" && (
-                <Field label={t("targets.customKind")} name="custom_kind" required maxLength={80} />
-              )}
-              {choice.typeId === null && (
-                <div className="space-y-2">
-                  <Label htmlFor="target-create-type_id">{t("targets.platform")}</Label>
-                  <FormSelect
-                    id="target-create-type_id"
-                    name="type_id"
-                    value={targetTypeId}
-                    onValueChange={(next) => next && setTargetTypeId(next)}
-                    required
-                    options={[
-                      { value: "linux", label: "linux" },
-                      { value: "kubernetes", label: "kubernetes" },
-                      { value: "cisco_ios_xe", label: "cisco_ios_xe" },
-                      { value: "generic", label: "generic" },
-                      { value: "custom", label: t("targets.custom") },
-                    ]}
-                  />
-                </div>
-              )}
-              {choice.typeId === null && targetTypeId === "custom" && (
-                <Field
-                  label={t("targets.customPlatform")}
-                  name="custom_type_id"
-                  required
-                  maxLength={120}
-                />
-              )}
               <div className="space-y-2">
                 <Label htmlFor="target-create-boundary">{t("targets.boundary")}</Label>
                 <FormSelect

@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import type { AccessMethod, Provider, Target } from "@/targets/data";
+import type { AccessMethod, Provider, Target, TargetTypeCatalog } from "@/targets/data";
 
 export function AccessMethodForm({
   target,
   providers,
+  catalog,
   method,
   onSaved,
   onCancel,
@@ -19,6 +20,7 @@ export function AccessMethodForm({
 }: {
   target: Target;
   providers: Provider[];
+  catalog: TargetTypeCatalog;
   method?: AccessMethod;
   onSaved: () => Promise<void>;
   onCancel?: () => void;
@@ -28,6 +30,8 @@ export function AccessMethodForm({
   const [pending, setPending] = useState(false);
   const [providerId, setProviderId] = useState(method?.provider_id ?? "");
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
+  const allowedTypes =
+    catalog.types.find((item) => item.id === target.type_id)?.access_method_types ?? [];
   const availableProviders = providers.filter(
     (provider) =>
       provider.kind === "target" &&
@@ -35,10 +39,7 @@ export function AccessMethodForm({
       provider.check.status === "passed" &&
       provider.check.checked_revision === provider.revision &&
       provider.access_method_profile &&
-      (!provider.access_method_profile.target_type_id ||
-        provider.access_method_profile.target_type_id === target.type_id) &&
-      (!provider.access_method_profile.target_kind ||
-        provider.access_method_profile.target_kind === target.kind),
+      allowedTypes.includes(provider.adapter_type),
   );
   const provider = availableProviders.find((item) => item.id === providerId);
   const isBMC = provider?.adapter_type.startsWith("bmc-") ?? false;

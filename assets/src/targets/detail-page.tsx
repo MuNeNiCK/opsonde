@@ -83,10 +83,14 @@ export function TargetDetailPage() {
     .filter((item) => item.target_id === target.id && item.active)
     .sort((left, right) => left.priority - right.priority);
   const bmcMethods = methods.filter((method) => {
-    if (target.kind !== "physical_host" || !["redfish", "ipmi"].includes(method.method))
-      return false;
+    if (!["redfish", "ipmi"].includes(method.method)) return false;
     const provider = snapshot.providers.find((item) => item.id === method.provider_id);
-    return provider?.adapter_type === `bmc-${method.method}`;
+    return (
+      provider?.adapter_type === `bmc-${method.method}` &&
+      snapshot.catalog.types
+        .find((item) => item.id === target.type_id)
+        ?.access_method_types.includes(provider.adapter_type)
+    );
   });
   const relationships = snapshot.relationships.filter(
     (item) =>
@@ -142,6 +146,7 @@ export function TargetDetailPage() {
           target={target}
           targets={snapshot.targets}
           providers={snapshot.providers}
+          catalog={snapshot.catalog}
           initialAction={searchParams.get("action") === "relationship" ? "relationship" : undefined}
           onComplete={complete}
           onError={setError}
@@ -203,6 +208,7 @@ export function TargetDetailPage() {
                       <AccessMethodForm
                         target={target}
                         providers={snapshot.providers}
+                        catalog={snapshot.catalog}
                         method={method}
                         onSaved={async () => {
                           await complete(t("targets.accessMethodUpdated"));
