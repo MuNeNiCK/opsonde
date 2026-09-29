@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.GenericHTTPNativeTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Generic.HTTP
+  alias Opsonde.Targets.Adapters.HTTP
 
   defmodule Stub do
     import Plug.Conn

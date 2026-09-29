@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Generic.HTTP do
+defmodule Opsonde.Targets.Adapters.HTTP do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
