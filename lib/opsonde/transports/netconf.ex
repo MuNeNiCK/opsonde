@@ -72,7 +72,7 @@ defmodule Opsonde.Transports.NETCONF do
          {:ok, %Result{} = result} <- request(config, endpoint, envelope(body), cancelled?) do
       case parse(result.reply) do
         {:ok, root} ->
-          case valid_reply(root, @message_id) do
+          case valid_reply(root, @message_id, result.reply) do
             :ok -> {:ok, %Result{result | root: root}}
             {:error, :failed, message} -> {:error, :unknown_after_dispatch, message}
             error -> error
@@ -196,7 +196,7 @@ defmodule Opsonde.Transports.NETCONF do
     with :ok <- SSH.channel_send(channel, frame(envelope(body), framing)),
          {:ok, reply, buffer} <- SSH.channel_receive(channel, <<>>, decoder(framing)),
          {:ok, root} <- parse(reply),
-         :ok <- valid_reply(root, @message_id),
+         :ok <- valid_reply(root, @message_id, reply),
          {:ok, subscription_id} <- subscription_id(kind, root) do
       progress = %{empty_subscription_progress() | subscription_id: subscription_id}
       report_subscription_progress(reporter, progress)
@@ -356,7 +356,7 @@ defmodule Opsonde.Transports.NETCONF do
                 end
 
               {:ok, @base_namespace, "rpc-reply"} ->
-                case valid_reply(root, message_id) do
+                case valid_reply(root, message_id, xml) do
                   :ok -> {:ok, xml, rest, progress}
                   {:error, category, message} -> {:error, category, message, progress}
                 end
@@ -449,7 +449,7 @@ defmodule Opsonde.Transports.NETCONF do
     with :ok <- SSH.channel_send(channel, frame(envelope(body, message_id), framing)),
          {:ok, reply, remaining} <- SSH.channel_receive(channel, buffer, decoder(framing)),
          {:ok, root} <- parse(reply),
-         :ok <- valid_reply(root, message_id),
+         :ok <- valid_reply(root, message_id, reply),
          true <- bounded_replies?([reply | replies]) do
       {owner, reference} = reporter
       send(owner, {:opsonde_netconf_progress, reference, Enum.reverse([reply | replies])})
@@ -513,13 +513,13 @@ defmodule Opsonde.Transports.NETCONF do
   defp request(_config, _endpoint, _rpc, _cancelled?),
     do: {:error, :failed, "NETCONF request is invalid"}
 
-  defp valid_reply({name, attributes, children}, message_id) do
+  defp valid_reply({name, attributes, children}, message_id, raw_reply) do
     with {:ok, @base_namespace, "rpc-reply"} <- qualified_name(name, attributes, %{}),
          true <- List.keyfind(attributes, "message-id", 0) == {"message-id", message_id},
          false <- Enum.any?(children, &rpc_error?(&1, namespace_bindings(attributes, %{}))) do
       :ok
     else
-      true -> {:error, :rejected, "NETCONF RPC was rejected"}
+      true -> {:error, :rejected, raw_reply}
       _invalid -> {:error, :failed, "NETCONF reply is invalid or mismatched"}
     end
   end

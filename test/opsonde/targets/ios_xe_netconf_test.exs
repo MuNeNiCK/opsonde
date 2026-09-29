@@ -199,7 +199,8 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         mode in [
           :dynamic_subscription,
           :dynamic_wrong_followup_id,
-          :dynamic_close_before_followup_reply
+          :dynamic_close_before_followup_reply,
+          :dynamic_rpc_error
         ]
 
     defp response(agent, session_id, rpc) do
@@ -246,6 +247,10 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
           {"<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><id xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\">22</id></rpc-reply>",
            0, state}
 
+        state.mode == :dynamic_rpc_error and String.contains?(rpc, "<modify-subscription") ->
+          {"<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><rpc-error><error-tag>operation-failed</error-tag><error-info><vendor-detail xmlns=\"urn:vendor:errors\">needs-reload</vendor-detail></error-info></rpc-error></rpc-reply>",
+           0, state}
+
         dynamic_mode?(state.mode) and
           (String.contains?(rpc, "<modify-subscription") or
              String.contains?(rpc, "<delete-subscription")) and
@@ -270,7 +275,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     defp edit_response(_rpc, %{mode: :rpc_error} = state) do
       reply =
-        "<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag></rpc-error></rpc-reply>"
+        "<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag><error-info><vendor-detail xmlns=\"urn:vendor:errors\">needs-reload</vendor-detail></error-info></rpc-error></rpc-reply>"
 
       {reply, 0, %{state | mode: :normal, edit_received?: true}}
     end
@@ -626,7 +631,10 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     Agent.update(context.agent, &%{&1 | mode: :rpc_error})
 
-    assert %Target.EffectResult{status: :partial, details: %{"completed" => 1}} =
+    assert %Target.EffectResult{
+             status: :partial,
+             details: %{"completed" => 1, "error" => sequence_error}
+           } =
              %{
                sequence
                | operation_id: Ecto.UUID.generate(),
@@ -634,6 +642,9 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              }
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert String.contains?(sequence_error, "<vendor-detail")
+    assert String.contains?(sequence_error, "needs-reload")
 
     Agent.update(context.agent, &%{&1 | mode: :wrong_second_message_id})
 
@@ -681,17 +692,22 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     Agent.update(context.agent, &%{&1 | mode: :rpc_error})
 
-    assert %Target.EffectResult{status: :failed} =
+    assert %Target.EffectResult{status: :failed, details: %{"error" => single_error}} =
              edit
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert String.contains?(single_error, "<vendor-detail")
+    assert String.contains?(single_error, "needs-reload")
 
     Agent.update(context.agent, &%{&1 | mode: :prefixed_rpc_error})
 
-    assert %Target.EffectResult{status: :failed} =
+    assert %Target.EffectResult{status: :failed, details: %{"error" => prefixed_error}} =
              edit
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert String.contains?(prefixed_error, "<nc:error-tag>operation-failed</nc:error-tag>")
 
     Agent.update(context.agent, &%{&1 | mode: :wrong_message_id})
 
@@ -794,6 +810,29 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              status: :unknown,
              details: %{"subscription_id" => "22", "received" => 2, "completed" => 0}
            } = run_subscription!(context, subscription)
+  end
+
+  test "dynamic NETCONF subscription preserves follow-up rpc-error details", context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | mode: :dynamic_rpc_error})
+
+    subscription =
+      dynamic_subscription_request(context, [
+        "<modify-subscription xmlns=\"urn:ietf:params:xml:ns:yang:ietf-subscribed-notifications\"><id>${subscription_id}</id></modify-subscription>"
+      ])
+
+    assert %Target.EffectResult{
+             status: :unknown,
+             details: %{
+               "subscription_id" => "22",
+               "received" => 2,
+               "completed" => 0,
+               "error" => error_reply
+             }
+           } = run_subscription!(context, subscription)
+
+    assert String.contains?(error_reply, "<vendor-detail")
+    assert String.contains?(error_reply, "needs-reload")
   end
 
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do
