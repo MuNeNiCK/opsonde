@@ -51,6 +51,7 @@ defmodule Opsonde.Targets.TypeCatalog do
         "ios-xe-ssh",
         "ios-xe-netconf",
         "ios-xe-restconf",
+        "netconf",
         "ssh-exec",
         "http-api"
       ]
@@ -60,7 +61,7 @@ defmodule Opsonde.Targets.TypeCatalog do
       label: "Custom network device",
       category_id: "network-device",
       kind: "network_device",
-      access_method_types: ["ssh-exec", "http-api"]
+      access_method_types: ["ssh-exec", "netconf", "http-api"]
     },
     %{
       id: "linux",

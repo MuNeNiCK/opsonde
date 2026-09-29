@@ -3,6 +3,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
+  alias Opsonde.Targets.Adapters.NETCONF, as: GenericNETCONF
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
   alias Opsonde.Targets.Profiles.IOSXE.NETCONF, as: NETCONF
   alias Opsonde.Transports.SSH
@@ -106,17 +107,37 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     defp rpc_response(rpc, state) do
       cond do
-        String.contains?(rpc, "<edit-config>") -> edit_response(rpc, state)
-        state.mode == :malformed -> {"not xml", 0, %{state | mode: :normal}}
-        state.mode == :wrong_message_id -> {system_reply("wrong"), 0, %{state | mode: :normal}}
-        String.contains?(rpc, "<native") -> {system_reply("opsonde-1"), 0, state}
-        String.contains?(rpc, "<interfaces") -> {interface_reply(state), 0, state}
+        state.mode == :malformed ->
+          {"not xml", 0, %{state | mode: :normal}}
+
+        state.mode == :wrong_message_id ->
+          {system_reply("wrong"), 0, %{state | mode: :normal}}
+
+        String.contains?(rpc, "<edit-config>") ->
+          edit_response(rpc, state)
+
+        String.contains?(rpc, "<native") ->
+          {system_reply("opsonde-1"), 0, state}
+
+        String.contains?(rpc, "<interfaces") ->
+          {interface_reply(state), 0, state}
+
+        true ->
+          {"<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><ok/></rpc-reply>",
+           0, state}
       end
     end
 
     defp edit_response(_rpc, %{mode: :rpc_error} = state) do
       reply =
         "<rpc-reply xmlns=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><rpc-error><error-type>application</error-type><error-tag>operation-failed</error-tag></rpc-error></rpc-reply>"
+
+      {reply, 0, %{state | mode: :normal, edit_received?: true}}
+    end
+
+    defp edit_response(_rpc, %{mode: :prefixed_rpc_error} = state) do
+      reply =
+        "<nc:rpc-reply xmlns:nc=\"urn:ietf:params:xml:ns:netconf:base:1.0\" message-id=\"opsonde-1\"><nc:rpc-error><nc:error-tag>operation-failed</nc:error-tag></nc:rpc-error></nc:rpc-reply>"
 
       {reply, 0, %{state | mode: :normal, edit_received?: true}}
     end
@@ -285,11 +306,16 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
                request.("<get/>", "request.netconf.observe", "rpc.observe")
              )
 
+    assert {:ok, :observation} =
+             Opsonde.Transports.NETCONF.classify_body(
+               "<get-config><source><running/></source></get-config>"
+             )
+
     for body <- [
           "<get xmlns=\"urn:vendor:actions\"/>",
           "<vendor:get xmlns:vendor=\"urn:vendor:actions\"/>"
         ] do
-      assert {:error, :failed, _reason} =
+      assert {:ok, %Target.RequestClassification{kind: :effect}} =
                Target.classify_request(
                  NETCONF,
                  nil,
@@ -303,6 +329,139 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
                  request.(body, "request.netconf.effect", "rpc.execute")
                )
     end
+  end
+
+  test "Custom network device uses generic NETCONF through Provider and TargetPolicy", context do
+    provider =
+      Providers.create_provider!(
+        "generic-netconf",
+        :target,
+        "netconf",
+        configuration(context),
+        credentials(),
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!(
+        "generic switch",
+        "network_device",
+        "custom-network-device",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "NETCONF",
+        "netconf",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.netconf.observe", "request.netconf.effect"],
+        actor: context.admin
+      )
+
+    context = Map.merge(context, %{provider: provider, target: target, method: method})
+    assert {:ok, _operations} = GenericNETCONF.capabilities(nil, %{})
+
+    read =
+      request(
+        context,
+        :observation,
+        "request.netconf.observe",
+        "rpc.observe",
+        %{},
+        %{"body" => "<get><filter><native/></filter></get>"}
+      )
+
+    assert {:ok, %Target.Observation{facts: %{"reply" => reply}}} =
+             read
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> then(&Targets.dispatch_target_observation(&1, %{}, actor: context.operator))
+
+    assert String.contains?(reply, "router-one")
+
+    effect =
+      request(
+        context,
+        :effect,
+        "request.netconf.effect",
+        "rpc.execute",
+        %{},
+        %{"body" => "<vendor:refresh xmlns:vendor=\"urn:vendor:ops\"/>"}
+      )
+
+    assert %Target.EffectResult{status: :applied} =
+             effect
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    before_reject = length(rpcs(context))
+
+    for body <- [
+          "<get xmlns=\"urn:vendor:ops\"/>",
+          "<get/><edit-config/>",
+          "<get>",
+          "<edit-config/>"
+        ] do
+      rejected = %{read | parameters: %{"body" => body}}
+      assert {:error, _error} = Targets.clear_target_request(rejected, actor: context.operator)
+    end
+
+    assert length(rpcs(context)) == before_reject
+
+    Agent.update(context.agent, &%{&1 | mode: :wrong_message_id})
+
+    assert {:error, _error} =
+             read
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> then(&Targets.dispatch_target_observation(&1, %{}, actor: context.operator))
+
+    edit = %{
+      effect
+      | parameters: %{
+          "body" =>
+            "<edit-config><target><running/></target><config><interfaces><interface><name>Loopback100</name><description>generic edit</description></interface></interfaces></config></edit-config>"
+        }
+    }
+
+    Agent.update(context.agent, &%{&1 | mode: :rpc_error})
+
+    assert %Target.EffectResult{status: :failed} =
+             edit
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | mode: :prefixed_rpc_error})
+
+    assert %Target.EffectResult{status: :failed} =
+             edit
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | mode: :wrong_message_id})
+
+    assert %Target.EffectResult{status: :unknown} =
+             edit
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    Agent.update(context.agent, &%{&1 | delay_edit_ms: 1_000})
+
+    assert %Target.EffectResult{status: :unknown} =
+             edit
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
   end
 
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do

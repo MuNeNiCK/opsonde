@@ -4,16 +4,13 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
-  alias Opsonde.Providers.Target
+  alias Opsonde.Targets.Adapters.NETCONF, as: GenericNETCONF
   alias Opsonde.Targets.Profiles.IOSXE
+  alias Opsonde.Transports.{NETCONF, SSH}
 
   @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
   @ios_xe_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
-  alias Opsonde.Transports.{NETCONF, SSH}
 
-  @message_id "opsonde-1"
-  @max_message_bytes 60_000
-  @netconf_namespace "urn:ietf:params:xml:ns:netconf:base:1.0"
   @method_observation "request.netconf.observe"
   @method_effect "request.netconf.effect"
 
@@ -28,60 +25,27 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     do: IOSXE.access_method_profile("netconf", @method_observation, @method_effect)
 
   @impl Opsonde.Providers.Adapter
-  def build(configuration, credentials) when is_map(configuration) do
-    configuration
-    |> Map.put_new("max_output_bytes", @max_message_bytes)
-    |> SSH.build(credentials)
-  end
-
-  def build(configuration, credentials), do: SSH.build(configuration, credentials)
+  def build(configuration, credentials), do: GenericNETCONF.build(configuration, credentials)
 
   @impl Opsonde.Providers.Adapter
-  def check(%SSH.Config{} = state, %{"endpoint" => endpoint}) do
-    case NETCONF.check(state, endpoint) do
-      {:ok, _session} -> :ok
-      {:error, :authentication, message} -> {:error, :authentication, message}
-      {:error, :host_key, message} -> {:error, :authentication, message}
-      {:error, _category, message} -> {:error, :unreachable, message}
-    end
-  end
-
-  def check(_state, _input),
-    do: {:error, :invalid_configuration, "IOS XE NETCONF check requires an endpoint"}
+  def check(state, input), do: GenericNETCONF.check(state, input)
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     capabilities = IOSXE.capabilities()
+    {:ok, generic} = GenericNETCONF.capabilities(nil, %{})
 
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ [method_observation()],
-         effects: capabilities.effects ++ [method_effect()]
+       | observations: capabilities.observations ++ generic.observations,
+         effects: capabilities.effects ++ generic.effects
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def observe(
-        %SSH.Config{} = state,
-        %{capability: @method_observation} = target_request,
-        invocation
-      ) do
-    with {:ok, body} <- method_body(target_request, "rpc.observe"),
-         true <- readonly_rpc?(body),
-         {:ok, reply} <-
-           method_rpc(
-             state,
-             target_request.connection.endpoint,
-             body,
-             cancelled?(invocation)
-           ) do
-      IOSXE.observation(%{"reply" => reply})
-    else
-      false -> {:error, :failed, "NETCONF observation must contain get or get-config"}
-      {:error, category, message} -> IOSXE.read_error(category, message)
-    end
-  end
+  def observe(%SSH.Config{} = state, %{capability: @method_observation} = request, invocation),
+    do: GenericNETCONF.observe(state, request, invocation)
 
   def observe(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.observation_request(request),
@@ -102,18 +66,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   def classify_request(_state, request) do
     case request.capability do
       @method_observation ->
-        case method_body(request, "rpc.observe") do
-          {:ok, body} ->
-            if readonly_rpc?(body),
-              do: {:ok, :observation},
-              else: {:error, :failed, "NETCONF observation is unsafe"}
-
-          _invalid ->
-            {:error, :failed, "NETCONF request is invalid"}
-        end
+        GenericNETCONF.classify_request(nil, request)
 
       @method_effect ->
-        classify_netconf(method_body(request, "rpc.execute"), :effect)
+        GenericNETCONF.classify_request(nil, request)
 
       "effect.interface" ->
         classify_netconf(IOSXE.effect_request(request), :effect)
@@ -127,20 +83,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   defp classify_netconf(_invalid, _kind), do: {:error, :failed, "NETCONF request is invalid"}
 
   @impl Opsonde.Providers.Target
-  def effect(%SSH.Config{} = state, %{capability: @method_effect} = target_request, invocation) do
-    with {:ok, body} <- method_body(target_request, "rpc.execute"),
-         {:ok, reply} <-
-           method_rpc(
-             state,
-             target_request.connection.endpoint,
-             body,
-             cancelled?(invocation)
-           ) do
-      IOSXE.applied(%{"reply" => reply})
-    else
-      {:error, category, message} -> IOSXE.effect_error(category, message)
-    end
-  end
+  def effect(%SSH.Config{} = state, %{capability: @method_effect} = request, invocation),
+    do: GenericNETCONF.effect(state, request, invocation)
 
   def effect(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.effect_request(request) do
@@ -156,26 +100,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(
-        %SSH.Config{} = state,
-        %{capability: @method_observation} = target_request,
-        invocation
-      ) do
-    with {:ok, body} <- method_body(target_request, "rpc.observe"),
-         true <- readonly_rpc?(body),
-         {:ok, reply} <-
-           method_rpc(
-             state,
-             target_request.connection.endpoint,
-             body,
-             cancelled?(invocation)
-           ) do
-      IOSXE.verification(%{"reply" => reply}, target_request.expected)
-    else
-      false -> {:error, :failed, "NETCONF verification must contain get or get-config"}
-      {:error, category, message} -> IOSXE.read_error(category, message)
-    end
-  end
+  def verify(%SSH.Config{} = state, %{capability: @method_observation} = request, invocation),
+    do: GenericNETCONF.verify(state, request, invocation)
 
   def verify(%SSH.Config{} = state, request, invocation) do
     with {:ok, name, expected} <- IOSXE.verification_request(request),
@@ -193,9 +119,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
-    rpc = rpc(netconf_system_filter())
-
-    with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
+    with {:ok, root} <- request(state, endpoint, netconf_system_filter(), cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, system_element} <- child(data, "native"),
          {:ok, hostname} <- child_text(system_element, "hostname"),
@@ -205,9 +129,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    rpc = rpc(netconf_interface_filter(name))
-
-    with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
+    with {:ok, root} <- request(state, endpoint, netconf_interface_filter(name), cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, configuration} <- data |> child("interfaces") |> interface(name),
          {:ok, operational} <- data |> child("interfaces-state") |> interface(name) do
@@ -247,134 +169,15 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   defp edit_interface(state, endpoint, name, field, value, cancelled?) do
-    request(state, endpoint, rpc(netconf_interface_edit(name, field, value)), cancelled?)
+    request(state, endpoint, netconf_interface_edit(name, field, value), cancelled?)
   end
 
-  defp request(state, endpoint, rpc, cancelled?) do
-    with {:ok, %NETCONF.Result{reply: reply}} <- NETCONF.request(state, endpoint, rpc, cancelled?),
-         {:ok, root} <- parse(reply),
-         :ok <- valid_reply(root) do
-      {:ok, root}
+  defp request(state, endpoint, body, cancelled?) do
+    case NETCONF.execute(state, endpoint, body, cancelled?) do
+      {:ok, %NETCONF.Result{root: root}} -> {:ok, root}
+      error -> error
     end
   end
-
-  defp method_rpc(state, endpoint, body, cancelled?) do
-    with {:ok, %NETCONF.Result{reply: reply}} <-
-           NETCONF.request(state, endpoint, rpc(body), cancelled?),
-         {:ok, root} <- parse(reply),
-         :ok <- valid_reply(root) do
-      {:ok, reply}
-    end
-  end
-
-  defp method_body(request, operation) do
-    expected_capability =
-      if(operation == "rpc.observe", do: @method_observation, else: @method_effect)
-
-    case request do
-      %{
-        capability: ^expected_capability,
-        operation: ^operation,
-        selectors: selectors,
-        parameters: %{"body" => body}
-      }
-      when selectors == %{} and is_binary(body) and byte_size(body) in 1..60_000 ->
-        {:ok, body}
-
-      _request ->
-        {:error, :failed, "NETCONF RPC request is invalid"}
-    end
-  end
-
-  defp readonly_rpc?(body) do
-    with {:ok, {_rpc, _attributes, children}} <- parse(rpc(body)),
-         [{name, attributes, _children}] <- Enum.reject(children, &is_binary/1) do
-      name in ["get", "get-config"] and
-        Enum.all?(attributes, fn
-          {"xmlns", namespace} -> namespace == @netconf_namespace
-          _other -> true
-        end)
-    else
-      _invalid -> false
-    end
-  end
-
-  defp method_observation do
-    output = method_output_schema()
-
-    %Target.Operation{
-      capability: @method_observation,
-      operation: "rpc.observe",
-      description: "Send one exact non-mutating NETCONF RPC body and return the raw reply",
-      input_schema: method_schema(),
-      output_schema: output,
-      verification_schema: Map.put(output, "minProperties", 1)
-    }
-  end
-
-  defp method_effect do
-    %Target.Operation{
-      capability: @method_effect,
-      operation: "rpc.execute",
-      description: "Send one exact NETCONF RPC body after authority review",
-      input_schema: method_schema()
-    }
-  end
-
-  defp method_schema do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "selectors" => %{"type" => "object", "maxProperties" => 0},
-        "parameters" => %{
-          "type" => "object",
-          "properties" => %{
-            "body" => %{"type" => "string", "minLength" => 1, "maxLength" => 60_000}
-          },
-          "required" => ["body"],
-          "additionalProperties" => false
-        }
-      },
-      "required" => ["selectors", "parameters"],
-      "additionalProperties" => false
-    }
-  end
-
-  defp method_output_schema do
-    %{
-      "type" => "object",
-      "properties" => %{
-        "reply" => %{"type" => "string", "minLength" => 1, "maxLength" => 60_000}
-      },
-      "required" => ["reply"],
-      "additionalProperties" => false
-    }
-  end
-
-  defp parse(xml) do
-    case Saxy.SimpleForm.parse_string(xml, expand_entity: :keep) do
-      {:ok, root} -> {:ok, root}
-      {:error, _error} -> {:error, :failed, "IOS XE NETCONF response is invalid"}
-    end
-  end
-
-  defp valid_reply({name, attributes, _children} = root) do
-    cond do
-      local_name(name) != "rpc-reply" ->
-        {:error, :failed, "IOS XE NETCONF response is invalid"}
-
-      attribute(attributes, "message-id") != @message_id ->
-        {:error, :failed, "IOS XE NETCONF response message ID is invalid"}
-
-      descendants(root, "rpc-error") != [] ->
-        {:error, :rejected, "IOS XE NETCONF request was rejected"}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp valid_reply(_root), do: {:error, :failed, "IOS XE NETCONF response is invalid"}
 
   defp reply_data(root) do
     case descendants(root, "data") do
@@ -449,15 +252,6 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     |> IO.iodata_to_binary()
     |> String.trim()
   end
-
-  defp attribute(attributes, wanted) do
-    Enum.find_value(attributes, fn {name, value} ->
-      if local_name(name) == wanted, do: value
-    end)
-  end
-
-  defp rpc(body),
-    do: "<rpc xmlns=\"#{@netconf_namespace}\" message-id=\"#{@message_id}\">#{body}</rpc>"
 
   defp local_name(name), do: name |> String.split(":") |> List.last()
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback

@@ -67,7 +67,13 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     refute Map.has_key?(by_id, "generic")
 
     assert by_id["custom-network-device"]["category_id"] == "network-device"
-    assert by_id["custom-network-device"]["access_method_types"] == ["ssh-exec", "http-api"]
+
+    assert by_id["custom-network-device"]["access_method_types"] == [
+             "ssh-exec",
+             "netconf",
+             "http-api"
+           ]
+
     assert by_id["custom-os"]["category_id"] == "os"
     assert by_id["bmc"]["access_method_types"] == ["bmc-redfish", "bmc-ipmi"]
     assert by_id["cisco_ios_xe"]["category_id"] == "network-device"
