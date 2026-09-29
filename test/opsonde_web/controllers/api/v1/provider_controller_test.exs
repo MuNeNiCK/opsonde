@@ -78,7 +78,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
             "name" => "public-http-target",
             "kind" => "target",
             "adapter_type" => "generic-http",
-            "configuration" => %{"endpoint" => "https://example.test/health"},
+            "configuration" => %{"endpoint" => "https://example.test"},
             "credentials" => %{}
           }
         },
@@ -89,7 +89,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
              "data" => %{
                "access_method_profile" => %{
                  "platform" => "generic",
-                 "method" => "http_get",
+                 "method" => "http",
                  "target_platform" => nil,
                  "target_kind" => nil
                }

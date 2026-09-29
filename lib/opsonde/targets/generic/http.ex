@@ -7,9 +7,13 @@ defmodule Opsonde.Targets.Generic.HTTP do
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.HTTPS
 
-  @capability "observe.http"
-  @operation "http.get"
+  @observe "native.http.observe"
+  @effect "native.http.effect"
+  @read_methods %{"GET" => :get, "HEAD" => :head}
+  @write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
   @max_preview_bytes 8_192
+  @max_body_bytes 65_536
+  @max_path_bytes 2_048
   @max_endpoint_bytes 1_024
   @default_timeout_ms 5_000
 
@@ -29,9 +33,9 @@ defmodule Opsonde.Targets.Generic.HTTP do
   def access_method_profile do
     %Target.AccessMethodProfile{
       platform: "generic",
-      method: "http_get",
+      method: "http",
       configuration_endpoint?: true,
-      capabilities: [@capability]
+      capabilities: [@observe, @effect]
     }
   end
 
@@ -61,7 +65,7 @@ defmodule Opsonde.Targets.Generic.HTTP do
 
   @impl Opsonde.Providers.Adapter
   def check(%State{} = state, %{"endpoint" => endpoint}) when endpoint == state.endpoint do
-    case get(state, %{}) do
+    case request(state, :get, "/", %{}, nil, %{}) do
       {:ok, %Req.Response{status: status}} when status in [401, 403] ->
         {:error, :authentication, "HTTP endpoint rejected the configured credentials"}
 
@@ -85,65 +89,141 @@ defmodule Opsonde.Targets.Generic.HTTP do
      %Target.Capabilities{
        observations: [
          %Target.Operation{
-           capability: @capability,
-           operation: @operation,
-           description:
-             "GET the operator-configured HTTP endpoint and inspect the actual status and response. " <>
-               "The URL is fixed by this Access Method; no request URL or method is accepted from AI.",
-           input_schema: input_schema(),
+           capability: @observe,
+           operation: "request.observe",
+           description: "Read one exact relative HTTP API path at the configured origin",
+           input_schema: input_schema(Map.keys(@read_methods)),
            output_schema: output_schema(),
-           verification_schema: output_schema()
+           verification_schema: output_schema(),
+           native?: true
          }
        ],
-       effects: []
+       effects: [
+         %Target.Operation{
+           capability: @effect,
+           operation: "request.execute",
+           description: "Send one exact relative HTTP API write after authority review",
+           input_schema: input_schema(Map.keys(@write_methods), true),
+           native?: true
+         }
+       ]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, request), do: valid_request(request)
-
-  @impl Opsonde.Providers.Target
-  def observe(%State{} = state, request, invocation) do
-    with :ok <- valid_request(request),
-         true <- request.connection.endpoint == state.endpoint,
-         :ok <- not_cancelled(invocation),
-         {:ok, %Req.Response{} = response} <- get(state, invocation),
-         :ok <- not_cancelled(invocation) do
-      {:ok, observation(state.endpoint, response)}
-    else
-      false -> {:error, :failed, "HTTP observation endpoint changed"}
+  def preflight(state, request) do
+    case native_request(state, request, :read) do
+      {:ok, _method, _path, _headers, _body} -> :ok
       {:error, _category, _message} = error -> error
     end
   end
 
   @impl Opsonde.Providers.Target
-  def effect(_state, _request, _invocation),
-    do: {:error, :failed, "HTTP Access Method has no effect operations"}
+  def observe(%State{} = state, request, invocation) do
+    with {:ok, method, path, headers, body} <- native_request(state, request, :read),
+         :ok <- not_cancelled(invocation),
+         {:ok, %Req.Response{} = response} <-
+           request(state, method, path, headers, body, invocation),
+         :ok <- not_cancelled(invocation) do
+      {:ok, observation(state.endpoint <> path, response)}
+    else
+      {:error, _category, _message} = error -> error
+    end
+  end
 
   @impl Opsonde.Providers.Target
-  def verify(_state, _request, _invocation),
-    do: {:error, :failed, "HTTP Access Method has no effect verification"}
+  def effect(%State{} = state, target_request, invocation) do
+    with {:ok, method, path, headers, body} <- native_request(state, target_request, :write),
+         :ok <- not_cancelled(invocation) do
+      case request(state, method, path, headers, body, invocation) do
+        {:ok, %Req.Response{status: status, body: response}}
+        when status in 200..299 ->
+          details = %{"status" => status}
 
-  defp valid_request(%{
-         capability: @capability,
-         operation: @operation,
-         selectors: selectors,
-         parameters: parameters
-       })
-       when selectors == %{} and parameters == %{},
-       do: :ok
+          details =
+            if response in ["", nil],
+              do: details,
+              else: Map.put(details, "response_redacted", true)
 
-  defp valid_request(_request),
-    do: {:error, :failed, "HTTP observation takes no URL or method input"}
+          {:ok,
+           %Target.EffectResult{
+             status: if(status == 202, do: :unknown, else: :applied),
+             reference: target_request.operation,
+             details: details
+           }}
+
+        {:ok, %Req.Response{status: status}} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             reference: target_request.operation,
+             details: %{"status" => status}
+           }}
+
+        {:error, :retryable, _message} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             reference: target_request.operation,
+             details: %{"reason" => "HTTP response was lost after dispatch"}
+           }}
+
+        {:error, :cancelled, _message} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             reference: target_request.operation,
+             details: %{"reason" => "HTTP effect outcome is unknown after cancellation"}
+           }}
+      end
+    else
+      {:error, :cancelled, _message} = error -> error
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  @impl Opsonde.Providers.Target
+  def verify(%State{} = state, target_request, invocation) do
+    with {:ok, method, path, headers, body} <- native_request(state, target_request, :read),
+         :ok <- not_cancelled(invocation),
+         {:ok, %Req.Response{} = response} <-
+           request(state, method, path, headers, body, invocation) do
+      observation = observation(state.endpoint <> path, response)
+      expected = target_request.expected
+
+      status =
+        case expected do
+          %{"status" => value} when is_integer(value) and map_size(expected) == 1 ->
+            if value == response.status, do: :verified, else: :not_verified
+
+          %{} when map_size(expected) == 0 ->
+            :unknown
+
+          _ ->
+            :unknown
+        end
+
+      {:ok,
+       %Target.Verification{
+         status: status,
+         observed_at: DateTime.utc_now(),
+         facts: observation.facts
+       }}
+    else
+      {:error, _category, _message} = error -> error
+    end
+  end
 
   defp endpoint(value)
        when is_binary(value) and byte_size(value) in 10..@max_endpoint_bytes do
     uri = URI.parse(value)
 
     if uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != "" and
-         is_nil(uri.userinfo) and is_nil(uri.query) and is_nil(uri.fragment) and
+         uri.path in [nil, "", "/"] and is_nil(uri.userinfo) and is_nil(uri.query) and
+         is_nil(uri.fragment) and
          not String.match?(value, ~r/[\s\x00-\x1f]/) do
-      {:ok, value, uri}
+      origin = URI.to_string(%{uri | path: nil})
+      {:ok, origin, uri}
     else
       {:error, :invalid_endpoint}
     end
@@ -169,19 +249,23 @@ defmodule Opsonde.Targets.Generic.HTTP do
 
   defp connect_options(_uri, _certificate, _timeout), do: {:error, :invalid_configuration}
 
-  defp get(state, invocation) do
+  defp request(state, method, path, headers, body, invocation) do
     with :ok <- not_cancelled(invocation) do
-      case Req.request(
-             method: :get,
-             url: state.endpoint,
-             headers: state.headers,
-             connect_options: state.connect_options,
-             receive_timeout: state.timeout_ms,
-             retry: false,
-             redirect: false,
-             decode_body: false,
-             into: &collect/2
-           ) do
+      options = [
+        method: method,
+        url: state.endpoint <> path,
+        headers: merge_headers(state.headers, headers),
+        connect_options: state.connect_options,
+        receive_timeout: state.timeout_ms,
+        retry: false,
+        redirect: false,
+        decode_body: false,
+        into: &collect/2
+      ]
+
+      options = if is_nil(body), do: options, else: Keyword.put(options, :body, body)
+
+      case Req.request(options) do
         {:ok, %Req.Response{status: status} = response} when status in 100..599 ->
           {:ok, response}
 
@@ -189,12 +273,107 @@ defmodule Opsonde.Targets.Generic.HTTP do
           {:error, :retryable, "HTTP endpoint request failed"}
 
         _other ->
-          {:error, :failed, "HTTP endpoint returned an invalid response"}
+          {:error, :retryable, "HTTP endpoint returned an invalid response"}
       end
     end
   rescue
-    _error -> {:error, :failed, "HTTP endpoint request failed"}
+    _error -> {:error, :retryable, "HTTP endpoint request failed"}
   end
+
+  defp merge_headers(configured, requested) do
+    configured
+    |> Map.new()
+    |> Map.merge(requested)
+    |> Map.to_list()
+  end
+
+  defp native_request(state, request, kind) do
+    methods = if kind == :read, do: @read_methods, else: @write_methods
+    capability = if kind == :read, do: @observe, else: @effect
+    operation = if kind == :read, do: "request.observe", else: "request.execute"
+    parameters = request.parameters
+
+    with true <- request.capability == capability and request.operation == operation,
+         true <-
+           not Map.has_key?(request, :connection) or request.connection.endpoint == state.endpoint,
+         true <- request.selectors == %{},
+         true <- not Map.has_key?(request, :protocol_request) or is_nil(request.protocol_request),
+         true <- not Map.has_key?(request, :secret_values) or request.secret_values == %{},
+         %{"method" => verb, "path" => path} <- parameters,
+         true <- Enum.all?(Map.keys(parameters), &(&1 in allowed_keys(kind))),
+         {:ok, method} <- Map.fetch(methods, verb),
+         :ok <- relative_path(path),
+         {:ok, headers} <- request_headers(Map.get(parameters, "headers", %{})),
+         {:ok, body} <- request_body(kind, method, Map.get(parameters, "body")) do
+      {:ok, method, path, headers, body}
+    else
+      _ -> {:error, :failed, "HTTP native request is invalid"}
+    end
+  end
+
+  defp allowed_keys(:read), do: ~w(method path headers)
+  defp allowed_keys(:write), do: ~w(method path headers body)
+
+  defp relative_path(path) when is_binary(path) and byte_size(path) in 1..@max_path_bytes do
+    uri = URI.parse(path)
+    segments = String.split(uri.path || "", "/", trim: true)
+
+    if is_nil(uri.scheme) and is_nil(uri.host) and is_nil(uri.userinfo) and
+         is_nil(uri.fragment) and is_binary(uri.path) and
+         String.starts_with?(uri.path, "/") and not String.starts_with?(uri.path, "//") and
+         not String.contains?(uri.path, ["\\", "//"]) and
+         not Regex.match?(~r/%(?:25|2e|2f|5c|0[0-9a-f]|1[0-9a-f]|7f)/i, uri.path) and
+         Enum.all?(segments, &(&1 not in [".", "..", ""])) and
+         not String.match?(path, ~r/[\s\x00-\x1f]/) do
+      :ok
+    else
+      {:error, :invalid_path}
+    end
+  rescue
+    _ -> {:error, :invalid_path}
+  end
+
+  defp relative_path(_path), do: {:error, :invalid_path}
+
+  defp request_headers(headers) when is_map(headers) and map_size(headers) <= 8 do
+    normalized =
+      Enum.map(headers, fn {name, value} -> {String.downcase(to_string(name)), value} end)
+
+    if length(normalized) == map_size(headers) and
+         length(Enum.uniq_by(normalized, &elem(&1, 0))) == length(normalized) and
+         Enum.all?(normalized, fn {name, value} ->
+           safe_header_name?(name) and is_binary(value) and byte_size(value) <= 1_024 and
+             not String.match?(value, ~r/[\x00-\x1f\x7f]/)
+         end) do
+      {:ok, Map.new(normalized)}
+    else
+      {:error, :invalid_headers}
+    end
+  rescue
+    _ -> {:error, :invalid_headers}
+  end
+
+  defp request_headers(_headers), do: {:error, :invalid_headers}
+
+  defp safe_header_name?(name)
+       when name in ["accept", "content-type", "if-match", "if-none-match"],
+       do: true
+
+  defp safe_header_name?("x-" <> name) do
+    byte_size(name) in 1..64 and Regex.match?(~r/\A[a-z0-9-]+\z/, name) and
+      not Enum.any?(~w(auth token secret key cookie credential), &String.contains?(name, &1))
+  end
+
+  defp safe_header_name?(_name), do: false
+
+  defp request_body(:read, _method, nil), do: {:ok, nil}
+  defp request_body(:write, :delete, nil), do: {:ok, nil}
+
+  defp request_body(:write, _method, body)
+       when is_binary(body) and byte_size(body) <= @max_body_bytes,
+       do: {:ok, body}
+
+  defp request_body(_kind, _method, _body), do: {:error, :invalid_body}
 
   defp collect({:data, data}, {request, response}) do
     previous =
@@ -243,12 +422,28 @@ defmodule Opsonde.Targets.Generic.HTTP do
     }
   end
 
-  defp input_schema do
+  defp input_schema(methods, write? \\ false) do
+    properties = %{
+      "method" => %{"type" => "string", "enum" => methods},
+      "path" => %{"type" => "string", "minLength" => 1, "maxLength" => @max_path_bytes},
+      "headers" => %{"type" => "object", "maxProperties" => 8}
+    }
+
+    properties =
+      if write?,
+        do: Map.put(properties, "body", %{"type" => "string", "maxLength" => @max_body_bytes}),
+        else: properties
+
     %{
       "type" => "object",
       "properties" => %{
         "selectors" => %{"type" => "object", "maxProperties" => 0},
-        "parameters" => %{"type" => "object", "maxProperties" => 0}
+        "parameters" => %{
+          "type" => "object",
+          "properties" => properties,
+          "required" => ["method", "path"],
+          "additionalProperties" => false
+        }
       },
       "required" => ["selectors", "parameters"],
       "additionalProperties" => false
@@ -259,7 +454,7 @@ defmodule Opsonde.Targets.Generic.HTTP do
     %{
       "type" => "object",
       "properties" => %{
-        "url" => %{"type" => "string", "maxLength" => @max_endpoint_bytes},
+        "url" => %{"type" => "string", "maxLength" => @max_endpoint_bytes + @max_path_bytes},
         "status" => %{"type" => "integer", "minimum" => 100, "maximum" => 599},
         "content_type" => %{"type" => "string", "maxLength" => 256},
         "body_encoding" => %{"type" => "string", "enum" => ["utf-8", "base64"]},
@@ -272,7 +467,7 @@ defmodule Opsonde.Targets.Generic.HTTP do
   end
 
   defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
-    if callback.(), do: {:error, :cancelled, "HTTP observation was cancelled"}, else: :ok
+    if callback.(), do: {:error, :cancelled, "HTTP request was cancelled"}, else: :ok
   end
 
   defp not_cancelled(_invocation), do: :ok

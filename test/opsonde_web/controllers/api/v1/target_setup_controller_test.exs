@@ -56,7 +56,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
   test "Access Method API rejects a Provider mismatch and accepts its declared binding",
        context do
-    endpoint = "https://example.test/health"
+    endpoint = "https://example.test"
 
     provider =
       Providers.create_provider!(
@@ -77,13 +77,13 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     method = %{
       "target_id" => target["id"],
       "provider_id" => provider.id,
-      "name" => "http-observation",
+      "name" => "http-api",
       "platform" => "generic",
-      "method" => "http_get",
+      "method" => "http",
       "endpoint" => endpoint,
       "provider_revision" => provider.revision,
       "priority" => 100,
-      "capabilities" => ["observe.http"]
+      "capabilities" => ["native.http.observe", "native.http.effect"]
     }
 
     invalid =
@@ -98,7 +98,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     registered =
       post_data!("/api/v1/access-methods", %{"access_method" => method}, context.admin_token)
 
-    assert registered["method"] == "http_get"
+    assert registered["method"] == "http"
     assert registered["provider_id"] == provider.id
   end
 

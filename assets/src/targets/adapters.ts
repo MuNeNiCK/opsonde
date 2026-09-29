@@ -37,7 +37,7 @@ export const targetAdapterOptions = [
   },
   {
     type: "generic-http",
-    label: "HTTP GET",
+    label: "HTTP API",
     family: "http",
   },
 ] as const;
