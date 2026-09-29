@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
+defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
@@ -182,7 +182,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
-    {hostname_path, version_path} = IOSXE.restconf_system_paths()
+    {hostname_path, version_path} = restconf_system_paths()
 
     with {:ok, hostname} <-
            request(
@@ -204,7 +204,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
              cancelled?,
              :read
            ),
-         {:ok, facts} <- IOSXE.restconf_system_facts(hostname, version) do
+         {:ok, facts} <- restconf_system_facts(hostname, version) do
       {:ok, facts}
     else
       {:error, _category, _message} = error -> error
@@ -212,7 +212,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    {configuration_path, operational_path} = IOSXE.restconf_interface_paths(name)
+    {configuration_path, operational_path} = restconf_interface_paths(name)
 
     with {:ok, configuration} <-
            request(
@@ -234,7 +234,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
              cancelled?,
              :read
            ),
-         {:ok, facts} <- IOSXE.restconf_interface_facts(name, configuration, operational) do
+         {:ok, facts} <- restconf_interface_facts(name, configuration, operational) do
       {:ok, facts}
     end
   end
@@ -264,8 +264,8 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   end
 
   defp patch_interface(state, endpoint, name, values, cancelled?) do
-    {path, _operational_path} = IOSXE.restconf_interface_paths(name)
-    body = IOSXE.restconf_interface_body(name, values)
+    {path, _operational_path} = restconf_interface_paths(name)
+    body = restconf_interface_body(name, values)
 
     request(
       state,
@@ -529,4 +529,52 @@ defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   defp failure_category(:effect), do: :unknown_after_dispatch
   defp failure_category(_phase), do: :unreachable
   defp invalid_endpoint, do: {:error, :failed, "IOS XE RESTCONF endpoint is invalid"}
+
+  defp restconf_system_paths do
+    {
+      "/restconf/data/Cisco-IOS-XE-native:native/hostname",
+      "/restconf/data/Cisco-IOS-XE-native:native/version"
+    }
+  end
+
+  defp restconf_system_facts(
+         %{"Cisco-IOS-XE-native:hostname" => hostname},
+         %{"Cisco-IOS-XE-native:version" => version}
+       ),
+       do: {:ok, %{"hostname" => hostname, "version" => version}}
+
+  defp restconf_system_facts(_hostname, _version),
+    do: {:error, :failed, "IOS XE RESTCONF system response is invalid"}
+
+  defp restconf_interface_paths(name) do
+    key = URI.encode_www_form(name)
+
+    {
+      "/restconf/data/ietf-interfaces:interfaces/interface=#{key}",
+      "/restconf/data/ietf-interfaces:interfaces-state/interface=#{key}"
+    }
+  end
+
+  defp restconf_interface_body(name, values),
+    do: %{"ietf-interfaces:interface" => Map.put(values, "name", name)}
+
+  defp restconf_interface_facts(
+         name,
+         %{"ietf-interfaces:interface" => configuration},
+         %{"ietf-interfaces:interface" => operational}
+       ) do
+    {:ok,
+     %{
+       "name" => name,
+       "description" => configuration["description"],
+       "enabled" => Map.get(configuration, "enabled", true),
+       "admin_status" => operational["admin-status"],
+       "oper_status" => operational["oper-status"],
+       "input_errors" => get_in(operational, ["statistics", "in-errors"]),
+       "output_errors" => get_in(operational, ["statistics", "out-errors"])
+     }}
+  end
+
+  defp restconf_interface_facts(_name, _configuration, _operational),
+    do: {:error, :failed, "IOS XE RESTCONF interface response is invalid"}
 end

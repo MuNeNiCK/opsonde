@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
+defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
@@ -6,6 +6,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.IOSXE
+
+  @interfaces_namespace "urn:ietf:params:xml:ns:yang:ietf-interfaces"
+  @ios_xe_namespace "http://cisco.com/ns/yang/Cisco-IOS-XE-native"
   alias Opsonde.Transports.{NETCONF, SSH}
 
   @message_id "opsonde-1"
@@ -180,26 +183,26 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
-    rpc = rpc(IOSXE.netconf_system_filter())
+    rpc = rpc(netconf_system_filter())
 
     with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, system_element} <- child(data, "native"),
          {:ok, hostname} <- child_text(system_element, "hostname"),
          {:ok, version} <- child_text(system_element, "version") do
-      {:ok, IOSXE.netconf_system_facts(hostname, version)}
+      {:ok, netconf_system_facts(hostname, version)}
     end
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    rpc = rpc(IOSXE.netconf_interface_filter(name))
+    rpc = rpc(netconf_interface_filter(name))
 
     with {:ok, root} <- request(state, endpoint, rpc, cancelled?),
          {:ok, data} <- reply_data(root),
          {:ok, configuration} <- data |> child("interfaces") |> interface(name),
          {:ok, operational} <- data |> child("interfaces-state") |> interface(name) do
       {:ok,
-       IOSXE.netconf_interface_facts(name, %{
+       netconf_interface_facts(name, %{
          "description" => optional_child_text(configuration, "description"),
          "enabled" => optional_child_text(configuration, "enabled"),
          "admin_status" => optional_child_text(operational, "admin-status"),
@@ -234,7 +237,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   end
 
   defp edit_interface(state, endpoint, name, field, value, cancelled?) do
-    request(state, endpoint, rpc(IOSXE.netconf_interface_edit(name, field, value)), cancelled?)
+    request(state, endpoint, rpc(netconf_interface_edit(name, field, value)), cancelled?)
   end
 
   defp request(state, endpoint, rpc, cancelled?) do
@@ -445,4 +448,63 @@ defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   defp local_name(name), do: name |> String.split(":") |> List.last()
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end
+
+  defp netconf_system_filter do
+    """
+    <get><filter type="subtree"><native xmlns="#{@ios_xe_namespace}"><hostname/><version/></native></filter></get>
+    """
+  end
+
+  defp netconf_system_facts(hostname, version),
+    do: %{"hostname" => hostname, "version" => version}
+
+  defp netconf_interface_filter(name) do
+    escaped = xml_escape(name)
+
+    """
+    <get><filter type="subtree"><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces><interfaces-state xmlns="#{@interfaces_namespace}"><interface><name>#{escaped}</name></interface></interfaces-state></filter></get>
+    """
+  end
+
+  defp netconf_interface_edit(name, field, value) when field in ["description", "enabled"] do
+    """
+    <edit-config><target><running/></target><default-operation>merge</default-operation><error-option>rollback-on-error</error-option><config><interfaces xmlns="#{@interfaces_namespace}"><interface><name>#{xml_escape(name)}</name><#{field}>#{xml_escape(value)}</#{field}></interface></interfaces></config></edit-config>
+    """
+  end
+
+  defp netconf_interface_facts(name, raw) do
+    %{
+      "name" => name,
+      "description" => raw["description"],
+      "enabled" => netconf_boolean(raw["enabled"], true),
+      "admin_status" => raw["admin_status"],
+      "oper_status" => raw["oper_status"],
+      "input_errors" => netconf_integer(raw["input_errors"]),
+      "output_errors" => netconf_integer(raw["output_errors"])
+    }
+  end
+
+  defp xml_escape(value) when is_boolean(value), do: to_string(value)
+
+  defp xml_escape(value) when is_binary(value) do
+    value
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&apos;")
+  end
+
+  defp netconf_boolean("true", _default), do: true
+  defp netconf_boolean("false", _default), do: false
+  defp netconf_boolean(_value, default), do: default
+
+  defp netconf_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {number, ""} -> number
+      _error -> nil
+    end
+  end
+
+  defp netconf_integer(_value), do: nil
 end

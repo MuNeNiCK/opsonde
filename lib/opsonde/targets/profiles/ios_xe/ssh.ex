@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
+defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
@@ -56,7 +56,7 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
         invocation
       ) do
     with {:ok, commands} <- method_commands(request, "cli.observe"),
-         true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1),
+         true <- Enum.all?(commands, &ssh_readonly_command?/1),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
       IOSXE.observation(%{"output" => output}, [evidence(output)])
@@ -87,7 +87,7 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   @impl Opsonde.Providers.Target
   def preflight(_state, %{capability: @method_observation} = request) do
     with {:ok, commands} <- method_commands(request, "cli.observe"),
-         true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1) do
+         true <- Enum.all?(commands, &ssh_readonly_command?/1) do
       :ok
     else
       false -> {:error, :failed, "CLI observation must use show commands"}
@@ -107,7 +107,7 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
     with {:ok, commands} <- method_commands(request, "cli.execute"),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)),
-         :ok <- IOSXE.ssh_command_accepted?(output) do
+         :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{"output" => output})
     else
       {:error, category, message} -> IOSXE.effect_error(category, message)
@@ -134,7 +134,7 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
         invocation
       ) do
     with {:ok, commands} <- method_commands(request, "cli.observe"),
-         true <- Enum.all?(commands, &IOSXE.ssh_readonly_command?/1),
+         true <- Enum.all?(commands, &ssh_readonly_command?/1),
          {:ok, output} <-
            run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
       IOSXE.verification(%{"output" => output}, request.expected, [evidence(output)])
@@ -161,16 +161,16 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
 
   defp observe_operation(state, endpoint, :system, cancelled?) do
     with {:ok, output} <-
-           run_shell(state, endpoint, script(IOSXE.ssh_system_commands()), cancelled?),
-         {:ok, facts} <- IOSXE.ssh_system_facts(output) do
+           run_shell(state, endpoint, script(ssh_system_commands()), cancelled?),
+         {:ok, facts} <- ssh_system_facts(output) do
       {:ok, facts, output}
     end
   end
 
   defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
     with {:ok, output} <-
-           run_shell(state, endpoint, script(IOSXE.ssh_interface_commands(name)), cancelled?),
-         {:ok, facts} <- IOSXE.ssh_interface_facts(name, output) do
+           run_shell(state, endpoint, script(ssh_interface_commands(name)), cancelled?),
+         {:ok, facts} <- ssh_interface_facts(name, output) do
       {:ok, facts, output}
     end
   end
@@ -178,15 +178,15 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
     with {:ok, facts, _output} <-
            observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["description"], expected, "description"),
+         :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
          {:ok, output} <-
            run_shell(
              state,
              endpoint,
-             script(IOSXE.ssh_description_commands(name, desired)),
+             script(ssh_description_commands(name, desired)),
              cancelled?
            ),
-         :ok <- IOSXE.ssh_command_accepted?(output) do
+         :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{
         "interface" => name,
         "description" => desired,
@@ -201,15 +201,15 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
     with {:ok, facts, _output} <-
            observe_operation(state, endpoint, {:interface, name}, cancelled?),
-         :ok <- matches(facts["enabled"], expected, "enabled"),
+         :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, output} <-
            run_shell(
              state,
              endpoint,
-             script(IOSXE.ssh_admin_state_commands(name, desired)),
+             script(ssh_admin_state_commands(name, desired)),
              cancelled?
            ),
-         :ok <- IOSXE.ssh_command_accepted?(output) do
+         :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired, "evidence" => evidence(output)})
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
@@ -307,8 +307,111 @@ defmodule Opsonde.Targets.Adapters.SSH.IOSXE do
   end
 
   defp evidence(output), do: %{"transport" => "ssh-cli", "output" => output}
-  defp matches(observed, expected, _field) when observed == expected, do: :ok
-  defp matches(observed, _expected, field), do: {:stale, observed, field}
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end
+
+  # IOS XE CLI vocabulary and response interpretation belong to this Method.
+  defp ssh_system_commands do
+    [
+      "show running-config | include ^hostname",
+      "show version | include Cisco IOS XE Software, Version"
+    ]
+  end
+
+  defp ssh_interface_commands(name) do
+    [
+      "show running-config interface #{name}",
+      "show interfaces #{name} | include line protocol|Description|input errors|output errors"
+    ]
+  end
+
+  defp ssh_description_commands(name, desired),
+    do: ["configure terminal", "interface #{name}", "description #{desired}", "end"]
+
+  defp ssh_admin_state_commands(name, desired),
+    do: [
+      "configure terminal",
+      "interface #{name}",
+      if(desired, do: "no shutdown", else: "shutdown"),
+      "end"
+    ]
+
+  defp ssh_system_facts(output) do
+    with [hostname] <- ssh_capture(output, ~r/^hostname\s+(\S+)\s*$/m),
+         [version] <- ssh_capture(output, ~r/^Cisco IOS XE Software, Version[ \t]+([^\r\n]+)/m) do
+      {:ok, %{"hostname" => hostname, "version" => String.trim(version)}}
+    else
+      _output -> {:error, :failed, "IOS XE SSH system response is invalid"}
+    end
+  end
+
+  defp ssh_interface_facts(name, output) do
+    line =
+      Regex.run(
+        ~r/^#{Regex.escape(name)} is (administratively down|up|down), line protocol is (up|down)/m,
+        output,
+        capture: :all_but_first
+      )
+
+    case line do
+      [admin, operational] ->
+        description =
+          case ssh_capture(output, ~r/^\s*Description:\s*(.*?)\s*$/m) do
+            [value] -> value
+            [] -> ssh_running_description(name, output)
+          end
+
+        {:ok,
+         %{
+           "name" => name,
+           "description" => description,
+           "enabled" => admin != "administratively down",
+           "admin_status" => if(admin == "administratively down", do: "down", else: admin),
+           "oper_status" => operational,
+           "input_errors" => ssh_error_count(output, "input"),
+           "output_errors" => ssh_error_count(output, "output")
+         }}
+
+      _line ->
+        {:error, :not_found, "IOS XE interface was not found"}
+    end
+  end
+
+  defp ssh_command_accepted?(output) do
+    if Regex.match?(
+         ~r/% (Invalid input|Incomplete command|Ambiguous command|Command rejected)/i,
+         output
+       ),
+       do: {:error, :rejected, "IOS XE SSH command was rejected"},
+       else: :ok
+  end
+
+  defp ssh_readonly_command?(command) do
+    command = command |> String.trim() |> String.downcase()
+    String.starts_with?(command, "show ") or command == "show"
+  end
+
+  defp ssh_running_description(name, output) do
+    pattern =
+      ~r/^interface #{Regex.escape(name)}\s*$\n(?:^[ !].*$\n)*?^ description\s+(.+?)\s*$/m
+
+    case ssh_capture(output, pattern) do
+      [description] -> description
+      [] -> nil
+    end
+  end
+
+  defp ssh_error_count(output, direction) do
+    case ssh_capture(output, ~r/^\s*([0-9,]+) #{direction} errors,/m) do
+      [value] -> value |> String.replace(",", "") |> String.to_integer()
+      [] -> nil
+    end
+  end
+
+  defp ssh_capture(output, pattern) do
+    case Regex.run(pattern, output, capture: :all_but_first) do
+      nil -> []
+      values -> values
+    end
+  end
 end

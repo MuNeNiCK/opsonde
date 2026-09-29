@@ -100,14 +100,21 @@ config :opsonde,
     Opsonde.Targets.Adapters.HTTP,
     Opsonde.Targets.Adapters.IPMI,
     Opsonde.Targets.Adapters.Redfish,
-    Opsonde.Targets.Adapters.NETCONF.IOSXE,
-    Opsonde.Targets.Adapters.RESTCONF.IOSXE,
-    Opsonde.Targets.Adapters.SSH.IOSXE,
+    Opsonde.Targets.Profiles.IOSXE.NETCONF,
+    Opsonde.Targets.Profiles.IOSXE.RESTCONF,
+    Opsonde.Targets.Profiles.IOSXE.SSH,
     Opsonde.Targets.Adapters.Kubernetes,
     Opsonde.Targets.Adapters.SSH.Linux
   ]
 
-config :phoenix, :filter_parameters, ["bmc_secret", "client_secret", "credentials", "password", "token"]
+config :phoenix, :filter_parameters, [
+  "bmc_secret",
+  "client_secret",
+  "credentials",
+  "password",
+  "token"
+]
+
 config :tzdata, :autoupdate, :disabled
 
 # Configure the endpoint
