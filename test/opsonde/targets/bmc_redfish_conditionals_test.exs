@@ -2,6 +2,8 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.Providers.Target
+  alias Opsonde.Targets.BMC.Redfish
   alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
 
@@ -106,6 +108,16 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       })
     end
 
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Native"} = conn, _agent) do
+      json(conn, 200, %{"Result" => "safe", "Password" => "fixture-secret"})
+    end
+
+    defp route(%{method: "HEAD", request_path: "/redfish/v1/Oem/Native"} = conn, _agent) do
+      conn
+      |> put_resp_header("etag", ~s("oem-1"))
+      |> send_resp(200, "")
+    end
+
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Wrong"} = conn, _agent) do
       json(conn, 200, %{"Result" => %{"unexpected" => "object"}})
     end
@@ -133,6 +145,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> json(202, %{"Message" => "accepted"})
     end
 
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Drop"} = _conn, agent) do
+      Agent.update(agent, &Map.update!(&1, :echo_calls, fn count -> count + 1 end))
+      Process.exit(self(), :kill)
+    end
+
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Malformed"} = conn, _agent),
       do: send_resp(conn, 200, "[")
 
@@ -149,6 +166,172 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> put_resp_content_type("application/json")
       |> send_resp(status, Jason.encode!(value))
     end
+  end
+
+  test "native Redfish effects validate URI and ETag and preserve uncertain results", context do
+    {:ok, state} = redfish_state(context.method.endpoint)
+    {:ok, capabilities} = Redfish.capabilities(state, %{})
+
+    assert Enum.any?(capabilities.effects, fn operation ->
+             operation.capability == "native.redfish.effect" and operation.native?
+           end)
+
+    assert "native.redfish.effect" in Redfish.access_method_profile().capabilities
+
+    request = native_effect_request(context, "PATCH", @system_path, %{"Name" => "native"})
+    request = %{request | selectors: %{"if_match" => ~s("rev-1")}}
+
+    assert {:ok, %{status: :applied, details: %{"http_status" => 204}}} =
+             Redfish.effect(state, request, %{})
+
+    assert Agent.get(context.agent, &{&1.name, &1.writes}) == {"native", 1}
+
+    for uri <- ["https://other.example/redfish/v1/Systems/1", "/redfish/v1/../Oem/Plain"] do
+      assert {:error, :failed, _} =
+               Redfish.effect(state, native_effect_request(context, "POST", uri, %{}), %{})
+    end
+
+    oversized =
+      native_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{
+        "Value" => String.duplicate("x", 70_000)
+      })
+
+    assert {:error, :failed, _} = Redfish.effect(state, oversized, %{})
+
+    assert {:ok, %{status: :applied, details: plain}} =
+             Redfish.effect(
+               state,
+               native_effect_request(context, "POST", "/redfish/v1/Oem/Plain", %{}),
+               %{}
+             )
+
+    assert plain == %{"http_status" => 200, "response_redacted" => true}
+
+    assert {:ok, %{status: :unknown, details: async}} =
+             Redfish.effect(
+               state,
+               native_effect_request(context, "POST", "/redfish/v1/Oem/AsyncSafe", %{}),
+               %{}
+             )
+
+    assert async["task_location"] == "/redfish/v1/TaskService/TaskMonitors/2"
+
+    assert {:ok, %{status: :unknown, details: lost}} =
+             Redfish.effect(
+               state,
+               native_effect_request(context, "POST", "/redfish/v1/Oem/Drop", %{}),
+               %{}
+             )
+
+    assert lost["reason"] =~ "lost"
+    assert Agent.get(context.agent, & &1.echo_calls) == 1
+  end
+
+  defp native_effect_request(context, method, uri, body) do
+    %Target.EffectRequest{
+      provider_revision: 1,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.method.endpoint},
+      capability: "native.redfish.effect",
+      operation: "request.execute",
+      authorization_digest: "fixture",
+      operation_id: Ecto.UUID.generate(),
+      idempotency_key: Ecto.UUID.generate(),
+      parameters: %{"method" => method, "uri" => uri, "body" => body}
+    }
+  end
+
+  test "native Redfish reads standard and OEM resources without operation registration",
+       context do
+    {:ok, state} = redfish_state(context.method.endpoint)
+    {:ok, capabilities} = Redfish.capabilities(state, %{})
+
+    assert Enum.any?(capabilities.observations, fn operation ->
+             operation.capability == "native.redfish.observe" and operation.native?
+           end)
+
+    assert "native.redfish.observe" in Redfish.access_method_profile().capabilities
+
+    assert %Target.Capabilities{} =
+             Providers.target_capabilities!(
+               context.method.provider_id,
+               context.method.provider_revision,
+               %{},
+               actor: context.operator
+             )
+
+    request = %Target.ObservationRequest{
+      provider_revision: 1,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.method.endpoint},
+      capability: "native.redfish.observe",
+      operation: "request.observe",
+      authorization_digest: "fixture"
+    }
+
+    for {uri, expected} <- [
+          {@system_path, "original"},
+          {"/redfish/v1/Oem/Native", "safe"}
+        ] do
+      assert {:ok, observation} =
+               Redfish.observe(
+                 state,
+                 %{request | parameters: %{"method" => "GET", "uri" => uri}},
+                 %{}
+               )
+
+      assert observation.facts["response"]["Name"] == expected or
+               observation.facts["response"]["Result"] == expected
+
+      refute inspect(observation) =~ "fixture-secret"
+    end
+
+    assert {:ok, head} =
+             Redfish.observe(
+               state,
+               %{
+                 request
+                 | parameters: %{"method" => "HEAD", "uri" => "/redfish/v1/Oem/Native"}
+               },
+               %{}
+             )
+
+    assert head.facts == %{"http_status" => 200, "response" => %{}}
+    assert [%{"etag" => ~s("oem-1")}] = Enum.map(head.evidence, &Map.take(&1, ["etag"]))
+
+    for parameters <- [
+          %{"method" => "POST", "uri" => "/redfish/v1/Oem/Native"},
+          %{"method" => "GET", "uri" => "https://other.example/redfish/v1/Oem/Native"},
+          %{"method" => "GET", "uri" => "/redfish/v1/Oem/Native", "extra" => true}
+        ] do
+      assert {:error, :failed, _} =
+               Redfish.observe(state, %{request | parameters: parameters}, %{})
+    end
+
+    assert {:error, :failed, _} =
+             Redfish.observe(
+               state,
+               %{request | parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Large"}},
+               %{}
+             )
+  end
+
+  defp redfish_state(endpoint) do
+    Redfish.build(
+      %{
+        "endpoint" => endpoint,
+        "system_path" => @system_path,
+        "expected_uuid" => @uuid,
+        "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
+      },
+      %{"username" => "tester", "password" => "secret"}
+    )
   end
 
   setup do

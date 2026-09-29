@@ -17,6 +17,8 @@ defmodule Opsonde.Targets.BMC.Redfish do
   }
   @api_read_methods %{"GET" => :get, "HEAD" => :head}
   @api_write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
+  @native_read "native.redfish.observe"
+  @native_effect "native.redfish.effect"
   @sensitive_names ~w(password passphrase secret token credential authorization apikey privatekey community)
   @max_collection_pages 8
 
@@ -33,7 +35,10 @@ defmodule Opsonde.Targets.BMC.Redfish do
   def kind, do: :target
 
   @impl Opsonde.Providers.Target
-  def access_method_profile, do: BMC.access_method_profile("redfish")
+  def access_method_profile do
+    profile = BMC.access_method_profile("redfish")
+    %{profile | capabilities: [@native_read, @native_effect | profile.capabilities]}
+  end
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
@@ -100,8 +105,8 @@ defmodule Opsonde.Targets.BMC.Redfish do
 
       {:ok,
        %Target.Capabilities{
-         observations: capabilities.observations ++ api.observations,
-         effects: effects ++ api.effects
+         observations: capabilities.observations ++ api.observations ++ [native_read_operation()],
+         effects: effects ++ api.effects ++ [native_effect_operation()]
        }}
     else
       {:error, category, message} -> read_error(category, message)
@@ -109,6 +114,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
   end
 
   @impl Opsonde.Providers.Target
+  def observe(%State{} = state, %{capability: @native_read} = request, invocation),
+    do: native_observe(state, request, invocation)
+
   def observe(%State{} = state, %{capability: "observe.bmc_api"} = request, invocation),
     do: api_observe(state, request, invocation)
 
@@ -126,6 +134,9 @@ defmodule Opsonde.Targets.BMC.Redfish do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%State{} = state, %{capability: @native_effect} = request, invocation),
+    do: native_effect(state, request, invocation)
+
   def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
     do: api_effect(state, request, invocation)
 
@@ -232,6 +243,180 @@ defmodule Opsonde.Targets.BMC.Redfish do
     end
   end
 
+  defp native_observe(state, request, invocation) do
+    with {:ok, method, path} <- native_read_request(state, request),
+         :ok <- not_cancelled(invocation),
+         {:ok, _system} <- system(state),
+         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
+      evidence =
+        %{
+          "source" => "redfish",
+          "method" => String.upcase(to_string(method)),
+          "uri" => path,
+          "http_status" => status,
+          "pages" => pages
+        }
+        |> maybe_etag(if(pages == 1, do: response_etag(headers), else: nil))
+
+      {:ok,
+       %Target.Observation{
+         facts: %{"http_status" => status, "response" => sanitize_response(body)},
+         observed_at: DateTime.utc_now(),
+         evidence: [evidence]
+       }}
+    else
+      {:error, category, message} -> read_error(category, message)
+    end
+  end
+
+  defp native_read_operation do
+    output = %{
+      "type" => "object",
+      "properties" => %{
+        "http_status" => %{"type" => "integer"},
+        "response" => %{"type" => "object"}
+      },
+      "required" => ["http_status", "response"],
+      "additionalProperties" => false
+    }
+
+    %Target.Operation{
+      capability: @native_read,
+      operation: "request.observe",
+      description: "Read one exact standard or OEM Redfish resource by relative URI",
+      input_schema: native_schema(["GET", "HEAD"]),
+      output_schema: output,
+      verification_schema: output,
+      native?: true
+    }
+  end
+
+  defp native_effect_operation do
+    %Target.Operation{
+      capability: @native_effect,
+      operation: "request.execute",
+      description:
+        "Send one exact standard or OEM Redfish write by relative URI after authority review",
+      input_schema: native_schema(Map.keys(@api_write_methods), true),
+      native?: true
+    }
+  end
+
+  defp native_schema(methods, write? \\ false) do
+    selector_properties =
+      if write?, do: %{"if_match" => %{"type" => "string", "maxLength" => 256}}, else: %{}
+
+    parameter_properties = %{
+      "method" => %{"type" => "string", "enum" => methods},
+      "uri" => %{"type" => "string", "minLength" => 11, "maxLength" => 2_048}
+    }
+
+    parameter_properties =
+      if write? do
+        Map.merge(parameter_properties, %{
+          "body" => %{"type" => "object"},
+          "include_response" => %{"type" => "boolean"}
+        })
+      else
+        parameter_properties
+      end
+
+    %{
+      "type" => "object",
+      "properties" => %{
+        "selectors" => %{
+          "type" => "object",
+          "properties" => selector_properties,
+          "additionalProperties" => false
+        },
+        "parameters" => %{
+          "type" => "object",
+          "properties" => parameter_properties,
+          "required" => ["method", "uri"],
+          "additionalProperties" => false
+        }
+      },
+      "required" => ["selectors", "parameters"],
+      "additionalProperties" => false
+    }
+  end
+
+  defp native_read_request(state, request) do
+    with true <- request.operation == "request.observe",
+         true <- request.connection.endpoint == state.endpoint,
+         true <- request.selectors == %{} and request.secret_values == %{},
+         true <- is_nil(request.protocol_request),
+         %{"method" => method, "uri" => uri} = parameters <- request.parameters,
+         true <- map_size(parameters) == 2,
+         {:ok, verb} <- Map.fetch(@api_read_methods, method),
+         {:ok, path} <- ResourceURI.relative(uri) do
+      {:ok, verb, path}
+    else
+      _ -> {:error, :failed, "Redfish native observation request is invalid"}
+    end
+  end
+
+  defp native_effect(state, target_request, invocation) do
+    with {:ok, method, path, body, headers, include_response?} <-
+           native_write_request(state, target_request),
+         :ok <- not_cancelled(invocation),
+         {:ok, _system} <- system(state),
+         :ok <- not_cancelled(invocation) do
+      result = request(state, method, path, body, headers)
+
+      effect_response(state, result, target_request.operation, fn status, reply ->
+        native_response_details(status, reply, include_response?)
+      end)
+    else
+      {:error, :cancelled, _message} = error -> error
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  defp native_write_request(state, request) do
+    parameters = request.parameters
+
+    with true <- request.operation == "request.execute",
+         true <- request.connection.endpoint == state.endpoint,
+         true <- is_nil(request.protocol_request) and request.secret_values == %{},
+         %{"method" => method, "uri" => uri} <- parameters,
+         true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri body include_response))),
+         {:ok, verb} <- Map.fetch(@api_write_methods, method),
+         {:ok, path} <- ResourceURI.relative(uri),
+         {:ok, headers} <- if_match_headers(request.selectors),
+         include_response? when is_boolean(include_response?) <-
+           Map.get(parameters, "include_response", false),
+         {:ok, body} <- native_body(verb, parameters) do
+      {:ok, verb, path, body, headers, include_response?}
+    else
+      _ -> {:error, :failed, "Redfish native effect request is invalid"}
+    end
+  end
+
+  defp native_body(verb, parameters) do
+    body = Map.get(parameters, "body")
+
+    if (verb == :delete or is_map(body)) and (is_nil(body) or is_map(body)) do
+      case Jason.encode(body) do
+        {:ok, encoded} when byte_size(encoded) <= 65_536 -> {:ok, body}
+        _ -> {:error, :failed, "Redfish request body exceeds its limit"}
+      end
+    else
+      {:error, :failed, "Redfish request body is invalid"}
+    end
+  rescue
+    _ -> {:error, :failed, "Redfish request body is invalid"}
+  end
+
+  defp native_response_details(status, reply, _include_response?) when map_size(reply) == 0,
+    do: %{"http_status" => status}
+
+  defp native_response_details(status, reply, true),
+    do: %{"http_status" => status, "response" => sanitize_response(reply)}
+
+  defp native_response_details(status, _reply, false),
+    do: %{"http_status" => status, "response_redacted" => true}
+
   defp api_effect(state, request, invocation) do
     with {:ok, method, path} <- api_request(state, request, @api_write_methods),
          {:ok, conditional_headers} <- if_match_headers(request.selectors),
@@ -240,49 +425,50 @@ defmodule Opsonde.Targets.BMC.Redfish do
          :ok <- not_cancelled(invocation) do
       body = if method == :delete and request.parameters == %{}, do: nil, else: request.parameters
 
-      case request(state, method, path, body, conditional_headers) do
-        {:ok, 202, headers, reply} ->
-          details =
-            %{"http_status" => 202}
-            |> Map.merge(public_response_details(reply, request))
-            |> maybe_task_location(response_task_location(state, headers))
+      result = request(state, method, path, body, conditional_headers)
 
-          {:ok,
-           %Target.EffectResult{status: :unknown, reference: request.operation, details: details}}
-
-        {:ok, status, _headers, reply} when status in [200, 201, 204] ->
-          {:ok,
-           %Target.EffectResult{
-             status: :applied,
-             reference: request.operation,
-             details:
-               %{"http_status" => status}
-               |> Map.merge(public_response_details(reply, request))
-           }}
-
-        {:ok, status, _headers, _reply} ->
-          {:ok,
-           %Target.EffectResult{
-             status: :unknown,
-             reference: request.operation,
-             details: %{"http_status" => status, "reason" => "Redfish write outcome is unclear"}
-           }}
-
-        {:error, :transport, _message} ->
-          {:ok,
-           %Target.EffectResult{
-             status: :unknown,
-             reference: request.operation,
-             details: %{"reason" => "Redfish response was lost after dispatch"}
-           }}
-
-        {:error, _category, message} ->
-          {:error, :failed, message}
-      end
+      effect_response(state, result, request.operation, fn status, reply ->
+        %{"http_status" => status}
+        |> Map.merge(public_response_details(reply, request))
+      end)
     else
       {:error, _category, message} -> {:error, :failed, message}
     end
   end
+
+  defp effect_response(state, {:ok, status, headers, reply}, reference, details)
+       when status in [200, 201, 202, 204] do
+    outcome = if status == 202, do: :unknown, else: :applied
+    visible = details.(status, reply)
+
+    visible =
+      if status == 202,
+        do: maybe_task_location(visible, response_task_location(state, headers)),
+        else: visible
+
+    {:ok, %Target.EffectResult{status: outcome, reference: reference, details: visible}}
+  end
+
+  defp effect_response(_state, {:ok, status, _headers, _reply}, reference, _details) do
+    {:ok,
+     %Target.EffectResult{
+       status: :unknown,
+       reference: reference,
+       details: %{"http_status" => status, "reason" => "Redfish write outcome is unclear"}
+     }}
+  end
+
+  defp effect_response(_state, {:error, :transport, _message}, reference, _details) do
+    {:ok,
+     %Target.EffectResult{
+       status: :unknown,
+       reference: reference,
+       details: %{"reason" => "Redfish response was lost after dispatch"}
+     }}
+  end
+
+  defp effect_response(_state, {:error, _category, message}, _reference, _details),
+    do: {:error, :failed, message}
 
   defp api_request(state, request, methods) do
     protocol = request.protocol_request
