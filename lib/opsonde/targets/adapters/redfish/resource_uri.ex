@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMC.Redfish.ResourceURI do
+defmodule Opsonde.Targets.Adapters.Redfish.ResourceURI do
   @moduledoc false
 
   @max_uri_bytes 2_048

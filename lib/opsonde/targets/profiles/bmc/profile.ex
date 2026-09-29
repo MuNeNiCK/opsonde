@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMC do
+defmodule Opsonde.Targets.Profiles.BMC do
   @moduledoc false
 
   alias Opsonde.Providers.Target

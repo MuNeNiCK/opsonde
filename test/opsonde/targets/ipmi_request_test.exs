@@ -1,8 +1,8 @@
-defmodule Opsonde.Targets.IPMINativeTest do
+defmodule Opsonde.Targets.IPMIRequestTest do
   use ExUnit.Case, async: true
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.BMC.IPMI
+  alias Opsonde.Targets.Adapters.IPMI
 
   @endpoint "ipmi://127.0.0.1:623"
 

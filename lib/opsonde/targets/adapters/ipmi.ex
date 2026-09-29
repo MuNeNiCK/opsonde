@@ -1,12 +1,12 @@
-defmodule Opsonde.Targets.BMC.IPMI do
+defmodule Opsonde.Targets.Adapters.IPMI do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.BMC
-  alias Opsonde.Targets.BMC.IPMINative
+  alias Opsonde.Targets.Profiles.BMC
+  alias Opsonde.Targets.Adapters.IPMI.RMCP
   alias Opsonde.Targets.BMC.OutputProjection
 
   @max_data_bytes 2048
@@ -402,7 +402,7 @@ defmodule Opsonde.Targets.BMC.IPMI do
   end
 
   defp native_command(state, address, netfn, opcode, data) do
-    case IPMINative.send_command(
+    case RMCP.send_command(
            address,
            state.user,
            state.password,

@@ -1,13 +1,13 @@
-defmodule Opsonde.Targets.BMC.Redfish do
+defmodule Opsonde.Targets.Adapters.Redfish do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.BMC
+  alias Opsonde.Targets.Profiles.BMC
   alias Opsonde.Targets.BMC.OutputProjection
-  alias Opsonde.Targets.BMC.Redfish.ResourceURI
+  alias Opsonde.Targets.Adapters.Redfish.ResourceURI
 
   @reset_types %{
     "bmc.power.on" => "On",

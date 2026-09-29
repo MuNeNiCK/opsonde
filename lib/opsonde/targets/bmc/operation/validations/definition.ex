@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.BMC.Operation.Validations.Definition do
   alias Opsonde.Targets
   alias Opsonde.Targets.BMC.CurrentAccessMethod
   alias Opsonde.Targets.BMC.JSONPointer
-  alias Opsonde.Targets.BMC.Redfish.ResourceURI
+  alias Opsonde.Targets.Adapters.Redfish.ResourceURI
 
   @dynamic_object_keywords ~w(patternProperties unevaluatedProperties propertyNames allOf anyOf oneOf not if then else $ref)
 

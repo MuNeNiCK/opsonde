@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.BMC.IPMINative do
+defmodule Opsonde.Targets.Adapters.IPMI.RMCP do
   @moduledoc false
 
   use Rustler, otp_app: :opsonde, crate: :ipmi_nif

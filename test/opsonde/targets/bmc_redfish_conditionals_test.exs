@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.BMC.Redfish
+  alias Opsonde.Targets.Adapters.Redfish
   alias Opsonde.Targets.BMC.OperationKey
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
 

@@ -1,7 +1,7 @@
 defmodule Opsonde.RedfishResourceURITest do
   use ExUnit.Case, async: true
 
-  alias Opsonde.Targets.BMC.Redfish.ResourceURI
+  alias Opsonde.Targets.Adapters.Redfish.ResourceURI
 
   @origin "https://bmc.example.test:8443"
 
