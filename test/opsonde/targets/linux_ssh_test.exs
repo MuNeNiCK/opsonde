@@ -323,7 +323,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       )
 
     assert {:error, error} = Targets.clear_target_request(request, actor: context.operator)
-    assert Exception.message(error) =~ "invalid"
+    assert Exception.message(error) =~ "kind does not match Method classification"
     assert commands(context) == []
   end
 
@@ -354,13 +354,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         %{"expected_definition_sha256" => @definition}
       )
 
-    invalid_clearance = Targets.clear_target_request!(invalid, actor: context.operator)
-
     assert {:error, _error} =
-             Targets.dispatch_target_effect(invalid_clearance, %{},
-               actor: context.operator,
-               authorize?: false
-             )
+             Targets.clear_target_request(invalid, actor: context.operator)
 
     assert commands(context) == []
 

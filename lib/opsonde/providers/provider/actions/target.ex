@@ -66,44 +66,22 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     |> normalize_capabilities(credentials)
   end
 
-  defp invoke(:preflight, adapter, state, arguments, _invocation, credentials) do
-    request = arguments.request
-
-    if valid_preflight_request?(request) do
-      result =
-        if function_exported?(adapter, :preflight, 2),
-          do: safe_call(fn -> adapter.preflight(state, request) end, credentials),
-          else: :ok
-
-      case result do
-        :ok ->
-          {:ok, %Target.RequestValidation{valid?: true}}
-
-        {:error, :failed, reason} when is_binary(reason) ->
-          {:ok,
-           %Target.RequestValidation{
-             valid?: false,
-             reason: Redactor.message(reason, credentials)
-           }}
-
-        _other ->
-          {:error, target_error(:failed, "Target preflight failed")}
-      end
-    else
-      {:error, target_error(:failed, "Invalid Target preflight request")}
-    end
+  defp invoke(:classify, adapter, state, arguments, _invocation, credentials) do
+    classify(adapter, state, arguments.request, credentials)
   end
 
   defp invoke(:observe, adapter, state, arguments, invocation, credentials) do
     request = arguments.request
 
-    with :ok <- validate_observation_request(request) do
+    with :ok <- validate_observation_request(request),
+         :ok <- classified_as(adapter, state, request, :observation, credentials) do
       observe(adapter, state, request, invocation, credentials, request.max_attempts)
     end
   end
 
   defp invoke(:effect, adapter, state, arguments, invocation, credentials) do
-    with :ok <- validate_effect_request(arguments.request) do
+    with :ok <- validate_effect_request(arguments.request),
+         :ok <- classified_as(adapter, state, arguments.request, :effect, credentials) do
       safe_effect_call(
         fn -> adapter.effect(state, arguments.request, invocation) end,
         credentials
@@ -113,10 +91,46 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   end
 
   defp invoke(:verify, adapter, state, arguments, invocation, credentials) do
-    with :ok <- validate_verification_request(arguments.request) do
+    with :ok <- validate_verification_request(arguments.request),
+         :ok <- classified_as(adapter, state, arguments.request, :observation, credentials) do
       safe_call(fn -> adapter.verify(state, arguments.request, invocation) end, credentials)
       |> normalize_verification(credentials)
     end
+  end
+
+  defp classified_as(adapter, state, request, expected, credentials) do
+    case classify(adapter, state, method_request(request), credentials) do
+      {:ok, %Target.RequestClassification{kind: ^expected}} ->
+        :ok
+
+      {:ok, %Target.RequestClassification{}} ->
+        {:error,
+         target_error(:failed, "Target request kind conflicts with Method classification")}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp classify(adapter, state, request, credentials) do
+    case Target.classify_request(adapter, state, request) do
+      {:ok, %Target.RequestClassification{} = classification} ->
+        {:ok, classification}
+
+      {:error, :failed, reason} ->
+        {:error, target_error(:failed, Redactor.message(reason, credentials))}
+    end
+  end
+
+  defp method_request(request) do
+    %Target.MethodRequest{
+      provider_revision: request.provider_revision,
+      connection: request.connection,
+      capability: request.capability,
+      operation: request.operation,
+      selectors: request.selectors,
+      parameters: request.parameters
+    }
   end
 
   defp observe(adapter, state, request, invocation, credentials, attempts_left) do
@@ -285,15 +299,6 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       {:error, target_error(:failed, "Invalid observation request")}
     end
   end
-
-  defp valid_preflight_request?(%Target.PreflightRequest{} = request) do
-    positive_integer?(request.provider_revision) and
-      request.kind in [:observation, :verification] and
-      nonempty_binary?(request.capability) and nonempty_binary?(request.operation) and
-      bounded_map?(request.selectors) and bounded_map?(request.parameters)
-  end
-
-  defp valid_preflight_request?(_request), do: false
 
   defp validate_effect_request(%Target.EffectRequest{} = request) do
     if valid_request_base?(request) and nonempty_binary?(request.operation_id) and

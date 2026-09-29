@@ -118,12 +118,26 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(%State{} = state, request) do
-    case observation_command(state.privilege, request) do
-      {:ok, _command, _decoder} -> :ok
-      {:error, _category, _message} = error -> error
+  def classify_request(%State{} = state, request) do
+    case request.capability do
+      @method_effect ->
+        classify_effect(Command.effect_command(request, @method_effect))
+
+      "effect.service" ->
+        classify_effect(restart_command(state.privilege, request))
+
+      _other ->
+        case observation_command(state.privilege, request) do
+          {:ok, _command, _decoder} -> {:ok, :observation}
+          {:error, _category, _message} -> {:error, :failed, "Linux request is invalid"}
+        end
     end
   end
+
+  defp classify_effect({:ok, _command}), do: {:ok, :effect}
+
+  defp classify_effect({:error, _category, _message}),
+    do: {:error, :failed, "Linux request is invalid"}
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: capability} = request, invocation)

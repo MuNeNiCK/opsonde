@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.HTTP
+  alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
 
   defmodule Stub do
     import Plug.Conn
@@ -210,6 +211,39 @@ defmodule Opsonde.Targets.HTTPAPITest do
 
     assert large.facts["body_truncated"] == true
     assert byte_size(large.facts["body"]) == 8_192
+    assert Agent.get(context.agent, & &1.writes) == []
+  end
+
+  test "a write cannot enter the observation path at clearance or direct Provider dispatch",
+       context do
+    parameters = %{"method" => "POST", "path" => "/api/action", "body" => "{}"}
+
+    proposal = %PolicyRequest{
+      kind: :observation,
+      authority_mode: :auto,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.http.observe",
+      operation: "request.observe",
+      parameters: parameters
+    }
+
+    assert {:error, clearance_error} =
+             Targets.clear_target_request(proposal, actor: context.operator)
+
+    assert Enum.any?(clearance_error.errors, &match?(%PolicyError{category: :denied}, &1))
+
+    dispatch_request = %{read_request(context, "POST", "/api/action") | parameters: parameters}
+
+    assert {:error, dispatch_error} =
+             Providers.target_observe(context.provider.id, dispatch_request, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Enum.any?(dispatch_error.errors, &match?(%Target.Error{category: :failed}, &1))
     assert Agent.get(context.agent, & &1.writes) == []
   end
 

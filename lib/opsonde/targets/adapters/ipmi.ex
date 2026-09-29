@@ -87,6 +87,35 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(%State{} = state, request) do
+    case request.capability do
+      @method_effect ->
+        classify_ipmi(method_request(state, request), :effect)
+
+      "observe.power" ->
+        if PowerControl.inspect_request?(request) and
+             request.connection.endpoint == state.endpoint,
+           do: {:ok, :observation},
+           else: {:error, :failed, "IPMI power observation is invalid"}
+
+      "effect.power" ->
+        with true <- request.operation != "bmc.power.cycle",
+             true <- request.connection.endpoint == state.endpoint,
+             {:ok, _intent} <- PowerControl.effect_request(request) do
+          {:ok, :effect}
+        else
+          _ -> {:error, :failed, "IPMI power effect is invalid"}
+        end
+
+      _other ->
+        {:error, :failed, "IPMI request is invalid"}
+    end
+  end
+
+  defp classify_ipmi({:ok, _first, _second, _third, _fourth}, kind), do: {:ok, kind}
+  defp classify_ipmi(_invalid, _kind), do: {:error, :failed, "IPMI request is invalid"}
+
+  @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
     with true <- PowerControl.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,

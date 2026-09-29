@@ -22,8 +22,8 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
-         :ok <- evaluate(context.policies, request),
-         :ok <- preflight(request, context.access_method) do
+         :ok <- classify(request, context),
+         :ok <- evaluate(context.policies, request) do
       {:ok, build_clearance(current_actor, request, context)}
     end
   end
@@ -36,18 +36,12 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
          request <- request_from_clearance(clearance),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
+         :ok <- classify(request, context),
          :ok <- evaluate(context.policies, request),
-         :ok <- preflight(request, context.access_method),
          :ok <- validate_authority(request),
          :ok <- current_policy_set(context.policies, clearance.policy_revisions),
          :ok <- current_provider(context.access_method, clearance) do
-      invoke(
-        operation,
-        current_actor,
-        context.access_method,
-        clearance,
-        arguments.invocation
-      )
+      invoke(operation, current_actor, context.access_method, clearance, arguments.invocation)
     end
   end
 
@@ -82,31 +76,30 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     end
   end
 
-  defp preflight(%{kind: kind} = request, method)
-       when kind in [:observation, :verification] and
-              request.capability != "observe.power" do
-    input = %ProviderTarget.PreflightRequest{
+  defp classify(request, %{access_method: method}) do
+    input = %ProviderTarget.MethodRequest{
       provider_revision: method.provider_revision,
-      kind: kind,
+      connection: %ProviderTarget.Connection{endpoint: method.endpoint},
       capability: request.capability,
       operation: request.operation,
       selectors: request.selectors,
       parameters: request.parameters
     }
 
-    case Providers.target_preflight(method.provider_id, input, %{}, authorize?: false) do
-      {:ok, %ProviderTarget.RequestValidation{valid?: true}} ->
+    expected = if request.kind == :effect, do: :effect, else: :observation
+
+    case Providers.target_classify(method.provider_id, input, %{}, authorize?: false) do
+      {:ok, %ProviderTarget.RequestClassification{kind: ^expected}} ->
         :ok
 
-      {:ok, %ProviderTarget.RequestValidation{valid?: false, reason: reason}} ->
-        {:error, policy_error(:denied, reason)}
+      {:ok, %ProviderTarget.RequestClassification{}} ->
+        {:error,
+         policy_error(:denied, "Target request kind does not match Method classification")}
 
       {:error, _error} ->
-        {:error, policy_error(:stale_context, "Target observation preflight is unavailable")}
+        {:error, policy_error(:denied, "Target Method request is invalid or unsupported")}
     end
   end
-
-  defp preflight(_request, _method), do: :ok
 
   defp evaluate(policies, request) do
     Enum.reduce_while(policies, :ok, fn policy, :ok ->

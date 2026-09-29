@@ -233,9 +233,9 @@ defmodule Opsonde.Providers.Provider do
       run {Opsonde.Providers.Provider.Actions.AI, operation: :review_recovery}
     end
 
-    action :target_preflight, :struct do
+    action :target_classify, :struct do
       public? false
-      constraints instance_of: Opsonde.Providers.Target.RequestValidation
+      constraints instance_of: Opsonde.Providers.Target.RequestClassification
       transaction? false
 
       argument :provider_id, :uuid, allow_nil?: false
@@ -243,10 +243,10 @@ defmodule Opsonde.Providers.Provider do
       argument :request, :struct,
         allow_nil?: false,
         sensitive?: true,
-        constraints: [instance_of: Opsonde.Providers.Target.PreflightRequest]
+        constraints: [instance_of: Opsonde.Providers.Target.MethodRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
-      run {Opsonde.Providers.Provider.Actions.Target, operation: :preflight}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :classify}
     end
 
     action :target_observe, :struct do
@@ -405,7 +405,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:target_preflight, :target_observe, :target_effect, :target_verify]) do
+    policy action([:target_classify, :target_observe, :target_effect, :target_verify]) do
       forbid_if always()
     end
 

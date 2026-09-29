@@ -99,22 +99,32 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @method_observation} = request) do
-    with {:ok, body} <- method_body(request, "rpc.observe"),
-         true <- readonly_rpc?(body) do
-      :ok
-    else
-      false -> {:error, :failed, "NETCONF observation must contain get or get-config"}
-      {:error, _category, _message} = error -> error
+  def classify_request(_state, request) do
+    case request.capability do
+      @method_observation ->
+        case method_body(request, "rpc.observe") do
+          {:ok, body} ->
+            if readonly_rpc?(body),
+              do: {:ok, :observation},
+              else: {:error, :failed, "NETCONF observation is unsafe"}
+
+          _invalid ->
+            {:error, :failed, "NETCONF request is invalid"}
+        end
+
+      @method_effect ->
+        classify_netconf(method_body(request, "rpc.execute"), :effect)
+
+      "effect.interface" ->
+        classify_netconf(IOSXE.effect_request(request), :effect)
+
+      _other ->
+        classify_netconf(IOSXE.observation_request(request), :observation)
     end
   end
 
-  def preflight(_state, request) do
-    case IOSXE.observation_request(request) do
-      {:ok, _operation} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
+  defp classify_netconf({:ok, _operation}, kind), do: {:ok, kind}
+  defp classify_netconf(_invalid, _kind), do: {:error, :failed, "NETCONF request is invalid"}
 
   @impl Opsonde.Providers.Target
   def effect(%SSH.Config{} = state, %{capability: @method_effect} = target_request, invocation) do
@@ -278,8 +288,12 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
 
   defp readonly_rpc?(body) do
     with {:ok, {_rpc, _attributes, children}} <- parse(rpc(body)),
-         [{name, _attributes, _children}] <- Enum.reject(children, &is_binary/1) do
-      local_name(name) in ["get", "get-config"]
+         [{name, attributes, _children}] <- Enum.reject(children, &is_binary/1) do
+      name in ["get", "get-config"] and
+        Enum.all?(attributes, fn
+          {"xmlns", namespace} -> namespace == @netconf_namespace
+          _other -> true
+        end)
     else
       _invalid -> false
     end

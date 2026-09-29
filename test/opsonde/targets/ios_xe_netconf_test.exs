@@ -266,6 +266,45 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
              )
   end
 
+  test "only NETCONF-base get RPCs can be classified as observations" do
+    request = fn body, capability, operation ->
+      %Target.MethodRequest{
+        provider_revision: 1,
+        connection: %Target.Connection{endpoint: "ssh://router.example:830"},
+        capability: capability,
+        operation: operation,
+        selectors: %{},
+        parameters: %{"body" => body}
+      }
+    end
+
+    assert {:ok, %Target.RequestClassification{kind: :observation}} =
+             Target.classify_request(
+               NETCONF,
+               nil,
+               request.("<get/>", "request.netconf.observe", "rpc.observe")
+             )
+
+    for body <- [
+          "<get xmlns=\"urn:vendor:actions\"/>",
+          "<vendor:get xmlns:vendor=\"urn:vendor:actions\"/>"
+        ] do
+      assert {:error, :failed, _reason} =
+               Target.classify_request(
+                 NETCONF,
+                 nil,
+                 request.(body, "request.netconf.observe", "rpc.observe")
+               )
+
+      assert {:ok, %Target.RequestClassification{kind: :effect}} =
+               Target.classify_request(
+                 NETCONF,
+                 nil,
+                 request.(body, "request.netconf.effect", "rpc.execute")
+               )
+    end
+  end
+
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do
     assert %Target.Capabilities{} =
              Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},

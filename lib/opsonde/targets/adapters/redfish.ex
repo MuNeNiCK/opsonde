@@ -119,6 +119,38 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(%State{} = state, request) do
+    case request.capability do
+      @method_read ->
+        classify_redfish(method_read_request(state, request), :observation)
+
+      @method_effect ->
+        classify_redfish(method_write_request(state, request), :effect)
+
+      "observe.power" ->
+        if PowerControl.inspect_request?(request) and
+             request.connection.endpoint == state.endpoint,
+           do: {:ok, :observation},
+           else: {:error, :failed, "Redfish power observation is invalid"}
+
+      "effect.power" ->
+        with true <- request.connection.endpoint == state.endpoint,
+             {:ok, _intent} <- PowerControl.effect_request(request) do
+          {:ok, :effect}
+        else
+          _ -> {:error, :failed, "Redfish power effect is invalid"}
+        end
+
+      _other ->
+        {:error, :failed, "Redfish request is invalid"}
+    end
+  end
+
+  defp classify_redfish({:ok, _first, _second}, kind), do: {:ok, kind}
+  defp classify_redfish({:ok, _first, _second, _third, _fourth, _fifth}, kind), do: {:ok, kind}
+  defp classify_redfish(_invalid, _kind), do: {:error, :failed, "Redfish request is invalid"}
+
+  @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: @method_read} = request, invocation),
     do: method_observe(state, request, invocation)
 

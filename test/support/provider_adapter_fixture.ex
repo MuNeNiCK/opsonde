@@ -5,6 +5,15 @@ defmodule Opsonde.ProviderAdapterFixture do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.ResourceScope
 
+  @observation_operations ~w(
+    filesystem.read filesystem.verify generic.inspect linux.identity.inspect
+    linux.service.inspect service.inspect system.inspect
+  )
+  @effect_operations ~w(
+    bmc.power.reset command.execute filesystem.delete interface.shutdown
+    service.restart linux.service.restart
+  )
+
   @impl true
   def type, do: "fixture-target"
 
@@ -62,6 +71,15 @@ defmodule Opsonde.ProviderAdapterFixture do
   def capabilities(state, invocation) do
     notify(invocation, {:capabilities, state})
     respond(invocation)
+  end
+
+  @impl Opsonde.Providers.Target
+  def classify_request(_state, request) do
+    cond do
+      request.operation in @observation_operations -> {:ok, :observation}
+      request.operation in @effect_operations -> {:ok, :effect}
+      true -> {:error, :failed, "Fixture Target request is invalid"}
+    end
   end
 
   @impl Opsonde.Providers.Target

@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.IOSXESSHTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
+  alias Opsonde.Targets.Profiles.IOSXE.SSH, as: IOSXESSH
 
   @password "correct horse battery staple"
   @capabilities [
@@ -13,6 +14,42 @@ defmodule Opsonde.Targets.IOSXESSHTest do
     "request.cli.observe",
     "request.cli.effect"
   ]
+
+  test "CLI redirection and embedded commands cannot enter the observation path" do
+    request = fn command, capability, operation ->
+      %Target.MethodRequest{
+        provider_revision: 1,
+        connection: %Target.Connection{endpoint: "ssh://router.example"},
+        capability: capability,
+        operation: operation,
+        selectors: %{},
+        parameters: %{"commands" => [command]}
+      }
+    end
+
+    for command <- [
+          "show version | redirect flash:report.txt",
+          "show version\nconfigure terminal"
+        ] do
+      assert {:error, :failed, _reason} =
+               Target.classify_request(
+                 IOSXESSH,
+                 nil,
+                 request.(command, "request.cli.observe", "cli.observe")
+               )
+    end
+
+    assert {:ok, %Target.RequestClassification{kind: :effect}} =
+             Target.classify_request(
+               IOSXESSH,
+               nil,
+               request.(
+                 "show version | redirect flash:report.txt",
+                 "request.cli.effect",
+                 "cli.execute"
+               )
+             )
+  end
 
   defmodule CLI do
     @behaviour :ssh_server_channel

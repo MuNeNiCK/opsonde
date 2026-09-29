@@ -64,14 +64,27 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   def observe(_state, _request, _invocation), do: invalid_request()
 
   @impl Opsonde.Providers.Target
-  def preflight(%State{} = state, %{capability: @method_observation} = request) do
-    case method_observation_operation(state, request) do
-      {:ok, _operation} -> :ok
-      {:error, _category, _message} = error -> error
+  def classify_request(%State{} = state, request) do
+    with :ok <- Client.endpoint(state, request.connection.endpoint) do
+      case request.capability do
+        @method_observation ->
+          classify_kubernetes(method_observation_operation(state, request), :observation)
+
+        @method_effect ->
+          classify_kubernetes(method_effect_operation(state, request), :effect)
+
+        _other ->
+          invalid_request()
+      end
+    else
+      _ -> {:error, :failed, "Kubernetes request is invalid"}
     end
   end
 
-  def preflight(_state, _request), do: invalid_request()
+  defp classify_kubernetes({:ok, _operation}, kind), do: {:ok, kind}
+
+  defp classify_kubernetes(_invalid, _kind),
+    do: {:error, :failed, "Kubernetes request is invalid"}
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do

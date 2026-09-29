@@ -116,22 +116,37 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @method_observation} = request) do
-    with {:ok, method, _path, _body} <- method_request(request, "request.observe"),
-         true <- method in [:get, :head] do
-      :ok
+  def classify_request(%State{}, request) do
+    with {:ok, _endpoint} <- endpoint(request.connection.endpoint) do
+      case request.capability do
+        @method_observation ->
+          case method_request(request, "request.observe") do
+            {:ok, method, _path, _body} when method in [:get, :head] -> {:ok, :observation}
+            _invalid -> {:error, :failed, "RESTCONF observation is invalid or unsafe"}
+          end
+
+        @method_effect ->
+          case method_request(request, "request.execute") do
+            {:ok, method, _path, _body} when method in [:post, :put, :patch, :delete] ->
+              {:ok, :effect}
+
+            _invalid ->
+              {:error, :failed, "RESTCONF effect is invalid"}
+          end
+
+        "effect.interface" ->
+          classify_restconf(IOSXE.effect_request(request), :effect)
+
+        _other ->
+          classify_restconf(IOSXE.observation_request(request), :observation)
+      end
     else
-      false -> {:error, :failed, "RESTCONF observation must use GET or HEAD"}
-      {:error, _category, _message} = error -> error
+      _ -> {:error, :failed, "RESTCONF request is invalid"}
     end
   end
 
-  def preflight(_state, request) do
-    case IOSXE.observation_request(request) do
-      {:ok, _operation} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
+  defp classify_restconf({:ok, _operation}, kind), do: {:ok, kind}
+  defp classify_restconf(_invalid, _kind), do: {:error, :failed, "RESTCONF request is invalid"}
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @method_effect} = target_request, invocation) do

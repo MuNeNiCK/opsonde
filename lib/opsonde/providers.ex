@@ -24,8 +24,8 @@ defmodule Opsonde.Providers do
         action: :target_capabilities,
         args: [:provider_id, :expected_revision, :invocation]
 
-      define :target_preflight,
-        action: :target_preflight,
+      define :target_classify,
+        action: :target_classify,
         args: [:provider_id, :request, :invocation]
 
       define :target_observe,

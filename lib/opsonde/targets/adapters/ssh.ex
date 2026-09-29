@@ -50,8 +50,13 @@ defmodule Opsonde.Targets.Adapters.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, _request),
-    do: {:error, :failed, "Raw SSH commands require effect authority"}
+  def classify_request(_state, request) do
+    with {:ok, _command} <- Command.effect_command(request, @effect_capability) do
+      {:ok, :effect}
+    else
+      _ -> {:error, :failed, "SSH command request is invalid"}
+    end
+  end
 
   @impl Opsonde.Providers.Target
   def observe(_state, _request, _invocation),

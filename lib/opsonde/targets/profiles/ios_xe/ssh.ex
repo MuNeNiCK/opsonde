@@ -85,22 +85,32 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(_state, %{capability: @method_observation} = request) do
-    with {:ok, commands} <- method_commands(request, "cli.observe"),
-         true <- Enum.all?(commands, &ssh_readonly_command?/1) do
-      :ok
-    else
-      false -> {:error, :failed, "CLI observation must use show commands"}
-      {:error, _category, _message} = error -> error
+  def classify_request(_state, request) do
+    case request.capability do
+      @method_observation ->
+        case method_commands(request, "cli.observe") do
+          {:ok, commands} ->
+            if Enum.all?(commands, &ssh_readonly_command?/1),
+              do: {:ok, :observation},
+              else: {:error, :failed, "CLI observation is unsafe"}
+
+          _invalid ->
+            {:error, :failed, "CLI request is invalid"}
+        end
+
+      @method_effect ->
+        classify_ios_xe(method_commands(request, "cli.execute"), :effect)
+
+      "effect.interface" ->
+        classify_ios_xe(IOSXE.effect_request(request), :effect)
+
+      _other ->
+        classify_ios_xe(IOSXE.observation_request(request), :observation)
     end
   end
 
-  def preflight(_state, request) do
-    case IOSXE.observation_request(request) do
-      {:ok, _operation} -> :ok
-      {:error, _category, _message} = error -> error
-    end
-  end
+  defp classify_ios_xe({:ok, _operation}, kind), do: {:ok, kind}
+  defp classify_ios_xe(_invalid, _kind), do: {:error, :failed, "CLI request is invalid"}
 
   @impl Opsonde.Providers.Target
   def effect(%Transport.Config{} = state, %{capability: @method_effect} = request, invocation) do
@@ -236,7 +246,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
         parameters: %{"commands" => commands}
       }
       when selectors == %{} and is_list(commands) and length(commands) in 1..50 ->
-        if Enum.all?(commands, &(is_binary(&1) and byte_size(&1) in 1..1_024)),
+        if Enum.all?(commands, &single_line_command?/1),
           do: {:ok, commands},
           else: {:error, :failed, "IOS XE CLI commands are invalid"}
 
@@ -388,8 +398,18 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
 
   defp ssh_readonly_command?(command) do
     command = command |> String.trim() |> String.downcase()
-    String.starts_with?(command, "show ") or command == "show"
+
+    (String.starts_with?(command, "show ") or command == "show") and
+      not String.contains?(command, ["|", ";", ">", "<"]) and
+      command |> String.to_charlist() |> Enum.all?(&(&1 in 32..126))
   end
+
+  defp single_line_command?(command) when is_binary(command),
+    do:
+      byte_size(command) in 1..1_024 and
+        not String.contains?(command, ["\r", "\n", <<0>>, <<27>>])
+
+  defp single_line_command?(_command), do: false
 
   defp ssh_running_description(name, output) do
     pattern =

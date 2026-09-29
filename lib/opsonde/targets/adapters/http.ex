@@ -108,10 +108,16 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   end
 
   @impl Opsonde.Providers.Target
-  def preflight(state, request) do
+  def classify_request(%State{} = state, request) do
     case method_request(state, request, :read) do
-      {:ok, _method, _path, _headers, _body} -> :ok
-      {:error, _category, _message} = error -> error
+      {:ok, _method, _path, _headers, _body} ->
+        {:ok, :observation}
+
+      {:error, _category, _message} ->
+        case method_request(state, request, :write) do
+          {:ok, _method, _path, _headers, _body} -> {:ok, :effect}
+          {:error, _category, _message} -> {:error, :failed, "HTTP request is invalid"}
+        end
     end
   end
 

@@ -65,16 +65,23 @@ defmodule Opsonde.Providers.Target do
           }
   end
 
-  defmodule PreflightRequest do
+  defmodule MethodRequest do
     @moduledoc false
-    @enforce_keys [:provider_revision, :kind, :capability, :operation, :selectors, :parameters]
+    @enforce_keys [
+      :provider_revision,
+      :connection,
+      :capability,
+      :operation,
+      :selectors,
+      :parameters
+    ]
     defstruct @enforce_keys
   end
 
-  defmodule RequestValidation do
+  defmodule RequestClassification do
     @moduledoc false
-    @enforce_keys [:valid?]
-    defstruct @enforce_keys ++ [reason: nil]
+    @enforce_keys [:kind]
+    defstruct @enforce_keys
   end
 
   defmodule ObservationRequest do
@@ -203,10 +210,64 @@ defmodule Opsonde.Providers.Target do
 
   @callback access_method_profile() :: AccessMethodProfile.t() | :unrestricted
 
-  @callback preflight(state :: term(), PreflightRequest.t()) ::
-              :ok | {:error, :failed, String.t()}
+  @callback classify_request(state :: term(), MethodRequest.t()) ::
+              {:ok, :observation | :effect} | {:error, :failed, String.t()}
 
-  @optional_callbacks resource_scope: 3, preflight: 2
+  @optional_callbacks resource_scope: 3
+
+  def classify_request(adapter, state, %MethodRequest{} = request) when is_atom(adapter) do
+    cond do
+      not valid_method_request?(request) ->
+        {:error, :failed, "Target Method request is invalid"}
+
+      not function_exported?(adapter, :classify_request, 2) ->
+        {:error, :failed, "Target classifier is unavailable"}
+
+      true ->
+        classify_with_adapter(adapter, state, request)
+    end
+  end
+
+  def classify_request(_adapter, _state, _request),
+    do: {:error, :failed, "Target Method request is invalid"}
+
+  defp classify_with_adapter(adapter, state, request) do
+    case adapter.classify_request(state, request) do
+      {:ok, kind} when kind in [:observation, :effect] ->
+        {:ok, %RequestClassification{kind: kind}}
+
+      {:error, :failed, reason} when is_binary(reason) and byte_size(reason) in 1..500 ->
+        {:error, :failed, reason}
+
+      _other ->
+        {:error, :failed, "Target classifier returned an invalid result"}
+    end
+  rescue
+    _error -> {:error, :failed, "Target classifier returned an invalid result"}
+  catch
+    _kind, _reason -> {:error, :failed, "Target classifier returned an invalid result"}
+  end
+
+  defp valid_method_request?(%MethodRequest{} = request) do
+    is_integer(request.provider_revision) and request.provider_revision > 0 and
+      match?(%Connection{}, request.connection) and
+      bounded_binary?(request.connection.endpoint, 1_024) and
+      bounded_binary?(request.capability, 120) and
+      bounded_binary?(request.operation, 120) and
+      bounded_map?(request.selectors) and bounded_map?(request.parameters)
+  end
+
+  defp bounded_binary?(value, maximum),
+    do: is_binary(value) and byte_size(value) in 1..maximum and String.valid?(value)
+
+  defp bounded_map?(value) when is_map(value) and map_size(value) <= 100 do
+    case Jason.encode(value) do
+      {:ok, encoded} -> byte_size(encoded) <= 65_536
+      {:error, _reason} -> false
+    end
+  end
+
+  defp bounded_map?(_value), do: false
 
   def capability_names(%Capabilities{} = capabilities) do
     (capabilities.observations ++ capabilities.effects)
