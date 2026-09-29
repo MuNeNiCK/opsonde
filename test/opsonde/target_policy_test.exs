@@ -191,7 +191,7 @@ defmodule Opsonde.TargetPolicyTest do
         context.admin,
         context.provider,
         ios,
-        "generic-ssh",
+        "ssh-exec",
         "generic",
         "ssh",
         "ssh://192.0.2.20:22"

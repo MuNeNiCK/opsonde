@@ -79,14 +79,14 @@ defmodule Opsonde.TargetsTest do
         ]
       )
 
-    generic_ssh =
-      create_method!(context, junos, "generic-ssh", "generic", "ssh", "ssh://192.0.2.20:22", [
+    ssh_exec =
+      create_method!(context, junos, "ssh-exec", "ssh", "ssh", "ssh://192.0.2.20:22", [
         "observe.command"
       ])
 
     assert linux.id != ios_xe.id
     assert linux_ssh.endpoint == ios_ssh.endpoint
-    assert generic_ssh.platform == "generic"
+    assert ssh_exec.platform == "ssh"
 
     assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.platform)) ==
              Enum.sort(~w(cisco_ios_xe kubernetes linux redfish vmware_esxi vmware_vm junos))
@@ -450,7 +450,7 @@ defmodule Opsonde.TargetsTest do
     assert Targets.get_access_method!(registered.id, actor: context.admin).method == "ssh"
   end
 
-  test "typed and generic adapters enforce their registration boundary", context do
+  test "product and protocol adapters enforce their registration boundary", context do
     linux = create_target!(context.admin, "profile-linux", "host", "linux")
     cluster = create_target!(context.admin, "profile-cluster", "cluster", "kubernetes")
     switch = create_target!(context.admin, "profile-switch", "network_device", "cisco_ios_xe")
@@ -463,7 +463,7 @@ defmodule Opsonde.TargetsTest do
           {"ios-xe-netconf", switch, "cisco_ios_xe", "netconf", "native.netconf.observe", linux},
           {"ios-xe-restconf", switch, "cisco_ios_xe", "restconf", "native.restconf.observe",
            linux},
-          {"generic-ssh", other, "generic", "ssh", "native.ssh.observe", nil}
+          {"ssh-exec", other, "ssh", "ssh", "native.ssh.observe", nil}
         ] do
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =

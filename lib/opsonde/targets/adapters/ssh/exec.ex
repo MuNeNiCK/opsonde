@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Generic.SSH do
+defmodule Opsonde.Targets.Adapters.SSH.Exec do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
@@ -12,7 +12,7 @@ defmodule Opsonde.Targets.Generic.SSH do
   @effect_capability "native.ssh.effect"
 
   @impl Opsonde.Providers.Adapter
-  def type, do: "generic-ssh"
+  def type, do: "ssh-exec"
 
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
@@ -20,7 +20,7 @@ defmodule Opsonde.Targets.Generic.SSH do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{
-      platform: "generic",
+      platform: "ssh",
       method: "ssh",
       capabilities: [@observation_capability, @effect_capability]
     }
@@ -63,7 +63,7 @@ defmodule Opsonde.Targets.Generic.SSH do
   end
 
   def preflight(_state, _request),
-    do: {:error, :failed, "Generic SSH observation is unsupported"}
+    do: {:error, :failed, "SSH observation is unsupported"}
 
   @impl Opsonde.Providers.Target
   def observe(state, request, invocation) do

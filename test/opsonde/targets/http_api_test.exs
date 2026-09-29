@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.GenericHTTPNativeTest do
+defmodule Opsonde.Targets.HTTPAPITest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
@@ -56,14 +56,14 @@ defmodule Opsonde.Targets.GenericHTTPNativeTest do
 
     admin =
       Accounts.bootstrap!(
-        "generic-http-native-admin@example.invalid",
+        "http-api-native-admin@example.invalid",
         "test-only-password",
         "test-only-password"
       )
 
     operator =
       Accounts.create_user!(
-        "generic-http-native-operator@example.invalid",
+        "http-api-native-operator@example.invalid",
         "test-only-password",
         :operator,
         actor: admin
@@ -71,9 +71,9 @@ defmodule Opsonde.Targets.GenericHTTPNativeTest do
 
     provider =
       Providers.create_provider!(
-        "generic-http-native",
+        "http-api-native",
         :target,
-        "generic-http",
+        "http-api",
         %{"endpoint" => endpoint},
         %{"bearer_token" => "fixture-token"},
         actor: admin
@@ -91,7 +91,7 @@ defmodule Opsonde.Targets.GenericHTTPNativeTest do
         target.id,
         provider.id,
         "HTTP API",
-        "generic",
+        "http",
         "http",
         endpoint,
         provider.revision,

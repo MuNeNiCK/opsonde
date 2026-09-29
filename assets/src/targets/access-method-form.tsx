@@ -42,7 +42,7 @@ export function AccessMethodForm({
   );
   const provider = availableProviders.find((item) => item.id === providerId);
   const isBMC = provider?.adapter_type.startsWith("bmc-") ?? false;
-  const fixedEndpoint = isBMC || provider?.adapter_type === "generic-http";
+  const fixedEndpoint = isBMC || provider?.adapter_type === "http-api";
   const currentEndpoint =
     fixedEndpoint && typeof provider?.configuration.endpoint === "string"
       ? provider.configuration.endpoint

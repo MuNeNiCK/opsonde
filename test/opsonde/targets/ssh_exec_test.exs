@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.GenericSSHTest do
+defmodule Opsonde.Targets.SSHExecTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
@@ -13,7 +13,7 @@ defmodule Opsonde.Targets.GenericSSHTest do
     directory =
       Path.join(
         System.tmp_dir!(),
-        "opsonde-generic-ssh-test-#{System.unique_integer([:positive])}"
+        "opsonde-ssh-exec-test-#{System.unique_integer([:positive])}"
       )
 
     File.mkdir_p!(directory)
@@ -175,20 +175,18 @@ defmodule Opsonde.Targets.GenericSSHTest do
              )
   end
 
-  test "generic adapter exposes reviewed observation and effect requests through one method",
+  test "SSH adapter exposes reviewed observation and effect requests through one method",
        context do
-    admin = Accounts.bootstrap!("generic-ssh-admin@example.com", @password, @password)
+    admin = Accounts.bootstrap!("ssh-exec-admin@example.com", @password, @password)
 
     operator =
-      Accounts.create_user!("generic-ssh-operator@example.com", @password, :operator,
-        actor: admin
-      )
+      Accounts.create_user!("ssh-exec-operator@example.com", @password, :operator, actor: admin)
 
     provider =
       Providers.create_provider!(
-        "generic-ssh",
+        "ssh-exec",
         :target,
-        "generic-ssh",
+        "ssh-exec",
         configuration(context),
         password_credentials(),
         actor: admin
@@ -216,8 +214,8 @@ defmodule Opsonde.Targets.GenericSSHTest do
       Targets.create_access_method!(
         target.id,
         provider.id,
-        "registered-generic-ssh",
-        "generic",
+        "registered-ssh-exec",
+        "ssh",
         "ssh",
         context.endpoint,
         provider.revision,

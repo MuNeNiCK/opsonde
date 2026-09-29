@@ -24,7 +24,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   end
 
   @impl Opsonde.Providers.Adapter
-  def type, do: "generic-http"
+  def type, do: "http-api"
 
   @impl Opsonde.Providers.Adapter
   def kind, do: :target
@@ -32,7 +32,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{
-      platform: "generic",
+      platform: "http",
       method: "http",
       configuration_endpoint?: true,
       capabilities: [@observe, @effect]

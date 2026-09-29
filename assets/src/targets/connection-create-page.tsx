@@ -24,7 +24,7 @@ const presentations = {
   },
   "cisco-ios-xe": { icon: Network, title: "Cisco IOS XE", description: "targets.choiceCisco" },
   kubernetes: { icon: Boxes, title: "Kubernetes", description: "targets.choiceKubernetes" },
-  generic: { icon: Cable, title: "Generic access", description: "targets.choiceGeneric" },
+  protocol: { icon: Cable, title: "Protocol access", description: "targets.choiceGeneric" },
   netbox: { icon: Database, title: "NetBox", description: "targets.choiceNetBox" },
 } as const;
 

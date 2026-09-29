@@ -62,7 +62,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       Providers.create_provider!(
         "http-binding-provider",
         :target,
-        "generic-http",
+        "http-api",
         %{"endpoint" => endpoint},
         %{},
         actor: context.admin
@@ -78,7 +78,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
       "target_id" => target["id"],
       "provider_id" => provider.id,
       "name" => "http-api",
-      "platform" => "generic",
+      "platform" => "http",
       "method" => "http",
       "endpoint" => endpoint,
       "provider_revision" => provider.revision,
@@ -173,12 +173,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         ["observe.command", "effect.command"]
       )
 
-    generic_ssh =
+    ssh_exec =
       create_access_method!(
         context,
         junos,
-        "generic-ssh",
-        "generic",
+        "ssh-exec",
+        "ssh",
         "ssh",
         ["observe.command"]
       )
@@ -203,7 +203,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         ["observe.config", "effect.config"]
       )
 
-    assert generic_ssh["platform"] == "generic"
+    assert ssh_exec["platform"] == "ssh"
     assert Enum.sort([ios_ssh["method"], ios_netconf["method"]]) == ["netconf", "ssh_cli"]
     assert linux_ssh["provider_id"] == context.target_provider.id
 
@@ -265,7 +265,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert_operation_response(method_page)
 
     assert Enum.sort(Enum.map(methods, & &1["name"])) ==
-             ~w(generic-ssh ios-netconf ios-ssh linux-ssh)
+             ~w(ios-netconf ios-ssh linux-ssh ssh-exec)
 
     for response <- [target_page, method_page] do
       refute response.resp_body =~ @provider_secret
