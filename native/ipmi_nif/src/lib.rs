@@ -49,4 +49,4 @@ fn connect_error(error: Error) -> &'static str {
     }
 }
 
-rustler::init!("Elixir.Opsonde.Targets.BMC.IPMINative");
+rustler::init!("Elixir.Opsonde.Transports.IPMI");
