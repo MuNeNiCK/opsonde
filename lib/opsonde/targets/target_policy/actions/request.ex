@@ -3,8 +3,6 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.BMC.OperationKey
-  alias Opsonde.Targets.BMC.SecretBindings
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyMatcher, PolicyRequest, RequestClearance}
 
   @authority_modes [:readonly, :ask, :auto, :full_access]
@@ -47,7 +45,6 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
         operation,
         current_actor,
         context.access_method,
-        context.bmc_operation,
         clearance,
         arguments.invocation
       )
@@ -69,13 +66,11 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
              authorize?: false
            ),
          :ok <- same_target(access_method, target),
-         {:ok, bmc_operation} <- bmc_operation(request, access_method),
          {:ok, policies} <- Targets.active_target_policies(target.id, authorize?: false) do
       {:ok,
        %{
          target: target,
          access_method: access_method,
-         bmc_operation: bmc_operation,
          policies: policies
        }}
     else
@@ -87,40 +82,9 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     end
   end
 
-  defp bmc_operation(%{capability: capability} = request, method)
-       when capability in ["observe.bmc_api", "effect.bmc_api"] do
-    with {:ok, id, revision} <- OperationKey.parse(request.operation),
-         {:ok, definition} <-
-           Targets.load_bmc_operation_for_use(id, revision, method.id, authorize?: false),
-         true <- OperationKey.capability(definition.request_kind) == capability,
-         true <- request_kind_matches?(request.kind, definition.request_kind),
-         {:ok, root} <- JSV.build(definition.input_schema, warnings: :silent),
-         {:ok, _validated} <-
-           JSV.validate(
-             %{"selectors" => request.selectors, "parameters" => request.parameters},
-             root,
-             cast: false
-           ),
-         :ok <- SecretBindings.check(definition, request.parameters, method.id) do
-      {:ok, definition}
-    else
-      _ ->
-        {:error, policy_error(:denied, "BMC operation is not registered for this Access Method")}
-    end
-  end
-
-  defp bmc_operation(%{operation: "bmc.api:" <> _}, _method),
-    do: {:error, policy_error(:denied, "BMC operation capability does not match")}
-
-  defp bmc_operation(_request, _method), do: {:ok, nil}
-
-  defp request_kind_matches?(:verification, :observation), do: true
-  defp request_kind_matches?(kind, kind), do: true
-  defp request_kind_matches?(_, _), do: false
-
   defp preflight(%{kind: kind} = request, method)
        when kind in [:observation, :verification] and
-              request.capability not in ["observe.bmc_api", "observe.power"] do
+              request.capability != "observe.power" do
     input = %ProviderTarget.PreflightRequest{
       provider_revision: method.provider_revision,
       kind: kind,
@@ -233,110 +197,75 @@ defmodule Opsonde.Targets.TargetPolicy.Actions.Request do
     )
   end
 
-  defp invoke(:observe, actor, method, definition, clearance, invocation) do
-    with {:ok, parameters, secret_values} <-
-           dispatch_parameters(definition, clearance.parameters, method.id) do
-      request = %ProviderTarget.ObservationRequest{
-        provider_revision: clearance.provider_revision,
-        target_id: clearance.target_id,
-        target_revision: clearance.target_revision,
-        access_method_id: clearance.access_method_id,
-        access_method_revision: clearance.access_method_revision,
-        connection: %ProviderTarget.Connection{endpoint: method.endpoint},
-        capability: clearance.capability,
-        operation: clearance.operation,
-        authorization_digest: clearance.digest,
-        authority_mode: clearance.authority_mode,
-        selectors: clearance.selectors,
-        parameters: parameters,
-        protocol_request: protocol_request(definition),
-        output_schema: output_schema(definition),
-        secret_values: secret_values,
-        max_attempts: clearance.max_attempts
-      }
+  defp invoke(:observe, actor, method, clearance, invocation) do
+    request = %ProviderTarget.ObservationRequest{
+      provider_revision: clearance.provider_revision,
+      target_id: clearance.target_id,
+      target_revision: clearance.target_revision,
+      access_method_id: clearance.access_method_id,
+      access_method_revision: clearance.access_method_revision,
+      connection: %ProviderTarget.Connection{endpoint: method.endpoint},
+      capability: clearance.capability,
+      operation: clearance.operation,
+      authorization_digest: clearance.digest,
+      authority_mode: clearance.authority_mode,
+      selectors: clearance.selectors,
+      parameters: clearance.parameters,
+      max_attempts: clearance.max_attempts
+    }
 
-      Providers.target_observe(method.provider_id, request, invocation,
-        actor: actor,
-        authorize?: false
-      )
-    end
+    Providers.target_observe(method.provider_id, request, invocation,
+      actor: actor,
+      authorize?: false
+    )
   end
 
-  defp invoke(:effect, actor, method, definition, clearance, invocation) do
-    with {:ok, parameters, secret_values} <-
-           dispatch_parameters(definition, clearance.parameters, method.id) do
-      request = %ProviderTarget.EffectRequest{
-        provider_revision: clearance.provider_revision,
-        target_id: clearance.target_id,
-        target_revision: clearance.target_revision,
-        access_method_id: clearance.access_method_id,
-        access_method_revision: clearance.access_method_revision,
-        connection: %ProviderTarget.Connection{endpoint: method.endpoint},
-        capability: clearance.capability,
-        operation: clearance.operation,
-        authorization_digest: clearance.digest,
-        authority_mode: clearance.authority_mode,
-        selectors: clearance.selectors,
-        parameters: parameters,
-        protocol_request: protocol_request(definition),
-        output_schema: output_schema(definition),
-        secret_values: secret_values,
-        operation_id: clearance.operation_id,
-        idempotency_key: clearance.idempotency_key
-      }
+  defp invoke(:effect, actor, method, clearance, invocation) do
+    request = %ProviderTarget.EffectRequest{
+      provider_revision: clearance.provider_revision,
+      target_id: clearance.target_id,
+      target_revision: clearance.target_revision,
+      access_method_id: clearance.access_method_id,
+      access_method_revision: clearance.access_method_revision,
+      connection: %ProviderTarget.Connection{endpoint: method.endpoint},
+      capability: clearance.capability,
+      operation: clearance.operation,
+      authorization_digest: clearance.digest,
+      authority_mode: clearance.authority_mode,
+      selectors: clearance.selectors,
+      parameters: clearance.parameters,
+      operation_id: clearance.operation_id,
+      idempotency_key: clearance.idempotency_key
+    }
 
-      Providers.target_effect(method.provider_id, request, invocation,
-        actor: actor,
-        authorize?: false
-      )
-    end
+    Providers.target_effect(method.provider_id, request, invocation,
+      actor: actor,
+      authorize?: false
+    )
   end
 
-  defp invoke(:verify, actor, method, definition, clearance, invocation) do
-    with {:ok, parameters, secret_values} <-
-           dispatch_parameters(definition, clearance.parameters, method.id) do
-      request = %ProviderTarget.VerificationRequest{
-        provider_revision: clearance.provider_revision,
-        target_id: clearance.target_id,
-        target_revision: clearance.target_revision,
-        access_method_id: clearance.access_method_id,
-        access_method_revision: clearance.access_method_revision,
-        connection: %ProviderTarget.Connection{endpoint: method.endpoint},
-        capability: clearance.capability,
-        operation: clearance.operation,
-        authorization_digest: clearance.digest,
-        selectors: clearance.selectors,
-        parameters: parameters,
-        protocol_request: protocol_request(definition),
-        secret_values: secret_values,
-        operation_id: clearance.operation_id,
-        reference: clearance.reference,
-        expected: clearance.expected
-      }
+  defp invoke(:verify, actor, method, clearance, invocation) do
+    request = %ProviderTarget.VerificationRequest{
+      provider_revision: clearance.provider_revision,
+      target_id: clearance.target_id,
+      target_revision: clearance.target_revision,
+      access_method_id: clearance.access_method_id,
+      access_method_revision: clearance.access_method_revision,
+      connection: %ProviderTarget.Connection{endpoint: method.endpoint},
+      capability: clearance.capability,
+      operation: clearance.operation,
+      authorization_digest: clearance.digest,
+      selectors: clearance.selectors,
+      parameters: clearance.parameters,
+      operation_id: clearance.operation_id,
+      reference: clearance.reference,
+      expected: clearance.expected
+    }
 
-      Providers.target_verify(method.provider_id, request, invocation,
-        actor: actor,
-        authorize?: false
-      )
-    end
-  end
-
-  defp protocol_request(nil), do: nil
-  defp protocol_request(definition), do: definition.protocol_request
-
-  defp output_schema(nil), do: nil
-  defp output_schema(definition), do: definition.output_schema
-
-  defp dispatch_parameters(nil, parameters, _method_id), do: {:ok, parameters, %{}}
-
-  defp dispatch_parameters(definition, parameters, method_id) do
-    case SecretBindings.resolve(definition, parameters, method_id) do
-      {:ok, resolved, values} ->
-        {:ok, resolved, values}
-
-      {:error, _reason} ->
-        {:error, policy_error(:denied, "BMC operation secret binding is unavailable")}
-    end
+    Providers.target_verify(method.provider_id, request, invocation,
+      actor: actor,
+      authorize?: false
+    )
   end
 
   defp validate_request(%PolicyRequest{} = request) do

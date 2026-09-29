@@ -1147,37 +1147,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
 
     create index(:signal_events, [:target_id])
 
-    create table(:bmc_operations, primary_key: false) do
-      add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
-      add :name, :text, null: false
-      add :description, :text, null: false
-      add :request_kind, :text, null: false
-      add :protocol_request, :map, null: false
-      add :secret_bindings, :map, null: false, default: %{}
-      add :parameter_classes, :map, null: false, default: %{}
-      add :input_schema, :map, null: false
-      add :output_schema, :map, null: false
-      add :verification_schema, :map
-      add :active, :boolean, null: false, default: true
-      add :revision, :bigint, null: false, default: 1
-
-      add :inserted_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :updated_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :access_method_id, :uuid, null: false
-    end
-
-    create unique_index(:bmc_operations, [:access_method_id, :name],
-             name: "bmc_operations_unique_method_name_index"
-           )
-
-    create index(:bmc_operations, [:access_method_id])
-
     create table(:oidc_providers, primary_key: false) do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :issuer, :text, null: false
@@ -1649,16 +1618,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
              references(:access_methods,
                column: :id,
                name: "verification_attempts_access_method_id_fkey",
-               type: :uuid,
-               prefix: "public"
-             )
-    end
-
-    alter table(:bmc_operations) do
-      modify :access_method_id,
-             references(:access_methods,
-               column: :id,
-               name: "bmc_operations_access_method_id_fkey",
                type: :uuid,
                prefix: "public"
              )
@@ -2137,51 +2096,10 @@ defmodule Opsonde.Repo.Migrations.Baseline do
 
     create index(:operations, [:target_id, :resource_scope])
 
-    create table(:bmc_secrets, primary_key: false) do
-      add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
-      add :name, :text, null: false
-      add :active, :boolean, null: false, default: true
-      add :revision, :bigint, null: false, default: 1
 
-      add :inserted_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :updated_at, :utc_datetime_usec,
-        null: false,
-        default: fragment("(now() AT TIME ZONE 'utc')")
-
-      add :access_method_id,
-          references(:access_methods,
-            column: :id,
-            name: "bmc_secrets_access_method_id_fkey",
-            type: :uuid,
-            prefix: "public"
-          ), null: false
-    end
-
-    create unique_index(:bmc_secrets, [:access_method_id, :name],
-             name: "bmc_secrets_unique_method_name_index"
-           )
-
-    alter table(:bmc_secrets) do
-      add :encrypted_value, :binary, null: false
-    end
   end
 
   def down do
-    drop constraint(:bmc_secrets, "bmc_secrets_access_method_id_fkey")
-
-    alter table(:bmc_secrets) do
-      remove :encrypted_value
-    end
-
-    drop_if_exists unique_index(:bmc_secrets, [:access_method_id, :name],
-                     name: "bmc_secrets_unique_method_name_index"
-                   )
-
-    drop table(:bmc_secrets)
-
     drop_if_exists index(:operations, [:target_id, :resource_scope])
 
     drop_if_exists index(:operations, [:target_id])
@@ -2493,12 +2411,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       remove :name
     end
 
-    drop constraint(:bmc_operations, "bmc_operations_access_method_id_fkey")
-
-    alter table(:bmc_operations) do
-      modify :access_method_id, :uuid
-    end
-
     alter table(:verification_attempts) do
       modify :access_method_id, :uuid
     end
@@ -2778,14 +2690,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
                    )
 
     drop table(:oidc_providers)
-
-    drop_if_exists index(:bmc_operations, [:access_method_id])
-
-    drop_if_exists unique_index(:bmc_operations, [:access_method_id, :name],
-                     name: "bmc_operations_unique_method_name_index"
-                   )
-
-    drop table(:bmc_operations)
 
     drop_if_exists index(:signal_events, [:target_id])
 

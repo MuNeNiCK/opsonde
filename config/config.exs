@@ -108,7 +108,6 @@ config :opsonde,
   ]
 
 config :phoenix, :filter_parameters, [
-  "bmc_secret",
   "client_secret",
   "credentials",
   "password",

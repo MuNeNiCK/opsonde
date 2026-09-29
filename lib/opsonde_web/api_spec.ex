@@ -8,7 +8,6 @@ defmodule OpsondeWeb.ApiSpec do
 
   alias OpsondeWeb.API.V1.{
     AccountSchemas,
-    BMCSchemas,
     InventorySchemas,
     OutcomeSchemas,
     ProviderSchemas,
@@ -31,7 +30,6 @@ defmodule OpsondeWeb.ApiSpec do
           |> Map.merge(AccountSchemas.components())
           |> Map.merge(ProviderSchemas.components())
           |> Map.merge(TargetSchemas.components())
-          |> Map.merge(BMCSchemas.components())
           |> Map.merge(InventorySchemas.components())
           |> Map.merge(WorkflowSchemas.components())
           |> Map.merge(OutcomeSchemas.components()),

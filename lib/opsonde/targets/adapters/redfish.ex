@@ -6,7 +6,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.BMC
-  alias Opsonde.Targets.BMC.OutputProjection
   alias Opsonde.Targets.Adapters.Redfish.ResourceURI
   alias Opsonde.Transports.HTTPS
 
@@ -102,12 +101,10 @@ defmodule Opsonde.Targets.Adapters.Redfish do
             []
         end
 
-      api = BMC.api_capabilities()
-
       {:ok,
        %Target.Capabilities{
-         observations: capabilities.observations ++ api.observations ++ [method_read_operation()],
-         effects: effects ++ api.effects ++ [method_effect_operation()]
+         observations: capabilities.observations ++ [method_read_operation()],
+         effects: effects ++ [method_effect_operation()]
        }}
     else
       {:error, category, message} -> read_error(category, message)
@@ -117,9 +114,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: @method_read} = request, invocation),
     do: method_observe(state, request, invocation)
-
-  def observe(%State{} = state, %{capability: "observe.bmc_api"} = request, invocation),
-    do: api_observe(state, request, invocation)
 
   def observe(%State{} = state, request, invocation) do
     with true <- BMC.inspect_request?(request),
@@ -137,9 +131,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: @method_effect} = request, invocation),
     do: method_effect(state, request, invocation)
-
-  def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
-    do: api_effect(state, request, invocation)
 
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
@@ -210,37 +201,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     else
       false -> {:error, :failed, "Redfish verification request is invalid"}
       {:error, category, message} -> read_error(category, message)
-    end
-  end
-
-  defp api_observe(state, request, invocation) do
-    with {:ok, method, path} <- api_request(state, request, @api_read_methods),
-         :ok <- not_cancelled(invocation),
-         {:ok, _system} <- system(state),
-         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation),
-         {:ok, facts} <- public_response(body, request) do
-      evidence =
-        %{
-          "source" => "redfish",
-          "method" => request.protocol_request["method"],
-          "uri" => path,
-          "http_status" => status,
-          "pages" => pages
-        }
-        |> maybe_etag(if(pages == 1, do: response_etag(headers), else: nil))
-
-      {:ok,
-       %Target.Observation{
-         facts: facts,
-         observed_at: DateTime.utc_now(),
-         evidence: [evidence]
-       }}
-    else
-      {:error, :invalid_output} ->
-        {:error, :failed, "Redfish response does not match registered output schema"}
-
-      {:error, category, message} ->
-        read_error(category, message)
     end
   end
 
@@ -343,8 +303,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp method_read_request(state, request) do
     with true <- request.operation == "request.observe",
          true <- request.connection.endpoint == state.endpoint,
-         true <- request.selectors == %{} and request.secret_values == %{},
-         true <- is_nil(request.protocol_request),
+         true <- request.selectors == %{},
          %{"method" => method, "uri" => uri} = parameters <- request.parameters,
          true <- map_size(parameters) == 2,
          {:ok, verb} <- Map.fetch(@api_read_methods, method),
@@ -377,7 +336,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
     with true <- request.operation == "request.execute",
          true <- request.connection.endpoint == state.endpoint,
-         true <- is_nil(request.protocol_request) and request.secret_values == %{},
          %{"method" => method, "uri" => uri} <- parameters,
          true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri body include_response))),
          {:ok, verb} <- Map.fetch(@api_write_methods, method),
@@ -416,25 +374,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp method_response_details(status, _reply, false),
     do: %{"http_status" => status, "response_redacted" => true}
 
-  defp api_effect(state, request, invocation) do
-    with {:ok, method, path} <- api_request(state, request, @api_write_methods),
-         {:ok, conditional_headers} <- if_match_headers(request.selectors),
-         :ok <- not_cancelled(invocation),
-         {:ok, _system} <- system(state),
-         :ok <- not_cancelled(invocation) do
-      body = if method == :delete and request.parameters == %{}, do: nil, else: request.parameters
-
-      result = request(state, method, path, body, conditional_headers)
-
-      effect_response(state, result, request.operation, fn status, reply ->
-        %{"http_status" => status}
-        |> Map.merge(public_response_details(reply, request))
-      end)
-    else
-      {:error, _category, message} -> {:error, :failed, message}
-    end
-  end
-
   defp effect_response(state, {:ok, status, headers, reply}, reference, details)
        when status in [200, 201, 202, 204] do
     outcome = if status == 202, do: :unknown, else: :applied
@@ -468,19 +407,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp effect_response(_state, {:error, _category, message}, _reference, _details),
     do: {:error, :failed, message}
-
-  defp api_request(state, request, methods) do
-    protocol = request.protocol_request
-
-    with true <- request.connection.endpoint == state.endpoint,
-         %{"method" => method, "uri" => uri} <- protocol,
-         {:ok, verb} <- Map.fetch(methods, method),
-         {:ok, path} <- ResourceURI.relative(uri) do
-      {:ok, verb, path}
-    else
-      _ -> {:error, :failed, "Redfish API request is invalid for this Access Method"}
-    end
-  end
 
   defp read_api_resource(state, method, path, invocation) do
     case request(state, method, path, nil) do
@@ -575,20 +501,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     do: etag == "*" or Regex.match?(~r/\A(?:W\/)?"[\x21\x23-\x7E]*"\z/, etag)
 
   defp valid_etag?(_etag), do: false
-
-  defp public_response(body, request) do
-    secret_bound? = map_size(request.secret_values) > 0
-    value = if secret_bound?, do: body, else: sanitize_response(body)
-    OutputProjection.project(value, request.output_schema, secret_bound?)
-  end
-
-  defp public_response_details(body, request) do
-    case public_response(body, request) do
-      {:ok, projected} when map_size(projected) > 0 -> %{"response" => projected}
-      {:ok, _empty} -> %{}
-      {:error, _reason} -> %{"response_unavailable" => true}
-    end
-  end
 
   defp response_task_location(state, headers) do
     case Req.Response.get_header(%Req.Response{headers: headers}, "location") do

@@ -294,8 +294,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          true <-
            not Map.has_key?(request, :connection) or request.connection.endpoint == state.endpoint,
          true <- request.selectors == %{},
-         true <- not Map.has_key?(request, :protocol_request) or is_nil(request.protocol_request),
-         true <- not Map.has_key?(request, :secret_values) or request.secret_values == %{},
          %{"method" => verb, "path" => path} <- parameters,
          true <- Enum.all?(Map.keys(parameters), &(&1 in allowed_keys(kind))),
          {:ok, method} <- Map.fetch(methods, verb),

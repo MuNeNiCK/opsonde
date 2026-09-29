@@ -172,53 +172,5 @@ defmodule Opsonde.Targets do
         action: :for_import,
         args: [:inventory_import_id]
     end
-
-    resource Opsonde.Targets.BMC.Operation do
-      define :get_bmc_operation, action: :read, get_by: [:id]
-
-      define :page_bmc_operations_for_method,
-        action: :page_for_method,
-        args: [:access_method_id]
-
-      define :available_bmc_operations_for_method,
-        action: :available_for_method,
-        args: [:access_method_id]
-
-      define :load_bmc_operation_for_use,
-        action: :for_use,
-        args: [:id, :expected_revision, :access_method_id]
-
-      define :create_bmc_operation,
-        action: :create,
-        args: [
-          :access_method_id,
-          :name,
-          :description,
-          :request_kind,
-          :protocol_request,
-          :input_schema,
-          :output_schema,
-          :verification_schema
-        ]
-
-      define :update_bmc_operation, action: :update, args: [:expected_revision]
-      define :deactivate_bmc_operation, action: :deactivate, args: [:expected_revision]
-    end
-
-    resource Opsonde.Targets.BMC.Secret do
-      define :get_bmc_secret, action: :read, get_by: [:id]
-
-      define :page_bmc_secrets_for_method,
-        action: :page_for_method,
-        args: [:access_method_id]
-
-      define :load_bmc_secret_for_use,
-        action: :for_use,
-        args: [:id, :expected_revision, :access_method_id]
-
-      define :create_bmc_secret, action: :create, args: [:access_method_id, :name, :value]
-      define :update_bmc_secret, action: :update, args: [:expected_revision]
-      define :deactivate_bmc_secret, action: :deactivate, args: [:expected_revision]
-    end
   end
 end

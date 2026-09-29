@@ -7,7 +7,6 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.BMC
   alias Opsonde.Targets.Adapters.IPMI.RMCP
-  alias Opsonde.Targets.BMC.OutputProjection
 
   @max_data_bytes 2048
   @method_effect "request.ipmi.effect"
@@ -74,20 +73,16 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     capabilities = BMC.capabilities()
-    api = BMC.api_capabilities()
     effects = Enum.reject(capabilities.effects, &(&1.operation == "bmc.power.cycle"))
 
     {:ok,
      %Target.Capabilities{
-       observations: capabilities.observations ++ api.observations,
-       effects: effects ++ api.effects ++ [method_effect_operation()]
+       observations: capabilities.observations,
+       effects: effects ++ [method_effect_operation()]
      }}
   end
 
   @impl Opsonde.Providers.Target
-  def observe(%State{} = state, %{capability: "observe.bmc_api"} = request, invocation),
-    do: api_observe(state, request, invocation)
-
   def observe(%State{} = state, request, invocation) do
     with true <- BMC.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
@@ -106,9 +101,6 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   def effect(%State{} = state, %{capability: @method_effect} = request, invocation),
     do: method_effect(state, request, invocation)
-
-  def effect(%State{} = state, %{capability: "effect.bmc_api"} = request, invocation),
-    do: api_effect(state, request, invocation)
 
   def effect(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
@@ -168,92 +160,6 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
-  defp api_observe(state, request, invocation) do
-    with {:ok, netfn, opcode, data} <- api_request(state, request),
-         :ok <- not_cancelled(invocation),
-         {:ok, completion, response} <- command(state, netfn, opcode, data) do
-      facts =
-        %{"completion_code" => completion, "accepted" => completion == 0}
-        |> maybe_response(response, map_size(request.secret_values) > 0)
-
-      with {:ok, visible} <-
-             OutputProjection.project(
-               facts,
-               request.output_schema,
-               map_size(request.secret_values) > 0
-             ) do
-        {:ok,
-         %Target.Observation{
-           facts:
-             facts
-             |> Map.take(["completion_code", "accepted", "response_redacted"])
-             |> Map.merge(visible),
-           observed_at: DateTime.utc_now(),
-           evidence: [
-             %{
-               "source" => "ipmi",
-               "netfn" => netfn,
-               "command" => opcode,
-               "completion_code" => completion
-             }
-           ]
-         }}
-      else
-        {:error, :invalid_output} ->
-          {:error, :failed, "IPMI response does not match registered output schema"}
-      end
-    else
-      {:error, category, message} -> read_error(category, message)
-    end
-  end
-
-  defp api_effect(state, request, invocation) do
-    with {:ok, netfn, opcode, data} <- api_request(state, request),
-         :ok <- not_cancelled(invocation) do
-      case command(state, netfn, opcode, data) do
-        {:ok, completion, response} ->
-          raw_details =
-            %{"netfn" => netfn, "command" => opcode, "completion_code" => completion}
-            |> maybe_response(response, map_size(request.secret_values) > 0)
-
-          details =
-            case OutputProjection.project(
-                   raw_details,
-                   request.output_schema,
-                   map_size(request.secret_values) > 0
-                 ) do
-              {:ok, visible} ->
-                raw_details
-                |> Map.take(["netfn", "command", "completion_code", "response_redacted"])
-                |> Map.merge(visible)
-
-              {:error, :invalid_output} ->
-                %{
-                  "netfn" => netfn,
-                  "command" => opcode,
-                  "completion_code" => completion,
-                  "response_unavailable" => true
-                }
-            end
-
-          {:ok,
-           %Target.EffectResult{
-             status: if(completion == 0, do: :applied, else: :failed),
-             reference: request.operation,
-             details: details
-           }}
-
-        {:error, :outcome_unknown, _message} ->
-          unknown_effect(request.operation, "IPMI command response was lost after dispatch")
-
-        {:error, _category, message} ->
-          {:error, :failed, message}
-      end
-    else
-      {:error, _category, message} -> {:error, :failed, message}
-    end
-  end
-
   defp method_effect(state, request, invocation) do
     with {:ok, netfn, opcode, data, include_response?} <- method_request(state, request),
          :ok <- not_cancelled(invocation) do
@@ -263,7 +169,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
           details =
             if include_response? do
-              maybe_response(details, response, false)
+              maybe_response(details, response)
             else
               Map.put(details, "response_redacted", true)
             end
@@ -320,8 +226,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
     with true <- request.operation == "command.execute",
          true <- request.connection.endpoint == state.endpoint,
-         true <- request.selectors == %{} and is_nil(request.protocol_request),
-         true <- request.secret_values == %{},
+         true <- request.selectors == %{},
          %{"netfn" => netfn, "command" => opcode} <- parameters,
          true <-
            Enum.all?(Map.keys(parameters), &(&1 in ~w(netfn command data_hex include_response))),
@@ -345,23 +250,6 @@ defmodule Opsonde.Targets.Adapters.IPMI do
      }}
   end
 
-  defp api_request(state, request) do
-    protocol = request.protocol_request
-
-    with true <- request.connection.endpoint == state.endpoint,
-         true <- request.selectors == %{},
-         %{"netfn" => netfn, "command" => opcode} <- protocol,
-         true <- Enum.sort(Map.keys(protocol)) == ["command", "netfn"],
-         true <- is_integer(netfn) and netfn in 0..62 and rem(netfn, 2) == 0,
-         true <- is_integer(opcode) and opcode in 0..255,
-         true <- request.secret_values == %{} or Map.keys(request.secret_values) == ["/data_hex"],
-         {:ok, data} <- request_data(request.parameters) do
-      {:ok, netfn, opcode, data}
-    else
-      _ -> {:error, :failed, "IPMI API request is invalid for this Access Method"}
-    end
-  end
-
   defp request_data(%{} = parameters) when map_size(parameters) == 0, do: {:ok, []}
 
   defp request_data(%{"data_hex" => hex} = parameters)
@@ -375,9 +263,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defp request_data(_parameters), do: {:error, :invalid_data}
 
-  defp maybe_response(details, _response, true), do: Map.put(details, "response_redacted", true)
-
-  defp maybe_response(details, response, false),
+  defp maybe_response(details, response),
     do:
       Map.put(
         details,
