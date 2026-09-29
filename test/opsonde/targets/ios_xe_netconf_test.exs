@@ -49,7 +49,12 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     def handle_ssh_msg(_message, state), do: {:ok, state}
 
     @impl true
-    def terminate(_reason, _state), do: :ok
+    def terminate(_reason, state) do
+      if observer = Agent.get(state.agent, & &1.observer),
+        do: send(observer, {:netconf_closed, state.session_id})
+
+      :ok
+    end
 
     defp consume(%{phase: :hello} = state) do
       case :binary.match(state.input, @delimiter) do
@@ -204,29 +209,33 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         ]
 
     defp response(agent, session_id, rpc) do
-      Agent.get_and_update(agent, fn state ->
-        state = %{state | rpcs: [rpc | state.rpcs], sessions: [session_id | state.sessions]}
-        {reply, delay_ms, state} = rpc_response(rpc, state)
+      {result, observer} =
+        Agent.get_and_update(agent, fn state ->
+          state = %{state | rpcs: [rpc | state.rpcs], sessions: [session_id | state.sessions]}
+          {reply, delay_ms, state} = rpc_response(rpc, state)
 
-        reply =
-          case Regex.run(~r/message-id="([^"]+)"/, rpc) do
-            [_, message_id] when message_id != "opsonde-1" ->
-              String.replace(reply, "message-id=\"opsonde-1\"", "message-id=\"#{message_id}\"")
+          reply =
+            case Regex.run(~r/message-id="([^"]+)"/, rpc) do
+              [_, message_id] when message_id != "opsonde-1" ->
+                String.replace(reply, "message-id=\"opsonde-1\"", "message-id=\"#{message_id}\"")
 
-            _other ->
+              _other ->
+                reply
+            end
+
+          reply =
+            if state.mode == :dynamic_wrong_followup_id and
+                 String.contains?(rpc, "<modify-subscription") do
+              Regex.replace(~r/message-id="[^"]+"/, reply, "message-id=\"wrong\"")
+            else
               reply
-          end
+            end
 
-        reply =
-          if state.mode == :dynamic_wrong_followup_id and
-               String.contains?(rpc, "<modify-subscription") do
-            Regex.replace(~r/message-id="[^"]+"/, reply, "message-id=\"wrong\"")
-          else
-            reply
-          end
+          {{{reply, delay_ms}, state.observer}, state}
+        end)
 
-        {{reply, delay_ms}, state}
-      end)
+      if observer, do: send(observer, {:netconf_rpc, session_id})
+      result
     end
 
     defp rpc_response(rpc, state) do
@@ -835,6 +844,42 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     assert String.contains?(error_reply, "needs-reload")
   end
 
+  test "stopping a NETCONF subscription caller closes its session without replay", context do
+    context = context |> Map.put(:netconf_timeout, 2_000) |> generic_netconf_context()
+    observer = self()
+    Agent.update(context.agent, &%{&1 | mode: :no_notification_events, observer: observer})
+
+    subscription =
+      request(
+        context,
+        :effect,
+        "request.netconf.effect",
+        "rpc.subscribe",
+        %{},
+        %{
+          "body" =>
+            "<create-subscription xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"/>",
+          "max_events" => 1,
+          "wait_ms" => 1_000
+        }
+      )
+
+    {caller, monitor} =
+      spawn_monitor(fn ->
+        subscription
+        |> Targets.clear_target_request!(actor: context.operator)
+        |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+      end)
+
+    assert_receive {:netconf_rpc, session_id}, 1_500
+    refute_receive {:netconf_closed, ^session_id}, 0
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}, 1_000
+    assert_receive {:netconf_closed, ^session_id}, 1_000
+    refute_receive {:netconf_rpc, _session}, 100
+    assert length(rpcs(context)) == 1
+  end
+
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do
     assert %Target.Capabilities{} =
              Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
@@ -966,6 +1011,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
       rpcs: [],
       sessions: [],
       notifications_sent: 0,
+      observer: nil,
       mode: :normal,
       delay_edit_ms: 0,
       edit_received?: false,
@@ -1058,7 +1104,11 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         "generic-netconf",
         :target,
         "netconf",
-        configuration(context),
+        Map.put(
+          configuration(context),
+          "operation_timeout_ms",
+          Map.get(context, :netconf_timeout, 500)
+        ),
         credentials(),
         actor: context.admin
       )
