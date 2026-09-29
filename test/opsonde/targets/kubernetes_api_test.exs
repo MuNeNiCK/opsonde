@@ -526,6 +526,52 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert length(requests(context)) == request_count
   end
 
+  test "Kubernetes Method rejects an unrelated namespace parameter before dispatch", context do
+    request_count = length(requests(context))
+
+    request =
+      target_request(
+        context,
+        :observation,
+        "request.kubernetes.observe",
+        "request.observe",
+        %{},
+        %{
+          "action" => "get",
+          "api_version" => "v1",
+          "kind" => "Pod",
+          "name" => "pod-one",
+          "namespace" => "other-namespace"
+        }
+      )
+
+    assert {:error, _error} = Targets.clear_target_request(request, actor: context.operator)
+    assert length(requests(context)) == request_count
+  end
+
+  test "Kubernetes read rejects a body that the API request would ignore", context do
+    request_count = length(requests(context))
+
+    request =
+      target_request(
+        context,
+        :observation,
+        "request.kubernetes.observe",
+        "request.observe",
+        %{},
+        %{
+          "action" => "get",
+          "api_version" => "v1",
+          "kind" => "Pod",
+          "name" => "pod-one",
+          "body" => %{"metadata" => %{"namespace" => "other-namespace"}}
+        }
+      )
+
+    assert {:error, _error} = Targets.clear_target_request(request, actor: context.operator)
+    assert length(requests(context)) == request_count
+  end
+
   test "generic write preserves conflict and unknown outcomes with independent observation",
        context do
     before = deployment_observation!(context)["response"]

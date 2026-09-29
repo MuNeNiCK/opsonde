@@ -128,8 +128,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   defp method_observation_operation(state, request) do
-    with {:ok, action, api_version, kind, name, query, _body} <-
+    with {:ok, action, api_version, kind, name, query, body} <-
            method_request(request, "request.observe"),
+         true <- is_nil(body),
          true <- action in ["get", "list"],
          {:ok, operation} <- method_read_operation(state, action, api_version, kind, name) do
       {:ok, add_query(operation, query)}
@@ -223,7 +224,12 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
         query = Map.get(parameters, "query", %{})
         body = Map.get(parameters, "body")
 
-        with true <- byte_size(api_version) in 1..120,
+        with true <-
+               Enum.all?(
+                 Map.keys(parameters),
+                 &(&1 in ~w(action api_version kind name query body))
+               ),
+             true <- byte_size(api_version) in 1..120,
              true <- byte_size(kind) in 1..120,
              true <- is_nil(name) or (is_binary(name) and Client.valid_name?(name)),
              {:ok, query} <- method_query(operation, query),
@@ -267,29 +273,35 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   defp method_schema(actions, query_keys) do
+    parameter_properties = %{
+      "action" => %{"type" => "string", "enum" => actions},
+      "api_version" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+      "kind" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+      "name" => %{"type" => ["string", "null"], "maxLength" => 253},
+      "query" => %{
+        "type" => "object",
+        "description" =>
+          "Optional Kubernetes query parameters; namespace is fixed by the Access Method",
+        "properties" =>
+          Map.new(query_keys, fn {key, _atom} ->
+            {key, %{"type" => "string", "maxLength" => 2_048}}
+          end),
+        "additionalProperties" => false
+      }
+    }
+
+    parameter_properties =
+      if Enum.any?(actions, &(&1 in ["create", "update", "patch"])),
+        do: Map.put(parameter_properties, "body", %{"type" => ["object", "null"]}),
+        else: parameter_properties
+
     %{
       "type" => "object",
       "properties" => %{
         "selectors" => %{"type" => "object", "maxProperties" => 0},
         "parameters" => %{
           "type" => "object",
-          "properties" => %{
-            "action" => %{"type" => "string", "enum" => actions},
-            "api_version" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
-            "kind" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
-            "name" => %{"type" => ["string", "null"], "maxLength" => 253},
-            "query" => %{
-              "type" => "object",
-              "description" =>
-                "Optional Kubernetes query parameters; namespace is fixed by the Access Method",
-              "properties" =>
-                Map.new(query_keys, fn {key, _atom} ->
-                  {key, %{"type" => "string", "maxLength" => 2_048}}
-                end),
-              "additionalProperties" => false
-            },
-            "body" => %{"type" => ["object", "null"]}
-          },
+          "properties" => parameter_properties,
           "required" => ["action", "api_version", "kind"],
           "additionalProperties" => false
         }
