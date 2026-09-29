@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Adapters.Kubernetes.API
+  alias Opsonde.Targets.Adapters.Kubernetes
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
 
   @password "correct horse battery staple"
@@ -718,7 +718,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       )
 
     assert {:error, :invalid_configuration} =
-             API.build(configuration(), %{"kubeconfig" => unsafe_exec})
+             Kubernetes.build(configuration(), %{"kubeconfig" => unsafe_exec})
 
     path_based =
       String.replace(
@@ -728,7 +728,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       )
 
     assert {:error, :invalid_configuration} =
-             API.build(configuration(), %{"kubeconfig" => path_based})
+             Kubernetes.build(configuration(), %{"kubeconfig" => path_based})
 
     insecure =
       String.replace(
@@ -738,7 +738,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       )
 
     assert {:error, :invalid_configuration} =
-             API.build(configuration(), %{"kubeconfig" => insecure})
+             Kubernetes.build(configuration(), %{"kubeconfig" => insecure})
   end
 
   defp observe!(context, capability, operation, selectors, parameters) do

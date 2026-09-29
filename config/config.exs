@@ -103,7 +103,7 @@ config :opsonde,
     Opsonde.Targets.Adapters.NETCONF.IOSXE,
     Opsonde.Targets.Adapters.RESTCONF.IOSXE,
     Opsonde.Targets.Adapters.SSH.IOSXE,
-    Opsonde.Targets.Adapters.Kubernetes.API,
+    Opsonde.Targets.Adapters.Kubernetes,
     Opsonde.Targets.Adapters.SSH.Linux
   ]
 

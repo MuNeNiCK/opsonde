@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Adapters.Kubernetes.API do
+defmodule Opsonde.Targets.Adapters.Kubernetes do
   @moduledoc false
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
