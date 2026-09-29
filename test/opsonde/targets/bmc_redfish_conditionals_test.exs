@@ -392,6 +392,50 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
              )
   end
 
+  test "Provider classifies exact Redfish verbs and rejects endpoint or URI substitution",
+       context do
+    request = %Target.MethodRequest{
+      provider_revision: context.method.provider_revision,
+      connection: %Target.Connection{endpoint: context.method.endpoint},
+      capability: "request.redfish.observe",
+      operation: "request.observe",
+      selectors: %{},
+      parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Example"}
+    }
+
+    classify = fn input ->
+      Providers.target_classify(context.method.provider_id, input, %{}, authorize?: false)
+    end
+
+    assert {:ok, %Target.RequestClassification{kind: :observation}} = classify.(request)
+
+    write = %{
+      request
+      | capability: "request.redfish.effect",
+        operation: "request.execute",
+        parameters: %{"method" => "POST", "uri" => "/redfish/v1/Oem/Plain", "body" => %{}}
+    }
+
+    assert {:ok, %Target.RequestClassification{kind: :effect}} = classify.(write)
+
+    for invalid <- [
+          %{request | parameters: %{"method" => "POST", "uri" => "/redfish/v1/Oem/Plain"}},
+          %{request | connection: %Target.Connection{endpoint: "https://other.example"}},
+          %{
+            write
+            | parameters: %{
+                "method" => "POST",
+                "uri" => "/redfish/v1/../Oem/Plain",
+                "body" => %{}
+              }
+          }
+        ] do
+      assert {:error, _} = classify.(invalid)
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == 0
+  end
+
   defp redfish_state(endpoint) do
     Redfish.build(
       %{

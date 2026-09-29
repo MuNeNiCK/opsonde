@@ -6,6 +6,37 @@ defmodule Opsonde.Targets.IPMIRequestTest do
 
   @endpoint "ipmi://127.0.0.1:623"
 
+  test "classify exact IPMI requests without assuming an arbitrary command is read-only" do
+    {:ok, state} =
+      IPMI.build(%{"endpoint" => @endpoint}, %{"username" => "fixture", "password" => "fixture"})
+
+    raw = %Target.MethodRequest{
+      provider_revision: 1,
+      connection: %Target.Connection{endpoint: @endpoint},
+      capability: "request.ipmi.effect",
+      operation: "command.execute",
+      selectors: %{},
+      parameters: %{"netfn" => 6, "command" => 1}
+    }
+
+    assert {:ok, %Target.RequestClassification{kind: :effect}} =
+             Target.classify_request(IPMI, state, raw)
+
+    power = %{raw | capability: "observe.power", operation: "bmc.power.inspect", parameters: %{}}
+
+    assert {:ok, %Target.RequestClassification{kind: :observation}} =
+             Target.classify_request(IPMI, state, power)
+
+    for invalid <- [
+          %{raw | connection: %Target.Connection{endpoint: "ipmi://other.example:623"}},
+          %{raw | parameters: %{"netfn" => 7, "command" => 1}},
+          %{raw | parameters: %{"netfn" => 6, "command" => 1, "data_hex" => "F"}},
+          %{raw | capability: "request.ipmi.observe"}
+        ] do
+      assert {:error, :failed, _} = Target.classify_request(IPMI, state, invalid)
+    end
+  end
+
   test "IPMI advertises one arbitrary command as an effect and validates it before dispatch" do
     {:ok, state} =
       IPMI.build(%{"endpoint" => @endpoint}, %{"username" => "fixture", "password" => "fixture"})
