@@ -2423,6 +2423,56 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert {:ok, nil} =
              ConditionRecovery.applied_effect_refresh_at(incident, run.id, [Ecto.UUID.generate()])
+
+    attempt = Cases.verification_attempt_by_operation!(effect.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
+                 )
+             )
+
+    waiting = Cases.get_case!(incident.id, authorize?: false)
+    assert waiting.pending_intent["action"] == "await_source_recovery"
+    {:ok, deadline, _offset} = DateTime.from_iso8601(waiting.pending_intent["wait_until"])
+    Process.sleep(max(DateTime.diff(deadline, DateTime.utc_now(), :millisecond), 0) + 100)
+
+    assert :ok =
+             SignalRecoveryCheckWorker.perform(%Oban.Job{
+               args: %{"case_id" => incident.id, "verification_attempt_id" => attempt.id}
+             })
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.pending_intent["action"] == "resolve_turn"
+
+    Cases.record_case_selected_target!(
+      current,
+      current.revision,
+      context.target.id,
+      context.target.revision,
+      authorize?: false
+    )
+
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    capability = %Target.Operation{
+      capability: "observe.service",
+      operation: "linux.service.inspect",
+      description: "Inspect one service",
+      input_schema: %{"type" => "object"},
+      output_schema: %{"type" => "object"}
+    }
+
+    assert {:ok, refreshed} =
+             ResolverProjection.build(
+               turn.id,
+               selection,
+               invocation({:ok, %Target.Capabilities{observations: [capability], effects: []}})
+             )
+
+    assert Enum.any?(refreshed.observation_tools, &(&1.access_method_id == context.method.id))
   end
 
   test "Resolver receives a current failed observation after Signal recovery", context do
