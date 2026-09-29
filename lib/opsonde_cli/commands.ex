@@ -44,6 +44,7 @@ defmodule OpsondeCLI.Commands do
     {"boundary", "deactivate"} =>
       Route.new(:post, "/management-boundaries/:id/deactivate", 1, "management_boundary"),
     {"target", "list"} => Route.page("/targets"),
+    {"target-type", "list"} => Route.new(:get, "/target-types"),
     {"target", "show"} => Route.new(:get, "/targets/:id", 1),
     {"target", "create"} => Route.new(:post, "/targets", 0, "target"),
     {"target", "update"} => Route.new(:patch, "/targets/:id", 1, "target"),

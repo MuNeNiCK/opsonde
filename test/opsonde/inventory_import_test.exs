@@ -49,7 +49,7 @@ defmodule Opsonde.InventoryImportTest do
       Targets.create_target!(
         "same-ip",
         "host",
-        "freebsd",
+        "custom-os",
         %{"ip" => "192.0.2.20", "owner" => "network"},
         nil,
         actor: context.admin

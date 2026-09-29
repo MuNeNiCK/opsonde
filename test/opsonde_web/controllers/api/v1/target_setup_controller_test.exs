@@ -4,6 +4,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   import OpenApiSpex.TestAssertions
 
   alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.Providers.Registry
   alias Opsonde.Targets.TargetPolicy.{PolicyError, PolicyRequest}
 
   @password "correct horse battery staple"
@@ -69,7 +70,32 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert by_id["custom-network-device"]["access_method_types"] == ["ssh-exec", "http-api"]
     assert by_id["custom-os"]["category_id"] == "os"
     assert by_id["bmc"]["access_method_types"] == ["bmc-redfish", "bmc-ipmi"]
-    assert by_id["cisco-ios-xe"]["category_id"] == "network-device"
+    assert by_id["cisco_ios_xe"]["category_id"] == "network-device"
+
+    for type <- types, adapter_type <- type["access_method_types"] do
+      assert {:ok, adapter} = Registry.fetch(adapter_type, Providers.Target)
+      assert %Providers.Target.AccessMethodProfile{} = adapter.access_method_profile()
+    end
+  end
+
+  test "Target creation enforces the published type and its kind", context do
+    for {kind, type_id} <- [{"host", "unsupported-device"}, {"cluster", "linux"}] do
+      response =
+        post_json(
+          "/api/v1/targets",
+          %{
+            "target" => %{
+              "name" => "invalid-target",
+              "kind" => kind,
+              "type_id" => type_id,
+              "facts" => %{}
+            }
+          },
+          context.admin_token
+        )
+
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(response, 422)
+    end
   end
 
   test "Access Method API rejects a Provider mismatch and accepts its declared binding",
@@ -113,6 +139,17 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
 
+    bmc = create_target!(context.admin_token, "bmc-http-mismatch", "management_plane", "bmc", nil)
+
+    wrong_target =
+      post_json(
+        "/api/v1/access-methods",
+        %{"access_method" => %{method | "target_id" => bmc["id"]}},
+        context.admin_token
+      )
+
+    assert %{"error" => %{"code" => "validation_failed"}} = json_response(wrong_target, 422)
+
     registered =
       post_data!("/api/v1/access-methods", %{"access_method" => method}, context.admin_token)
 
@@ -145,7 +182,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         boundary["id"]
       )
 
-    bmc = create_target!(context.admin_token, "bmc-01", "bmc", "redfish", boundary["id"])
+    bmc = create_target!(context.admin_token, "bmc-01", "management_plane", "bmc", boundary["id"])
 
     ios_xe =
       create_target!(
@@ -161,7 +198,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         context.admin_token,
         "edge-future",
         "network_device",
-        "junos",
+        "custom-network-device",
         boundary["id"]
       )
 

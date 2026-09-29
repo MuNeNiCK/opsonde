@@ -29,10 +29,12 @@ defmodule Opsonde.RelatedTargetRouteTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     linux = target!(admin, provider, "linux-01", "host", "linux", "linux-ssh")
-    vm = target!(admin, provider, "vm-01", "virtual_machine", "vmware_vm", "vm-ssh")
-    bmc = target!(admin, provider, "bmc-01", "bmc", "redfish", "bmc-redfish")
+    vm = target!(admin, provider, "vm-01", "virtual_machine", "custom-vm", "vm-ssh")
+    bmc = target!(admin, provider, "bmc-01", "management_plane", "bmc", "bmc-redfish")
     kubernetes = target!(admin, provider, "cluster-01", "cluster", "kubernetes", "k8s-api")
-    switch = target!(admin, provider, "switch-01", "network", "ios-xe", "switch-netconf")
+
+    switch =
+      target!(admin, provider, "switch-01", "network_device", "cisco_ios_xe", "switch-netconf")
 
     runs_on = relationship!(admin, linux, vm, "runs_on")
     managed_by = relationship!(admin, vm, bmc, "managed_by")
@@ -395,7 +397,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
       Targets.create_target!(
         "unavailable-01",
         "host",
-        "freebsd",
+        "custom-os",
         %{},
         nil,
         actor: context.admin

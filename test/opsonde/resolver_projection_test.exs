@@ -80,7 +80,9 @@ defmodule Opsonde.ResolverProjectionTest do
   test "selected Target projection exposes only the active method-operation intersection",
        context do
     other =
-      Targets.create_target!("switch-01", "network", "ios-xe", %{}, nil, actor: context.admin)
+      Targets.create_target!("switch-01", "network_device", "cisco_ios_xe", %{}, nil,
+        actor: context.admin
+      )
 
     operator =
       Accounts.change_preferred_language!(context.operator, :ja, actor: context.operator)

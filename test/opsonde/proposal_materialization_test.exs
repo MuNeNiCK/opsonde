@@ -100,7 +100,7 @@ defmodule Opsonde.ProposalMaterializationTest do
     endpoint = "https://bmc.example.test:8443"
 
     target =
-      Targets.create_target!("proposal-physical", "physical_host", "bare_metal", %{}, nil,
+      Targets.create_target!("proposal-physical", "management_plane", "bmc", %{}, nil,
         actor: context.admin
       )
 

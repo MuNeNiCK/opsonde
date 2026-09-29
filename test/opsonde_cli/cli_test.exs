@@ -93,7 +93,11 @@ defmodule OpsondeCLI.CLITest do
       {:ok, encoded, conn} = read_body(conn)
 
       assert Jason.decode!(encoded) == %{
-               "target" => %{"name" => "edge-1", "kind" => "network", "platform" => "ios_xe"}
+               "target" => %{
+                 "name" => "edge-1",
+                 "kind" => "network_device",
+                 "type_id" => "cisco_ios_xe"
+               }
              }
 
       conn
@@ -101,7 +105,7 @@ defmodule OpsondeCLI.CLITest do
       |> Req.Test.json(%{data: %{id: "target-1", revision: 1}})
     end)
 
-    input = ~s({"name":"edge-1","kind":"network","platform":"ios_xe"})
+    input = ~s({"name":"edge-1","kind":"network_device","type_id":"cisco_ios_xe"})
 
     output =
       capture_io(input, fn ->
@@ -259,6 +263,27 @@ defmodule OpsondeCLI.CLITest do
       end)
 
     assert output =~ ~s("id": "ollama")
+  end
+
+  test "lists Target types through the authenticated catalog", context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/api/v1/target-types"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+
+      Req.Test.json(conn, %{
+        data: %{
+          categories: [%{id: "network-device", label: "Network device"}],
+          types: [%{id: "custom-network-device", category_id: "network-device"}]
+        }
+      })
+    end)
+
+    output = capture_io(fn -> assert CLI.run(["target-type", "list"], runtime(context)) == 0 end)
+    assert output =~ ~s("custom-network-device")
+    assert output =~ ~s("network-device")
   end
 
   test "passes pagination without changing the shared API contract", context do

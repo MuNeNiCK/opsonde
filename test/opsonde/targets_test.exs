@@ -30,15 +30,21 @@ defmodule Opsonde.TargetsTest do
     ios_xe =
       create_target!(context.admin, "edge-01", "network_device", "cisco_ios_xe", boundary.id)
 
-    bmc = create_target!(context.admin, "bmc-01", "bmc", "redfish", boundary.id)
+    bmc = create_target!(context.admin, "bmc-01", "management_plane", "bmc", boundary.id)
 
     hypervisor =
-      create_target!(context.admin, "esxi-01", "hypervisor", "vmware_esxi", boundary.id)
+      create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization", boundary.id)
 
-    vm = create_target!(context.admin, "vm-01", "virtual_machine", "vmware_vm", boundary.id)
+    vm = create_target!(context.admin, "vm-01", "virtual_machine", "custom-vm", boundary.id)
 
     junos =
-      create_target!(context.admin, "edge-unsupported", "network_device", "junos", boundary.id)
+      create_target!(
+        context.admin,
+        "edge-unsupported",
+        "network_device",
+        "custom-network-device",
+        boundary.id
+      )
 
     common_endpoint = "ssh://192.0.2.10:22"
 
@@ -89,7 +95,9 @@ defmodule Opsonde.TargetsTest do
     assert ssh_exec.platform == "ssh"
 
     assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.type_id)) ==
-             Enum.sort(~w(cisco_ios_xe kubernetes linux redfish vmware_esxi vmware_vm junos))
+             Enum.sort(
+               ~w(bmc cisco_ios_xe custom-network-device custom-virtualization custom-vm kubernetes linux)
+             )
 
     assert Enum.map(
              Targets.available_access_methods!(ios_xe.id, "observe.config", authorize?: false),
@@ -129,7 +137,8 @@ defmodule Opsonde.TargetsTest do
         actor: context.admin
       )
 
-    destination = create_target!(context.admin, "compute-host", "hypervisor", "vmware_esxi")
+    destination =
+      create_target!(context.admin, "compute-host", "hypervisor", "custom-virtualization")
 
     identity =
       Targets.create_external_identity!(source.id, "zabbix", "hostid", "10427",
@@ -166,7 +175,7 @@ defmodule Opsonde.TargetsTest do
       Targets.create_target!(
         "late-added-node",
         "host",
-        "freebsd",
+        "custom-os",
         %{"incident_hint" => "signal-9001"},
         nil,
         actor: context.admin
@@ -193,11 +202,11 @@ defmodule Opsonde.TargetsTest do
   end
 
   test "method and relationship use requires current active revisions", context do
-    source = create_target!(context.admin, "vm-01", "virtual_machine", "vmware_vm")
-    destination = create_target!(context.admin, "esxi-01", "hypervisor", "vmware_esxi")
+    source = create_target!(context.admin, "vm-01", "virtual_machine", "custom-vm")
+    destination = create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization")
 
     method =
-      create_method!(context, source, "ssh", "generic", "ssh", "ssh://192.0.2.30:22", [
+      create_method!(context, source, "ssh", "ssh", "ssh", "ssh://192.0.2.30:22", [
         "observe.command"
       ])
 
@@ -281,8 +290,8 @@ defmodule Opsonde.TargetsTest do
   end
 
   test "relationships are directional and reject self-links", context do
-    bmc = create_target!(context.admin, "bmc-01", "bmc", "redfish")
-    hypervisor = create_target!(context.admin, "esxi-01", "hypervisor", "vmware_esxi")
+    bmc = create_target!(context.admin, "bmc-01", "management_plane", "bmc")
+    hypervisor = create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization")
     linux = create_target!(context.admin, "linux-01", "host", "linux")
     cluster = create_target!(context.admin, "cluster-01", "cluster", "kubernetes")
 
@@ -324,9 +333,9 @@ defmodule Opsonde.TargetsTest do
     assert Exception.message(error) =~ "must differ"
   end
 
-  test "BMC Access Methods bind their checked Provider to a physical host", context do
-    physical = create_target!(context.admin, "rack-host-01", "physical_host", "bare_metal")
-    virtual = create_target!(context.admin, "vm-01", "virtual_machine", "linux")
+  test "BMC Access Methods bind their checked Provider to a controller", context do
+    physical = create_target!(context.admin, "rack-host-01", "management_plane", "bmc")
+    virtual = create_target!(context.admin, "vm-01", "virtual_machine", "custom-vm")
 
     for {adapter_type, method, endpoint} <- [
           {"bmc-redfish", "redfish", "https://bmc.example.test:8443"},
@@ -454,7 +463,9 @@ defmodule Opsonde.TargetsTest do
     linux = create_target!(context.admin, "profile-linux", "host", "linux")
     cluster = create_target!(context.admin, "profile-cluster", "cluster", "kubernetes")
     switch = create_target!(context.admin, "profile-switch", "network_device", "cisco_ios_xe")
-    other = create_target!(context.admin, "profile-other", "network_device", "junos")
+
+    other =
+      create_target!(context.admin, "profile-other", "network_device", "custom-network-device")
 
     for {type, target, platform, method, capability, invalid_target} <- [
           {"kubernetes-api", cluster, "kubernetes", "api", "native.kubernetes_api.observe",

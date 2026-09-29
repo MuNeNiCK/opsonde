@@ -690,7 +690,7 @@ defmodule Opsonde.SignalIngressTest do
     targets =
       Enum.map(names, fn name ->
         target =
-          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+          Targets.create_target!(name, "network_device", "custom-network-device", %{}, nil,
             actor: context.admin
           )
 
@@ -809,7 +809,7 @@ defmodule Opsonde.SignalIngressTest do
     targets =
       for name <- ["poe-switch", "unrelated-core"], into: %{} do
         target =
-          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+          Targets.create_target!(name, "network_device", "custom-network-device", %{}, nil,
             actor: context.admin
           )
 
@@ -956,7 +956,7 @@ defmodule Opsonde.SignalIngressTest do
     targets =
       for name <- ["poe", "ap"], into: %{} do
         target =
-          Targets.create_target!(name, "network_device", "generic", %{}, nil,
+          Targets.create_target!(name, "network_device", "custom-network-device", %{}, nil,
             actor: context.admin
           )
 
@@ -1363,7 +1363,7 @@ defmodule Opsonde.SignalIngressTest do
     enable_signal_automation!(context.admin)
 
     anchor =
-      Targets.create_target!("dense-anchor", "network_device", "generic", %{}, nil,
+      Targets.create_target!("dense-anchor", "network_device", "custom-network-device", %{}, nil,
         actor: context.admin
       )
 
@@ -1377,9 +1377,12 @@ defmodule Opsonde.SignalIngressTest do
 
     for index <- 1..128 do
       neighbour =
-        Targets.create_target!("dense-neighbour-#{index}", "network_device", "generic", %{}, nil,
-          actor: context.admin
-        )
+        Targets.create_target!(
+          "dense-neighbour-#{index}",
+          "network_device",
+          "custom-network-device",
+          %{},
+          nil, actor: context.admin)
 
       Targets.create_relationship!(anchor.id, neighbour.id, "connected_to", %{}, nil,
         actor: context.admin

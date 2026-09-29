@@ -27,7 +27,7 @@ defmodule OpsondeWeb.API.V1.BMCSetupControllerTest do
     viewer = Accounts.create_user!("bmc-api-viewer@example.com", @password, :viewer, actor: admin)
 
     target =
-      Targets.create_target!("rack-01", "physical_host", "bare_metal", %{}, nil, actor: admin)
+      Targets.create_target!("rack-01", "management_plane", "bmc", %{}, nil, actor: admin)
 
     methods =
       for {adapter, method, endpoint} <- [

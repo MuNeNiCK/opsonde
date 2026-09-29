@@ -367,7 +367,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
 
     target =
-      Targets.create_target!("etag-host", "physical_host", "bare_metal", %{}, nil, actor: admin)
+      Targets.create_target!("etag-host", "management_plane", "bmc", %{}, nil, actor: admin)
 
     provider =
       Providers.create_provider!(

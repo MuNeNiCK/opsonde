@@ -15,8 +15,6 @@ defmodule Opsonde.Targets.BMC do
     %Target.AccessMethodProfile{
       platform: "bare_metal",
       method: method,
-      target_type_id: "bare_metal",
-      target_kind: "physical_host",
       configuration_endpoint?: true,
       required_capabilities: ["observe.power"],
       capabilities:

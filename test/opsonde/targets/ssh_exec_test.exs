@@ -208,7 +208,9 @@ defmodule Opsonde.Targets.SSHExecTest do
     assert tool.operation == "command.execute"
 
     target =
-      Targets.create_target!("future-router", "network_device", "junos", %{}, nil, actor: admin)
+      Targets.create_target!("future-router", "network_device", "custom-network-device", %{}, nil,
+        actor: admin
+      )
 
     method =
       Targets.create_access_method!(

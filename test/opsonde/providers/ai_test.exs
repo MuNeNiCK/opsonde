@@ -1734,7 +1734,7 @@ defmodule Opsonde.Providers.AITest do
           id: "relation-1",
           revision: 1,
           source_target: target_candidate("target-1", "linux"),
-          destination_target: target_candidate("target-2", "vmware_esxi"),
+          destination_target: target_candidate("target-2", "custom-virtualization"),
           kind: "runs_on"
         }
       ],

@@ -84,7 +84,12 @@ defmodule Opsonde.Targets.HTTPAPITest do
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     target =
-      Targets.create_target!("unknown-router", "network_device", "junos", %{}, nil, actor: admin)
+      Targets.create_target!(
+        "unknown-router",
+        "network_device",
+        "custom-network-device",
+        %{},
+        nil, actor: admin)
 
     method =
       Targets.create_access_method!(

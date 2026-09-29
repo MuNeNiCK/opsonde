@@ -89,9 +89,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
              "data" => %{
                "access_method_profile" => %{
                  "platform" => "http",
-                 "method" => "http",
-                 "target_type_id" => nil,
-                 "target_kind" => nil
+                 "method" => "http"
                }
              }
            } = json_response(response, 201)

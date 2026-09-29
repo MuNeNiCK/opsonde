@@ -806,7 +806,7 @@ defmodule Opsonde.ResolverDeliveryTest do
       Targets.create_target!(
         "snapshot-vm",
         "virtual_machine",
-        "vmware_vm",
+        "custom-vm",
         %{},
         nil,
         actor: context.admin
@@ -817,7 +817,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         vm.id,
         linux_method.provider_id,
         "snapshot-vm-ssh",
-        "vmware_vm",
+        "custom-vm",
         "ssh",
         "ssh://snapshot-vm",
         linux_method.provider_revision,

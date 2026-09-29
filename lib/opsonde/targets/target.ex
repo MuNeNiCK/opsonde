@@ -39,6 +39,7 @@ defmodule Opsonde.Targets.Target do
       primary? true
       accept [:name, :kind, :type_id, :facts, :management_boundary_id]
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
+      validate Opsonde.Targets.Target.Validations.Type
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :type_id, :facts]}
       change Opsonde.Targets.Changes.EnqueueCaseReconciliation
     end
@@ -52,6 +53,7 @@ defmodule Opsonde.Targets.Target do
 
       validate Opsonde.Validations.CurrentRevision
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
+      validate Opsonde.Targets.Target.Validations.Type
       change {Opsonde.Targets.Changes.BuildSearchText, fields: [:name, :kind, :type_id, :facts]}
       change Opsonde.Targets.Changes.EnqueueCaseReconciliation
       change optimistic_lock(:revision)

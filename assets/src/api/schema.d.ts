@@ -1849,8 +1849,6 @@ export interface components {
             access_method_profile?: {
                 method: string;
                 platform: string;
-                target_kind: string | null;
-                target_type_id: string | null;
             };
             adapter_type: string;
             check: {

@@ -36,9 +36,7 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
          %AccessMethodProfile{} = profile <- adapter.access_method_profile() do
       %{
         platform: profile.platform,
-        method: profile.method,
-        target_type_id: profile.target_type_id,
-        target_kind: profile.target_kind
+        method: profile.method
       }
     else
       _unrestricted -> nil

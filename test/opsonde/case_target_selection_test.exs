@@ -18,7 +18,10 @@ defmodule Opsonde.CaseTargetSelectionTest do
     linux =
       Targets.create_target!("linux-01", "host", "linux", %{"site" => "tokyo"}, nil, actor: admin)
 
-    switch = Targets.create_target!("switch-01", "network", "ios-xe", %{}, nil, actor: admin)
+    switch =
+      Targets.create_target!("switch-01", "network_device", "cisco_ios_xe", %{}, nil,
+        actor: admin
+      )
 
     %{admin: admin, operator: operator, viewer: viewer, linux: linux, switch: switch}
   end

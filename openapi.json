@@ -1114,21 +1114,11 @@
               },
               "platform": {
                 "type": "string"
-              },
-              "target_kind": {
-                "nullable": true,
-                "type": "string"
-              },
-              "target_type_id": {
-                "nullable": true,
-                "type": "string"
               }
             },
             "required": [
               "platform",
-              "method",
-              "target_type_id",
-              "target_kind"
+              "method"
             ],
             "type": "object"
           },

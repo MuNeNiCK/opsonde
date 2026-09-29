@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
   alias Opsonde.{Providers, Targets}
   alias Opsonde.Providers.Registry
   alias Opsonde.Providers.Target.AccessMethodProfile
+  alias Opsonde.Targets.TypeCatalog
 
   @impl true
   def init(opts), do: {:ok, opts}
@@ -62,8 +63,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
          true <- Enum.all?(capabilities, &(&1 in profile.capabilities)),
          true <- Enum.all?(profile.required_capabilities, &(&1 in capabilities)),
          {:ok, %{active: true} = target} <- Targets.get_target(target_id, authorize?: false),
-         true <- is_nil(profile.target_type_id) or target.type_id == profile.target_type_id,
-         true <- is_nil(profile.target_kind) or target.kind == profile.target_kind do
+         true <- TypeCatalog.allows_method?(target.type_id, provider.adapter_type) do
       :ok
     else
       _other ->

@@ -26,7 +26,7 @@ defmodule Opsonde.BMCOperationTest do
       Accounts.create_user!("bmc-operator@example.com", @password, :operator, actor: admin)
 
     target =
-      Targets.create_target!("rack-01", "physical_host", "bare_metal", %{}, nil, actor: admin)
+      Targets.create_target!("rack-01", "management_plane", "bmc", %{}, nil, actor: admin)
 
     redfish = method!(admin, target, "bmc-redfish", "redfish", "https://bmc.example.test:8443")
     ipmi = method!(admin, target, "bmc-ipmi", "ipmi", "ipmi://bmc.example.test:623")
