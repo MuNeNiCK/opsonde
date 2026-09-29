@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.Profiles.Kubernetes do
+defmodule Opsonde.Targets.Adapters.Kubernetes.Resources do
   @moduledoc false
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.Kubernetes, as: Client

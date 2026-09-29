@@ -3,7 +3,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.Profiles.Kubernetes, as: Profile
+  alias Opsonde.Targets.Adapters.Kubernetes.Resources, as: Resources
   alias Opsonde.Transports.Kubernetes, as: Client
   alias Opsonde.Transports.Kubernetes.State
 
@@ -42,7 +42,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   def check(state, input), do: Client.check(state, input)
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation), do: {:ok, Profile.capabilities(method_operations())}
+  def capabilities(_state, _invocation), do: {:ok, Resources.capabilities(method_operations())}
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, %{capability: @method_observation} = request, invocation) do
@@ -61,10 +61,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   def observe(%State{} = state, request, invocation) do
     with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation, decoder} <- Profile.observation_operation(state.namespace, request),
+         {:ok, operation, decoder} <- Resources.observation_operation(state.namespace, request),
          {:ok, result} <-
            Client.run_observation(state, operation, decoder, cancelled?(invocation)),
-         {:ok, facts} <- Profile.decode(decoder, result) do
+         {:ok, facts} <- Resources.decode(decoder, result) do
       {:ok, %Target.Observation{facts: facts, observed_at: DateTime.utc_now()}}
     else
       {:error, category, message} -> read_error(category, message)
@@ -80,7 +80,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   def preflight(%State{} = state, request) do
-    case Profile.observation_operation(state.namespace, request) do
+    case Resources.observation_operation(state.namespace, request) do
       {:ok, _operation, _decoder} -> :ok
       {:error, _category, _message} = error -> error
     end
@@ -99,7 +99,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   def effect(%State{} = state, request, invocation) do
     with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation} <- Profile.effect_operation(state.namespace, request),
+         {:ok, operation} <- Resources.effect_operation(state.namespace, request),
          result <- Client.run(state, operation, cancelled?(invocation), :effect) do
       effect_result(result)
     else
@@ -116,7 +116,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
       {:ok,
        %Target.Verification{
-         status: Profile.expected_status(facts, request.expected),
+         status: Resources.expected_status(facts, request.expected),
          observed_at: DateTime.utc_now(),
          facts: facts
        }}
@@ -127,13 +127,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   def verify(%State{} = state, request, invocation) do
     with :ok <- Client.endpoint(state, request.connection.endpoint),
-         {:ok, operation, :deployment} <- Profile.observation_operation(state.namespace, request),
-         {:ok, expected} <- Profile.verification_expected(request.expected),
+         {:ok, operation, :deployment} <-
+           Resources.observation_operation(state.namespace, request),
+         {:ok, expected} <- Resources.verification_expected(request.expected),
          {:ok, result} <- Client.run(state, operation, cancelled?(invocation), :read),
-         {:ok, facts} <- Profile.decode(:deployment, result) do
+         {:ok, facts} <- Resources.decode(:deployment, result) do
       {:ok,
        %Target.Verification{
-         status: Profile.expected_status(facts, expected),
+         status: Resources.expected_status(facts, expected),
          observed_at: DateTime.utc_now(),
          facts: facts
        }}

@@ -68,6 +68,51 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       })
     end
 
+    defp route(%{method: "GET", request_path: "/apis/example.com/v1"} = conn, _agent, _request) do
+      json(conn, 200, %{
+        "apiVersion" => "v1",
+        "groupVersion" => "example.com/v1",
+        "kind" => "APIResourceList",
+        "resources" => [resource("widgets", "Widget", ~w(get list patch))]
+      })
+    end
+
+    defp route(
+           %{
+             method: "GET",
+             request_path: "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one"
+           } = conn,
+           agent,
+           _request
+         ) do
+      json(conn, 200, Agent.get(agent, & &1.widget))
+    end
+
+    defp route(
+           %{
+             method: "PATCH",
+             request_path: "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one"
+           } = conn,
+           agent,
+           %{body: body}
+         ) do
+      patch = Jason.decode!(body)
+
+      widget =
+        Agent.get_and_update(agent, fn state ->
+          current = state.widget
+
+          updated =
+            current
+            |> put_in(["metadata", "resourceVersion"], "8")
+            |> put_in(["spec", "mode"], get_in(patch, ["spec", "mode"]))
+
+          {updated, %{state | widget: updated}}
+        end)
+
+      json(conn, 200, widget)
+    end
+
     defp route(
            %{method: "GET", request_path: "/api/v1/namespaces/#{@namespace}/pods"} = conn,
            agent,
@@ -260,11 +305,28 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       }
     }
 
+    widget = %{
+      "apiVersion" => "example.com/v1",
+      "kind" => "Widget",
+      "metadata" => %{
+        "name" => "widget-one",
+        "namespace" => @namespace,
+        "resourceVersion" => "7"
+      },
+      "spec" => %{"mode" => "idle"}
+    }
+
     agent =
       start_supervised!(
         {Agent,
          fn ->
-           %{requests: [], deployment: deployment, watch_delay_ms: 0, patch_delay_ms: 0}
+           %{
+             requests: [],
+             deployment: deployment,
+             widget: widget,
+             watch_delay_ms: 0,
+             patch_delay_ms: 0
+           }
          end}
       )
 
@@ -332,6 +394,48 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       agent: agent,
       endpoint: endpoint
     }
+  end
+
+  test "generic API request reaches a dynamically discovered custom resource", context do
+    parameters = %{
+      "action" => "get",
+      "api_version" => "example.com/v1",
+      "kind" => "Widget",
+      "name" => "widget-one"
+    }
+
+    observation =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, parameters)
+
+    assert get_in(observation.facts, ["response", "spec", "mode"]) == "idle"
+
+    request =
+      policy_request(
+        context,
+        :effect,
+        "request.kubernetes.effect",
+        "request.execute",
+        %{},
+        Map.merge(parameters, %{
+          "action" => "patch",
+          "body" => %{"spec" => %{"mode" => "active"}}
+        })
+      )
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert %Target.EffectResult{status: :applied, reference: "8"} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert get_in(
+             observe!(context, "request.kubernetes.observe", "request.observe", %{}, parameters).facts,
+             ["response", "spec", "mode"]
+           ) == "active"
+
+    assert Enum.any?(requests(context), &(&1.path == "/apis/example.com/v1"))
   end
 
   test "public Provider path exposes bounded namespace operations and observations", context do
