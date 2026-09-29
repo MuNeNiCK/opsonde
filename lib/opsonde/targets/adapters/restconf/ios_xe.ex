@@ -1,11 +1,11 @@
-defmodule Opsonde.Targets.IOSXE.RESTCONF do
+defmodule Opsonde.Targets.Adapters.RESTCONF.IOSXE do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.IOSXE
+  alias Opsonde.Targets.Profiles.IOSXE
 
   @native_observation "native.restconf.observe"
   @native_effect "native.restconf.effect"

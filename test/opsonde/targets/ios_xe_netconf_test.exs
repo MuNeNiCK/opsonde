@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.TargetPolicy.PolicyRequest
-  alias Opsonde.Targets.IOSXE.NETCONF
+  alias Opsonde.Targets.Adapters.NETCONF.IOSXE, as: NETCONF
   alias Opsonde.Transports.SSH
 
   @password "correct horse battery staple"

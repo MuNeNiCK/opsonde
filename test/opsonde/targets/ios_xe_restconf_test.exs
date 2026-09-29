@@ -304,7 +304,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     assert length(requests(context)) == count
 
     assert {:error, :invalid_configuration} =
-             Opsonde.Targets.IOSXE.RESTCONF.build(
+             Opsonde.Targets.Adapters.RESTCONF.IOSXE.build(
                %{
                  "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem"),
                  "insecure" => true
@@ -313,7 +313,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
              )
 
     assert {:ok, state} =
-             Opsonde.Targets.IOSXE.RESTCONF.build(
+             Opsonde.Targets.Adapters.RESTCONF.IOSXE.build(
                %{"ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")},
                %{"username" => "tester", "password" => "secret"}
              )
@@ -321,7 +321,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     wrong_hostname = String.replace(context.method.endpoint, "127.0.0.1", "127.0.0.2")
 
     assert {:error, :unreachable, _message} =
-             Opsonde.Targets.IOSXE.RESTCONF.check(state, %{"endpoint" => wrong_hostname})
+             Opsonde.Targets.Adapters.RESTCONF.IOSXE.check(state, %{"endpoint" => wrong_hostname})
   end
 
   defp observe!(context, capability, operation, selectors) do

@@ -1,11 +1,11 @@
-defmodule Opsonde.Targets.IOSXE.NETCONF do
+defmodule Opsonde.Targets.Adapters.NETCONF.IOSXE do
   @moduledoc false
 
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
   alias Opsonde.Providers.Target
-  alias Opsonde.Targets.IOSXE
+  alias Opsonde.Targets.Profiles.IOSXE
   alias Opsonde.Transports.{NETCONF, SSH}
 
   @message_id "opsonde-1"

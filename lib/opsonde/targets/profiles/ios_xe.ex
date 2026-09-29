@@ -1,4 +1,4 @@
-defmodule Opsonde.Targets.IOSXE do
+defmodule Opsonde.Targets.Profiles.IOSXE do
   @moduledoc false
 
   alias Opsonde.Providers.Target
@@ -202,6 +202,112 @@ defmodule Opsonde.Targets.IOSXE do
       do: not String.match?(value, ~r/[\x00-\x1F\x7F]/)
 
   def valid_description?(_value, _allow_nil), do: false
+
+  # IOS XE CLI vocabulary and response interpretation belong to this product
+  # profile. The SSH adapter owns the session and delivery of these commands.
+  def ssh_system_commands do
+    [
+      "show running-config | include ^hostname",
+      "show version | include Cisco IOS XE Software, Version"
+    ]
+  end
+
+  def ssh_interface_commands(name) do
+    [
+      "show running-config interface #{name}",
+      "show interfaces #{name} | include line protocol|Description|input errors|output errors"
+    ]
+  end
+
+  def ssh_description_commands(name, desired),
+    do: ["configure terminal", "interface #{name}", "description #{desired}", "end"]
+
+  def ssh_admin_state_commands(name, desired),
+    do: [
+      "configure terminal",
+      "interface #{name}",
+      if(desired, do: "no shutdown", else: "shutdown"),
+      "end"
+    ]
+
+  def ssh_system_facts(output) do
+    with [hostname] <- ssh_capture(output, ~r/^hostname\s+(\S+)\s*$/m),
+         [version] <- ssh_capture(output, ~r/^Cisco IOS XE Software, Version[ \t]+([^\r\n]+)/m) do
+      {:ok, %{"hostname" => hostname, "version" => String.trim(version)}}
+    else
+      _output -> {:error, :failed, "IOS XE SSH system response is invalid"}
+    end
+  end
+
+  def ssh_interface_facts(name, output) do
+    line =
+      Regex.run(
+        ~r/^#{Regex.escape(name)} is (administratively down|up|down), line protocol is (up|down)/m,
+        output,
+        capture: :all_but_first
+      )
+
+    case line do
+      [admin, operational] ->
+        description =
+          case ssh_capture(output, ~r/^\s*Description:\s*(.*?)\s*$/m) do
+            [value] -> value
+            [] -> ssh_running_description(name, output)
+          end
+
+        {:ok,
+         %{
+           "name" => name,
+           "description" => description,
+           "enabled" => admin != "administratively down",
+           "admin_status" => if(admin == "administratively down", do: "down", else: admin),
+           "oper_status" => operational,
+           "input_errors" => ssh_error_count(output, "input"),
+           "output_errors" => ssh_error_count(output, "output")
+         }}
+
+      _line ->
+        {:error, :not_found, "IOS XE interface was not found"}
+    end
+  end
+
+  def ssh_command_accepted?(output) do
+    if Regex.match?(
+         ~r/% (Invalid input|Incomplete command|Ambiguous command|Command rejected)/i,
+         output
+       ),
+       do: {:error, :rejected, "IOS XE SSH command was rejected"},
+       else: :ok
+  end
+
+  def ssh_readonly_command?(command) do
+    command = command |> String.trim() |> String.downcase()
+    String.starts_with?(command, "show ") or command == "show"
+  end
+
+  defp ssh_running_description(name, output) do
+    pattern =
+      ~r/^interface #{Regex.escape(name)}\s*$\n(?:^[ !].*$\n)*?^ description\s+(.+?)\s*$/m
+
+    case ssh_capture(output, pattern) do
+      [description] -> description
+      [] -> nil
+    end
+  end
+
+  defp ssh_error_count(output, direction) do
+    case ssh_capture(output, ~r/^\s*([0-9,]+) #{direction} errors,/m) do
+      [value] -> value |> String.replace(",", "") |> String.to_integer()
+      [] -> nil
+    end
+  end
+
+  defp ssh_capture(output, pattern) do
+    case Regex.run(pattern, output, capture: :all_but_first) do
+      nil -> []
+      values -> values
+    end
+  end
 
   defp verification_expected(expected) when is_map(expected) do
     if Enum.all?(Map.keys(expected), &(&1 in @verification_fields)),

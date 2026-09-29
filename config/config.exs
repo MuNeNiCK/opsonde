@@ -100,9 +100,9 @@ config :opsonde,
     Opsonde.Targets.Adapters.HTTP,
     Opsonde.Targets.BMC.IPMI,
     Opsonde.Targets.BMC.Redfish,
-    Opsonde.Targets.IOSXE.NETCONF,
-    Opsonde.Targets.IOSXE.RESTCONF,
-    Opsonde.Targets.IOSXE.SSH,
+    Opsonde.Targets.Adapters.NETCONF.IOSXE,
+    Opsonde.Targets.Adapters.RESTCONF.IOSXE,
+    Opsonde.Targets.Adapters.SSH.IOSXE,
     Opsonde.Targets.Kubernetes.API,
     Opsonde.Targets.Linux.SSH
   ]
