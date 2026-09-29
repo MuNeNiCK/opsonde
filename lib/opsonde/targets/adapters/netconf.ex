@@ -96,6 +96,22 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
         "additionalProperties" => false
       })
 
+    subscription_input =
+      put_in(input, ["properties", "parameters"], %{
+        "type" => "object",
+        "properties" => %{
+          "body" => %{
+            "type" => "string",
+            "minLength" => 1,
+            "maxLength" => NETCONF.max_body_bytes()
+          },
+          "max_events" => %{"type" => "integer", "minimum" => 1, "maximum" => 20},
+          "wait_ms" => %{"type" => "integer", "minimum" => 100, "maximum" => 20_000}
+        },
+        "required" => ["body", "max_events", "wait_ms"],
+        "additionalProperties" => false
+      })
+
     {:ok,
      %Target.Capabilities{
        observations: [
@@ -120,12 +136,28 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
            operation: "rpc.sequence",
            description: "Execute exact NETCONF RPCs in one session after authority review",
            input_schema: sequence_input
+         },
+         %Target.Operation{
+           capability: @effect,
+           operation: "rpc.subscribe",
+           description:
+             "Send an exact NETCONF subscription RPC and receive bounded notifications",
+           input_schema: subscription_input
          }
        ]
      }}
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(%SSH.Config{} = state, %{operation: "rpc.subscribe"} = request) do
+    with {:ok, _body, _max_events, wait_ms} <- subscription_request(request),
+         true <- wait_ms + 100 < state.operation_timeout do
+      {:ok, :effect}
+    else
+      _invalid -> {:error, :failed, "NETCONF subscription is invalid"}
+    end
+  end
+
   def classify_request(_state, %{operation: "rpc.sequence"} = request) do
     case sequence_bodies(request) do
       {:ok, _bodies} -> {:ok, :effect}
@@ -161,6 +193,33 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
+  def effect(%SSH.Config{} = state, %{operation: "rpc.subscribe"} = request, invocation) do
+    with {:ok, body, max_events, wait_ms} <- subscription_request(request) do
+      case NETCONF.subscribe(
+             state,
+             request.connection.endpoint,
+             body,
+             max_events,
+             wait_ms,
+             cancelled?(invocation)
+           ) do
+        {:ok, events, completion} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :applied,
+             details: %{
+               "events" => events,
+               "received" => length(events),
+               "completion" => Atom.to_string(completion)
+             }
+           }}
+
+        {:error, category, message, events} ->
+          subscription_error(category, message, events)
+      end
+    end
+  end
+
   def effect(%SSH.Config{} = state, %{operation: "rpc.sequence"} = request, invocation) do
     with {:ok, bodies} <- sequence_bodies(request) do
       case NETCONF.execute_many(
@@ -252,6 +311,40 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
   end
 
   defp sequence_bodies(_request), do: {:error, :failed, "NETCONF sequence is invalid"}
+
+  defp subscription_request(%{
+         capability: @effect,
+         operation: "rpc.subscribe",
+         selectors: %{},
+         parameters:
+           %{"body" => body, "max_events" => max_events, "wait_ms" => wait_ms} = parameters
+       })
+       when map_size(parameters) == 3 and is_integer(max_events) and max_events in 1..20 and
+              is_integer(wait_ms) and wait_ms in 100..20_000 do
+    if NETCONF.subscription_body?(body),
+      do: {:ok, body, max_events, wait_ms},
+      else: {:error, :failed, "NETCONF subscription is invalid"}
+  end
+
+  defp subscription_request(_request), do: {:error, :failed, "NETCONF subscription is invalid"}
+
+  defp subscription_error(category, message, events) do
+    if category in [
+         :timeout_after_dispatch,
+         :cancelled_after_dispatch,
+         :disconnected_after_dispatch,
+         :output_limit_after_dispatch,
+         :unknown_after_dispatch
+       ] or events != [] do
+      {:ok,
+       %Target.EffectResult{
+         status: :unknown,
+         details: %{"events" => events, "received" => length(events), "error" => message}
+       }}
+    else
+      effect_error(category, message)
+    end
+  end
 
   defp sequence_error(category, message, replies) do
     if category in [

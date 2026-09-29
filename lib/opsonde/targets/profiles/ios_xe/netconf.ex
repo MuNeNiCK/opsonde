@@ -63,13 +63,13 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   @impl Opsonde.Providers.Target
-  def classify_request(_state, request) do
+  def classify_request(state, request) do
     case request.capability do
       @method_observation ->
-        GenericNETCONF.classify_request(nil, request)
+        GenericNETCONF.classify_request(state, request)
 
       @method_effect ->
-        GenericNETCONF.classify_request(nil, request)
+        GenericNETCONF.classify_request(state, request)
 
       "effect.interface" ->
         classify_netconf(IOSXE.effect_request(request), :effect)

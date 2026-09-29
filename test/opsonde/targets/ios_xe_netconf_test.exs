@@ -16,7 +16,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
     @delimiter "]]>]]>"
     @server_hello """
-    <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities><session-id>1</session-id></hello>
+    <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability><capability>urn:ietf:params:netconf:capability:notification:1.0</capability></capabilities><session-id>1</session-id></hello>
     """
 
     @impl true
@@ -61,7 +61,18 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
               byte_size(state.input) - position - length
             )
 
-          :ok = :ssh_connection.send(state.connection, state.channel, @server_hello <> @delimiter)
+          hello =
+            if Agent.get(state.agent, &(&1.mode == :no_notification_capability)) do
+              String.replace(
+                @server_hello,
+                "<capability>urn:ietf:params:netconf:capability:notification:1.0</capability>",
+                ""
+              )
+            else
+              @server_hello
+            end
+
+          :ok = :ssh_connection.send(state.connection, state.channel, hello <> @delimiter)
           consume(%{state | phase: :rpc, input: rest})
 
         :nomatch ->
@@ -75,6 +86,50 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
           {reply, delay_ms} = response(state.agent, state.session_id, rpc)
           Process.sleep(delay_ms)
           :ok = :ssh_connection.send(state.connection, state.channel, frame(reply))
+
+          if String.contains?(rpc, "<create-subscription") do
+            mode = Agent.get(state.agent, & &1.mode)
+
+            events =
+              case mode do
+                :drop_after_first_notification -> ["link-down"]
+                :no_notification_events -> []
+                _other -> ["link-down", "link-up"]
+              end
+
+            for event <- events do
+              notification =
+                case mode do
+                  :malformed_notification ->
+                    "<notification xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"><#{event} xmlns=\"urn:vendor:events\"/></notification>"
+
+                  :malformed_notification_time ->
+                    "<notification xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"><eventTime>invalid</eventTime><#{event} xmlns=\"urn:vendor:events\"/></notification>"
+
+                  _other ->
+                    "<notification xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"><eventTime>2026-09-29T00:00:00Z</eventTime><#{event} xmlns=\"urn:vendor:events\"/></notification>"
+                end
+
+              payload =
+                if mode == :truncated_notification,
+                  do: binary_part(frame(notification), 0, 20),
+                  else: frame(notification)
+
+              if :ssh_connection.send(state.connection, state.channel, payload) == :ok,
+                do:
+                  Agent.update(
+                    state.agent,
+                    &%{&1 | notifications_sent: &1.notifications_sent + 1}
+                  )
+
+              if mode == :hold_after_first_notification and event == "link-down",
+                do: Process.sleep(1_000)
+            end
+
+            if mode == :drop_after_first_notification,
+              do: :ssh_connection.close(state.connection, state.channel)
+          end
+
           consume(%{state | input: rest})
 
         :more ->
@@ -134,6 +189,9 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
         state.mode == :wrong_second_message_id and String.contains?(rpc, "<edit-config>") ->
           {system_reply("wrong"), 0, %{state | mode: :normal}}
+
+        state.mode == :slow_subscription_ack and String.contains?(rpc, "<create-subscription") ->
+          {system_reply("opsonde-1"), 250, state}
 
         String.contains?(rpc, "<edit-config>") ->
           edit_response(rpc, state)
@@ -450,6 +508,101 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
            |> Enum.uniq()
            |> length() == 1
 
+    subscription =
+      %{
+        effect
+        | operation: "rpc.subscribe",
+          parameters: %{
+            "body" =>
+              "<create-subscription xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"/>",
+            "max_events" => 2,
+            "wait_ms" => 200
+          }
+      }
+
+    assert {:error, _error} =
+             Targets.clear_target_request(
+               %{subscription | parameters: Map.put(subscription.parameters, "body", "<get/>")},
+               actor: context.operator
+             )
+
+    assert %Target.EffectResult{
+             status: :applied,
+             details: %{"events" => [first_event, second_event], "received" => 2}
+           } =
+             run_subscription!(context, subscription)
+
+    assert String.contains?(first_event, "link-down")
+    assert String.contains?(second_event, "link-up")
+
+    Agent.update(context.agent, &%{&1 | mode: :no_notification_events})
+
+    assert %Target.EffectResult{
+             status: :applied,
+             details: %{"events" => [], "received" => 0, "completion" => "window"}
+           } =
+             run_subscription!(context, subscription)
+
+    Agent.update(context.agent, &%{&1 | mode: :truncated_notification})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"received" => 0}} =
+             run_subscription!(context, subscription)
+
+    Agent.update(context.agent, &%{&1 | mode: :slow_subscription_ack})
+
+    assert %Target.EffectResult{status: :unknown} =
+             run_subscription!(context, subscription, %{"wait_ms" => 350})
+
+    before_unsupported = length(rpcs(context))
+    Agent.update(context.agent, &%{&1 | mode: :no_notification_capability})
+
+    assert {:error, _error} =
+             subscription
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> then(
+               &Targets.dispatch_target_effect(&1, %{},
+                 actor: context.operator,
+                 authorize?: false
+               )
+             )
+
+    assert length(rpcs(context)) == before_unsupported
+
+    Agent.update(context.agent, &%{&1 | mode: :malformed_notification})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"received" => 0}} =
+             run_subscription!(context, subscription)
+
+    Agent.update(context.agent, &%{&1 | mode: :malformed_notification_time})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"received" => 0}} =
+             run_subscription!(context, subscription)
+
+    Agent.update(context.agent, &%{&1 | mode: :drop_after_first_notification})
+
+    assert %Target.EffectResult{status: :unknown, details: %{"received" => 1}} =
+             run_subscription!(context, subscription)
+
+    sent_before_cancel = Agent.get(context.agent, & &1.notifications_sent)
+    rpc_before_cancel = length(rpcs(context))
+    Agent.update(context.agent, &%{&1 | mode: :hold_after_first_notification})
+
+    assert %Target.EffectResult{status: :unknown} =
+             run_subscription!(
+               context,
+               subscription,
+               %{},
+               %{
+                 cancelled?: fn ->
+                   Agent.get(context.agent, &(&1.notifications_sent > sent_before_cancel))
+                 end
+               }
+             )
+
+    assert length(rpcs(context)) == rpc_before_cancel + 1
+
+    Agent.update(context.agent, &%{&1 | mode: :normal})
+
     Agent.update(context.agent, &%{&1 | mode: :rpc_error})
 
     assert %Target.EffectResult{status: :partial, details: %{"completed" => 1}} =
@@ -690,6 +843,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     %{
       rpcs: [],
       sessions: [],
+      notifications_sent: 0,
       mode: :normal,
       delay_edit_ms: 0,
       edit_received?: false,
@@ -746,6 +900,17 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
       idempotency_key: if(kind == :effect, do: Ecto.UUID.generate()),
       expected: expected
     )
+  end
+
+  defp run_subscription!(context, subscription, parameters \\ %{}, invocation \\ %{}) do
+    %{
+      subscription
+      | parameters: Map.merge(subscription.parameters, parameters),
+        operation_id: Ecto.UUID.generate(),
+        idempotency_key: Ecto.UUID.generate()
+    }
+    |> Targets.clear_target_request!(actor: context.operator)
+    |> Targets.dispatch_target_effect!(invocation, actor: context.operator, authorize?: false)
   end
 
   defp configuration(context), do: configuration_for(context.endpoint, context.fingerprint)

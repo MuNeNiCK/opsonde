@@ -148,7 +148,11 @@ defmodule Opsonde.Transports.SSH do
 
   def channel_receive(%Channel{} = channel, buffer, complete?)
       when is_binary(buffer) and is_function(complete?, 1),
-      do: receive_channel(channel, buffer, complete?)
+      do: receive_channel(channel, buffer, complete?, false)
+
+  def channel_receive(%Channel{} = channel, buffer, complete?, :reject_partial_timeout)
+      when is_binary(buffer) and is_function(complete?, 1),
+      do: receive_channel(channel, buffer, complete?, true)
 
   defp run(config, endpoint, cancelled?, operation) when is_function(cancelled?, 0) do
     with {:ok, host, port, fingerprint} <- endpoint(config, endpoint),
@@ -318,7 +322,7 @@ defmodule Opsonde.Transports.SSH do
     end
   end
 
-  defp receive_channel(channel, buffer, complete?) do
+  defp receive_channel(channel, buffer, complete?, reject_partial_timeout?) do
     case complete?.(buffer) do
       {:ok, value, rest} ->
         {:ok, value, rest}
@@ -333,7 +337,7 @@ defmodule Opsonde.Transports.SSH do
               :ssh_connection.close(channel.connection, channel.id)
               {:error, :output_limit_after_dispatch, "SSH subsystem output exceeded its limit"}
             else
-              receive_channel(channel, buffer <> data, complete?)
+              receive_channel(channel, buffer <> data, complete?, reject_partial_timeout?)
             end
 
           {:ssh_cm, connection, {:eof, id}}
@@ -344,7 +348,12 @@ defmodule Opsonde.Transports.SSH do
           when connection == channel.connection and id == channel.id ->
             {:error, :disconnected_after_dispatch, "SSH subsystem closed before its reply"}
         after
-          timeout -> {:error, :timeout_after_dispatch, "SSH subsystem timed out"}
+          timeout ->
+            if reject_partial_timeout? and buffer != <<>> do
+              {:error, :unknown_after_dispatch, "SSH subsystem message incomplete at timeout"}
+            else
+              {:error, :timeout_after_dispatch, "SSH subsystem timed out"}
+            end
         end
 
       {:error, _category, _message} = error ->
