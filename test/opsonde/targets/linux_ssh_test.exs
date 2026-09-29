@@ -327,6 +327,28 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert commands(context) == []
   end
 
+  test "unlisted shell command is an effect and cannot borrow another Target's Method", context do
+    request =
+      target_request(
+        context,
+        :effect,
+        "request.ssh.effect",
+        "command.execute",
+        %{},
+        %{"command" => "service nginx status"}
+      )
+
+    assert %Opsonde.Targets.TargetRequest.Clearance{kind: :effect} =
+             Targets.clear_target_request!(request, actor: context.operator)
+
+    other = Targets.create_target!("other-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    borrowed = %{request | target_id: other.id, target_revision: other.revision}
+
+    assert {:error, _error} = Targets.clear_target_request(borrowed, actor: context.operator)
+    assert commands(context) == []
+  end
+
   test "arbitrary Method effect remains unchanged when privilege is none", context do
     configuration = Map.put(configuration(context), "privilege", "none")
     assert {:ok, state} = LinuxSSH.build(configuration, credentials())
