@@ -3,7 +3,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
   alias Opsonde.{Accounts, Cases, Providers, Signals, Targets}
   alias Opsonde.Cases.Turn.ResolverProjection, as: ResolverProjection
-  alias Opsonde.Providers.{AI, Signal, Target}
+  alias Opsonde.Providers.{AI, Signal}
 
   @password "correct horse battery staple"
 
@@ -518,11 +518,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
   end
 
   defp projection(turn, _context) do
-    ResolverProjection.build(turn.id, selection(), %{
-      test_pid: self(),
-      respond: fn -> {:ok, capabilities()} end,
-      cancelled?: fn -> false end
-    })
+    ResolverProjection.build(turn.id, selection())
   end
 
   defp adjacent_target_ids(request, current_target_id) do
@@ -585,25 +581,6 @@ defmodule Opsonde.RelatedTargetRouteTest do
       provider_id: Ecto.UUID.generate(),
       provider_revision: 1,
       source: :assignment
-    }
-  end
-
-  defp capabilities do
-    %Target.Capabilities{
-      observations: [
-        %Target.Operation{
-          capability: "observe.system",
-          operation: "system.inspect",
-          description: "Inspect system state",
-          input_schema: %{"type" => "object"},
-          output_schema: %{
-            "type" => "object",
-            "properties" => %{"status" => %{"type" => "string"}},
-            "additionalProperties" => false
-          }
-        }
-      ],
-      effects: []
     }
   end
 

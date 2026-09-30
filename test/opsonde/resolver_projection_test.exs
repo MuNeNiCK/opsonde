@@ -88,9 +88,10 @@ defmodule Opsonde.ResolverProjectionTest do
     {incident, run} = open!("operator-instructions", context.operator, target)
     started = start!(incident, run, "operator-instructions-turn")
     capabilities = %Target.Capabilities{observations: [], effects: []}
+    checked_catalog!(context, capabilities)
 
     assert {:ok, request} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert request.operating_instructions == "Do not modify root"
     assert request.selected_target_revision == target.revision
@@ -149,12 +150,10 @@ defmodule Opsonde.ResolverProjectionTest do
       ]
     }
 
+    context = checked_catalog!(context, capabilities)
+
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(capabilities)
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     assert request.case_id == incident.id
     assert request.turn == 1
@@ -197,7 +196,6 @@ defmodule Opsonde.ResolverProjectionTest do
     refute encoded =~ @provider_secret
     refute encoded =~ "endpoint-secret"
 
-    assert_receive {:capabilities, %{token: @provider_secret}}
     refute_receive {:observe, _, _}
     refute_receive {:effect, _, _}
     refute_receive {:resolve, _, _}
@@ -223,9 +221,10 @@ defmodule Opsonde.ResolverProjectionTest do
     {incident, run} = open!("related-unavailable", context.operator, context.target)
     started = start!(incident, run, "related-unavailable-turn")
     capabilities = %Target.Capabilities{observations: [], effects: []}
+    context = checked_catalog!(context, capabilities)
 
     assert {:ok, unavailable} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: id}] = unavailable.target_relations
     assert id == relation.id
@@ -245,7 +244,7 @@ defmodule Opsonde.ResolverProjectionTest do
     |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     assert {:ok, available} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: ^id}] = available.target_relations
     assert available.traversable_relation_ids == [id]
@@ -279,9 +278,10 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, run, "relation-after-traversal-turn")
     capabilities = %Target.Capabilities{observations: [], effects: []}
+    checked_catalog!(context, capabilities)
 
     assert {:ok, request} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: id, revision: revision}] = request.target_relations
     assert id == relation.id
@@ -323,9 +323,10 @@ defmodule Opsonde.ResolverProjectionTest do
     }
 
     capabilities = %Target.Capabilities{observations: [observation], effects: [effect]}
+    context = checked_catalog!(context, capabilities)
 
     assert {:ok, before_observation} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.ObservationTool{id: observation_tool_id}] =
              before_observation.observation_tools
@@ -354,7 +355,7 @@ defmodule Opsonde.ResolverProjectionTest do
       )
 
     assert {:ok, after_observation} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     assert [_observation_request, %AI.ProposalTool{} = proposal] =
              after_observation.proposal_tools
@@ -382,7 +383,7 @@ defmodule Opsonde.ResolverProjectionTest do
     )
 
     assert {:ok, after_verification} =
-             ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
+             ResolverProjection.build(started.value.id, selection())
 
     refute Enum.any?(after_verification.proposal_tools, &(&1.operation == "service.restart"))
   end
@@ -405,17 +406,13 @@ defmodule Opsonde.ResolverProjectionTest do
     started = start!(incident, searched.run, "preselection-turn")
 
     assert {:ok, request} =
-             ResolverProjection.build(started.value.id, selection(), %{
-               test_pid: self(),
-               respond: fn -> flunk("preselection reached a Target provider") end
-             })
+             ResolverProjection.build(started.value.id, selection())
 
     assert is_nil(request.selected_target_id)
     assert request.observation_tools == []
     assert request.proposal_tools == []
     assert [%AI.TargetCandidate{id: target_id}] = request.target_candidates
     assert target_id == context.target.id
-    refute_receive {:capabilities, _}
   end
 
   test "projection enforces the AI contract byte and item ceilings", context do
@@ -443,11 +440,7 @@ defmodule Opsonde.ResolverProjectionTest do
     started = start!(incident, run, "bounded-turn")
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(%Target.Capabilities{observations: [], effects: []})
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     limits = AI.resolver_disclosure_limits()
     assert length(AI.resolver_disclosure_items(request)) <= limits.max_items
@@ -545,11 +538,7 @@ defmodule Opsonde.ResolverProjectionTest do
     started = start!(incident, run, "compact-evidence-turn")
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(%Target.Capabilities{observations: [], effects: []})
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     projected_applied = Enum.find(request.evidence, &(&1.id == applied.id))
     assert projected_applied.content["facts"] == %{"active_state" => "inactive"}
@@ -591,11 +580,7 @@ defmodule Opsonde.ResolverProjectionTest do
       )
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(%Target.Capabilities{observations: [], effects: []})
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     assert request.retry_context == %{
              "category" => "invalid_output",
@@ -696,11 +681,7 @@ defmodule Opsonde.ResolverProjectionTest do
     started = start!(incident, searched.run, "multi-source-turn")
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(%Target.Capabilities{observations: [], effects: []})
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     signal_evidence = Enum.filter(request.evidence, &(&1.kind == "signal_event"))
 
@@ -755,11 +736,7 @@ defmodule Opsonde.ResolverProjectionTest do
     started = start!(incident, run, "repeated-observation-turn")
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               started.value.id,
-               selection(),
-               invocation(%Target.Capabilities{observations: [], effects: []})
-             )
+             ResolverProjection.build(started.value.id, selection())
 
     evidence_ids = Enum.map(request.evidence, & &1.id)
     assert newest.id in evidence_ids
@@ -776,7 +753,7 @@ defmodule Opsonde.ResolverProjectionTest do
     )
 
     assert {:ok, method_request} =
-             ResolverProjection.build(method_turn.value.id, selection(), unreachable_invocation())
+             ResolverProjection.build(method_turn.value.id, selection())
 
     assert method_request.observation_tools == []
     assert method_request.proposal_tools == []
@@ -802,15 +779,10 @@ defmodule Opsonde.ResolverProjectionTest do
     Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
 
     assert {:ok, provider_request} =
-             ResolverProjection.build(
-               provider_turn.value.id,
-               selection(),
-               unreachable_invocation()
-             )
+             ResolverProjection.build(provider_turn.value.id, selection())
 
     assert provider_request.observation_tools == []
     assert provider_request.proposal_tools == []
-    refute_receive {:capabilities, _}
   end
 
   test "cancelled Cases and stale selected Targets stop before capability probing", context do
@@ -819,7 +791,7 @@ defmodule Opsonde.ResolverProjectionTest do
     Cases.request_case_cancellation!(incident.id, incident.revision, actor: context.operator)
 
     assert {:error, "Case cancellation was requested"} =
-             ResolverProjection.build(started.value.id, selection(), unreachable_invocation())
+             ResolverProjection.build(started.value.id, selection())
 
     {stale_case, stale_run} = open!("stale", context.operator, context.target)
     stale_turn = start!(stale_case, stale_run, "stale-turn")
@@ -832,9 +804,7 @@ defmodule Opsonde.ResolverProjectionTest do
     )
 
     assert {:error, "Selected Target revision changed"} =
-             ResolverProjection.build(stale_turn.value.id, selection(), unreachable_invocation())
-
-    refute_receive {:capabilities, _}
+             ResolverProjection.build(stale_turn.value.id, selection())
   end
 
   defp open!(source_ref, actor, target \\ nil) do
@@ -934,18 +904,17 @@ defmodule Opsonde.ResolverProjectionTest do
     Signals.ingest_signal!(provider.id, provider.revision, envelope, invocation)
   end
 
-  defp invocation(capabilities) do
-    %{
-      test_pid: self(),
-      respond: fn -> {:ok, capabilities} end,
-      cancelled?: fn -> false end
-    }
-  end
+  defp checked_catalog!(context, capabilities) do
+    current = Targets.get_access_method!(context.method.id, actor: context.admin)
 
-  defp unreachable_invocation do
-    %{
-      test_pid: self(),
-      respond: fn -> flunk("ineligible projection reached a Target provider") end
-    }
+    method =
+      Targets.check_access_method!(
+        current.id,
+        current.revision,
+        %{respond: fn -> {:ok, capabilities} end},
+        actor: context.admin
+      )
+
+    %{context | method: method}
   end
 end

@@ -650,13 +650,12 @@ defmodule Opsonde.ResolverDeliveryTest do
   end
 
   test "accepted observation and Proposal retain exact offered tool snapshots", context do
-    {target, method, capabilities} = target_context!(context.admin)
+    {target, method} = target_context!(context.admin)
 
     observation_turn = selected_turn!("observation-snapshot", context.operator, target)
 
     assert :ok =
              ResolverDelivery.run(observation_turn.id,
-               target_invocation: target_invocation(capabilities),
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
@@ -731,7 +730,6 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert :ok =
              ResolverDelivery.run(proposal_turn.id,
-               target_invocation: target_invocation(capabilities),
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
@@ -801,7 +799,7 @@ defmodule Opsonde.ResolverDeliveryTest do
   end
 
   test "accepted relationship snapshot reaches the durable related Target route", context do
-    {linux, linux_method, capabilities} = target_context!(context.admin)
+    {linux, linux_method} = target_context!(context.admin)
 
     vm =
       Targets.create_target!(
@@ -863,7 +861,6 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert :ok =
              ResolverDelivery.run(turn.id,
-               target_invocation: target_invocation(capabilities),
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
@@ -1036,15 +1033,15 @@ defmodule Opsonde.ResolverDeliveryTest do
       ]
     }
 
-    {target, method, capabilities}
-  end
+    method =
+      Targets.check_access_method!(
+        method.id,
+        method.revision,
+        %{respond: fn -> {:ok, capabilities} end},
+        actor: admin
+      )
 
-  defp target_invocation(capabilities) do
-    %{
-      test_pid: self(),
-      respond: fn -> {:ok, capabilities} end,
-      cancelled?: fn -> false end
-    }
+    {target, method}
   end
 
   defp invalid_output(

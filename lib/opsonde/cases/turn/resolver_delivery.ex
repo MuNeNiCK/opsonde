@@ -34,8 +34,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp deliver(turn, opts) do
     with {:ok, selection} <- assigned_selection(turn),
          {:ok, selection} <- current_selection(selection),
-         target_invocation <- invocation(turn.case_id, Keyword.get(opts, :target_invocation, %{})),
-         {:ok, request} <- ResolverProjection.build(turn.id, selection, target_invocation) do
+         {:ok, request} <- ResolverProjection.build(turn.id, selection) do
       resolve(turn, selection, request, opts)
     else
       {:error, error} -> handle_failure(turn, error)
@@ -234,14 +233,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
       {:error, %AI.Error{} = error} -> {:error, error}
       {:error, _error} -> {:error, ai_error(:unavailable, "Resolver AI is unavailable")}
     end
-  end
-
-  defp invocation(case_id, supplied) do
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
-    Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or case_cancelled?(case_id)
-    end)
   end
 
   defp resolver_invocation(request, supplied) do

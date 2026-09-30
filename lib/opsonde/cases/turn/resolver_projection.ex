@@ -7,15 +7,12 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.Turn.TraversalBoundary, as: TraversalBoundary
   alias Opsonde.Providers.AI
-  alias Opsonde.Targets.OperationCatalog
 
   @diagnostic_text_limit 2_000
 
-  @spec build(String.t(), AI.Selection.t(), map()) ::
+  @spec build(String.t(), AI.Selection.t()) ::
           {:ok, AI.ResolverRequest.t()} | {:error, term()}
-  def build(turn_id, selection, invocation \\ %{})
-
-  def build(turn_id, %AI.Selection{role: :resolver} = selection, invocation) do
+  def build(turn_id, %AI.Selection{role: :resolver} = selection) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
          {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
@@ -35,7 +32,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, recent_recovery_review} <- recent_recovery_review(incident),
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
-         {:ok, tools} <- tools(target, run, invocation, incident, conditions, continuity),
+         {:ok, tools} <- tools(target, run, incident, conditions, continuity),
          request <-
            request(
              selection,
@@ -57,7 +54,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     end
   end
 
-  def build(_turn_id, _selection, _invocation),
+  def build(_turn_id, _selection),
     do: {:error, "Resolver AI selection is invalid"}
 
   defp current_recovery_evidence(_incident, []), do: {:ok, []}
@@ -292,10 +289,10 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     }
   end
 
-  defp tools(nil, _run, _invocation, _incident, _conditions, _evidence),
+  defp tools(nil, _run, _incident, _conditions, _evidence),
     do: {:ok, {[], []}}
 
-  defp tools(target, run, invocation, incident, conditions, evidence) do
+  defp tools(target, run, incident, conditions, evidence) do
     if remaining(run.max_target_requests, run.target_request_count) == 0 and
          remaining(run.max_effects, run.effect_count) == 0 do
       {:ok, {[], []}}
@@ -303,9 +300,8 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       with {:ok, methods} <-
              Targets.available_access_methods_for_target(target.id, authorize?: false),
            {:ok, methods} <-
-             available_methods(methods, incident, run, target, conditions, evidence),
-           {:ok, capabilities} <- OperationCatalog.for_methods(methods, invocation) do
-        {:ok, build_tools(target, run, methods, capabilities)}
+             available_methods(methods, incident, run, target, conditions, evidence) do
+        {:ok, build_tools(target, run, methods)}
       end
     end
   end
@@ -378,12 +374,12 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     |> Enum.max(DateTime, fn -> nil end)
   end
 
-  defp build_tools(target, run, methods, capabilities) do
+  defp build_tools(target, run, methods) do
     observation? = remaining(run.max_target_requests, run.target_request_count) > 0
     proposal? = remaining(run.max_effects, run.effect_count) > 0
 
     Enum.reduce(methods, {[], []}, fn method, {observations, proposals} ->
-      vocabulary = Map.fetch!(capabilities, method.id)
+      vocabulary = method.operation_catalog
 
       method_observations =
         if observation?,

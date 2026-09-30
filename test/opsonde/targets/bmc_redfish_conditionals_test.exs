@@ -707,7 +707,8 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.writes) == 0
   end
 
-  test "capability discovery is distinct for Methods sharing one Redfish Provider", context do
+  test "Case projection reads each checked Method catalog without contacting either endpoint",
+       context do
     second_agent =
       start_supervised!(%{
         id: :second_redfish_state,
@@ -754,18 +755,67 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
       |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
-    assert {:ok, catalog} =
-             Opsonde.Targets.OperationCatalog.for_methods([context.method, second], %{})
+    Agent.update(context.agent, &Map.put(&1, :paths, []))
+    Agent.update(second_agent, &Map.put(&1, :paths, []))
 
-    assert Enum.any?(catalog[context.method.id].observations, &(&1.capability == "observe.power"))
+    incident =
+      Opsonde.Cases.open_case!(
+        :manual,
+        "test",
+        "checked-method-projection",
+        "Investigate controller reachability",
+        :warning,
+        %{"observed_problem" => "controller alert", "desired_outcome" => "controller healthy"},
+        context.target.id,
+        :en,
+        actor: context.admin
+      )
 
-    assert Enum.map(catalog[second.id].observations, & &1.capability) == [
-             "request.redfish.observe"
-           ]
+    run = Opsonde.Cases.active_resolution_run!(incident.id, authorize?: false)
 
-    assert Enum.map(catalog[second.id].effects, & &1.capability) == ["request.redfish.effect"]
+    turn =
+      Opsonde.Cases.start_turn!(
+        incident.id,
+        run.id,
+        "checked-method-projection",
+        %{"objective" => "Investigate the controller"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      )
+
+    selection = %Opsonde.Providers.AI.Selection{
+      role: :resolver,
+      provider_id: Ecto.UUID.generate(),
+      provider_revision: 1,
+      source: :assignment
+    }
+
+    assert {:ok, projection} =
+             Opsonde.Cases.Turn.ResolverProjection.build(turn.value.id, selection)
+
+    assert Enum.any?(
+             projection.observation_tools,
+             &(&1.access_method_id == context.method.id and &1.capability == "observe.power")
+           )
+
+    assert Enum.map(
+             Enum.filter(projection.observation_tools, &(&1.access_method_id == second.id)),
+             & &1.capability
+           ) == ["request.redfish.observe"]
+
+    assert Enum.map(
+             Enum.filter(
+               projection.proposal_tools,
+               &(&1.access_method_id == second.id and &1.request_kind == :effect)
+             ),
+             & &1.capability
+           ) == ["request.redfish.effect"]
+
     assert Agent.get(context.agent, & &1.writes) == 0
     assert Agent.get(second_agent, & &1.writes) == 0
+    assert Agent.get(context.agent, & &1.paths) == []
+    assert Agent.get(second_agent, & &1.paths) == []
   end
 
   defp redfish_state(endpoint) do

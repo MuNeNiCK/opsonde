@@ -299,6 +299,7 @@ defmodule Opsonde.Targets.AccessMethod do
                   active == true and target.active == true and provider.kind == :target and
                     provider.enabled == true and provider_revision == provider.revision and
                     is_nil(provider.retired_at) and check_status == :passed and
+                    not is_nil(operation_catalog) and
                     checked_connection_revision == connection_revision and
                     checked_target_revision == target.revision,
                   do: true,

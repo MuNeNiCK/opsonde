@@ -680,18 +680,12 @@ defmodule Opsonde.OperationDeliveryTest do
     next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               next_turn.id,
-               %AI.Selection{
-                 role: :resolver,
-                 provider_id: context.resolver_provider.id,
-                 provider_revision: context.resolver_provider.revision,
-                 source: :assignment
-               },
-               invocation(fn ->
-                 flunk("unrelated Target outcome reopened the failed Access Method")
-               end)
-             )
+             ResolverProjection.build(next_turn.id, %AI.Selection{
+               role: :resolver,
+               provider_id: context.resolver_provider.id,
+               provider_revision: context.resolver_provider.revision,
+               source: :assignment
+             })
 
     assert request.observation_tools == []
     assert request.proposal_tools == []
@@ -2222,11 +2216,7 @@ defmodule Opsonde.OperationDeliveryTest do
     pre_effect_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
     assert {:ok, suppressed} =
-             ResolverProjection.build(
-               pre_effect_turn.id,
-               selection,
-               invocation(fn -> flunk("twice-failed method was queried before effect") end)
-             )
+             ResolverProjection.build(pre_effect_turn.id, selection)
 
     assert suppressed.observation_tools == []
 
@@ -2255,11 +2245,7 @@ defmodule Opsonde.OperationDeliveryTest do
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               turn.id,
-               selection,
-               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
-             )
+             ResolverProjection.build(turn.id, selection)
 
     assert [%AI.Condition{failed_observation_ids: [^failed_id]}] = request.conditions
     assert request.recovery_evidence_ids == []
@@ -2379,20 +2365,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
 
-    capability = %Target.Operation{
-      capability: "observe.service",
-      operation: "linux.service.inspect",
-      description: "Inspect one service",
-      input_schema: %{"type" => "object"},
-      output_schema: %{"type" => "object"}
-    }
-
     assert {:ok, refreshed} =
-             ResolverProjection.build(
-               turn.id,
-               selection,
-               invocation({:ok, %Target.Capabilities{observations: [capability], effects: []}})
-             )
+             ResolverProjection.build(turn.id, selection)
 
     assert Enum.any?(refreshed.observation_tools, &(&1.access_method_id == context.method.id))
   end
@@ -3211,16 +3185,12 @@ defmodule Opsonde.OperationDeliveryTest do
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
     assert {:ok, request} =
-             ResolverProjection.build(
-               resumed_turn.id,
-               %AI.Selection{
-                 role: :resolver,
-                 provider_id: context.resolver_provider.id,
-                 provider_revision: context.resolver_provider.revision,
-                 source: :assignment
-               },
-               invocation({:ok, %Target.Capabilities{observations: [], effects: []}})
-             )
+             ResolverProjection.build(resumed_turn.id, %AI.Selection{
+               role: :resolver,
+               provider_id: context.resolver_provider.id,
+               provider_revision: context.resolver_provider.revision,
+               source: :assignment
+             })
 
     assert get_in(Jason.decode!(request.objective), [
              "last_rejected_recovery_review",
@@ -3593,17 +3563,22 @@ defmodule Opsonde.OperationDeliveryTest do
       effects: []
     }
 
+    current_method = Targets.get_access_method!(context.method.id, actor: context.admin)
+
+    Targets.check_access_method!(
+      current_method.id,
+      current_method.revision,
+      %{respond: fn -> {:ok, capabilities} end},
+      actor: context.admin
+    )
+
     assert {:ok, request} =
-             ResolverProjection.build(
-               resumed_turn.id,
-               %AI.Selection{
-                 role: :resolver,
-                 provider_id: context.resolver_provider.id,
-                 provider_revision: context.resolver_provider.revision,
-                 source: :assignment
-               },
-               invocation({:ok, capabilities})
-             )
+             ResolverProjection.build(resumed_turn.id, %AI.Selection{
+               role: :resolver,
+               provider_id: context.resolver_provider.id,
+               provider_revision: context.resolver_provider.revision,
+               source: :assignment
+             })
 
     assert request.alert_state == :firing
 
