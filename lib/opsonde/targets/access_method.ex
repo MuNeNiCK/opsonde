@@ -26,13 +26,7 @@ defmodule Opsonde.Targets.AccessMethod do
     read :available_for_target do
       argument :target_id, :uuid, allow_nil?: false
 
-      filter expr(
-               target_id == ^arg(:target_id) and active == true and target.active == true and
-                 provider.kind == :target and provider.enabled == true and
-                 provider.check_status == :passed and
-                 provider.checked_revision == provider.revision and
-                 provider_revision == provider.revision
-             )
+      filter expr(target_id == ^arg(:target_id) and check_current == true)
 
       prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc], limit: 100)
     end
@@ -45,11 +39,9 @@ defmodule Opsonde.Targets.AccessMethod do
         constraints: [min_length: 1, max_length: 120]
 
       filter expr(
-               target_id == ^arg(:target_id) and active == true and target.active == true and
-                 provider.kind == :target and provider.enabled == true and
-                 provider.check_status == :passed and
-                 provider.checked_revision == provider.revision and
-                 provider_revision == provider.revision and has(capabilities, ^arg(:capability))
+               target_id == ^arg(:target_id) and check_current == true and
+                 has(capabilities, ^arg(:capability)) and
+                 has(observed_capabilities, ^arg(:capability))
              )
 
       prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc])
@@ -66,11 +58,9 @@ defmodule Opsonde.Targets.AccessMethod do
         constraints: [min_length: 1, max_length: 120]
 
       filter expr(
-               id == ^arg(:id) and revision == ^arg(:expected_revision) and active == true and
-                 target.active == true and provider.kind == :target and provider.enabled == true and
-                 provider.check_status == :passed and
-                 provider.checked_revision == provider.revision and
-                 provider_revision == provider.revision and has(capabilities, ^arg(:capability))
+               id == ^arg(:id) and revision == ^arg(:expected_revision) and check_current == true and
+                 has(capabilities, ^arg(:capability)) and
+                 has(observed_capabilities, ^arg(:capability))
              )
     end
 
@@ -310,7 +300,10 @@ defmodule Opsonde.Targets.AccessMethod do
                     provider.enabled == true and provider_revision == provider.revision and
                     is_nil(provider.retired_at) and check_status == :passed and
                     checked_connection_revision == connection_revision and
-                    checked_target_revision == target.revision, do: true, else: false)
+                    checked_target_revision == target.revision,
+                  do: true,
+                  else: false
+                )
               ) do
       public? true
     end

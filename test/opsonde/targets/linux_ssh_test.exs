@@ -72,11 +72,6 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         credentials(),
         actor: admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     target = Targets.create_target!("linux-01", "host", "linux", %{}, nil, actor: admin)
@@ -93,6 +88,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         @capabilities,
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     Agent.update(context.commands, fn _commands -> [] end)
 

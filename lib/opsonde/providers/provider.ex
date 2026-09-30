@@ -63,8 +63,7 @@ defmodule Opsonde.Providers.Provider do
                  kind == ^arg(:expected_kind) and
                  enabled == true and
                  is_nil(retired_at) and
-                 check_status == :passed and
-                 checked_revision == revision
+                 (kind == :target or (check_status == :passed and checked_revision == revision))
              )
 
       prepare build(load: [:credentials])
@@ -336,6 +335,7 @@ defmodule Opsonde.Providers.Provider do
       argument :check_message, :string
 
       validate Opsonde.Validations.CurrentRevision
+      validate attribute_does_not_equal(:kind, :target)
       validate compare(:retired_at, is_nil: true)
       change set_attribute(:checked_revision, arg(:expected_revision))
       change set_attribute(:check_status, arg(:check_status))
@@ -356,11 +356,17 @@ defmodule Opsonde.Providers.Provider do
         allow_nil?: false,
         constraints: [min: 1]
 
-      validate attribute_equals(:check_status, :passed),
-        message: "has not passed its current check"
+      validate attribute_equals(:check_status, :passed) do
+        message "has not passed its current check"
+        where attribute_does_not_equal(:kind, :target)
+      end
 
-      validate compare(:checked_revision, is_equal: {:ref, :revision}),
-        message: "does not have a current check"
+      validate compare(:checked_revision, is_equal: {:ref, :revision}) do
+        message "does not have a current check"
+        where attribute_does_not_equal(:kind, :target)
+      end
+
+      validate Opsonde.Providers.Provider.Validations.TargetConfiguration
 
       validate Opsonde.Validations.CurrentRevision
       validate compare(:retired_at, is_nil: true)

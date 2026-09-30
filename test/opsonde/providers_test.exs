@@ -20,11 +20,53 @@ defmodule Opsonde.ProvidersTest do
     %{admin: admin, operator: operator, viewer: viewer}
   end
 
+  test "Target credentials enable after pure validation and remote checks belong to Methods",
+       context do
+    provider =
+      Providers.create_provider!(
+        "HTTP credentials",
+        :target,
+        "http-api",
+        %{},
+        %{"bearer_token" => @token},
+        actor: context.admin
+      )
+
+    enabled = Providers.enable_provider!(provider, provider.revision, actor: context.admin)
+    assert enabled.enabled
+    assert is_nil(enabled.check_status)
+
+    assert Providers.load_provider_for_invocation!(enabled.id, enabled.revision, :target,
+             authorize?: false
+           ).credentials == %{"bearer_token" => @token}
+
+    assert {:error, _} =
+             Providers.check_provider(
+               enabled.id,
+               enabled.revision,
+               %{"endpoint" => "http://192.0.2.1"},
+               actor: context.admin
+             )
+
+    invalid =
+      Providers.create_provider!(
+        "invalid HTTP configuration",
+        :target,
+        "http-api",
+        %{"timeout_ms" => -1},
+        %{},
+        actor: context.admin
+      )
+
+    assert {:error, _} =
+             Providers.enable_provider(invalid, invalid.revision, actor: context.admin)
+  end
+
   test "Ash interface stores only ciphertext and enforces lifecycle policy", context do
     provider = create_provider!(context.admin, "reachable")
 
     assert provider.revision == 1
-    assert provider.kind == :target
+    assert provider.kind == :inventory
     refute provider.enabled
     assert %Ash.NotLoaded{} = provider.credentials
     assert is_binary(provider.encrypted_credentials)
@@ -47,9 +89,9 @@ defmodule Opsonde.ProvidersTest do
     assert {:error, %Ash.Error.Forbidden{}} =
              Providers.create_provider(
                "forbidden",
-               :target,
-               "fixture-target",
-               %{"endpoint" => "reachable"},
+               :inventory,
+               "fixture-inventory",
+               %{"source" => "reachable"},
                %{"token" => @token},
                actor: context.operator
              )
@@ -57,9 +99,9 @@ defmodule Opsonde.ProvidersTest do
     assert {:error, error} =
              Providers.create_provider(
                "wrong-kind",
-               :inventory,
-               "fixture-target",
-               %{"endpoint" => "reachable"},
+               :target,
+               "fixture-inventory",
+               %{"source" => "reachable"},
                %{"token" => @token},
                actor: context.admin
              )
@@ -99,7 +141,7 @@ defmodule Opsonde.ProvidersTest do
       Providers.update_provider!(
         failed_recheck,
         1,
-        %{name: "renamed", configuration: %{"endpoint" => "reachable"}},
+        %{name: "renamed", configuration: %{"source" => "reachable"}},
         actor: context.admin
       )
 
@@ -128,8 +170,8 @@ defmodule Opsonde.ProvidersTest do
     invalid_configuration =
       Providers.create_provider!(
         "invalid-configuration",
-        :target,
-        "fixture-target",
+        :inventory,
+        "fixture-inventory",
         %{},
         %{"token" => @token},
         actor: context.admin
@@ -165,7 +207,7 @@ defmodule Opsonde.ProvidersTest do
       Providers.update_provider!(
         provider,
         1,
-        %{configuration: %{"endpoint" => "reachable"}},
+        %{configuration: %{"source" => "reachable"}},
         actor: context.admin
       )
 
@@ -189,14 +231,14 @@ defmodule Opsonde.ProvidersTest do
     assert is_nil(current.checked_revision)
   end
 
-  test "all provider kinds share one Ash invocation gate", context do
+  test "Inventory invocation requires its current Provider check", context do
     provider = create_provider!(context.admin, "reachable")
 
     assert {:error, _error} =
              Providers.load_provider_for_invocation(
                provider.id,
                1,
-               :target,
+               :inventory,
                authorize?: false
              )
 
@@ -207,14 +249,14 @@ defmodule Opsonde.ProvidersTest do
       Providers.load_provider_for_invocation!(
         enabled.id,
         1,
-        :target,
+        :inventory,
         authorize?: false
       )
 
     assert eligible.id == enabled.id
     assert eligible.credentials == %{"token" => @token}
 
-    for {revision, kind} <- [{2, :target}, {1, :inventory}] do
+    for {revision, kind} <- [{2, :inventory}, {1, :target}] do
       assert {:error, _error} =
                Providers.load_provider_for_invocation(
                  enabled.id,
@@ -228,7 +270,7 @@ defmodule Opsonde.ProvidersTest do
              Providers.load_provider_for_invocation(
                enabled.id,
                1,
-               :target,
+               :inventory,
                actor: context.admin
              )
 
@@ -238,7 +280,7 @@ defmodule Opsonde.ProvidersTest do
              Providers.load_provider_for_invocation(
                disabled.id,
                1,
-               :target,
+               :inventory,
                authorize?: false
              )
   end
@@ -246,9 +288,9 @@ defmodule Opsonde.ProvidersTest do
   defp create_provider!(admin, endpoint, name \\ "primary") do
     Providers.create_provider!(
       name,
-      :target,
-      "fixture-target",
-      %{"endpoint" => endpoint},
+      :inventory,
+      "fixture-inventory",
+      %{"source" => endpoint},
       %{"token" => @token},
       actor: admin
     )

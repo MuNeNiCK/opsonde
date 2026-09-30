@@ -154,10 +154,23 @@ defmodule Opsonde.TargetRequestTest do
 
     assert request_error(target_error).category == :stale_context
 
-    current_request = %{base | target_revision: context.linux.revision + 1}
+    rechecked =
+      Targets.check_access_method!(context.ssh.id, context.ssh.revision, %{},
+        actor: context.admin
+      )
+
+    current_request = %{
+      base
+      | target_revision: context.linux.revision + 1,
+        access_method_revision: rechecked.revision
+    }
+
     current_clearance = Targets.clear_target_request!(current_request, actor: context.operator)
 
-    Targets.update_access_method!(context.ssh, 1, %{priority: 10}, actor: context.admin)
+    edited =
+      Targets.update_access_method!(rechecked, rechecked.revision, %{priority: 10},
+        actor: context.admin
+      )
 
     assert {:error, method_error} =
              Targets.dispatch_target_observation(
@@ -168,7 +181,7 @@ defmodule Opsonde.TargetRequestTest do
 
     assert request_error(method_error).category == :stale_context
 
-    current_request = %{current_request | access_method_revision: 2}
+    current_request = %{current_request | access_method_revision: edited.revision}
     current_clearance = Targets.clear_target_request!(current_request, actor: context.operator)
 
     Providers.update_provider!(
@@ -272,6 +285,7 @@ defmodule Opsonde.TargetRequestTest do
       ["observe.command", "effect.command"],
       actor: admin
     )
+    |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
   end
 
   defp enabled_target_provider!(admin) do
@@ -285,8 +299,7 @@ defmodule Opsonde.TargetRequestTest do
         actor: admin
       )
 
-    checked = Providers.check_provider!(provider.id, provider.revision, %{}, actor: admin)
-    Providers.enable_provider!(checked, checked.revision, actor: admin)
+    Providers.enable_provider!(provider, provider.revision, actor: admin)
   end
 
   defp invocation(%_{} = response),

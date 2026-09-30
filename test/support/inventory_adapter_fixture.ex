@@ -16,6 +16,18 @@ defmodule Opsonde.InventoryAdapterFixture do
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
   @impl Opsonde.Providers.Adapter
+  def check(%{source: "reachable"}, %{"fail" => true}),
+    do: {:error, :unreachable, "fixture unreachable"}
+
+  def check(%{source: "echo", token: token}, _input),
+    do: {:error, :authentication, "credential #{token} was rejected"}
+
+  def check(%{source: "invalid_response"}, _input), do: :invalid
+
+  def check(%{source: category}, _input)
+      when category in ["authentication", "unreachable", "capability"],
+      do: {:error, String.to_existing_atom(category), "fixture #{category}"}
+
   def check(_state, _input), do: :ok
 
   @impl Opsonde.Providers.Inventory

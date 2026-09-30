@@ -396,11 +396,6 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         credentials(),
         actor: admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     target =
@@ -420,6 +415,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         @capabilities,
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     Map.merge(context, %{
       admin: admin,
@@ -1002,14 +998,13 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
       )
 
     failed =
-      Providers.check_provider!(
-        unreachable.id,
-        unreachable.revision,
-        %{"endpoint" => "ssh://127.0.0.1:1"},
-        actor: context.admin
+      Opsonde.TargetConnectionFixture.check_connection(
+        unreachable,
+        "ssh://127.0.0.1:1",
+        context.admin
       )
 
-    assert failed.check_status == :failed
+    assert {:error, _} = failed
   end
 
   defp initial_peer_state do
@@ -1118,11 +1113,6 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         credentials(),
         actor: context.admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: context.admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
     target =
@@ -1147,6 +1137,7 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
         ["request.netconf.observe", "request.netconf.effect"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     Map.merge(context, %{provider: provider, target: target, method: method})
   end

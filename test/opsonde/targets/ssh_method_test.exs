@@ -193,11 +193,6 @@ defmodule Opsonde.Targets.SSHMethodTest do
         password_credentials(),
         actor: admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     assert %Target.Capabilities{observations: [], effects: [tool, shell]} =
@@ -233,6 +228,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
         ["request.ssh.effect"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     for command <- ["uname -a", "systemctl restart sshd.service", "uname -a; touch /tmp/unsafe"] do
       assert {:error, denied} =

@@ -41,7 +41,6 @@ defmodule Opsonde.ResolverProjectionTest do
         %{"token" => @provider_secret},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target =
@@ -66,6 +65,7 @@ defmodule Opsonde.ResolverProjectionTest do
         ["observe.system", "effect.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{
       admin: admin,
@@ -242,6 +242,7 @@ defmodule Opsonde.ResolverProjectionTest do
       ["observe.system"],
       actor: context.admin
     )
+    |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     assert {:ok, available} =
              ResolverProjection.build(started.value.id, selection(), invocation(capabilities))
@@ -792,6 +793,7 @@ defmodule Opsonde.ResolverProjectionTest do
         ["observe.system"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     assert second_method.active
     {provider_case, provider_run} = open!("disabled-provider", context.operator, context.target)

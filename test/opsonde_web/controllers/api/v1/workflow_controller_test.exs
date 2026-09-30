@@ -1049,7 +1049,6 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         %{"token" => "provider-secret"},
         actor: context.admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
     target =
@@ -1067,6 +1066,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         ["effect.service", "observe.service"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     resolver =
       Providers.create_provider!(

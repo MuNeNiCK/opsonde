@@ -228,15 +228,13 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
 
     checked =
-      Providers.check_provider!(
-        provider.id,
-        provider.revision,
-        %{"endpoint" => context.method.endpoint},
-        actor: context.admin
+      Opsonde.TargetConnectionFixture.check_connection(
+        provider,
+        context.method.endpoint,
+        context.admin
       )
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+    assert {:ok, _catalog} = checked
 
     capabilities =
       Providers.target_capabilities!(
@@ -266,6 +264,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         Target.capability_names(capabilities),
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     read = %Request{
       kind: :observation,
@@ -393,15 +392,13 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         )
 
       checked =
-        Providers.check_provider!(
-          provider.id,
-          provider.revision,
-          %{"endpoint" => context.method.endpoint},
-          actor: context.admin
+        Opsonde.TargetConnectionFixture.check_connection(
+          provider,
+          context.method.endpoint,
+          context.admin
         )
 
-      assert checked.check_status == :passed
-      provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+      assert {:ok, _catalog} = checked
 
       capabilities =
         Providers.target_capabilities!(
@@ -755,6 +752,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         ["request.redfish.observe", "request.redfish.effect"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     assert {:ok, catalog} =
              Opsonde.Targets.OperationCatalog.for_methods([context.method, second], %{})
@@ -835,12 +833,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
-        actor: admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, endpoint, admin)
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: admin)
+    assert {:ok, _catalog} = checked
 
     method =
       Targets.create_access_method!(
@@ -854,6 +849,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         ["observe.power", "request.redfish.observe", "request.redfish.effect"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{admin: admin, operator: operator, target: target, method: method, agent: agent}
   end

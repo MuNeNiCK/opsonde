@@ -36,16 +36,10 @@ export function AccessMethodForm({
     (provider) =>
       provider.kind === "target" &&
       provider.enabled &&
-      provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision &&
       provider.access_method_profile &&
       allowedTypes.includes(provider.adapter_type),
   );
   const provider = availableProviders.find((item) => item.id === providerId);
-  const protocol = catalog.methods.find(
-    (method) => method.adapter_type === provider?.adapter_type,
-  )?.protocol;
-  const isBMC = protocol === "redfish" || protocol === "ipmi";
   const currentEndpoint = endpoint;
   const fieldId = `target-access-${method?.id ?? "new"}`;
 
@@ -57,37 +51,9 @@ export function AccessMethodForm({
     setPending(true);
     onError("");
     try {
-      const response = apiData(
-        await apiClient.POST("/api/v1/providers/{id}/target-capabilities", {
-          params: { path: { id: provider.id } },
-          body: { provider: { expected_revision: provider.revision, endpoint: currentEndpoint } },
-        }),
-      );
-      const advertisedCapabilities = Array.from(
-        new Set(
-          [...response.data.observations, ...response.data.effects].map(
-            (operation) => operation.capability,
-          ),
-        ),
-      );
-      const powerAllowed = isBMC && form.has("power");
       const capabilities = method
-        ? method.capabilities.filter(
-            (capability) =>
-              advertisedCapabilities.includes(capability) &&
-              (capability !== "effect.power" || powerAllowed),
-          )
-        : advertisedCapabilities.filter(
-            (capability) => capability !== "effect.power" || powerAllowed,
-          );
-      if (
-        method &&
-        powerAllowed &&
-        advertisedCapabilities.includes("effect.power") &&
-        !capabilities.includes("effect.power")
-      ) {
-        capabilities.push("effect.power");
-      }
+        ? form.getAll("capability").filter((entry): entry is string => typeof entry === "string")
+        : [];
       const values = {
         name: typeof name === "string" ? name : "",
         endpoint: currentEndpoint,
@@ -95,26 +61,49 @@ export function AccessMethodForm({
         priority: Number(form.get("priority")),
         capabilities,
       };
-      if (method) {
-        apiData(
-          await apiClient.PATCH("/api/v1/access-methods/{id}", {
-            params: { path: { id: method.id } },
-            body: { access_method: { ...values, expected_revision: method.revision } },
-          }),
-        );
-      } else {
-        apiData(
-          await apiClient.POST("/api/v1/access-methods", {
-            body: {
-              access_method: {
-                ...values,
-                target_id: target.id,
-                provider_id: provider.id,
-                method: provider.access_method_profile.method,
+      const registered = method
+        ? apiData(
+            await apiClient.PATCH("/api/v1/access-methods/{id}", {
+              params: { path: { id: method.id } },
+              body: { access_method: { ...values, expected_revision: method.revision } },
+            }),
+          ).data
+        : apiData(
+            await apiClient.POST("/api/v1/access-methods", {
+              body: {
+                access_method: {
+                  ...values,
+                  target_id: target.id,
+                  provider_id: provider.id,
+                  method: provider.access_method_profile.method,
+                },
               },
-            },
+            }),
+          ).data;
+      try {
+        const checked = apiData(
+          await apiClient.POST("/api/v1/access-methods/{id}/check", {
+            params: { path: { id: registered.id } },
+            body: { access_method: { expected_revision: registered.revision } },
           }),
-        );
+        ).data;
+        if (!method && checked.check.current) {
+          apiData(
+            await apiClient.PATCH("/api/v1/access-methods/{id}", {
+              params: { path: { id: checked.id } },
+              body: {
+                access_method: {
+                  expected_revision: checked.revision,
+                  capabilities: checked.check.observed_capabilities,
+                },
+              },
+            }),
+          );
+        }
+      } catch {
+        // Registration is durable even when the check response is lost.
+        await onSaved();
+        return onError(t("targets.requestFailed"));
       }
       await onSaved();
     } catch {
@@ -177,16 +166,23 @@ export function AccessMethodForm({
           required
         />
       </div>
-      {isBMC && (
-        <label className="flex items-center gap-2 text-sm md:col-span-2">
-          <input
-            type="checkbox"
-            name="power"
-            className="size-4"
-            defaultChecked={method?.capabilities.includes("effect.power")}
-          />
-          {t("targets.allowPowerControl")}
-        </label>
+      {method && (
+        <fieldset className="space-y-2 md:col-span-2">
+          <legend className="text-sm font-medium">{t("targets.allowedCapabilities")}</legend>
+          {Array.from(new Set([...method.check.observed_capabilities, ...method.capabilities])).map(
+            (capability) => (
+              <label key={capability} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="capability"
+                  value={capability}
+                  defaultChecked={method.capabilities.includes(capability)}
+                />
+                {capability}
+              </label>
+            ),
+          )}
+        </fieldset>
       )}
       <div className="flex gap-2 md:col-span-2">
         <Button type="submit" disabled={pending || !provider}>

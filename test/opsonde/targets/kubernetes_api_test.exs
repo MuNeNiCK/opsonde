@@ -442,14 +442,9 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
-        actor: admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, endpoint, admin)
 
-    assert checked.check_status == :passed,
-           "Kubernetes fixture check failed: #{checked.check_category}: #{checked.check_message}"
-
-    provider = Providers.enable_provider!(checked, checked.revision, actor: admin)
+    assert {:ok, _catalog} = checked
 
     target =
       Targets.create_target!("cluster-one", "cluster", "kubernetes", %{}, nil, actor: admin)
@@ -466,6 +461,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         @capabilities,
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{
       admin: admin,
@@ -529,11 +525,6 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         %{"kubeconfig" => kubeconfig(context.endpoint)},
         actor: context.admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: context.admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
     method =
@@ -548,6 +539,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
         @capabilities,
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     api_wide = %{context | provider: provider, method: method}
     path = "/apis/acme.example/v9/racks/rack-a"

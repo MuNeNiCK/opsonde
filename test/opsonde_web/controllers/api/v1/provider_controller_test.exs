@@ -129,17 +129,26 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         assert_operation_response(response)
         assert_secret_free(response, Map.values(credentials))
 
-        checked =
-          post_json(
-            "/api/v1/providers/#{id}/check",
-            %{"provider" => %{"expected_revision" => 1}},
-            context.admin_token
-          )
+        if kind == "target" do
+          assert post_json(
+                   "/api/v1/providers/#{id}/check",
+                   %{"provider" => %{"expected_revision" => 1}},
+                   context.admin_token
+                 )
+                 |> response(422)
+        else
+          checked =
+            post_json(
+              "/api/v1/providers/#{id}/check",
+              %{"provider" => %{"expected_revision" => 1}},
+              context.admin_token
+            )
 
-        assert %{"data" => %{"check" => %{"status" => "passed", "checked_revision" => 1}}} =
-                 json_response(checked, 200)
+          assert %{"data" => %{"check" => %{"status" => "passed", "checked_revision" => 1}}} =
+                   json_response(checked, 200)
 
-        assert_operation_response(checked)
+          assert_operation_response(checked)
+        end
 
         enabled =
           post_json(
@@ -187,7 +196,16 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
 
   test "Provider lifecycle preserves failed checks and rejects stale revisions", context do
     secret = "credential-never-returned"
-    provider = create_target!(context.admin_token, "echo", secret)
+
+    provider =
+      create_provider!(
+        context.admin_token,
+        "inventory-check",
+        "inventory",
+        "fixture-inventory",
+        %{"source" => "echo"},
+        %{"token" => secret}
+      )
 
     failed =
       post_json(
@@ -215,7 +233,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         %{
           "provider" => %{
             "expected_revision" => 1,
-            "configuration" => %{"endpoint" => "reachable"},
+            "configuration" => %{"source" => "reachable"},
             "credentials" => %{"token" => "replacement-secret"}
           }
         },
@@ -673,19 +691,10 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
              json_response(invalid_cursor, 422)
   end
 
-  test "enabled Target Provider exposes adapter capabilities to administrators and operators",
+  test "enabled Target Provider exposes adapter capabilities to administrators",
        context do
     provider =
       create_target!(context.admin_token, "reachable", "capability-secret")
-      |> then(fn provider ->
-        post_json(
-          "/api/v1/providers/#{provider["id"]}/check",
-          %{"provider" => %{"expected_revision" => provider["revision"]}},
-          context.admin_token
-        )
-        |> json_response(200)
-        |> Map.fetch!("data")
-      end)
       |> then(fn provider ->
         post_json(
           "/api/v1/providers/#{provider["id"]}/enable",
@@ -709,9 +718,11 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
           token
         )
 
-      assert %{"data" => %{"observations" => [], "effects" => []}} =
+      assert %{"data" => %{"observations" => observations, "effects" => effects}} =
                json_response(response, 200)
 
+      assert Enum.any?(observations, &(&1["capability"] == "observe.command"))
+      assert Enum.any?(effects, &(&1["capability"] == "effect.command"))
       assert_secret_free(response, ["capability-secret"])
     end
 

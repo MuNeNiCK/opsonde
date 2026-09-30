@@ -173,12 +173,9 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
-        actor: admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, endpoint, admin)
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: admin)
+    assert {:ok, _catalog} = checked
 
     target =
       Targets.create_target!("router-one", "network_device", "cisco_ios_xe", %{}, nil,
@@ -197,6 +194,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
         @capabilities,
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{
       admin: admin,

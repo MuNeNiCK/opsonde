@@ -21,7 +21,6 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         %{"token" => "route-target-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target = Targets.create_target!("route-effect-linux", "host", "linux", %{}, nil, actor: admin)
@@ -38,6 +37,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         ["effect.service", "observe.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{admin: admin, operator: operator, provider: provider, target: target, method: method}
   end
@@ -267,7 +267,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
       "target_id" => target_id,
       "target_revision" => 1,
       "access_method_id" => access_method_id,
-      "access_method_revision" => 1,
+      "access_method_revision" => context.method.revision,
       "capability" => "effect.service",
       "operation" => "service.restart",
       "selectors" => %{"service" => "api"},
@@ -282,7 +282,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         "target_id" => target_id,
         "target_revision" => 1,
         "access_method_id" => access_method_id,
-        "access_method_revision" => 1,
+        "access_method_revision" => context.method.revision,
         "provider_id" => provider_id,
         "provider_revision" => 1,
         "capability" => "effect.service",
@@ -299,7 +299,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
         "target_id" => target_id,
         "target_revision" => 1,
         "access_method_id" => access_method_id,
-        "access_method_revision" => 1,
+        "access_method_revision" => context.method.revision,
         "provider_id" => provider_id,
         "provider_revision" => context.provider.revision,
         "capability" => "observe.service",

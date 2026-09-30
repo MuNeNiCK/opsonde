@@ -39,7 +39,6 @@ defmodule Opsonde.OperationDeliveryTest do
         %{"token" => "operation-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target = Targets.create_target!("operation-linux", "host", "linux", %{}, nil, actor: admin)
@@ -56,6 +55,7 @@ defmodule Opsonde.OperationDeliveryTest do
         ["effect.service", "observe.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     resolver_provider =
       Providers.create_provider!(
@@ -750,6 +750,7 @@ defmodule Opsonde.OperationDeliveryTest do
         ["observe.service"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     alternate_context = %{context | method: alternate}
 
@@ -4083,6 +4084,7 @@ defmodule Opsonde.OperationDeliveryTest do
         ["effect.service", "observe.service"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     %{context | target: target, method: method}
   end

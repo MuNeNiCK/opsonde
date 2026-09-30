@@ -25,7 +25,6 @@ defmodule Opsonde.RelatedTargetRouteTest do
         %{"token" => "relationship-provider-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     linux = target!(admin, provider, "linux-01", "host", "linux", "linux-ssh")
@@ -571,6 +570,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
       ["observe.system"],
       actor: admin
     )
+    |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     target
   end

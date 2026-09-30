@@ -11,7 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("Method discovery and registration both use the operator's exact endpoint", async () => {
+test("Method registration precedes its exact connection check and grants", async () => {
   await i18n.changeLanguage("en");
   const time = "2026-09-30T00:00:00Z";
   const target: Target = {
@@ -37,8 +37,8 @@ test("Method discovery and registration both use the operator's exact endpoint",
     enabled: true,
     revision: 3,
     check: {
-      status: "passed",
-      checked_revision: 3,
+      status: null,
+      checked_revision: null,
       checked_at: time,
       category: null,
       message: null,
@@ -64,13 +64,22 @@ test("Method discovery and registration both use the operator's exact endpoint",
     calls.push({ path, options });
     return Promise.resolve({
       data: {
-        data: path.endsWith("target-capabilities")
-          ? { observations: [{ capability: "request.http.observe" }], effects: [] }
-          : { id: "method-1" },
+        data: {
+          id: "method-1",
+          revision: path.endsWith("/check") ? 3 : 1,
+          check: {
+            current: path.endsWith("/check"),
+            observed_capabilities: ["request.http.observe"],
+          },
+        },
       },
       response: new Response(),
     });
   }) as typeof apiClient.POST);
+  vi.spyOn(apiClient, "PATCH").mockImplementation(((path: string, options: unknown) => {
+    calls.push({ path, options });
+    return Promise.resolve({ data: { data: { id: "method-1" } }, response: new Response() });
+  }) as typeof apiClient.PATCH);
   const saved = vi.fn(async () => {});
   const error = vi.fn();
   const user = userEvent.setup();
@@ -92,13 +101,6 @@ test("Method discovery and registration both use the operator's exact endpoint",
   await waitFor(() => expect(saved).toHaveBeenCalledOnce());
   expect(calls).toEqual([
     {
-      path: "/api/v1/providers/{id}/target-capabilities",
-      options: {
-        params: { path: { id: "provider-1" } },
-        body: { provider: { expected_revision: 3, endpoint: "https://second.example" } },
-      },
-    },
-    {
       path: "/api/v1/access-methods",
       options: {
         body: {
@@ -110,9 +112,23 @@ test("Method discovery and registration both use the operator's exact endpoint",
             name: "second device",
             endpoint: "https://second.example",
             priority: 100,
-            capabilities: ["request.http.observe"],
+            capabilities: [],
           },
         },
+      },
+    },
+    {
+      path: "/api/v1/access-methods/{id}/check",
+      options: {
+        params: { path: { id: "method-1" } },
+        body: { access_method: { expected_revision: 1 } },
+      },
+    },
+    {
+      path: "/api/v1/access-methods/{id}",
+      options: {
+        params: { path: { id: "method-1" } },
+        body: { access_method: { expected_revision: 3, capabilities: ["request.http.observe"] } },
       },
     },
   ]);

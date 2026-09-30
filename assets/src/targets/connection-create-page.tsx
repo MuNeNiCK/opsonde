@@ -275,22 +275,13 @@ function TargetConnectionForm({
         },
       }),
     );
-    try {
-      const checked = apiData(
-        await apiClient.POST("/api/v1/providers/{id}/check", {
-          params: { path: { id: response.data.id } },
-          body: {
-            provider: {
-              expected_revision: response.data.revision,
-              check_input: { endpoint },
-            },
-          },
-        }),
-      );
-      return checked.data.check.status === "passed";
-    } catch {
-      return false;
-    }
+    const enabled = apiData(
+      await apiClient.POST("/api/v1/providers/{id}/enable", {
+        params: { path: { id: response.data.id } },
+        body: { provider: { expected_revision: response.data.revision } },
+      }),
+    );
+    return enabled.data.enabled;
   }
 
   return (
@@ -355,7 +346,7 @@ function TargetConnectionForm({
           )}
           <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending}>
             {pending ? <Spinner /> : <Plus />}
-            {t("targets.addAndCheck")}
+            {t(isNetBox ? "targets.addAndCheck" : "targets.addConnection")}
           </Button>
         </form>
       </CardContent>

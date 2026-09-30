@@ -6,7 +6,6 @@ import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 
 type Provider = components["schemas"]["Provider"];
@@ -18,16 +17,9 @@ type Props = {
   onError: (message: string) => void;
 };
 
-function firstFingerprintEndpoint(provider: Provider) {
-  const fingerprints = provider.configuration.host_key_fingerprints;
-  if (!fingerprints || typeof fingerprints !== "object" || Array.isArray(fingerprints)) return "";
-  return Object.keys(fingerprints)[0] ?? "";
-}
-
 export function TargetProviderSection({ providers, canManage, onRefresh, onError }: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
-  const [checkInputs, setCheckInputs] = useState<Record<string, string>>({});
   const visibleProviders = providers.filter(
     (provider) => provider.kind === "target" || provider.kind === "inventory",
   );
@@ -46,18 +38,6 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
   }
 
   async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
-    const checkInput =
-      provider.kind === "target"
-        ? {
-            endpoint:
-              checkInputs[provider.id] ||
-              firstFingerprintEndpoint(provider) ||
-              (typeof provider.configuration.base_url === "string"
-                ? provider.configuration.base_url
-                : ""),
-          }
-        : { resource: "devices", filters: {}, page_size: 50 };
-
     await mutate(`${provider.id}-${action}`, () => {
       if (action === "check") {
         return apiClient.POST("/api/v1/providers/{id}/check", {
@@ -65,7 +45,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
           body: {
             provider: {
               expected_revision: provider.revision,
-              check_input: checkInput,
+              check_input: { resource: "devices", filters: {}, page_size: 50 },
             },
           },
         });
@@ -95,6 +75,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
         {visibleProviders.map((provider) => {
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
+          const canEnable = provider.kind === "target" || passed;
           return (
             <Card key={provider.id}>
               <CardHeader>
@@ -110,49 +91,41 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                 <CardDescription>{provider.adapter_type}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-start gap-2 text-sm">
-                  {passed ? (
-                    <CheckCircle2 className="mt-0.5 size-4 text-success" />
-                  ) : (
-                    <CircleAlert className="mt-0.5 size-4 text-warning" />
-                  )}
-                  <span>{t(passed ? "targets.checkPassed" : "targets.checkRequired")}</span>
-                </div>
-                {provider.check.message && (
-                  <details className="text-sm text-muted-foreground">
-                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-                    <p>{provider.check.message}</p>
-                  </details>
+                {provider.kind === "target" ? (
+                  <p className="text-sm text-muted-foreground">{t("targets.checkAtMethod")}</p>
+                ) : (
+                  <>
+                    <div className="flex items-start gap-2 text-sm">
+                      {passed ? (
+                        <CheckCircle2 className="mt-0.5 size-4 text-success" />
+                      ) : (
+                        <CircleAlert className="mt-0.5 size-4 text-warning" />
+                      )}
+                      <span>{t(passed ? "targets.checkPassed" : "targets.checkRequired")}</span>
+                    </div>
+                    {provider.check.message && (
+                      <p className="text-sm text-muted-foreground">{provider.check.message}</p>
+                    )}
+                  </>
                 )}
                 {canManage && (
                   <div className="space-y-3">
-                    {provider.kind === "target" && (
-                      <Input
-                        aria-label={t("targets.checkEndpoint")}
-                        placeholder={t("targets.checkEndpoint")}
-                        value={checkInputs[provider.id] ?? firstFingerprintEndpoint(provider)}
-                        onChange={(event) =>
-                          setCheckInputs((current) => ({
-                            ...current,
-                            [provider.id]: event.target.value,
-                          }))
-                        }
-                      />
-                    )}
                     <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={pending !== null}
-                        onClick={() => void providerAction(provider, "check")}
-                      >
-                        {pending === `${provider.id}-check` && <Spinner />}
-                        {t("targets.check")}
-                      </Button>
+                      {provider.kind !== "target" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pending !== null}
+                          onClick={() => void providerAction(provider, "check")}
+                        >
+                          {pending === `${provider.id}-check` && <Spinner />}
+                          {t("targets.check")}
+                        </Button>
+                      )}
                       {!provider.enabled ? (
                         <Button
                           size="sm"
-                          disabled={!passed || pending !== null}
+                          disabled={!canEnable || pending !== null}
                           onClick={() => void providerAction(provider, "enable")}
                         >
                           {pending === `${provider.id}-enable` && <Spinner />}

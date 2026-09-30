@@ -21,7 +21,6 @@ defmodule Opsonde.Targets.MethodCheckTest do
         %{"token" => "private-check-token"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     target = Targets.create_target!("unknown-host", "host", "custom-os", %{}, nil, actor: admin)
@@ -67,12 +66,62 @@ defmodule Opsonde.Targets.MethodCheckTest do
     assert is_nil(current.operation_catalog)
   end
 
+  test "availability requires a current Method check and the observed grant intersection",
+       context do
+    assert Targets.available_access_methods!(context.target.id, "observe.service",
+             authorize?: false
+           ) == []
+
+    checked =
+      Targets.check_access_method!(
+        context.method.id,
+        context.method.revision,
+        %{respond: fn -> {:ok, catalog()} end},
+        actor: context.admin
+      )
+
+    assert [available] =
+             Targets.available_access_methods!(context.target.id, "observe.service",
+               authorize?: false
+             )
+
+    assert available.id == checked.id
+
+    edited =
+      Targets.update_access_method!(
+        checked,
+        checked.revision,
+        %{capabilities: ["observe.command"]},
+        actor: context.admin
+      )
+
+    assert edited.check_current
+
+    assert Targets.available_access_methods!(context.target.id, "observe.service",
+             authorize?: false
+           ) == []
+
+    assert Targets.available_access_methods!(context.target.id, "observe.command",
+             authorize?: false
+           ) == []
+
+    assert {:error, _} =
+             Targets.load_access_method_for_use(edited.id, edited.revision, "observe.command",
+               authorize?: false
+             )
+  end
+
   test "a newer check result cannot be overwritten by an older completion", context do
     response = fn ->
       current = Targets.get_access_method!(context.method.id, actor: context.admin)
 
       inner =
-        Targets.check_access_method!(current.id, current.revision, %{}, actor: context.admin)
+        Targets.check_access_method!(
+          current.id,
+          current.revision,
+          %{respond: fn -> {:ok, %Target.Capabilities{observations: [], effects: []}} end},
+          actor: context.admin
+        )
 
       assert inner.check_status == :passed
       {:ok, catalog()}
@@ -137,7 +186,9 @@ defmodule Opsonde.Targets.MethodCheckTest do
       Targets.check_access_method!(
         context.method.id,
         context.method.revision,
-        %{respond: fn -> {:ok, catalog()} end}, actor: context.admin)
+        %{respond: fn -> {:ok, catalog()} end},
+        actor: context.admin
+      )
 
     assert checked.check_current
 
@@ -145,7 +196,9 @@ defmodule Opsonde.Targets.MethodCheckTest do
       Targets.update_target!(
         context.target,
         context.target.revision,
-        %{facts: %{"serial" => "changed"}}, actor: context.admin)
+        %{facts: %{"serial" => "changed"}},
+        actor: context.admin
+      )
 
     current = Targets.get_access_method!(checked.id, actor: context.admin)
     refute current.check_current
@@ -155,14 +208,18 @@ defmodule Opsonde.Targets.MethodCheckTest do
       Targets.check_access_method!(
         current.id,
         current.revision,
-        %{respond: fn -> {:ok, catalog()} end}, actor: context.admin)
+        %{respond: fn -> {:ok, catalog()} end},
+        actor: context.admin
+      )
 
     assert rechecked.check_current
 
     Providers.update_provider!(
       context.provider,
       context.provider.revision,
-      %{credentials: %{"token" => "changed-private-token"}}, actor: context.admin)
+      %{credentials: %{"token" => "changed-private-token"}},
+      actor: context.admin
+    )
 
     current = Targets.get_access_method!(checked.id, actor: context.admin)
     refute current.check_current

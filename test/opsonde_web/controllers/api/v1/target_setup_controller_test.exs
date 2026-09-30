@@ -28,7 +28,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         %{"token" => @provider_secret},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     inventory_provider =
@@ -64,7 +63,8 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert_operation_response(checked_response)
     %{"data" => checked} = json_response(checked_response, 200)
     assert checked["check"]["status"] == "passed"
-    assert checked["check"]["observed_capabilities"] == []
+    assert "observe.command" in checked["check"]["observed_capabilities"]
+    assert "effect.command" in checked["check"]["observed_capabilities"]
     assert checked["capabilities"] == ["observe.service"]
     assert checked["check"]["checked_target_revision"] == target["revision"]
 
@@ -157,12 +157,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
             actor: context.admin
           )
 
-        checked =
-          Providers.record_provider_check!(provider, provider.revision, :passed, nil, nil,
-            authorize?: false
-          )
-
-        enabled = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+        enabled = Providers.enable_provider!(provider, provider.revision, actor: context.admin)
         {:ok, adapter} = Registry.fetch(descriptor["adapter_type"], Providers.Target)
         {descriptor["adapter_type"], {enabled, endpoint, adapter.access_method_profile()}}
       end
@@ -228,9 +223,6 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         %{},
         %{},
         actor: context.admin
-      )
-      |> then(
-        &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 

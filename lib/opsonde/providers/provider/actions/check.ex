@@ -14,11 +14,22 @@ defmodule Opsonde.Providers.Provider.Actions.Check do
              authorize?: false,
              load: [:credentials]
            ),
-         :ok <- ensure_revision(provider, expected_revision) do
+         :ok <- ensure_revision(provider, expected_revision),
+         :ok <- ensure_remote_check_owner(provider) do
       result = check_result(provider, check_input)
       record(provider, expected_revision, result, context)
     end
   end
+
+  defp ensure_remote_check_owner(%{kind: :target}) do
+    {:error,
+     Ash.Error.Changes.InvalidAttribute.exception(
+       field: :kind,
+       message: "Check the registered Access Method for a Target connection"
+     )}
+  end
+
+  defp ensure_remote_check_owner(_provider), do: :ok
 
   defp ensure_revision(%{revision: revision}, revision), do: :ok
 

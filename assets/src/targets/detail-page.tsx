@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { apiClient, apiData } from "@/api/client";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,7 @@ export function TargetDetailPage() {
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
   const [error, setError] = useState("");
+  const [checkingMethodId, setCheckingMethodId] = useState<string | null>(null);
   const [editingMethodId, setEditingMethodId] = useState<string | null>(null);
   const [success, setSuccess] = useState(
     (location.state as { created?: boolean } | null)?.created ? t("targets.targetCreated") : "",
@@ -148,9 +150,7 @@ export function TargetDetailPage() {
         >
           {methods.map((method, index) => {
             const provider = snapshot.providers.find((item) => item.id === method.provider_id);
-            const currentCheck = provider?.check.checked_revision === provider?.revision;
-            const available =
-              provider?.enabled && currentCheck && provider.check.status === "passed";
+            const available = method.check.current;
             return (
               <Record
                 key={method.id}
@@ -170,16 +170,29 @@ export function TargetDetailPage() {
                     {provider
                       ? provider.name +
                         " · " +
-                        t(available ? "targets.checkPassed" : "targets.checkRequired")
+                        t(available ? "targets.checkPassed" : "targets.methodCheckRequired")
                       : t("targets.connectionMissing")}
                   </span>
                 </div>
-                {provider?.check.message && (
+                {method.check.message && (
                   <details className="mt-2 text-sm text-muted-foreground">
                     <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-                    <p>{provider.check.message}</p>
+                    <p>{method.check.message}</p>
                   </details>
                 )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t("targets.observedCapabilities")}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {method.check.observed_capabilities.map((capability) => (
+                    <Badge key={capability} variant="outline">
+                      {capability}
+                    </Badge>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t("targets.allowedCapabilities")}
+                </p>
                 {method.capabilities.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1">
                     {method.capabilities.map((capability) => (
@@ -190,7 +203,32 @@ export function TargetDetailPage() {
                   </div>
                 )}
                 {canManage && (
-                  <div className="mt-3">
+                  <div className="mt-3 space-y-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={checkingMethodId !== null || !provider?.enabled}
+                      onClick={async () => {
+                        setCheckingMethodId(method.id);
+                        setError("");
+                        try {
+                          apiData(
+                            await apiClient.POST("/api/v1/access-methods/{id}/check", {
+                              params: { path: { id: method.id } },
+                              body: { access_method: { expected_revision: method.revision } },
+                            }),
+                          );
+                        } catch {
+                          setError(t("targets.requestFailed"));
+                        } finally {
+                          await refresh();
+                          setCheckingMethodId(null);
+                        }
+                      }}
+                    >
+                      {checkingMethodId === method.id && <Spinner />}
+                      {t("targets.check")}
+                    </Button>
                     {editingMethodId === method.id ? (
                       <AccessMethodForm
                         target={target}

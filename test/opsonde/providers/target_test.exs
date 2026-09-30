@@ -26,7 +26,6 @@ defmodule Opsonde.Providers.TargetTest do
         %{"token" => @token},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     %{admin: admin, operator: operator, viewer: viewer, provider: provider}

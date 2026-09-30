@@ -1071,7 +1071,10 @@ const ja = {
       },
       redfishSystemPath: "電源操作に使うSystemパス（任意）",
       redfishSystemUuid: "Systemを指定する場合の照合UUID",
-      allowPowerControl: "この接続で電源操作を許可する",
+      allowedCapabilities: "許可する操作",
+      observedCapabilities: "確認できた操作",
+      checkAtMethod: "接続確認は対象のAccess Methodで行います。",
+      methodCheckRequired: "このAccess Methodの接続確認が必要です。",
       connectionSavedCheckFailed:
         "接続は保存されましたが、確認に失敗しました。下の診断情報を確認してください。",
       targetDescription: "物理、仮想、プラットフォーム、ネットワークのTargetを登録します。",

@@ -1,6 +1,20 @@
 defmodule Opsonde.TargetConnectionFixture do
   @moduledoc false
 
+  # Protocol-role tests exercise check independently of Method persistence.
+  # Enabling validates reusable configuration; it does not contact the peer.
+  def check_connection(provider, endpoint, actor) do
+    Opsonde.Providers.enable_provider!(provider, provider.revision, actor: actor)
+
+    Opsonde.Providers.check_target_connection(
+      provider.id,
+      %Opsonde.Providers.Target.CapabilitiesRequest{
+        provider_revision: provider.revision,
+        connection: %Opsonde.Providers.Target.Connection{endpoint: endpoint}
+      },
+      %{}, authorize?: false)
+  end
+
   def input(adapter_type, endpoint) do
     protocol =
       Enum.find(

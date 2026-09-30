@@ -34,7 +34,6 @@ defmodule Opsonde.ProposalAuthorityTest do
         %{"token" => "authority-target-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target = Targets.create_target!("authority-linux", "host", "linux", %{}, nil, actor: admin)
@@ -51,6 +50,7 @@ defmodule Opsonde.ProposalAuthorityTest do
         ["effect.service", "observe.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     resolver_provider = ai_provider!(admin, "authority-resolver", "resolver-model")
 
@@ -561,10 +561,15 @@ defmodule Opsonde.ProposalAuthorityTest do
         actor: context.admin
       )
 
+    method =
+      Targets.check_access_method!(context.method.id, context.method.revision, %{},
+        actor: context.admin
+      )
+
     {incident, _run, proposal} =
       proposal!(
         "linked-target",
-        %{context | target: target} |> Map.put(:initial_target, guest),
+        %{context | target: target, method: method} |> Map.put(:initial_target, guest),
         :effect
       )
 

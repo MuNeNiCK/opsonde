@@ -22,7 +22,6 @@ defmodule Opsonde.ProposalMaterializationTest do
         %{"token" => "proposal-target-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target = Targets.create_target!("proposal-linux", "host", "linux", %{}, nil, actor: admin)
@@ -39,6 +38,7 @@ defmodule Opsonde.ProposalMaterializationTest do
         ["effect.service", "observe.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     %{admin: admin, operator: operator, provider: provider, target: target, method: method}
   end

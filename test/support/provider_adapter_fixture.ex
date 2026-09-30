@@ -108,6 +108,29 @@ defmodule Opsonde.ProviderAdapterFixture do
 
   defp respond(%{respond: respond}) when is_function(respond, 0), do: respond.()
 
-  defp respond(_invocation),
-    do: {:ok, %Target.Capabilities{observations: [], effects: []}}
+  defp respond(_invocation) do
+    # Protocol fixture support is independent of each registered Method's grants.
+    schema = %{"type" => "object", "properties" => %{}, "additionalProperties" => false}
+
+    operations = fn capabilities ->
+      Enum.map(capabilities, fn capability ->
+        %Target.Operation{
+          capability: capability,
+          operation: "fixture.#{capability}",
+          description: "Fixture operation",
+          input_schema: schema,
+          output_schema: schema
+        }
+      end)
+    end
+
+    {:ok,
+     %Target.Capabilities{
+       observations:
+         operations.(
+           ~w(observe.command observe.config observe.identity observe.power observe.service observe.system)
+         ),
+       effects: operations.(~w(effect.command effect.config effect.power effect.service))
+     }}
+  end
 end

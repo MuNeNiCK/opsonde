@@ -210,7 +210,7 @@ defmodule Opsonde.TargetsTest do
 
     assert Targets.load_access_method_for_use!(
              method.id,
-             1,
+             method.revision,
              "observe.command",
              authorize?: false
            ).id == method.id
@@ -218,24 +218,24 @@ defmodule Opsonde.TargetsTest do
     updated_method =
       Targets.update_access_method!(
         method,
-        1,
+        method.revision,
         %{priority: 10},
         actor: context.admin
       )
 
-    assert updated_method.revision == 2
+    assert updated_method.revision == method.revision + 1
 
     assert {:error, _error} =
              Targets.load_access_method_for_use(
                method.id,
-               1,
+               method.revision,
                "observe.command",
                authorize?: false
              )
 
     assert Targets.load_access_method_for_use!(
              method.id,
-             2,
+             updated_method.revision,
              "observe.command",
              authorize?: false
            ).id == method.id
@@ -351,13 +351,7 @@ defmodule Opsonde.TargetsTest do
           actor: context.admin
         )
 
-      # Fixture: only the registration boundary is under test here; no BMC is contacted.
-      checked =
-        Providers.record_provider_check!(provider, provider.revision, :passed, nil, nil,
-          authorize?: false
-        )
-
-      enabled = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+      enabled = Providers.enable_provider!(provider, provider.revision, actor: context.admin)
 
       create = fn target_id, candidate_method, candidate_endpoint, capabilities ->
         Targets.create_access_method(
@@ -408,9 +402,6 @@ defmodule Opsonde.TargetsTest do
         },
         %{"username" => "operator", "auth_method" => "password", "password" => "test-only"},
         actor: context.admin
-      )
-      |> then(
-        &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
@@ -482,9 +473,6 @@ defmodule Opsonde.TargetsTest do
         Providers.create_provider!(type, :target, type, configuration, credentials,
           actor: context.admin
         )
-        |> then(
-          &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
-        )
         |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
       create = fn selected_target, candidate_method ->
@@ -529,6 +517,7 @@ defmodule Opsonde.TargetsTest do
       capabilities,
       actor: context.admin
     )
+    |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
   end
 
   defp enabled_target_provider!(admin) do
@@ -542,7 +531,6 @@ defmodule Opsonde.TargetsTest do
         actor: admin
       )
 
-    checked = Providers.check_provider!(provider.id, provider.revision, %{}, actor: admin)
-    Providers.enable_provider!(checked, checked.revision, actor: admin)
+    Providers.enable_provider!(provider, provider.revision, actor: admin)
   end
 end

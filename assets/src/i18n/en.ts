@@ -1097,7 +1097,10 @@ const en = {
       },
       redfishSystemPath: "System path for power operations (optional)",
       redfishSystemUuid: "Matching System UUID (when selecting a System)",
-      allowPowerControl: "Allow power control through this connection",
+      allowedCapabilities: "Allowed capabilities",
+      observedCapabilities: "Observed capabilities",
+      checkAtMethod: "Check each Access Method on its Target.",
+      methodCheckRequired: "Check this Access Method.",
       connectionSavedCheckFailed:
         "Connection saved, but the check failed. Review its diagnostics below.",
       targetDescription: "Register a physical, virtual, platform, or network Target.",

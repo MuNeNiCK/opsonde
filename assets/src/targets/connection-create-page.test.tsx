@@ -61,7 +61,7 @@ async function renderPage(path: string) {
   vi.spyOn(apiClient, "POST").mockImplementation(((path: string, options: unknown) => {
     calls.push({ path, options });
     return Promise.resolve({
-      data: { data: { id: "provider-1", revision: 1, check: { status: "passed" } } },
+      data: { data: { id: "provider-1", revision: 1, enabled: true, check: { status: null } } },
       response: new Response(),
     });
   }) as typeof apiClient.POST);
@@ -100,7 +100,7 @@ test("named controller profile uses the published IPMI form and exact Provider i
   );
   await user.type(screen.getByRole("textbox", { name: "Username" }), "operator");
   await user.type(screen.getByLabelText("Password"), "test-secret");
-  await user.click(screen.getByRole("button", { name: "Add and check" }));
+  await user.click(screen.getByRole("button", { name: "Add Target connection" }));
   await waitFor(() => expect(screen.getByText("Connection saved")).toBeTruthy());
   expect(calls).toEqual([
     {
@@ -118,13 +118,12 @@ test("named controller profile uses the published IPMI form and exact Provider i
       },
     },
     {
-      path: "/api/v1/providers/{id}/check",
+      path: "/api/v1/providers/{id}/enable",
       options: {
         params: { path: { id: "provider-1" } },
         body: {
           provider: {
             expected_revision: 1,
-            check_input: { endpoint: "ipmi://controller.example:623" },
           },
         },
       },
@@ -140,7 +139,7 @@ test("Custom network NETCONF preserves protocol auth and host fingerprint", asyn
   await user.type(screen.getByRole("textbox", { name: "Host key fingerprint" }), "SHA256:fixture");
   await user.type(screen.getByRole("textbox", { name: "Username" }), "operator");
   await user.type(screen.getByLabelText("Password"), "test-only-password");
-  await user.click(screen.getByRole("button", { name: "Add and check" }));
+  await user.click(screen.getByRole("button", { name: "Add Target connection" }));
   await waitFor(() => expect(screen.getByText("Connection saved")).toBeTruthy());
   expect(calls[0]).toEqual({
     path: "/api/v1/providers",

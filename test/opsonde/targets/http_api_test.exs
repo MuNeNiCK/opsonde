@@ -81,9 +81,6 @@ defmodule Opsonde.Targets.HTTPAPITest do
         %{"bearer_token" => "fixture-token"},
         actor: admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => endpoint}, actor: admin)
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     target =
@@ -108,6 +105,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
         ["request.http.observe", "request.http.effect"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     {:ok, state} = HTTP.build(%{}, %{"bearer_token" => "fixture-token"})
     {:ok, state} = HTTP.bind_connection(state, %Target.Connection{endpoint: endpoint})
@@ -156,7 +154,9 @@ defmodule Opsonde.Targets.HTTPAPITest do
       Targets.update_access_method!(
         checked,
         checked.revision,
-        %{name: "renamed", priority: 20, capabilities: []}, actor: context.admin)
+        %{name: "renamed", priority: 20, capabilities: []},
+        actor: context.admin
+      )
 
     assert edited.check_status == :passed
     assert edited.checked_at == checked.checked_at
@@ -186,6 +186,21 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert failed.observed_capabilities == []
     assert is_nil(failed.operation_catalog)
     assert Providers.get_provider!(context.provider.id, actor: context.admin).enabled
+
+    request = %Request{
+      kind: :effect,
+      authority_mode: :auto,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: failed.id,
+      access_method_revision: failed.revision,
+      capability: "request.http.effect",
+      operation: "request.effect",
+      parameters: %{"method" => "POST", "path" => "/api/action", "body" => "{}"}
+    }
+
+    assert {:error, _} = Targets.clear_target_request(request, actor: context.operator)
+    assert Agent.get(context.agent, & &1.writes) == []
 
     assert {:error, %Ash.Error.Forbidden{}} =
              Targets.check_access_method(context.method.id, failed.revision, %{},
@@ -220,11 +235,6 @@ defmodule Opsonde.Targets.HTTPAPITest do
         %{"bearer_token" => "fixture-token"},
         actor: context.admin
       )
-      |> then(
-        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
-          actor: context.admin
-        )
-      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
     refute Map.has_key?(provider.configuration, "endpoint")
@@ -246,6 +256,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
           ["request.http.observe"],
           actor: context.admin
         )
+        |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
       request = %Request{
         kind: :observation,

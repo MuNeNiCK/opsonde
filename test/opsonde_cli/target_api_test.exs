@@ -43,8 +43,9 @@ defmodule OpsondeCLI.TargetAPITest do
         :target,
         "fixture-target",
         %{"endpoint" => "reachable"},
-        %{"token" => "private-cli-token"}, actor: context.admin)
-      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+        %{"token" => "private-cli-token"},
+        actor: context.admin
+      )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
     target =
@@ -59,7 +60,9 @@ defmodule OpsondeCLI.TargetAPITest do
         "ssh://192.0.2.1:22",
         provider.revision,
         100,
-        [], actor: context.admin)
+        [],
+        actor: context.admin
+      )
 
     output =
       capture_io(Jason.encode!(%{expected_revision: method.revision}), fn ->
@@ -70,7 +73,8 @@ defmodule OpsondeCLI.TargetAPITest do
     %{"data" => checked} = Jason.decode!(output)
     assert checked["check"]["current"]
     assert checked["check"]["status"] == "passed"
-    assert checked["check"]["observed_capabilities"] == []
+    assert "observe.command" in checked["check"]["observed_capabilities"]
+    assert "effect.command" in checked["check"]["observed_capabilities"]
     assert checked["capabilities"] == []
     refute output =~ "private-cli-token"
   end
@@ -115,9 +119,6 @@ defmodule OpsondeCLI.TargetAPITest do
           configuration,
           credentials,
           actor: context.admin
-        )
-        |> then(
-          &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
         )
         |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 

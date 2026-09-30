@@ -825,6 +825,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         ["observe.system"],
         actor: context.admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
     relationship =
       Targets.create_relationship!(linux.id, vm.id, "runs_on", %{}, nil, actor: context.admin)
@@ -986,7 +987,6 @@ defmodule Opsonde.ResolverDeliveryTest do
         %{"token" => "snapshot-target-secret"},
         actor: admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     target =
@@ -1004,6 +1004,7 @@ defmodule Opsonde.ResolverDeliveryTest do
         ["observe.system", "effect.service"],
         actor: admin
       )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
     capabilities = %Target.Capabilities{
       observations: [

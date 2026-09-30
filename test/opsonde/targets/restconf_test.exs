@@ -138,12 +138,10 @@ defmodule Opsonde.Targets.RESTCONFTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
-        actor: admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, endpoint, admin)
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: admin)
+    assert {:ok, _catalog} = checked
+
     %{admin: admin, provider: provider, agent: agent, endpoint: endpoint}
   end
 
@@ -189,27 +187,27 @@ defmodule Opsonde.Targets.RESTCONFTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => context.endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, context.endpoint, context.admin)
 
-    assert checked.check_status == :passed
+    assert {:ok, _catalog} = checked
 
     provider =
       Providers.update_provider!(
-        checked,
-        checked.revision,
+        provider,
+        provider.revision,
         %{credentials: %{"bearer_token" => "wrong-token"}},
         actor: context.admin
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => context.endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, context.endpoint, context.admin)
 
-    assert checked.check_status == :failed
-    assert checked.check_category == :authentication
+    assert {:error, _} = checked
+
+    assert Enum.any?(
+             elem(checked, 1).errors,
+             &match?(%Target.Error{category: :authentication}, &1)
+           )
   end
 
   test "an XML effect is sent once and verified with an independent exact read", context do
@@ -312,22 +310,14 @@ defmodule Opsonde.Targets.RESTCONFTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, endpoint, context.admin)
 
-    assert checked.check_status == :passed,
-           "Mutual TLS check failed: #{checked.check_category}: #{checked.check_message}"
+    assert {:ok, _catalog} = checked
 
     baseline =
-      Providers.check_provider!(
-        context.provider.id,
-        context.provider.revision,
-        %{"endpoint" => endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(context.provider, endpoint, context.admin)
 
-    assert baseline.check_status == :failed
+    assert {:error, _} = baseline
   end
 
   test "classification rejects malformed or escaping paths and disguised effects without I/O",
@@ -494,12 +484,10 @@ defmodule Opsonde.Targets.RESTCONFTest do
     Agent.update(context.agent, &%{&1 | discovery: "not XML", requests: []})
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => context.endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, context.endpoint, context.admin)
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+    assert {:ok, _catalog} = checked
+
     context = %{context | provider: provider}
 
     read =
@@ -545,12 +533,10 @@ defmodule Opsonde.Targets.RESTCONFTest do
       )
 
     checked =
-      Providers.check_provider!(provider.id, provider.revision, %{"endpoint" => context.endpoint},
-        actor: context.admin
-      )
+      Opsonde.TargetConnectionFixture.check_connection(provider, context.endpoint, context.admin)
 
-    assert checked.check_status == :passed
-    provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+    assert {:ok, _catalog} = checked
+
     context = %{context | provider: provider}
 
     read =
