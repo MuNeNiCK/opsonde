@@ -232,6 +232,14 @@ defmodule Opsonde.Cases.Operation.Delivery do
   end
 
   defp continue_handoff(
+         %{outcome_category: "authorization_invalidated", id: operation_id},
+         _proposal,
+         _evidence,
+         %{pending_intent: %{"action" => "resolve_turn", "source_operation_id" => operation_id}}
+       ),
+       do: :ok
+
+  defp continue_handoff(
          %{outcome_category: "authorization_invalidated"} = operation,
          _proposal,
          _evidence,
