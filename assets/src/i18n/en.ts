@@ -1095,8 +1095,8 @@ const en = {
         "custom-vm": "Register a virtual machine.",
         kubernetes: "Register a Kubernetes cluster.",
       },
-      redfishSystemPath: "Redfish System path",
-      redfishSystemUuid: "Expected System UUID",
+      redfishSystemPath: "System path for power operations (optional)",
+      redfishSystemUuid: "Matching System UUID (when selecting a System)",
       allowPowerControl: "Allow power control through this connection",
       connectionSavedCheckFailed:
         "Connection saved, but the check failed. Review its diagnostics below.",

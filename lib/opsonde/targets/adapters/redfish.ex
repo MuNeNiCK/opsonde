@@ -39,7 +39,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     %Target.AccessMethodProfile{
       method: "redfish",
       configuration_endpoint?: true,
-      required_capabilities: ["observe.power"],
       capabilities: [
         @method_read,
         @method_effect | Target.capability_names(PowerControl.capabilities())
@@ -54,8 +53,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- Enum.all?(Map.keys(configuration), &(&1 in allowed)),
          true <- Enum.sort(Map.keys(credentials)) == ["password", "username"],
          {:ok, endpoint} <- endpoint(configuration["endpoint"]),
-         {:ok, system_path} <- system_path(configuration["system_path"]),
-         {:ok, expected_uuid} <- required_string(configuration["expected_uuid"], 128),
+         {:ok, system_path, expected_uuid} <- system_identity(configuration),
          {:ok, username} <- required_string(credentials["username"], 255),
          false <- String.contains?(username, ":"),
          {:ok, password} <- required_string(credentials["password"], 4_096),
@@ -80,10 +78,9 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   @impl Opsonde.Providers.Adapter
   def check(%State{endpoint: endpoint} = state, %{"endpoint" => endpoint}) do
-    case system(state) do
-      {:ok, _system} -> :ok
+    case service_root(state) do
+      {:ok, _root} -> :ok
       {:error, :authentication, message} -> {:error, :authentication, message}
-      {:error, :identity, message} -> {:error, :capability, message}
       {:error, _category, message} -> {:error, :unreachable, message}
     end
   end
@@ -94,27 +91,32 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
-    with {:ok, system} <- system(state) do
+    power = power_capabilities(state)
+
+    {:ok,
+     %Target.Capabilities{
+       observations: power.observations ++ [method_read_operation()],
+       effects: power.effects ++ [method_effect_operation()]
+     }}
+  end
+
+  defp power_capabilities(state) do
+    with {:ok, system} <- system(state),
+         {:ok, _power} <- power_state(system) do
       capabilities = PowerControl.capabilities()
 
       effects =
         case reset_action(state, system) do
           {:ok, _target, allowed} ->
-            Enum.filter(capabilities.effects, fn operation ->
-              @reset_types[operation.operation] in allowed
-            end)
+            Enum.filter(capabilities.effects, &(@reset_types[&1.operation] in allowed))
 
-          {:error, _category, _message} ->
+          _ ->
             []
         end
 
-      {:ok,
-       %Target.Capabilities{
-         observations: capabilities.observations ++ [method_read_operation()],
-         effects: effects ++ [method_effect_operation()]
-       }}
+      %{capabilities | effects: effects}
     else
-      {:error, category, message} -> read_error(category, message)
+      _ -> %Target.Capabilities{observations: [], effects: []}
     end
   end
 
@@ -247,7 +249,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp method_observe(state, request, invocation) do
     with {:ok, method, path} <- method_read_request(state, request),
          :ok <- not_cancelled(invocation),
-         {:ok, _system} <- system(state),
          {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
       evidence =
         %{
@@ -357,8 +358,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp method_effect(state, target_request, invocation) do
     with {:ok, method, path, body, headers, include_response?} <-
            method_write_request(state, target_request),
-         :ok <- not_cancelled(invocation),
-         {:ok, _system} <- system(state),
          :ok <- not_cancelled(invocation) do
       result = request(state, method, path, body, headers)
 
@@ -591,6 +590,19 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp sensitive_name?(_key), do: false
 
+  defp service_root(state) do
+    with {:ok, 200, _headers, root} <- request(state, :get, "/redfish/v1/", nil),
+         version when is_binary(version) and version != "" <- root["RedfishVersion"] do
+      {:ok, root}
+    else
+      {:error, _category, _message} = error -> error
+      _ -> {:error, :failed, "Redfish ServiceRoot response is invalid"}
+    end
+  end
+
+  defp system(%State{system_path: nil}),
+    do: {:error, :failed, "No Redfish System is selected for power operations"}
+
   defp system(state) do
     with {:ok, 200, collection, _pages, _headers} <-
            read_api_resource(state, :get, "/redfish/v1/Systems", %{}),
@@ -749,6 +761,18 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   defp system_path(_path), do: {:error, :invalid_system_path}
+
+  defp system_identity(configuration) do
+    case {configuration["system_path"], configuration["expected_uuid"]} do
+      {nil, nil} ->
+        {:ok, nil, nil}
+
+      {path, uuid} ->
+        with {:ok, path} <- system_path(path),
+             {:ok, uuid} <- required_string(uuid, 128),
+             do: {:ok, path, uuid}
+    end
+  end
 
   defp required_string(value, max) when is_binary(value) do
     if byte_size(value) in 1..max, do: {:ok, value}, else: {:error, :invalid_string}

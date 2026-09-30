@@ -4,6 +4,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
   alias Opsonde.{Accounts, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.Redfish
+  alias Opsonde.Targets.TargetRequest.Request
 
   @system_path "/redfish/v1/Systems/1"
   @uuid "b70d412b-9707-4784-ae6d-14ce38586e00"
@@ -17,6 +18,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     def init(agent), do: agent
 
     def call(conn, agent) do
+      Agent.update(
+        agent,
+        &Map.update(&1, :paths, [conn.request_path], fn paths -> [conn.request_path | paths] end)
+      )
+
       if get_req_header(conn, "authorization") == ["Basic " <> Base.encode64("tester:secret")] do
         route(conn, agent)
       else
@@ -24,8 +30,25 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       end
     end
 
-    defp route(%{method: "GET", request_path: "/redfish/v1/Systems"} = conn, _agent) do
-      json(conn, 200, %{"Members" => [%{"@odata.id" => @system_path}]})
+    defp route(%{method: "GET", request_path: "/redfish/v1/Systems"} = conn, agent) do
+      if Agent.get(agent, &Map.get(&1, :no_system, false)),
+        do: send_resp(conn, 404, ""),
+        else: json(conn, 200, %{"Members" => [%{"@odata.id" => @system_path}]})
+    end
+
+    defp route(%{method: "GET", request_path: "/redfish/v1/"} = conn, _agent) do
+      json(conn, 200, %{"@odata.id" => "/redfish/v1/", "RedfishVersion" => "1.16.0"})
+    end
+
+    defp route(%{request_path: "/redfish/v1/Oem/Property"} = conn, agent) do
+      if conn.method == "PATCH" do
+        {:ok, body, _conn} = read_body(conn)
+        %{"Name" => name} = Jason.decode!(body)
+        Agent.update(agent, &%{&1 | name: name, writes: &1.writes + 1})
+        send_resp(conn, 204, "")
+      else
+        json(conn, 200, %{"Name" => Agent.get(agent, & &1.name)})
+      end
     end
 
     defp route(%{method: "GET", request_path: @system_path} = conn, agent) do
@@ -189,6 +212,106 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     end
   end
 
+  test "generic Method registers and dispatches without a selected ComputerSystem", context do
+    Agent.update(context.agent, &Map.merge(&1, %{no_system: true, paths: []}))
+
+    provider =
+      Providers.create_provider!(
+        "service-root-only",
+        :target,
+        "bmc-redfish",
+        %{
+          "endpoint" => context.method.endpoint,
+          "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
+        },
+        %{"username" => "tester", "password" => "secret"},
+        actor: context.admin
+      )
+
+    checked =
+      Providers.check_provider!(
+        provider.id,
+        provider.revision,
+        %{"endpoint" => context.method.endpoint},
+        actor: context.admin
+      )
+
+    assert checked.check_status == :passed
+    provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+
+    capabilities =
+      Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: context.admin)
+
+    assert Target.capability_names(capabilities) == [
+             "request.redfish.observe",
+             "request.redfish.effect"
+           ]
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        provider.id,
+        "Service root",
+        "redfish",
+        context.method.endpoint,
+        provider.revision,
+        100,
+        Target.capability_names(capabilities),
+        actor: context.admin
+      )
+
+    read = %Request{
+      kind: :observation,
+      authority_mode: :readonly,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: method.id,
+      access_method_revision: method.revision,
+      capability: "request.redfish.observe",
+      operation: "request.observe",
+      parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Example"}
+    }
+
+    clearance = Targets.clear_target_request!(read, actor: context.operator)
+    observation = Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
+    assert observation.facts["response"]["Result"] == "safe"
+
+    write = %{
+      read
+      | kind: :effect,
+        authority_mode: :full_access,
+        capability: "request.redfish.effect",
+        operation: "request.execute",
+        operation_id: Ecto.UUID.generate(),
+        idempotency_key: Ecto.UUID.generate(),
+        parameters: %{
+          "method" => "PATCH",
+          "uri" => "/redfish/v1/Oem/Property",
+          "body" => %{"Name" => "generic"}
+        }
+    }
+
+    clearance = Targets.clear_target_request!(write, actor: context.operator)
+
+    assert %{status: :applied, details: %{"http_status" => 204}} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Agent.get(context.agent, & &1.name) == "generic"
+    read = %{read | parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Property"}}
+    clearance = Targets.clear_target_request!(read, actor: context.operator)
+
+    assert %Target.Observation{facts: %{"response" => %{"Name" => "generic"}}} =
+             Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
+
+    refute Enum.any?(
+             Agent.get(context.agent, & &1.paths),
+             &String.starts_with?(&1, "/redfish/v1/Systems")
+           )
+  end
+
   test "Redfish Method effects validate URI and ETag and preserve uncertain results", context do
     {:ok, state} = redfish_state(context.method.endpoint)
     {:ok, capabilities} = Redfish.capabilities(state, %{})
@@ -295,6 +418,45 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     assert {:ok, %Target.Observation{facts: %{"power_state" => "off"}}} =
              Redfish.observe(state, observation, %{})
+  end
+
+  test "System identity constrains power convenience without blocking the protocol", context do
+    {:ok, state} = redfish_state(context.method.endpoint)
+    state = %{state | expected_uuid: "different-system"}
+    assert :ok = Redfish.check(state, %{"endpoint" => context.method.endpoint})
+    assert {:ok, capabilities} = Redfish.capabilities(state, %{})
+
+    assert Target.capability_names(capabilities) == [
+             "request.redfish.observe",
+             "request.redfish.effect"
+           ]
+
+    request = %Target.ObservationRequest{
+      provider_revision: context.method.provider_revision,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.method.endpoint},
+      capability: "request.redfish.observe",
+      operation: "request.observe",
+      authorization_digest: "fixture",
+      parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Example"}
+    }
+
+    assert {:ok, %Target.Observation{facts: %{"response" => %{"Result" => "safe"}}}} =
+             Redfish.observe(state, request, %{})
+
+    power = %{
+      request
+      | capability: "observe.power",
+        operation: "bmc.power.inspect",
+        parameters: %{}
+    }
+
+    assert {:error, :failed, message} = Redfish.observe(state, power, %{})
+    assert message =~ "identity"
+    assert Agent.get(context.agent, & &1.writes) == 0
   end
 
   defp method_effect_request(context, method, uri, body) do

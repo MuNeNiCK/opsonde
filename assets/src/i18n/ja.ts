@@ -1069,8 +1069,8 @@ const ja = {
         "custom-vm": "仮想マシンを登録します。",
         kubernetes: "Kubernetesクラスタを登録します。",
       },
-      redfishSystemPath: "Redfish Systemパス",
-      redfishSystemUuid: "照合するSystem UUID",
+      redfishSystemPath: "電源操作に使うSystemパス（任意）",
+      redfishSystemUuid: "Systemを指定する場合の照合UUID",
       allowPowerControl: "この接続で電源操作を許可する",
       connectionSavedCheckFailed:
         "接続は保存されましたが、確認に失敗しました。下の診断情報を確認してください。",

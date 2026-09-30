@@ -29,7 +29,6 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     %Target.AccessMethodProfile{
       method: "ipmi",
       configuration_endpoint?: true,
-      required_capabilities: ["observe.power"],
       capabilities: [@method_effect | Target.capability_names(PowerControl.capabilities())]
     }
   end
@@ -62,8 +61,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @impl Opsonde.Providers.Adapter
   def check(%State{endpoint: endpoint} = state, %{"endpoint" => endpoint}) do
     with {:ok, 0, device} <- command(state, 0x06, 0x01, []),
-         true <- length(device) >= 11,
-         {:ok, _power} <- read_power(state) do
+         true <- length(device) >= 11 do
       :ok
     else
       {:error, :authentication, message} -> {:error, :authentication, message}
@@ -75,15 +73,22 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     do: {:error, :invalid_configuration, "IPMI check endpoint must match Provider configuration"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation) do
-    capabilities = PowerControl.capabilities()
-    effects = Enum.reject(capabilities.effects, &(&1.operation == "bmc.power.cycle"))
+  def capabilities(state, invocation) do
+    with :ok <- not_cancelled(invocation) do
+      power =
+        case read_power(state) do
+          {:ok, _power} -> PowerControl.capabilities()
+          _ -> %Target.Capabilities{observations: [], effects: []}
+        end
 
-    {:ok,
-     %Target.Capabilities{
-       observations: capabilities.observations,
-       effects: effects ++ [method_effect_operation()]
-     }}
+      effects = Enum.reject(power.effects, &(&1.operation == "bmc.power.cycle"))
+
+      {:ok,
+       %Target.Capabilities{
+         observations: power.observations,
+         effects: effects ++ [method_effect_operation()]
+       }}
+    end
   end
 
   @impl Opsonde.Providers.Target

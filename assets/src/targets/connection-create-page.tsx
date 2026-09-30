@@ -202,10 +202,10 @@ function TargetConnectionForm({
     } else if (family === "bmc-redfish") {
       configuration = {
         endpoint,
-        system_path: value(form, "system_path"),
-        expected_uuid: value(form, "expected_uuid"),
         ca_certificate: value(form, "ca_certificate"),
       };
+      if (value(form, "system_path")) configuration.system_path = value(form, "system_path");
+      if (value(form, "expected_uuid")) configuration.expected_uuid = value(form, "expected_uuid");
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "bmc-ipmi") {
       configuration = { endpoint };
@@ -419,9 +419,8 @@ function RedfishFields() {
         label={t("targets.redfishSystemPath")}
         name="system_path"
         placeholder="/redfish/v1/Systems/1"
-        required
       />
-      <Field label={t("targets.redfishSystemUuid")} name="expected_uuid" required />
+      <Field label={t("targets.redfishSystemUuid")} name="expected_uuid" />
       <Area label={t("targets.caCertificate")} name="ca_certificate" required />
     </>
   );
