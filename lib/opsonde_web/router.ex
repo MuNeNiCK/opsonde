@@ -75,6 +75,7 @@ defmodule OpsondeWeb.Router do
     get "/access-methods", TargetSetupController, :access_methods_index
     post "/access-methods", TargetSetupController, :access_methods_create
     patch "/access-methods/:id", TargetSetupController, :access_methods_update
+    post "/access-methods/:id/check", TargetSetupController, :access_methods_check
     post "/access-methods/:id/deactivate", TargetSetupController, :access_methods_deactivate
 
     get "/target-relationships", TargetSetupController, :relationships_index

@@ -367,6 +367,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/access-methods/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check the registered Method connection and record its observed capabilities */
+        post: operations["checkAccessMethod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai-services": {
         parameters: {
             query?: never;
@@ -1521,6 +1538,11 @@ export interface components {
         AuditRunPage: {
             data: components["schemas"]["AuditRun"][];
             page: components["schemas"]["Page"];
+        };
+        CheckAccessMethodRequest: {
+            access_method: {
+                expected_revision: number;
+            };
         };
         ErrorResponse: {
             error: components["schemas"]["Error"];
@@ -2939,6 +2961,16 @@ export interface components {
         AccessMethod: {
             active: boolean;
             capabilities: string[];
+            check: {
+                /** Format: date-time */
+                checked_at: string | null;
+                checked_target_revision: number | null;
+                current: boolean;
+                message: string | null;
+                observed_capabilities: string[];
+                /** @enum {string|null} */
+                status: "checking" | "passed" | "failed" | null;
+            };
             endpoint: string;
             /** Format: uuid */
             id: string;
@@ -5181,6 +5213,96 @@ export interface operations {
             };
             /** @description Resource was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    checkAccessMethod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Access Method revision */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckAccessMethodRequest"];
+            };
+        };
+        responses: {
+            /** @description Connection check result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessMethodResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

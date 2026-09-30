@@ -78,6 +78,20 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     |> normalize_capabilities(credentials)
   end
 
+  defp invoke(:check, adapter, state, arguments, invocation, credentials) do
+    with :ok <-
+           Registry.check(adapter, state, %{"endpoint" => arguments.request.connection.endpoint}),
+         :ok <- ensure_not_cancelled(invocation) do
+      invoke(:capabilities, adapter, state, arguments, invocation, credentials)
+    else
+      {:error, category, message} ->
+        {:error, target_error(category, Redactor.message(message, credentials))}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   defp invoke(:classify, adapter, state, arguments, _invocation, credentials) do
     classify(adapter, state, arguments.request, credentials)
   end

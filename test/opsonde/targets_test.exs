@@ -383,7 +383,6 @@ defmodule Opsonde.TargetsTest do
             {virtual.id, method, endpoint, ["observe.power"]},
             {physical.id, "ssh", endpoint, ["observe.power"]},
             {physical.id, method, "#{endpoint}/other", ["observe.power"]},
-            {physical.id, method, endpoint, []},
             {physical.id, method, endpoint, ["observe.power", "request.ssh.effect"]}
           ] do
         assert {:error, error} =

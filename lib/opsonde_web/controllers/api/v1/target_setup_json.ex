@@ -55,6 +55,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
       provider_revision: method.provider_revision,
       priority: method.priority,
       capabilities: method.capabilities,
+      check: %{
+        current: method.check_current,
+        status: method.check_status,
+        message: method.check_message,
+        checked_at: method.checked_at,
+        checked_target_revision: method.checked_target_revision,
+        observed_capabilities: method.observed_capabilities
+      },
       active: method.active,
       revision: method.revision,
       inserted_at: method.inserted_at,

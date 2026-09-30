@@ -60,10 +60,9 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
     with true <- Ash.Changeset.get_attribute(changeset, :method) == profile.method,
          {:ok, state} <- Registry.build(adapter, provider.configuration, provider.credentials),
          {:ok, _state} <- adapter.bind_connection(state, connection),
-         true <- is_list(capabilities) and capabilities != [],
+         true <- is_list(capabilities),
          true <- Enum.uniq(capabilities) == capabilities,
          true <- Enum.all?(capabilities, &(&1 in profile.capabilities)),
-         true <- Enum.all?(profile.required_capabilities, &(&1 in capabilities)),
          {:ok, %{active: true} = target} <- Targets.get_target(target_id, authorize?: false),
          true <- TypeCatalog.allows_method?(target.type_id, provider.adapter_type) do
       :ok
@@ -71,7 +70,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
       _other ->
         {:error,
          field: :method,
-         message: "Access Method must match its checked Provider, Target and capabilities"}
+         message: "Access Method must match its Provider, Target and granted capabilities"}
     end
   end
 end

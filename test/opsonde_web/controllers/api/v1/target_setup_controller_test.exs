@@ -54,6 +54,25 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     }
   end
 
+  test "Method checks publish observed capabilities independently of grants", context do
+    target = create_target!(context.admin_token, "method-check", "host", "custom-os", nil)
+    method = create_access_method!(context, target, "method-check", "ssh", ["observe.service"])
+    path = "/api/v1/access-methods/#{method["id"]}/check"
+    body = %{"access_method" => %{"expected_revision" => method["revision"]}}
+    assert post_json(path, body, context.operator_token) |> response(403)
+    checked_response = post_json(path, body, context.admin_token)
+    assert_operation_response(checked_response)
+    %{"data" => checked} = json_response(checked_response, 200)
+    assert checked["check"]["status"] == "passed"
+    assert checked["check"]["observed_capabilities"] == []
+    assert checked["capabilities"] == ["observe.service"]
+    assert checked["check"]["checked_target_revision"] == target["revision"]
+
+    assert get_json("/api/v1/access-methods", context.viewer_token)
+           |> json_response(200)
+           |> get_in(["data", Access.at(0), "check", "status"]) == "passed"
+  end
+
   test "Target type catalog publishes custom choices per supported category", context do
     response = get_json("/api/v1/target-types", context.viewer_token)
     assert_operation_response(response)

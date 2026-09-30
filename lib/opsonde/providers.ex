@@ -24,6 +24,10 @@ defmodule Opsonde.Providers do
         action: :target_capabilities,
         args: [:provider_id, :request, :invocation]
 
+      define :check_target_connection,
+        action: :target_check,
+        args: [:provider_id, :request, :invocation]
+
       define :target_classify,
         action: :target_classify,
         args: [:provider_id, :request, :invocation]

@@ -444,6 +444,26 @@
         ],
         "type": "object"
       },
+      "CheckAccessMethodRequest": {
+        "properties": {
+          "access_method": {
+            "properties": {
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "access_method"
+        ],
+        "type": "object"
+      },
       "ErrorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5931,6 +5951,56 @@
             "maxItems": 100,
             "type": "array"
           },
+          "check": {
+            "additionalProperties": false,
+            "properties": {
+              "checked_at": {
+                "format": "date-time",
+                "nullable": true,
+                "type": "string"
+              },
+              "checked_target_revision": {
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              "current": {
+                "type": "boolean"
+              },
+              "message": {
+                "maxLength": 500,
+                "nullable": true,
+                "type": "string"
+              },
+              "observed_capabilities": {
+                "items": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "checking",
+                  "passed",
+                  "failed"
+                ],
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "current",
+              "status",
+              "message",
+              "checked_at",
+              "checked_target_revision",
+              "observed_capabilities"
+            ],
+            "type": "object"
+          },
           "endpoint": {
             "maxLength": 1024,
             "minLength": 1,
@@ -5993,6 +6063,7 @@
           "provider_revision",
           "priority",
           "capabilities",
+          "check",
           "active"
         ],
         "type": "object"
@@ -9469,6 +9540,121 @@
         "summary": "Get a Proposal",
         "tags": [
           "Proposals"
+        ]
+      }
+    },
+    "/api/v1/access-methods/{id}/check": {
+      "post": {
+        "callbacks": {},
+        "operationId": "checkAccessMethod",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckAccessMethodRequest"
+              }
+            }
+          },
+          "description": "Access Method revision",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessMethodResponse"
+                }
+              }
+            },
+            "description": "Connection check result"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Check the registered Method connection and record its observed capabilities",
+        "tags": [
+          "Targets"
         ]
       }
     },

@@ -67,6 +67,23 @@ defmodule Opsonde.Targets do
 
       define :update_access_method, action: :update, args: [:expected_revision]
       define :deactivate_access_method, action: :deactivate, args: [:expected_revision]
+      define :check_access_method, action: :check, args: [:id, :expected_revision, :invocation]
+
+      define :begin_access_method_check,
+        action: :begin_check,
+        args: [:expected_revision, :attempt_id]
+
+      define :record_access_method_check,
+        action: :record_check,
+        args: [
+          :expected_revision,
+          :attempt_id,
+          :connection_revision,
+          :target_revision,
+          :status,
+          :message,
+          :capability_catalog
+        ]
 
       define :available_access_methods,
         action: :available,

@@ -39,6 +39,47 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:observations, :effects]
     defstruct [:observations, :effects]
     @type t :: %__MODULE__{observations: [Operation.t()], effects: [Operation.t()]}
+
+    # The same typed value crosses the role port and the Method persistence seam.
+    def constraints do
+      operation = [
+        instance_of: Operation,
+        fields: [
+          capability: [type: :string, allow_nil?: false],
+          operation: [type: :string, allow_nil?: false],
+          description: [type: :string, allow_nil?: false],
+          input_schema: [type: :map, allow_nil?: false],
+          output_schema: [type: :map],
+          verification_schema: [type: :map],
+          evidence_requirements: [
+            type: {:array, :struct},
+            allow_nil?: false,
+            constraints: [
+              items: [
+                instance_of: EvidenceRequirement,
+                fields: [
+                  parameter: [type: :string, allow_nil?: false],
+                  fact: [type: :string, allow_nil?: false],
+                  observation: [type: :string, allow_nil?: false]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+
+      [
+        instance_of: __MODULE__,
+        fields: [
+          observations: [
+            type: {:array, :struct},
+            allow_nil?: false,
+            constraints: [items: operation]
+          ],
+          effects: [type: {:array, :struct}, allow_nil?: false, constraints: [items: operation]]
+        ]
+      ]
+    end
   end
 
   defmodule Connection do
@@ -51,15 +92,11 @@ defmodule Opsonde.Providers.Target do
   defmodule AccessMethodProfile do
     @moduledoc false
     @enforce_keys [:method, :capabilities]
-    defstruct @enforce_keys ++
-                [
-                  required_capabilities: []
-                ]
+    defstruct @enforce_keys
 
     @type t :: %__MODULE__{
             method: String.t(),
-            capabilities: [String.t()],
-            required_capabilities: [String.t()]
+            capabilities: [String.t()]
           }
   end
 

@@ -234,6 +234,20 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
           {"Access Method updated", "application/json", TargetSchemas.ref("AccessMethodResponse")}
       ] ++ @write_errors
 
+  operation :access_methods_check,
+    operation_id: "checkAccessMethod",
+    summary: "Check the registered Method connection and record its observed capabilities",
+    parameters: Schemas.id_parameter(),
+    request_body:
+      {"Access Method revision", "application/json",
+       TargetSchemas.ref("CheckAccessMethodRequest"), required: true},
+    responses:
+      [
+        ok:
+          {"Connection check result", "application/json",
+           TargetSchemas.ref("AccessMethodResponse")}
+      ] ++ @write_errors
+
   operation :access_methods_deactivate,
     operation_id: "deactivateAccessMethod",
     summary: "Deactivate an Access Method",
@@ -510,6 +524,21 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   end
 
   def access_methods_deactivate(_conn, _params), do: {:error, :bad_request}
+
+  def access_methods_check(conn, %{"id" => id, "access_method" => input}) when is_map(input) do
+    with true <- Map.keys(input) == ["expected_revision"],
+         {:ok, method} <-
+           Targets.check_access_method(id, input["expected_revision"], %{},
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, TargetSetupJSON.access_method(method))
+    else
+      false -> {:error, :bad_request}
+      {:error, _} = error -> error
+    end
+  end
+
+  def access_methods_check(_conn, _params), do: {:error, :bad_request}
 
   def relationships_index(conn, params) do
     page(conn, params, &Targets.page_relationships/1, &TargetSetupJSON.relationship/1)

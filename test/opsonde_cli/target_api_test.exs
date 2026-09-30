@@ -36,6 +36,45 @@ defmodule OpsondeCLI.TargetAPITest do
     }
   end
 
+  test "CLI checks a registered Method through the authenticated remote API contract", context do
+    provider =
+      Providers.create_provider!(
+        "check fixture",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "private-cli-token"}, actor: context.admin)
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!("check-host", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "check-method",
+        "ssh",
+        "ssh://192.0.2.1:22",
+        provider.revision,
+        100,
+        [], actor: context.admin)
+
+    output =
+      capture_io(Jason.encode!(%{expected_revision: method.revision}), fn ->
+        assert CLI.run(["access-method", "check", method.id, "--input", "-"], context.runtime) ==
+                 0
+      end)
+
+    %{"data" => checked} = Jason.decode!(output)
+    assert checked["check"]["current"]
+    assert checked["check"]["status"] == "passed"
+    assert checked["check"]["observed_capabilities"] == []
+    assert checked["capabilities"] == []
+    refute output =~ "private-cli-token"
+  end
+
   test "CLI registers both BMC Methods through the authenticated API", context do
     catalog =
       capture_io(fn -> assert CLI.run(["target-type", "list"], context.runtime) == 0 end)

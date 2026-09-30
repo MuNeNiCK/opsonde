@@ -1589,6 +1589,15 @@ defmodule Opsonde.Repo.Migrations.Baseline do
     end
 
     alter table(:access_methods) do
+      add :connection_revision, :bigint, null: false, default: 1
+      add :check_attempt_id, :uuid
+      add :check_status, :text
+      add :checked_connection_revision, :bigint
+      add :checked_target_revision, :bigint
+      add :check_message, :text
+      add :checked_at, :utc_datetime_usec
+      add :observed_capabilities, {:array, :text}, null: false, default: []
+      add :operation_catalog, :map
       add :name, :text, null: false
       add :method, :text, null: false
       add :endpoint, :text, null: false

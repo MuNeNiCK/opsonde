@@ -34,6 +34,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       "AccessMethodPage" => Schemas.page(ref("AccessMethod")),
       "CreateAccessMethodRequest" => create_access_method_request(),
       "UpdateAccessMethodRequest" => update_access_method_request(),
+      "CheckAccessMethodRequest" => deactivate_request(:access_method),
       "DeactivateAccessMethodRequest" => deactivate_request(:access_method),
       "TargetRelationship" => relationship(),
       "TargetRelationshipResponse" => Schemas.data(ref("TargetRelationship")),
@@ -210,6 +211,30 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         provider_revision: positive_integer(),
         priority: priority(),
         capabilities: string_array(100, 120),
+        check:
+          object(
+            %{
+              current: %Schema{type: :boolean},
+              status: %Schema{
+                type: :string,
+                enum: ["checking", "passed", "failed"],
+                nullable: true
+              },
+              message: %Schema{type: :string, nullable: true, maxLength: 500},
+              checked_at: nullable_timestamp(),
+              checked_target_revision: %Schema{type: :integer, minimum: 1, nullable: true},
+              observed_capabilities: string_array(100, 120)
+            },
+            [
+              :current,
+              :status,
+              :message,
+              :checked_at,
+              :checked_target_revision,
+              :observed_capabilities
+            ],
+            false
+          ),
         active: %Schema{type: :boolean}
       },
       [
@@ -221,6 +246,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
         :provider_revision,
         :priority,
         :capabilities,
+        :check,
         :active
       ]
     )

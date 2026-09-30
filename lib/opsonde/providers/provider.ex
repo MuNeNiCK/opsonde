@@ -145,6 +145,20 @@ defmodule Opsonde.Providers.Provider do
       run {Opsonde.Providers.Provider.Actions.Target, operation: :capabilities}
     end
 
+    action :target_check, :struct do
+      public? false
+      constraints instance_of: Opsonde.Providers.Target.Capabilities
+      transaction? false
+      argument :provider_id, :uuid, allow_nil?: false
+
+      argument :request, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Providers.Target.CapabilitiesRequest]
+
+      argument :invocation, :map, allow_nil?: false, default: %{}
+      run {Opsonde.Providers.Provider.Actions.Target, operation: :check}
+    end
+
     action :signal_ingest, :struct do
       constraints instance_of: Opsonde.Providers.Signal.IngestResult
       transaction? false
@@ -404,7 +418,13 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :admin)
     end
 
-    policy action([:target_classify, :target_observe, :target_effect, :target_verify]) do
+    policy action([
+             :target_check,
+             :target_classify,
+             :target_observe,
+             :target_effect,
+             :target_verify
+           ]) do
       forbid_if always()
     end
 

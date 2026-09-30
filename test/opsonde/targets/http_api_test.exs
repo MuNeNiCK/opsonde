@@ -12,7 +12,8 @@ defmodule Opsonde.Targets.HTTPAPITest do
     def init(agent), do: agent
 
     def call(conn, agent) do
-      if get_req_header(conn, "authorization") == ["Bearer fixture-token"] do
+      if get_req_header(conn, "authorization") == ["Bearer fixture-token"] and
+           Agent.get(agent, &Map.get(&1, :authorized, true)) do
         route(conn, agent)
       else
         send_resp(conn, 401, "")
@@ -121,6 +122,75 @@ defmodule Opsonde.Targets.HTTPAPITest do
       state: state,
       agent: agent
     }
+  end
+
+  test "a registered Method check records connection facts separately from operator grants",
+       context do
+    checked =
+      Targets.check_access_method!(context.method.id, context.method.revision, %{},
+        actor: context.admin
+      )
+
+    assert checked.check_status == :passed
+    assert checked.checked_target_revision == context.target.revision
+    assert checked.checked_connection_revision == checked.connection_revision
+    assert checked.capabilities == ["request.http.observe", "request.http.effect"]
+    assert checked.observed_capabilities == ["request.http.observe", "request.http.effect"]
+    reread = Targets.get_access_method!(checked.id, actor: context.admin)
+    assert reread.checked_at == checked.checked_at
+    assert reread.check_status == :passed
+    assert reread.operation_catalog == checked.operation_catalog
+
+    assert %Target.Operation{operation: "request.observe"} =
+             hd(reread.operation_catalog.observations)
+  end
+
+  test "Method grants and display edits preserve a check but an endpoint edit invalidates it",
+       context do
+    checked =
+      Targets.check_access_method!(context.method.id, context.method.revision, %{},
+        actor: context.admin
+      )
+
+    edited =
+      Targets.update_access_method!(
+        checked,
+        checked.revision,
+        %{name: "renamed", priority: 20, capabilities: []}, actor: context.admin)
+
+    assert edited.check_status == :passed
+    assert edited.checked_at == checked.checked_at
+    assert edited.observed_capabilities == ["request.http.observe", "request.http.effect"]
+    assert edited.capabilities == []
+
+    changed =
+      Targets.update_access_method!(edited, edited.revision, %{endpoint: context.endpoint <> "/"},
+        actor: context.admin
+      )
+
+    assert is_nil(changed.check_status)
+    assert changed.observed_capabilities == []
+    assert is_nil(changed.operation_catalog)
+  end
+
+  test "a failed Method recheck clears earlier connection facts without disabling shared credentials",
+       context do
+    checked =
+      Targets.check_access_method!(context.method.id, context.method.revision, %{},
+        actor: context.admin
+      )
+
+    Agent.update(context.agent, &Map.put(&1, :authorized, false))
+    failed = Targets.check_access_method!(checked.id, checked.revision, %{}, actor: context.admin)
+    assert failed.check_status == :failed
+    assert failed.observed_capabilities == []
+    assert is_nil(failed.operation_catalog)
+    assert Providers.get_provider!(context.provider.id, actor: context.admin).enabled
+
+    assert {:error, %Ash.Error.Forbidden{}} =
+             Targets.check_access_method(context.method.id, failed.revision, %{},
+               actor: context.operator
+             )
   end
 
   test "two registered Methods share credentials but reach their own HTTP endpoints", context do
