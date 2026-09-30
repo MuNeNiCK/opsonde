@@ -43,7 +43,7 @@ export function clearStoredToken() {
 
 const authentication: Middleware = {
   onRequest({ request }) {
-    request.headers.set("Accept", "application/json");
+    if (!request.headers.has("Accept")) request.headers.set("Accept", "application/json");
     const token = storedToken();
     if (token) request.headers.set("Authorization", `Bearer ${token}`);
     return request;

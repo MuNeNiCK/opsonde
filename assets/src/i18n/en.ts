@@ -1,5 +1,33 @@
 const en = {
   translation: {
+    files: {
+      title: "Files",
+      add: "Add file",
+      empty: "No files",
+      refresh: "Refresh",
+      download: "Download",
+      remove: "Remove",
+      resume: "Resume upload",
+      useInCase: "Use in Case",
+      select: "File (optional)",
+      none: "No file",
+      transferring: "Transferring file…",
+      expires: "Expires {{date}}",
+      source: "Source request: {{id}}",
+      failed: "File transfer failed. Refresh to check progress before trying again.",
+      tooLarge: "The file exceeds the server transfer limit.",
+      differentFile: "Select the same file to resume this upload.",
+      unavailable: "This file is incomplete, removed, or expired.",
+      invalidProgress: "The server returned unexpected transfer progress. Refresh before resuming.",
+      integrityFailed: "File integrity verification failed.",
+      status: {
+        uploading: "Upload incomplete",
+        receiving: "Receiving",
+        ready: "Ready",
+        revoked: "Removed",
+        expired: "Expired",
+      },
+    },
     common: {
       language: "Language",
       theme: "Theme",

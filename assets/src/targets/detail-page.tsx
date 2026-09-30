@@ -20,6 +20,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
 import { AccessMethodForm } from "@/targets/access-method-form";
 import { TargetDetailActions } from "@/targets/detail-actions";
+import { TargetFileSection } from "@/targets/file-section";
 
 export function TargetDetailPage() {
   const { targetId = "" } = useParams();
@@ -142,6 +143,7 @@ export function TargetDetailPage() {
         />
       )}
 
+      <TargetFileSection key={target.id} targetId={target.id} />
       <div className="grid gap-4 xl:grid-cols-2">
         <Section
           icon={<Cable />}

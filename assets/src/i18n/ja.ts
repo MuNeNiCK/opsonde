@@ -1,5 +1,33 @@
 const ja = {
   translation: {
+    files: {
+      title: "ファイル",
+      add: "ファイルを追加",
+      empty: "ファイルはありません",
+      refresh: "更新",
+      download: "ダウンロード",
+      remove: "削除",
+      resume: "アップロードを再開",
+      useInCase: "ケースで使用",
+      select: "ファイル（任意）",
+      none: "ファイルなし",
+      transferring: "ファイルを転送中…",
+      expires: "有効期限 {{date}}",
+      source: "取得元リクエスト: {{id}}",
+      failed: "転送に失敗しました。更新して進捗を確認してください。",
+      tooLarge: "ファイルが転送上限を超えています。",
+      differentFile: "再開するには同じファイルを選択してください。",
+      unavailable: "このファイルは未完了、削除済み、または期限切れです。",
+      invalidProgress: "転送の進捗を確認できません。更新してから再開してください。",
+      integrityFailed: "ファイルの整合性を確認できませんでした。",
+      status: {
+        uploading: "アップロード未完了",
+        receiving: "受信中",
+        ready: "使用可能",
+        revoked: "削除済み",
+        expired: "期限切れ",
+      },
+    },
     common: {
       language: "言語",
       theme: "テーマ",

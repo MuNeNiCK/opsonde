@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
@@ -13,18 +13,32 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  fileReference,
+  getTargetFile,
+  listTargetFiles,
+  type TargetFile,
+} from "@/targets/file-transfer";
 
 type Target = components["schemas"]["Target"];
 
 export function CaseCreatePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [search] = useSearchParams();
   const { account } = useAuthentication();
   const [sourceRef] = useState(() => crypto.randomUUID());
   const [targets, setTargets] = useState<Target[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [targetId, setTargetId] = useState(search.get("target") ?? "");
+  const [fileId, setFileId] = useState(search.get("file") ?? "");
+  const [fileListing, setFileListing] = useState<{ targetId: string; items: TargetFile[] } | null>(
+    null,
+  );
   const canOperate = account?.role === "admin" || account?.role === "operator";
+  const files = fileListing?.targetId === targetId ? fileListing.items : [];
+  const loadingFiles = canOperate && !!targetId && fileListing?.targetId !== targetId;
 
   useEffect(() => {
     let active = true;
@@ -39,6 +53,30 @@ export function CaseCreatePage() {
       active = false;
     };
   }, [t]);
+
+  useEffect(() => {
+    let active = true;
+    if (!targetId || !canOperate) return;
+    listTargetFiles(targetId)
+      .then((items) => {
+        if (active)
+          setFileListing({
+            targetId,
+            items: items.filter(
+              (file) => file.status === "ready" && Date.parse(file.expires_at) > Date.now(),
+            ),
+          });
+      })
+      .catch(() => {
+        if (active) {
+          setFileListing({ targetId, items: [] });
+          setError(t("files.failed"));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [targetId, canOperate, t]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -56,6 +94,7 @@ export function CaseCreatePage() {
     setPending(true);
     setError("");
     try {
+      const attachment = fileId ? fileReference(await getTargetFile(targetId, fileId)) : null;
       const response = apiData(
         await apiClient.POST("/api/v1/cases", {
           body: {
@@ -65,9 +104,10 @@ export function CaseCreatePage() {
               source_ref: sourceRef,
               title: value("title"),
               severity: value("severity") as "info" | "warning" | "error" | "critical",
-              initial_target_id: value("initial_target_id") || null,
+              initial_target_id: targetId || null,
               initial_context: {
                 desired_outcome: desiredOutcome,
+                ...(attachment ? { files: { attachment } } : {}),
                 ...(value("observed_problem")
                   ? { observed_problem: value("observed_problem") }
                   : {}),
@@ -77,8 +117,12 @@ export function CaseCreatePage() {
         }),
       );
       void navigate(`/cases/${response.data.id}`);
-    } catch {
-      setError(t("cases.requestFailed"));
+    } catch (cause) {
+      setError(
+        cause instanceof Error && cause.message === "unavailable"
+          ? t("files.unavailable")
+          : t("cases.requestFailed"),
+      );
     } finally {
       setPending(false);
     }
@@ -137,6 +181,11 @@ export function CaseCreatePage() {
                     id="case-target"
                     name="initial_target_id"
                     placeholder={t("cases.findTarget")}
+                    value={targetId || null}
+                    onValueChange={(value) => {
+                      setTargetId(value ?? "");
+                      setFileId("");
+                    }}
                     options={targets.map((target) => ({ value: target.id, label: target.name }))}
                   />
                 </div>
@@ -153,7 +202,31 @@ export function CaseCreatePage() {
                   />
                 </div>
               </div>
-              <Button type="submit" disabled={pending}>
+              {targetId && (
+                <div className="space-y-2">
+                  <Label htmlFor="case-file">{t("files.select")}</Label>
+                  <FormSelect
+                    id="case-file"
+                    value={fileId || null}
+                    disabled={loadingFiles || pending}
+                    placeholder={t("files.none")}
+                    onValueChange={(value) => setFileId(value ?? "")}
+                    options={[
+                      { value: "", label: t("files.none") },
+                      ...files.map((file) => ({ value: file.id, label: file.name })),
+                    ]}
+                  />
+                  {fileId && !loadingFiles && !files.some((file) => file.id === fileId) && (
+                    <p className="text-sm text-destructive">{t("files.unavailable")}</p>
+                  )}
+                </div>
+              )}
+              <Button
+                type="submit"
+                disabled={
+                  pending || loadingFiles || !!(fileId && !files.some((file) => file.id === fileId))
+                }
+              >
                 {pending && <Spinner />}
                 {t("cases.createManual")}
               </Button>
