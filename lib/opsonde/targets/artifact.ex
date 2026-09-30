@@ -15,6 +15,13 @@ defmodule Opsonde.Targets.Artifact do
   actions do
     defaults [:read]
 
+    read :for_target do
+      get? true
+      argument :id, :uuid, allow_nil?: false
+      argument :target_id, :uuid, allow_nil?: false
+      filter expr(id == ^arg(:id) and target_id == ^arg(:target_id))
+    end
+
     read :page do
       argument :target_id, :uuid, allow_nil?: false
       filter expr(target_id == ^arg(:target_id))
@@ -124,12 +131,22 @@ defmodule Opsonde.Targets.Artifact do
       forbid_if always()
     end
 
-    policy action([:read, :page, :limits, :begin, :append, :complete, :chunk, :revoke]) do
+    policy action([
+             :read,
+             :for_target,
+             :page,
+             :limits,
+             :begin,
+             :append,
+             :complete,
+             :chunk,
+             :revoke
+           ]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :for_target, :page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if relates_to_actor_via(:uploaded_by)
     end

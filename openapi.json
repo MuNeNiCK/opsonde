@@ -5017,6 +5017,110 @@
         ],
         "type": "object"
       },
+      "TargetFileLimitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "chunk_bytes": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "lifetime_seconds": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "max_size_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "chunk_bytes",
+              "max_size_bytes",
+              "lifetime_seconds"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TargetFile": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "received_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sha256": {
+            "nullable": true,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "uploading",
+              "ready",
+              "revoked",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "revision",
+          "sha256",
+          "expires_at",
+          "media_type",
+          "size_bytes",
+          "target_id",
+          "received_bytes",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "AuditScheduleResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5108,6 +5212,25 @@
         ],
         "type": "object"
       },
+      "TargetFilePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TargetFile"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "Evidence": {
         "additionalProperties": false,
         "properties": {
@@ -5172,6 +5295,52 @@
           "observed_at",
           "inserted_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "CreateTargetFileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "additionalProperties": false,
+            "properties": {
+              "expected_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "media_type": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              "size_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "upload_key": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "media_type",
+              "size_bytes",
+              "expected_sha256",
+              "upload_key"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "file"
         ],
         "type": "object"
       },
@@ -6321,6 +6490,18 @@
           "revision",
           "changed_by_id",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "TargetFileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TargetFile"
+          }
+        },
+        "required": [
+          "data"
         ],
         "type": "object"
       },
@@ -8788,6 +8969,232 @@
         ]
       }
     },
+    "/api/v1/targets/{target_id}/files/{id}": {
+      "delete": {
+        "callbacks": {},
+        "operationId": "revokeTargetFile",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileResponse"
+                }
+              }
+            },
+            "description": "File metadata"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Remove a Target file from use",
+        "tags": [
+          "Targets"
+        ]
+      },
+      "get": {
+        "callbacks": {},
+        "operationId": "getTargetFile",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileResponse"
+                }
+              }
+            },
+            "description": "File metadata"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get Target file metadata and upload progress",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
     "/api/v1/inventory-imports/{id}/rows": {
       "get": {
         "callbacks": {},
@@ -9182,6 +9589,265 @@
           }
         },
         "summary": "Update a management boundary",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
+    "/api/v1/targets/{target_id}/files/{id}/chunks/{offset}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "downloadTargetFileChunk",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Binary chunk"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Download a completed Target file chunk",
+        "tags": [
+          "Targets"
+        ]
+      },
+      "put": {
+        "callbacks": {},
+        "operationId": "appendTargetFileChunk",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "Binary chunk",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileResponse"
+                }
+              }
+            },
+            "description": "File metadata"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Upload a binary chunk at its exact offset",
         "tags": [
           "Targets"
         ]
@@ -11506,6 +12172,99 @@
         ]
       }
     },
+    "/api/v1/target-file-limits": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getTargetFileLimits",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileLimitsResponse"
+                }
+              }
+            },
+            "description": "File transfer limits"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get server file transfer limits",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
     "/api/v1/verification-attempts/{id}": {
       "get": {
         "callbacks": {},
@@ -13336,6 +14095,245 @@
         ]
       }
     },
+    "/api/v1/targets/{target_id}/files": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listTargetFiles",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFilePage"
+                }
+              }
+            },
+            "description": "File page"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Target file metadata and progress",
+        "tags": [
+          "Targets"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "createTargetFile",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTargetFileRequest"
+              }
+            }
+          },
+          "description": "File metadata",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileResponse"
+                }
+              }
+            },
+            "description": "Staged file"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Begin uploading a Target file",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
     "/api/v1/cases/{id}/cancel": {
       "post": {
         "callbacks": {},
@@ -13532,6 +14530,120 @@
         "summary": "Get a Report",
         "tags": [
           "Reports"
+        ]
+      }
+    },
+    "/api/v1/targets/{target_id}/files/{id}/complete": {
+      "post": {
+        "callbacks": {},
+        "operationId": "completeTargetFile",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetFileResponse"
+                }
+              }
+            },
+            "description": "File metadata"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource state conflicts with the request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Validate and publish a completely uploaded file",
+        "tags": [
+          "Targets"
         ]
       }
     },

@@ -11,6 +11,7 @@ defmodule OpsondeWeb.ApiSpec do
     InventorySchemas,
     OutcomeSchemas,
     ProviderSchemas,
+    TargetFileSchemas,
     TargetSchemas,
     WorkflowSchemas
   }
@@ -30,6 +31,7 @@ defmodule OpsondeWeb.ApiSpec do
           |> Map.merge(AccountSchemas.components())
           |> Map.merge(ProviderSchemas.components())
           |> Map.merge(TargetSchemas.components())
+          |> Map.merge(TargetFileSchemas.components())
           |> Map.merge(InventorySchemas.components())
           |> Map.merge(WorkflowSchemas.components())
           |> Map.merge(OutcomeSchemas.components()),

@@ -44,13 +44,6 @@ defmodule OpsondeWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  plug Plug.Parsers,
-    parsers: [:urlencoded, :multipart, :json],
-    pass: ["*/*"],
-    json_decoder: Phoenix.json_library(),
-    body_reader: {OpsondeWeb.CacheBodyReader, :read_body, []}
-
-  plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
   plug OpsondeWeb.Router

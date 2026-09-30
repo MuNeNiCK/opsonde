@@ -247,6 +247,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/targets/{target_id}/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Target file metadata and upload progress */
+        get: operations["getTargetFile"];
+        put?: never;
+        post?: never;
+        /** Remove a Target file from use */
+        delete: operations["revokeTargetFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory-imports/{id}/rows": {
         parameters: {
             query?: never;
@@ -313,6 +331,24 @@ export interface paths {
         head?: never;
         /** Update a management boundary */
         patch: operations["updateManagementBoundary"];
+        trace?: never;
+    };
+    "/api/v1/targets/{target_id}/files/{id}/chunks/{offset}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a completed Target file chunk */
+        get: operations["downloadTargetFileChunk"];
+        /** Upload a binary chunk at its exact offset */
+        put: operations["appendTargetFileChunk"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/target-relationships": {
@@ -693,6 +729,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/target-file-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get server file transfer limits */
+        get: operations["getTargetFileLimits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/verification-attempts/{id}": {
         parameters: {
             query?: never;
@@ -984,6 +1037,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/targets/{target_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Target file metadata and progress */
+        get: operations["listTargetFiles"];
+        put?: never;
+        /** Begin uploading a Target file */
+        post: operations["createTargetFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{id}/cancel": {
         parameters: {
             query?: never;
@@ -1012,6 +1083,23 @@ export interface paths {
         get: operations["getReport"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/targets/{target_id}/files/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate and publish a completely uploaded file */
+        post: operations["completeTargetFile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2728,6 +2816,33 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        TargetFileLimitsResponse: {
+            data: {
+                chunk_bytes: number;
+                lifetime_seconds: number;
+                max_size_bytes: number;
+            };
+        };
+        TargetFile: {
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            media_type: string;
+            name: string;
+            received_bytes: number;
+            revision: number;
+            sha256: string | null;
+            size_bytes: number;
+            /** @enum {string} */
+            status: "uploading" | "ready" | "revoked" | "expired";
+            /** Format: uuid */
+            target_id: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         AuditScheduleResponse: {
             data: components["schemas"]["AuditSchedule"];
         };
@@ -2748,6 +2863,10 @@ export interface components {
                 target_ids?: string[];
                 timezone: string;
             };
+        };
+        TargetFilePage: {
+            data: components["schemas"]["TargetFile"][];
+            page: components["schemas"]["Page"];
         };
         Evidence: {
             /** Format: uuid */
@@ -2770,6 +2889,15 @@ export interface components {
             turn_id: string | null;
             /** Format: date-time */
             updated_at: string;
+        };
+        CreateTargetFileRequest: {
+            file: {
+                expected_sha256: string;
+                media_type: string;
+                name: string;
+                size_bytes: number;
+                upload_key: string;
+            };
         };
         InventoryImportRowPage: {
             data: components["schemas"]["InventoryImportRow"][];
@@ -3052,6 +3180,9 @@ export interface components {
             revision: number;
             /** Format: date-time */
             updated_at: string;
+        };
+        TargetFileResponse: {
+            data: components["schemas"]["TargetFile"];
         };
         ResolutionRunResponse: {
             data: components["schemas"]["ResolutionRun"];
@@ -4653,6 +4784,178 @@ export interface operations {
             };
         };
     };
+    getTargetFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revokeTargetFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listInventoryImportRows: {
         parameters: {
             query?: {
@@ -4892,6 +5195,185 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ManagementBoundaryResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    downloadTargetFileChunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+                id: string;
+                offset: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Binary chunk */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    appendTargetFileChunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+                id: string;
+                offset: number;
+            };
+            cookie?: never;
+        };
+        /** @description Binary chunk */
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description File metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileResponse"];
                 };
             };
             /** @description Request body is invalid */
@@ -6745,6 +7227,89 @@ export interface operations {
             };
         };
     };
+    getTargetFileLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File transfer limits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileLimitsResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getVerificationAttempt: {
         parameters: {
             query?: never;
@@ -8157,6 +8722,184 @@ export interface operations {
             };
         };
     };
+    listTargetFiles: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFilePage"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createTargetFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description File metadata */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTargetFileRequest"];
+            };
+        };
+        responses: {
+            /** @description Staged file */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     cancelCase: {
         parameters: {
             query?: never;
@@ -8287,6 +9030,92 @@ export interface operations {
             };
             /** @description Resource was not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    completeTargetFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetFileResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource state conflicts with the request */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

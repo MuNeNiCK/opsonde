@@ -170,6 +170,7 @@ defmodule Opsonde.Targets do
 
     resource Opsonde.Targets.Artifact do
       define :get_artifact, action: :read, get_by: [:id]
+      define :get_artifact_for_target, action: :for_target, args: [:id, :target_id]
       define :page_artifacts, action: :page, args: [:target_id]
       define :artifact_limits, action: :limits
 

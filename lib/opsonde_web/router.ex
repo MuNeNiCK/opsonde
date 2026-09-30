@@ -15,8 +15,28 @@ defmodule OpsondeWeb.Router do
     plug OpsondeWeb.API.Auth
   end
 
+  pipeline :request_body do
+    plug Plug.Parsers,
+      parsers: [:urlencoded, :multipart, :json],
+      pass: ["*/*"],
+      json_decoder: Phoenix.json_library(),
+      body_reader: {OpsondeWeb.CacheBodyReader, :read_body, []}
+  end
+
+  pipeline :binary_api do
+    plug :accepts, ["json", "bin"]
+    plug :fetch_query_params
+    plug OpenApiSpex.Plug.PutApiSpec, module: OpsondeWeb.ApiSpec
+  end
+
   scope "/api/v1", OpsondeWeb.API.V1 do
-    pipe_through :api
+    pipe_through [:binary_api, :authenticated_api]
+    put "/targets/:target_id/files/:id/chunks/:offset", TargetFileController, :append_chunk
+    get "/targets/:target_id/files/:id/chunks/:offset", TargetFileController, :download_chunk
+  end
+
+  scope "/api/v1", OpsondeWeb.API.V1 do
+    pipe_through [:api, :request_body]
 
     get "/openapi.json", OpenAPIController, :show
     post "/accounts/bootstrap", AccountController, :bootstrap
@@ -27,7 +47,7 @@ defmodule OpsondeWeb.Router do
   end
 
   scope "/api/v1", OpsondeWeb.API.V1 do
-    pipe_through [:api, :authenticated_api]
+    pipe_through [:api, :authenticated_api, :request_body]
 
     get "/session", SessionController, :show
     delete "/session", SessionController, :delete
@@ -66,6 +86,12 @@ defmodule OpsondeWeb.Router do
     get "/targets/:id", TargetSetupController, :targets_show
     patch "/targets/:id", TargetSetupController, :targets_update
     post "/targets/:id/deactivate", TargetSetupController, :targets_deactivate
+    post "/targets/:target_id/files", TargetFileController, :create
+    get "/targets/:target_id/files", TargetFileController, :index
+    get "/targets/:target_id/files/:id", TargetFileController, :show
+    post "/targets/:target_id/files/:id/complete", TargetFileController, :complete
+    delete "/targets/:target_id/files/:id", TargetFileController, :revoke
+    get "/target-file-limits", TargetFileController, :limits
 
     get "/external-identities", TargetSetupController, :identities_index
     post "/external-identities", TargetSetupController, :identities_create
@@ -137,7 +163,7 @@ defmodule OpsondeWeb.Router do
   end
 
   scope "/api/v1", OpsondeWeb do
-    pipe_through :api
+    pipe_through [:api, :request_body]
 
     post "/signals/alertmanager/:provider_id", SignalWebhookController, :alertmanager
     post "/signals/generic/:provider_id", SignalWebhookController, :generic
@@ -151,7 +177,7 @@ defmodule OpsondeWeb.Router do
   end
 
   scope "/auth", OpsondeWeb do
-    pipe_through :oidc_browser
+    pipe_through [:oidc_browser, :request_body]
 
     get "/user/oidc", OIDCController, :start
     get "/user/oidc/callback", OIDCController, :callback
