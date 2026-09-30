@@ -40,6 +40,56 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       json(conn, 200, %{"@odata.id" => "/redfish/v1/", "RedfishVersion" => "1.16.0"})
     end
 
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Bundle/content"} = conn, _agent) do
+      conn
+      |> put_resp_content_type("application/octet-stream")
+      |> send_resp(200, <<255, 0, 1, 2, 255>>)
+    end
+
+    defp route(%{method: "PUT", request_path: "/redfish/v1/Oem/Bundle/content"} = conn, agent) do
+      {:ok, bytes, conn} = read_body(conn)
+
+      Agent.update(
+        agent,
+        &Map.put(&1, :file_input, {bytes, get_req_header(conn, "content-type")})
+      )
+
+      conn |> put_resp_content_type("application/octet-stream") |> send_resp(200, bytes)
+    end
+
+    defp route(%{request_path: "/redfish/v1/Oem/Bundle/Interrupted"} = conn, _agent) do
+      conn = send_chunked(conn, 200)
+      {:ok, _conn} = chunk(conn, <<255, 0>>)
+      Process.sleep(50)
+      Process.exit(self(), :kill)
+    end
+
+    defp route(%{request_path: "/redfish/v1/Oem/Bundle/Cancelled"} = conn, agent) do
+      conn = send_chunked(conn, 200)
+      {:ok, conn} = chunk(conn, <<255, 0>>)
+      Agent.update(agent, &Map.put(&1, :cancelled, true))
+      Process.sleep(150)
+      conn
+    end
+
+    defp route(%{method: "POST", request_path: "/redfish/v1/UpdateService/upload"} = conn, agent) do
+      {:ok, parameter_headers, conn} = read_part_headers(conn)
+      {:ok, parameters, conn} = read_part_body(conn, [])
+      {:ok, file_headers, conn} = read_part_headers(conn)
+      {:ok, bytes, conn} = read_part_body(conn, [])
+      {:done, conn} = read_part_headers(conn)
+
+      Agent.update(
+        agent,
+        &Map.put(&1, :multipart_input, {parameter_headers, parameters, file_headers, bytes})
+      )
+
+      conn
+      |> put_resp_header("location", "/redfish/v1/TaskService/TaskMonitors/2")
+      |> put_resp_content_type("application/octet-stream")
+      |> send_resp(202, <<255, 0, 1, 2, 255>>)
+    end
+
     defp route(%{request_path: "/redfish/v1/Oem/Property"} = conn, agent) do
       if conn.method == "PATCH" do
         {:ok, body, _conn} = read_body(conn)
@@ -197,6 +247,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Malformed"} = conn, _agent),
       do: send_resp(conn, 200, "[")
 
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Malformed"} = conn, agent) do
+      Agent.update(agent, &%{&1 | name: "changed", writes: &1.writes + 1})
+      send_resp(conn, 200, "[")
+    end
+
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Redirect"} = conn, _agent) do
       conn
       |> put_resp_header("location", "/redfish/v1/Oem/Pages")
@@ -210,6 +265,322 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> put_resp_content_type("application/json")
       |> send_resp(status, Jason.encode!(value))
     end
+  end
+
+  test "checked Redfish Method returns exact binary file content without JSON decoding",
+       context do
+    request = %Request{
+      kind: :observation,
+      authority_mode: :readonly,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.redfish.observe",
+      operation: "request.observe",
+      parameters: %{
+        "method" => "GET",
+        "uri" => "/redfish/v1/Oem/Bundle/content",
+        "accept" => "application/octet-stream",
+        "response_file" => %{"name" => "bundle.bin", "media_type" => "application/octet-stream"}
+      }
+    }
+
+    result =
+      request
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    file = result.facts["file"]
+    assert file["size_bytes"] == 5
+    assert file["sha256"] == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+    assert Targets.read_bound_artifact_chunk!(file, 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    assert result.facts["response"] == %{}
+
+    assert {:ok, _} =
+             JSV.validate(
+               result.facts,
+               JSV.build!(
+                 Enum.find(
+                   context.method.operation_catalog.observations,
+                   &(&1.capability == "request.redfish.observe")
+                 ).output_schema
+               )
+             )
+  end
+
+  test "checked Redfish effects send immutable raw and native multipart files", context do
+    bytes = <<255, 0, 1, 2, 255>>
+    raw = stage_file(context, bytes, "raw.bin", "application/octet-stream")
+    boundary = "opsonde-wire-boundary"
+    media = "multipart/form-data; boundary=#{boundary}"
+
+    multipart =
+      IO.iodata_to_binary([
+        "--#{boundary}\r\nContent-Disposition: form-data; name=\"UpdateParameters\"\r\nContent-Type: application/json\r\n\r\n{}\r\n",
+        "--#{boundary}\r\nContent-Disposition: form-data; name=\"UpdateFile\"; filename=\"firmware.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+        bytes,
+        "\r\n--#{boundary}--\r\n"
+      ])
+
+    envelope = stage_file(context, multipart, "request.multipart", media)
+
+    for {verb, uri, input, content_type, outcome} <- [
+          {"PUT", "/redfish/v1/Oem/Bundle/content", raw, "application/octet-stream", :applied},
+          {"POST", "/redfish/v1/UpdateService/upload", envelope, media, :unknown}
+        ] do
+      parameters = %{
+        "method" => verb,
+        "uri" => uri,
+        "body_file" => "payload",
+        "files" => %{"payload" => input},
+        "content_type" => content_type,
+        "response_file" => %{"name" => "reply.bin", "media_type" => "application/octet-stream"}
+      }
+
+      clearance =
+        file_request(context, :effect, parameters)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      result =
+        Targets.dispatch_target_effect!(clearance, %{},
+          actor: context.operator,
+          authorize?: false
+        )
+
+      assert result.status == outcome
+
+      assert Targets.read_bound_artifact_chunk!(result.details["file"], 0,
+               actor: context.operator
+             ) == bytes
+
+      assert result.details["file"]["sha256"] ==
+               "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+      if verb == "POST",
+        do: assert(result.details["task_location"] == "/redfish/v1/TaskService/TaskMonitors/2")
+
+      catalog =
+        Enum.find(
+          context.method.operation_catalog.effects,
+          &(&1.capability == "request.redfish.effect")
+        )
+
+      assert {:ok, _} =
+               JSV.validate(
+                 %{"selectors" => %{}, "parameters" => parameters},
+                 JSV.build!(catalog.input_schema)
+               )
+
+      for invalid <- [
+            Map.put(parameters, "body", %{}),
+            Map.put(parameters, "body_file", "missing"),
+            Map.put(parameters, "uri", "https://other.example/redfish/v1/UpdateService/upload")
+          ] do
+        assert {:error, _} =
+                 Targets.clear_target_request(file_request(context, :effect, invalid),
+                   actor: context.operator
+                 )
+      end
+
+      Targets.revoke_artifact!(input["id"], actor: context.operator)
+
+      assert {:error, _} =
+               Targets.dispatch_target_effect(clearance, %{},
+                 actor: context.operator,
+                 authorize?: false
+               )
+    end
+
+    assert Agent.get(context.agent, & &1.file_input) == {bytes, ["application/octet-stream"]}
+
+    {parameter_headers, parameters, file_headers, upload} =
+      Agent.get(context.agent, & &1.multipart_input)
+
+    assert parameters == "{}"
+    assert upload == bytes
+
+    assert List.keyfind(parameter_headers, "content-disposition", 0) ==
+             {"content-disposition", "form-data; name=\"UpdateParameters\""}
+
+    assert List.keyfind(file_headers, "content-disposition", 0) ==
+             {"content-disposition", "form-data; name=\"UpdateFile\"; filename=\"firmware.bin\""}
+
+    assert List.keyfind(file_headers, "content-type", 0) ==
+             {"content-type", "application/octet-stream"}
+
+    paths = Agent.get(context.agent, & &1.paths)
+    assert Enum.count(paths, &(&1 == "/redfish/v1/UpdateService/upload")) == 1
+    # One raw PUT, plus no calls after the input file was revoked.
+    assert Enum.count(paths, &(&1 == "/redfish/v1/Oem/Bundle/content")) == 1
+  end
+
+  test "Redfish overflow and interruption never publish partial files", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{chunk_bytes: 3, max_size_bytes: 4})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    for uri <- ["/redfish/v1/Oem/Bundle/content", "/redfish/v1/Oem/Bundle/Interrupted"] do
+      clearance =
+        file_request(context, :observation, %{
+          "method" => "GET",
+          "uri" => uri,
+          "response_file" => %{
+            "name" => "partial.bin",
+            "media_type" => "application/octet-stream"
+          }
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      assert {:error, _} =
+               Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+    end
+
+    receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert length(receipts) == 2
+
+    for receipt <- receipts do
+      assert receipt.status == :receiving
+      assert receipt.received_bytes <= 4
+      assert is_nil(receipt.sha256)
+
+      assert {:error, _} =
+               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+    end
+  end
+
+  test "cancelled Redfish file effects remain unknown without replay", context do
+    clearance =
+      file_request(context, :effect, %{
+        "method" => "POST",
+        "uri" => "/redfish/v1/Oem/Bundle/Cancelled",
+        "body" => %{},
+        "response_file" => %{
+          "name" => "cancelled.bin",
+          "media_type" => "application/octet-stream"
+        }
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: fn -> true end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Targets.page_artifacts!(context.target.id, actor: context.operator).results == []
+
+    result =
+      Targets.dispatch_target_effect!(
+        clearance,
+        %{cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end},
+        actor: context.operator,
+        authorize?: false
+      )
+
+    assert result.status == :unknown
+    refute Map.has_key?(result.details, "file")
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert Agent.get(
+             context.agent,
+             &Enum.count(&1.paths, fn path -> path == "/redfish/v1/Oem/Bundle/Cancelled" end)
+           ) == 1
+  end
+
+  test "lost Redfish file effect response retains receipt identity without replay", context do
+    clearance =
+      file_request(context, :effect, %{
+        "method" => "POST",
+        "uri" => "/redfish/v1/Oem/Drop",
+        "body" => %{},
+        "response_file" => %{"name" => "lost.bin", "media_type" => "application/octet-stream"}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert Agent.get(context.agent, & &1.echo_calls) == 1
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert result.details["reason"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "failed Redfish file publication cannot report success or resend the body", context do
+    input = stage_file(context, <<255, 0, 1, 2, 255>>, "request.bin", "application/octet-stream")
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_redfish_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'ready' THEN RAISE EXCEPTION 'injected file publication failure'; END IF;
+      RETURN NEW;
+    END $$;
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_redfish_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_redfish_file_ready()"
+    )
+
+    clearance =
+      file_request(context, :effect, %{
+        "method" => "PUT",
+        "uri" => "/redfish/v1/Oem/Bundle/content",
+        "body_file" => "payload",
+        "files" => %{"payload" => input},
+        "content_type" => "application/octet-stream",
+        "response_file" => %{"name" => "reply.bin", "media_type" => "application/octet-stream"}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    receipt = Enum.find(receipts, &(&1.id != input["id"]))
+    assert receipt.status == :receiving
+    assert receipt.received_bytes == 5
+    assert result.details["reason"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert Agent.get(
+             context.agent,
+             &Enum.count(&1.paths, fn path -> path == "/redfish/v1/Oem/Bundle/content" end)
+           ) == 1
+  end
+
+  test "an undecodable reply after a Redfish change stays unknown", context do
+    clearance =
+      file_request(context, :effect, %{
+        "method" => "POST",
+        "uri" => "/redfish/v1/Oem/Malformed",
+        "body" => %{}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert Agent.get(context.agent, &{&1.name, &1.writes}) == {"changed", 1}
   end
 
   test "generic Method registers and dispatches without a selected ComputerSystem", context do
@@ -563,6 +934,42 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert {:error, :failed, message} = Redfish.observe(state, power, %{})
     assert message =~ "identity"
     assert Agent.get(context.agent, & &1.writes) == 0
+  end
+
+  defp stage_file(context, bytes, name, media) do
+    hash = :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+
+    file =
+      Targets.begin_artifact!(
+        context.target.id,
+        name,
+        media,
+        byte_size(bytes),
+        hash,
+        "redfish-file-#{System.unique_integer()}",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(file.id, 0, bytes, actor: context.operator)
+    Targets.complete_artifact!(file.id, actor: context.operator)
+    Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
+  end
+
+  defp file_request(context, kind, parameters) do
+    %Request{
+      kind: kind,
+      authority_mode: :full_access,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability:
+        if(kind == :effect, do: "request.redfish.effect", else: "request.redfish.observe"),
+      operation: if(kind == :effect, do: "request.execute", else: "request.observe"),
+      operation_id: "redfish-file-#{System.unique_integer()}",
+      idempotency_key: "redfish-file-#{System.unique_integer()}",
+      parameters: parameters
+    }
   end
 
   defp method_effect_request(context, method, uri, body) do

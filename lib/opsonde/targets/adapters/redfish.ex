@@ -156,8 +156,11 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     end
   end
 
-  defp classify_redfish({:ok, _first, _second}, kind), do: {:ok, kind}
-  defp classify_redfish({:ok, _first, _second, _third, _fourth, _fifth}, kind), do: {:ok, kind}
+  defp classify_redfish({:ok, _first, _second, _transfer}, kind), do: {:ok, kind}
+
+  defp classify_redfish({:ok, _first, _second, _third, _fourth, _fifth, _transfer}, kind),
+    do: {:ok, kind}
+
   defp classify_redfish(_invalid, _kind), do: {:error, :failed, "Redfish request is invalid"}
 
   @impl Opsonde.Providers.Target
@@ -255,9 +258,10 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   defp method_observe(state, request, invocation) do
-    with {:ok, method, path} <- method_read_request(state, request),
+    with {:ok, method, path, transfer} <- method_read_request(state, request),
          :ok <- not_cancelled(invocation),
-         {:ok, status, body, pages, headers} <- read_api_resource(state, method, path, invocation) do
+         {:ok, status, body, pages, headers} <-
+           read_api_resource(state, method, path, transfer, invocation) do
       evidence =
         %{
           "source" => "redfish",
@@ -270,7 +274,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
       {:ok,
        %Target.Observation{
-         facts: %{"http_status" => status, "response" => sanitize_response(body)},
+         facts: method_response_details(status, body, true) |> Map.put_new("response", %{}),
          observed_at: DateTime.utc_now(),
          evidence: [evidence]
        }}
@@ -284,7 +288,10 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       "type" => "object",
       "properties" => %{
         "http_status" => %{"type" => "integer"},
-        "response" => %{"type" => "object"}
+        "response" => %{"type" => "object"},
+        "file" => Target.FileReference.schema(),
+        "content_type" => %{"type" => "string"},
+        "content_encoding" => %{"type" => "string"}
       },
       "required" => ["http_status", "response"],
       "additionalProperties" => false
@@ -316,14 +323,19 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
     parameter_properties = %{
       "method" => %{"type" => "string", "enum" => methods},
-      "uri" => %{"type" => "string", "minLength" => 11, "maxLength" => 2_048}
+      "uri" => %{"type" => "string", "minLength" => 11, "maxLength" => 2_048},
+      "accept" => %{"type" => "string", "maxLength" => 256},
+      "response_file" => Target.FileWriter.options_schema()
     }
 
     parameter_properties =
       if write? do
         Map.merge(parameter_properties, %{
           "body" => %{"type" => "object"},
-          "include_response" => %{"type" => "boolean"}
+          "include_response" => %{"type" => "boolean"},
+          "body_file" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+          "files" => Target.FileReference.set_schema(),
+          "content_type" => %{"type" => "string", "maxLength" => 256}
         })
       else
         parameter_properties
@@ -354,20 +366,21 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          true <- request.connection.endpoint == state.endpoint,
          true <- request.selectors == %{},
          %{"method" => method, "uri" => uri} = parameters <- request.parameters,
-         true <- map_size(parameters) == 2,
+         true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri accept response_file))),
+         {:ok, transfer} <- transfer_options(parameters),
          {:ok, verb} <- Map.fetch(@api_read_methods, method),
          {:ok, path} <- RedfishURI.relative(uri) do
-      {:ok, verb, path}
+      {:ok, verb, path, transfer}
     else
       _ -> {:error, :failed, "Redfish read request is invalid"}
     end
   end
 
   defp method_effect(state, target_request, invocation) do
-    with {:ok, method, path, body, headers, include_response?} <-
+    with {:ok, method, path, body, headers, include_response?, transfer} <-
            method_write_request(state, target_request),
          :ok <- not_cancelled(invocation) do
-      result = request(state, method, path, body, headers)
+      result = request(state, method, path, body, headers, transfer, invocation)
 
       effect_response(state, result, target_request.operation, fn status, reply ->
         method_response_details(status, reply, include_response?)
@@ -384,20 +397,36 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- request.operation == "request.execute",
          true <- request.connection.endpoint == state.endpoint,
          %{"method" => method, "uri" => uri} <- parameters,
-         true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri body include_response))),
+         true <-
+           Enum.all?(
+             Map.keys(parameters),
+             &(&1 in ~w(method uri body body_file content_type accept response_file include_response))
+           ),
+         {:ok, transfer} <- transfer_options(parameters),
          {:ok, verb} <- Map.fetch(@api_write_methods, method),
          {:ok, path} <- RedfishURI.relative(uri),
          {:ok, headers} <- if_match_headers(request.selectors),
          include_response? when is_boolean(include_response?) <-
            Map.get(parameters, "include_response", false),
-         {:ok, body} <- method_body(verb, parameters) do
-      {:ok, verb, path, body, headers, include_response?}
+         {:ok, body} <- method_body(verb, parameters, Map.get(request, :files, %{})) do
+      {:ok, verb, path, body, headers, include_response?, transfer}
     else
       _ -> {:error, :failed, "Redfish write request is invalid"}
     end
   end
 
-  defp method_body(verb, parameters) do
+  defp method_body(_verb, %{"body_file" => label} = parameters, files) do
+    with false <- Map.has_key?(parameters, "body"),
+         true <- is_binary(label),
+         {:ok, reference} <- Map.fetch(files, label),
+         true <- Target.FileReference.valid?(reference) do
+      {:ok, {:file, label, reference}}
+    else
+      _ -> {:error, :failed, "Redfish input file is invalid"}
+    end
+  end
+
+  defp method_body(verb, parameters, _files) do
     body = Map.get(parameters, "body")
 
     if (verb == :delete or is_map(body)) and (is_nil(body) or is_map(body)) do
@@ -411,6 +440,30 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   rescue
     _ -> {:error, :failed, "Redfish request body is invalid"}
   end
+
+  defp transfer_options(parameters) do
+    with true <- Target.FileWriter.valid_options?(parameters["response_file"]),
+         true <-
+           Enum.all?(["accept", "content_type"], fn key ->
+             value = Map.get(parameters, key, "application/json")
+
+             is_binary(value) and byte_size(value) in 1..256 and
+               String.contains?(value, "/") and Regex.match?(~r/\A[\x20-\x7e]+\z/, value)
+           end) do
+      {:ok, Map.take(parameters, ~w(accept content_type response_file))}
+    else
+      _ -> {:error, :failed, "Redfish transfer options are invalid"}
+    end
+  end
+
+  defp method_response_details(status, {:file, file, media, encoding}, _include_response?),
+    do: %{
+      "http_status" => status,
+      "response" => %{},
+      "file" => file,
+      "content_type" => media,
+      "content_encoding" => encoding
+    }
 
   defp method_response_details(status, reply, _include_response?) when map_size(reply) == 0,
     do: %{"http_status" => status}
@@ -443,20 +496,23 @@ defmodule Opsonde.Targets.Adapters.Redfish do
      }}
   end
 
-  defp effect_response(_state, {:error, :transport, _message}, reference, _details) do
+  defp effect_response(_state, {:error, :transport, message}, reference, _details) do
     {:ok,
      %Target.EffectResult{
        status: :unknown,
        reference: reference,
-       details: %{"reason" => "Redfish response was lost after dispatch"}
+       details: %{"reason" => message}
      }}
   end
 
   defp effect_response(_state, {:error, _category, message}, _reference, _details),
     do: {:error, :failed, message}
 
-  defp read_api_resource(state, method, path, invocation) do
-    case request(state, method, path, nil) do
+  defp read_api_resource(state, method, path, transfer, invocation) do
+    case request(state, method, path, nil, [], transfer, invocation) do
+      {:ok, status, headers, {:file, _, _, _} = body} when status in [200, 204] ->
+        {:ok, status, body, 1, headers}
+
       {:ok, status, headers, body} when status in [200, 204] ->
         with {:ok, combined, pages} <-
                collect_pages(state, method, path, body, 1, MapSet.new([path]), invocation) do
@@ -485,7 +541,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         with :ok <- not_cancelled(invocation),
              {:ok, next_path} <- RedfishURI.from_link(state.endpoint, link, path),
              false <- MapSet.member?(seen, next_path),
-             {:ok, 200, _headers, next_body} <- request(state, :get, next_path, nil),
+             {:ok, 200, _headers, next_body} <-
+               request(state, :get, next_path, nil, [], %{}, invocation),
              first when is_list(first) <- body["Members"],
              following when is_list(following) <- next_body["Members"],
              merged <-
@@ -613,7 +670,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp system(state) do
     with {:ok, 200, collection, _pages, _headers} <-
-           read_api_resource(state, :get, "/redfish/v1/Systems", %{}),
+           read_api_resource(state, :get, "/redfish/v1/Systems", %{}, %{}),
          members when is_list(members) <- collection["Members"],
          true <- Enum.any?(members, &(&1["@odata.id"] == state.system_path)),
          {:ok, 200, _headers, system} <- request(state, :get, state.system_path, nil),
@@ -684,7 +741,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp power_state(%{"PowerState" => "Off"}), do: {:ok, "off"}
   defp power_state(_system), do: {:error, :failed, "Redfish PowerState is unavailable"}
 
-  defp request(state, method, path, body, extra_headers \\ []) do
+  defp request(state, method, path, body, extra_headers \\ [], transfer \\ %{}, invocation \\ %{}) do
     host = URI.parse(state.endpoint).host
 
     options = [
@@ -692,7 +749,11 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       url: state.endpoint <> path,
       auth: state.auth,
       headers:
-        [{"accept", "application/json"}, {"content-type", "application/json"}] ++ extra_headers,
+        [
+          {"accept", Map.get(transfer, "accept", "application/json")},
+          {"content-type", Map.get(transfer, "content_type", "application/json")},
+          {"accept-encoding", "identity"}
+        ] ++ extra_headers,
       connect_options: [
         timeout: state.timeout,
         transport_opts: HTTPS.custom_trust_options(state.cacerts, host)
@@ -700,7 +761,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       receive_timeout: state.timeout,
       retry: false,
       redirect: false,
-      decode_body: false,
+      raw: true,
       into: fn {:data, data}, {req, response} ->
         accumulated = if is_binary(response.body), do: response.body, else: ""
 
@@ -712,9 +773,16 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       end
     ]
 
-    options = if is_nil(body), do: options, else: Keyword.put(options, :json, body)
+    body = if is_map(body), do: Jason.encode!(body), else: body
 
-    case Req.request(options) do
+    case Opsonde.Transports.HTTP.request(options, body, transfer["response_file"], invocation) do
+      {:ok,
+       %Req.Response{status: status, headers: headers, private: %{opsonde_file: file}} = response}
+      when status in 200..299 ->
+        {:ok, status, headers,
+         {:file, file, List.first(Req.Response.get_header(response, "content-type")) || "",
+          Enum.join(Req.Response.get_header(response, "content-encoding"), ",")}}
+
       {:ok, %Req.Response{status: status, headers: headers, body: raw}}
       when is_binary(raw) and byte_size(raw) <= 65_536 ->
         cond do
@@ -722,9 +790,15 @@ defmodule Opsonde.Targets.Adapters.Redfish do
             decoded = if raw == "", do: %{}, else: Jason.decode(raw)
 
             case decoded do
-              {:ok, value} when is_map(value) -> {:ok, status, headers, value}
-              %{} = value -> {:ok, status, headers, value}
-              _ -> {:error, :failed, "Redfish response is not a JSON object"}
+              {:ok, value} when is_map(value) ->
+                {:ok, status, headers, value}
+
+              %{} = value ->
+                {:ok, status, headers, value}
+
+              _ ->
+                {:error, response_failure_category(method),
+                 "Redfish response is not a JSON object"}
             end
 
           status in [401, 403] ->
@@ -738,14 +812,23 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         end
 
       {:ok, _response} ->
-        {:error, :failed, "Redfish response exceeded its limit"}
+        {:error, response_failure_category(method), "Redfish response exceeded its limit"}
 
-      {:error, _error} ->
-        {:error, :transport, "Redfish endpoint is unreachable"}
+      {:error, :retryable, message} ->
+        {:error, :transport, message}
+
+      {:error, :cancelled, _message} ->
+        {:error, :transport, "Redfish response was cancelled after dispatch"}
+
+      {:error, category, message} ->
+        {:error, category, message}
     end
   rescue
     _ -> {:error, :transport, "Redfish request failed"}
   end
+
+  defp response_failure_category(method) when method in [:get, :head], do: :failed
+  defp response_failure_category(_method), do: :transport
 
   defp endpoint(value) when is_binary(value) and byte_size(value) <= 255 do
     case URI.parse(value) do
