@@ -3,29 +3,15 @@ config :opsonde, Oban, testing: :manual
 config :opsonde, token_signing_secret: "u1BW1Gxt1a++kTeasKEiwmx0VR8UEq+S"
 
 config :opsonde,
-  provider_adapters: [
-    Opsonde.AI.ReqLLM,
-    Opsonde.Inventories.NetBox.API,
-    Opsonde.Notifications.HTTP.Webhook,
-    Opsonde.Signals.Alertmanager.Webhook,
-    Opsonde.Signals.Generic.Webhook,
-    Opsonde.Signals.Zabbix.Webhook,
-    Opsonde.Targets.Adapters.SSH,
-    Opsonde.Targets.Adapters.HTTP,
-    Opsonde.Targets.Adapters.NETCONF,
-    Opsonde.Targets.Adapters.IPMI,
-    Opsonde.Targets.Adapters.Redfish,
-    Opsonde.Targets.Profiles.IOSXE.NETCONF,
-    Opsonde.Targets.Profiles.IOSXE.RESTCONF,
-    Opsonde.Targets.Profiles.IOSXE.SSH,
-    Opsonde.Targets.Adapters.Kubernetes,
-    Opsonde.Targets.Profiles.Linux.SSH,
-    Opsonde.ProviderAdapterFixture,
-    Opsonde.SignalAdapterFixture,
-    Opsonde.InventoryAdapterFixture,
-    Opsonde.NotificationAdapterFixture,
-    Opsonde.AIAdapterFixture
-  ]
+  provider_adapters:
+    read_config(:opsonde)[:provider_adapters] ++
+      [
+        Opsonde.ProviderAdapterFixture,
+        Opsonde.SignalAdapterFixture,
+        Opsonde.InventoryAdapterFixture,
+        Opsonde.NotificationAdapterFixture,
+        Opsonde.AIAdapterFixture
+      ]
 
 config :opsonde, Opsonde.Vault,
   ciphers: [

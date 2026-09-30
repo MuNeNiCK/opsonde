@@ -371,6 +371,101 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.echo_calls) == 1
   end
 
+  test "named controller profiles share generic requests and uncertain delivery", context do
+    for type <- ["hpe-ilo-redfish", "dell-idrac-redfish"] do
+      provider =
+        Providers.create_provider!(
+          type,
+          :target,
+          type,
+          %{
+            "endpoint" => context.method.endpoint,
+            "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
+          },
+          %{"username" => "tester", "password" => "secret"},
+          actor: context.admin
+        )
+
+      checked =
+        Providers.check_provider!(
+          provider.id,
+          provider.revision,
+          %{"endpoint" => context.method.endpoint},
+          actor: context.admin
+        )
+
+      assert checked.check_status == :passed
+      provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+
+      capabilities =
+        Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: context.admin)
+
+      assert Target.capability_names(capabilities) == [
+               "request.redfish.observe",
+               "request.redfish.effect"
+             ]
+
+      {:ok, adapter} = Providers.Registry.fetch(type, Target)
+      assert adapter.type() == type
+      assert adapter.access_method_profile().method == "redfish"
+
+      read = %Target.ObservationRequest{
+        provider_revision: provider.revision,
+        target_id: context.target.id,
+        target_revision: context.target.revision,
+        access_method_id: context.method.id,
+        access_method_revision: context.method.revision,
+        connection: %Target.Connection{endpoint: context.method.endpoint},
+        capability: "request.redfish.observe",
+        operation: "request.observe",
+        authorization_digest: "fixture",
+        parameters: %{"method" => "GET", "uri" => "/redfish/v1/Oem/Example"}
+      }
+
+      assert %Target.Observation{facts: %{"response" => %{"Result" => "safe"}}} =
+               Providers.target_observe!(provider.id, read, %{},
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      effect =
+        struct!(
+          Target.EffectRequest,
+          Map.merge(
+            Map.take(
+              Map.from_struct(read),
+              [
+                :provider_revision,
+                :target_id,
+                :target_revision,
+                :access_method_id,
+                :access_method_revision,
+                :connection,
+                :authorization_digest
+              ]
+            ),
+            %{
+              capability: "request.redfish.effect",
+              operation: "request.execute",
+              operation_id: Ecto.UUID.generate(),
+              idempotency_key: Ecto.UUID.generate(),
+              parameters: %{"method" => "POST", "uri" => "/redfish/v1/Oem/Drop", "body" => %{}}
+            }
+          )
+        )
+
+      assert %Target.EffectResult{status: :unknown, details: %{"reason" => reason}} =
+               Providers.target_effect!(provider.id, effect, %{},
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      assert reason =~ "lost"
+    end
+
+    assert Agent.get(context.agent, & &1.echo_calls) == 2
+  end
+
   test "power observation and effect keep the observed-state precondition", context do
     {:ok, state} = redfish_state(context.method.endpoint)
 
