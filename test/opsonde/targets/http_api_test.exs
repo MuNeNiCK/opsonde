@@ -1031,6 +1031,77 @@ defmodule Opsonde.Targets.HTTPAPITest do
              receipt.received_bytes
   end
 
+  test "chunked response trailers validate the completed file digest", context do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, {_address, port}} = :inet.sockname(listener)
+
+    peer =
+      Task.async(fn ->
+        for _ <- 1..3 do
+          {:ok, socket} = :gen_tcp.accept(listener, 2_000)
+          {:ok, request} = :gen_tcp.recv(socket, 0, 2_000)
+
+          digest =
+            if String.starts_with?(request, "GET /bad "),
+              do: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+              else: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="
+
+          :ok =
+            :gen_tcp.send(socket, [
+              "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n",
+              "Trailer: Content-Digest\r\n\r\n5\r\nhello\r\n0\r\n",
+              "Content-Digest: sha-256=:",
+              digest,
+              ":\r\n\r\n"
+            ])
+
+          :gen_tcp.close(socket)
+        end
+      end)
+
+    try do
+      method =
+        Targets.create_access_method!(
+          context.target.id,
+          context.provider.id,
+          "HTTP trailers",
+          "http",
+          "http://127.0.0.1:#{port}",
+          context.provider.revision,
+          100,
+          ["request.http.observe", "request.http.effect"],
+          actor: context.admin
+        )
+        |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+      context = %{context | method: method}
+
+      result =
+        cleared_http(context, "GET", "/valid")
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert read_file(context, result.facts["file"]) == "hello"
+
+      assert {:error, _} =
+               cleared_http(context, "GET", "/bad")
+               |> Targets.dispatch_target_observation(%{},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert [%{status: :receiving, received_bytes: 5} = partial | _] =
+               Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+      assert {:error, _} =
+               Targets.artifact_reference(partial.id, context.target.id, actor: context.operator)
+
+      Task.await(peer, 2_000)
+    after
+      Task.shutdown(peer, :brutal_kill)
+      :gen_tcp.close(listener)
+    end
+  end
+
   test "cancellation during the response prevents publication", context do
     invocation = %{
       cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end

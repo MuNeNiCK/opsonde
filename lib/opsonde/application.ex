@@ -25,6 +25,7 @@ defmodule Opsonde.Application do
       Opsonde.Repo,
       {Oban, Application.fetch_env!(:opsonde, Oban)},
       Opsonde.Vault,
+      {Finch, name: Opsonde.Transports.HTTP},
       Opsonde.Accounts.OIDC.Client.child_spec(),
       {DNSCluster, query: Application.get_env(:opsonde, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Opsonde.PubSub},

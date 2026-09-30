@@ -210,6 +210,46 @@ defmodule Opsonde.Targets.RESTCONFTest do
            )
   end
 
+  test "connections at one origin cannot reuse another configuration's TLS trust", context do
+    untrusted =
+      Providers.create_provider!(
+        "RESTCONF different trust",
+        :target,
+        "restconf",
+        %{
+          "ca_certificate" => File.read!("test/support/certs/restconf_client_ca.pem"),
+          "request_timeout_ms" => 500
+        },
+        %{"username" => "tester", "password" => "secret"},
+        actor: context.admin
+      )
+
+    assert {:error, _} =
+             Opsonde.TargetConnectionFixture.check_connection(
+               untrusted,
+               context.endpoint,
+               context.admin
+             )
+
+    read =
+      request(
+        context,
+        Target.ObservationRequest,
+        "request.restconf.observe",
+        "request.observe",
+        %{
+          "method" => "GET",
+          "path" => "/data/example:settings"
+        }
+      )
+
+    assert %Target.Observation{facts: %{"http_status" => 200}} =
+             Providers.target_observe!(context.provider.id, read, %{},
+               actor: context.admin,
+               authorize?: false
+             )
+  end
+
   test "an XML effect is sent once and verified with an independent exact read", context do
     xml = ~s(<settings xmlns="urn:example"><name>changed</name></settings>)
 

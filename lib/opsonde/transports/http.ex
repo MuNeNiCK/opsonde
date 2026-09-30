@@ -3,6 +3,7 @@ defmodule Opsonde.Transports.HTTP do
 
   alias Opsonde.Providers.Target
   @poll_interval 20
+  @pool_idle_timeout 60_000
 
   # Wire I/O only. Storage and authorization remain in the supplied file ports.
   def request(options, body, output, invocation) do
@@ -46,8 +47,9 @@ defmodule Opsonde.Transports.HTTP do
   end
 
   defp wire_request(options, writer) do
-    case Req.request(options) do
+    case Req.request(Keyword.put(options, :adapter, __MODULE__)) do
       {:error, %Req.TransportError{reason: :timeout}} -> timeout_failure(writer)
+      {:error, %Finch.TransportError{reason: :timeout}} -> timeout_failure(writer)
       result -> result
     end
   rescue
@@ -57,6 +59,55 @@ defmodule Opsonde.Transports.HTTP do
     :http_cancelled -> {:error, :cancelled, "HTTP request was cancelled"}
     _kind, _reason -> response_failure(writer)
   end
+
+  # Public Req preparation and Finch streaming APIs retain synchronous
+  # backpressure while making every response event available to this owner.
+  @doc false
+  def run(%Req.Request{} = request) do
+    options =
+      Req.Finch.pool_options(
+        connect_options: Req.Request.get_option(request, :connect_options, []),
+        inet6: String.contains?(request.url.host || "", ":")
+      )
+      |> Keyword.put(:protocols, [:http1])
+      |> Keyword.put(:pool_max_idle_time, @pool_idle_timeout)
+
+    tag = :crypto.hash(:sha256, :erlang.term_to_binary(options))
+    pool = Finch.Pool.new(URI.to_string(request.url), tag: tag)
+    :ok = Finch.start_pool(__MODULE__, pool, options)
+
+    wire =
+      Finch.build(
+        request.method,
+        request.url,
+        Req.get_headers_list(request),
+        stream_body(request.body),
+        pool_tag: tag
+      )
+
+    case Finch.stream_while(wire, __MODULE__, {request, Req.Response.new()}, &stream_event/2,
+           receive_timeout: Req.Request.get_option(request, :receive_timeout, 15_000),
+           pool_timeout: Req.Request.get_option(request, :pool_timeout, 5_000)
+         ) do
+      {:ok, result} -> result
+      {:error, error, {request, _response}} -> {request, error}
+    end
+  end
+
+  defp stream_body(body) when is_nil(body) or is_binary(body) or is_list(body), do: body
+  defp stream_body(body), do: {:stream, body}
+
+  defp stream_event({:status, status}, {request, response}),
+    do: {:cont, {request, %{response | status: status}}}
+
+  defp stream_event({:headers, fields}, {request, response}),
+    do: {:cont, {request, %{response | headers: Req.Response.new(headers: fields).headers}}}
+
+  defp stream_event({:trailers, fields}, {request, response}),
+    do: {:cont, {request, %{response | trailers: Req.Response.new(trailers: fields).trailers}}}
+
+  defp stream_event({:data, _bytes} = event, {request, _response} = acc),
+    do: request.into.(event, acc)
 
   defp await_wire(task, deadline, writer, invocation) do
     remaining = deadline - System.monotonic_time(:millisecond)
