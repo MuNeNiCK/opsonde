@@ -211,7 +211,7 @@ function TargetConnectionForm({
       configuration = { endpoint };
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else {
-      configuration = { namespace: value(form, "namespace") };
+      configuration = value(form, "namespace") ? { namespace: value(form, "namespace") } : {};
       credentials = { kubeconfig: value(form, "kubeconfig") };
     }
 
@@ -454,7 +454,11 @@ function KubernetesFields() {
   const { t } = useTranslation();
   return (
     <>
-      <Field label={t("targets.namespace")} name="namespace" defaultValue="default" required />
+      <Field
+        label={t("targets.namespace")}
+        name="namespace"
+        placeholder={t("targets.allNamespaces")}
+      />
       <Area label={t("targets.kubeconfig")} name="kubeconfig" required />
     </>
   );

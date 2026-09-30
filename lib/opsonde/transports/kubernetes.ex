@@ -15,7 +15,7 @@ defmodule Opsonde.Transports.Kubernetes do
       when is_map(configuration) and is_map(credentials) do
     with :ok <- exact_keys(configuration, @configuration_keys),
          :ok <- exact_keys(credentials, @credential_keys),
-         {:ok, namespace} <- required_name(configuration, "namespace"),
+         {:ok, namespace} <- namespace(configuration),
          {:ok, timeout} <- timeout(configuration),
          kubeconfig when is_binary(kubeconfig) <- Map.get(credentials, "kubeconfig"),
          true <- byte_size(kubeconfig) in 1..65_536,
@@ -273,8 +273,11 @@ defmodule Opsonde.Transports.Kubernetes do
   defp exact_keys?(map, allowed),
     do: Enum.all?(Map.keys(map), &(is_binary(&1) and &1 in allowed))
 
-  defp required_name(map, key) do
-    case Map.get(map, key) do
+  defp namespace(configuration) do
+    case Map.get(configuration, "namespace") do
+      value when value in [nil, ""] ->
+        {:ok, nil}
+
       value when is_binary(value) ->
         if valid_name?(value), do: {:ok, value}, else: {:error, :invalid_name}
 

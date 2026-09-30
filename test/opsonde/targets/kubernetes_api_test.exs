@@ -43,6 +43,27 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     defp route(%{method: "GET", request_path: "/api"} = conn, _agent, _request),
       do: json(conn, 200, %{"kind" => "APIVersions", "versions" => ["v1"]})
 
+    defp route(%{request_path: "/apis/acme.example/v9/racks/rack-a"} = conn, agent, request) do
+      if request.method == "PATCH" do
+        patch = Jason.decode!(request.body)
+        Agent.update(agent, &Map.put(&1, :rack_mode, patch["spec"]["mode"]))
+      end
+
+      json(conn, 200, %{
+        "apiVersion" => "acme.example/v9",
+        "kind" => "Rack",
+        "metadata" => %{"name" => "rack-a", "resourceVersion" => "12"},
+        "spec" => %{"mode" => Agent.get(agent, &Map.get(&1, :rack_mode, "idle"))}
+      })
+    end
+
+    defp route(
+           %{method: "GET", request_path: "/api/v1/namespaces/other/pods"} = conn,
+           _agent,
+           _request
+         ),
+         do: json(conn, 200, %{"kind" => "PodList", "items" => []})
+
     defp route(%{method: "GET", request_path: "/api/v1"} = conn, _agent, _request) do
       json(conn, 200, %{
         "apiVersion" => "v1",
@@ -498,6 +519,116 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert Enum.any?(requests(context), &(&1.path == parameters["path"]))
   end
 
+  test "API-wide checked Method reaches a cluster CRD and a different namespace", context do
+    provider =
+      Providers.create_provider!(
+        "api-wide",
+        :target,
+        "kubernetes-api",
+        %{"request_timeout_ms" => 500},
+        %{"kubeconfig" => kubeconfig(context.endpoint)},
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        provider.id,
+        "API-wide",
+        "api",
+        context.endpoint,
+        provider.revision,
+        110,
+        @capabilities,
+        actor: context.admin
+      )
+
+    api_wide = %{context | provider: provider, method: method}
+    path = "/apis/acme.example/v9/racks/rack-a"
+
+    result =
+      observe!(api_wide, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => path
+      })
+
+    assert get_in(result.facts, ["response", "spec", "mode"]) == "idle"
+
+    request =
+      target_request(api_wide, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+        "method" => "PATCH",
+        "path" => path,
+        "content_type" => "application/merge-patch+json",
+        "body" => ~s({"spec":{"mode":"active"}})
+      })
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert %Target.EffectResult{status: :applied} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    fresh =
+      observe!(api_wide, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => path
+      })
+
+    assert get_in(fresh.facts, ["response", "spec", "mode"]) == "active"
+
+    other =
+      observe!(api_wide, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/api/v1/namespaces/other/pods"
+      })
+
+    assert other.facts["response"] == %{"kind" => "PodList", "items" => []}
+
+    before = length(requests(context))
+
+    for scope <- [api_wide, context],
+        path <- [
+          "/api/v1/namespaces/#{@namespace}/pods/one/exec",
+          "/api/v1/namespaces/#{@namespace}/pods/one/attach"
+        ] do
+      read =
+        target_request(
+          scope,
+          :observation,
+          "request.kubernetes.observe",
+          "request.observe",
+          %{},
+          %{"method" => "GET", "path" => path}
+        )
+
+      assert {:error, _} = Targets.clear_target_request(read, actor: context.operator)
+    end
+
+    for path <- [path, "/api/v1/namespaces/other/pods"] do
+      scoped =
+        target_request(
+          context,
+          :observation,
+          "request.kubernetes.observe",
+          "request.observe",
+          %{},
+          %{"method" => "GET", "path" => path}
+        )
+
+      assert {:error, _} = Targets.clear_target_request(scoped, actor: context.operator)
+    end
+
+    assert length(requests(context)) == before
+  end
+
   test "exact HTTP Method carries CRD subresource apply and complete YAML response", context do
     path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one/status"
     body = "apiVersion: example.com/v1\nkind: Widget\nstatus:\n  ready: true\n"
@@ -539,6 +670,41 @@ defmodule Opsonde.Targets.KubernetesAPITest do
              requests(context),
              &(&1.accept == ["application/json;as=Table;g=meta.k8s.io;v=v1, application/yaml"])
            )
+  end
+
+  test "namespace-bound Method rejects conflicting literal JSON and YAML identities before I/O",
+       context do
+    before = length(requests(context))
+
+    for {content_type, body} <- [
+          {"application/merge-patch+json",
+           ~s({"metadata":{"namespace":"other"},"spec":{"mode":"active"}})},
+          {"application/apply-patch+yaml",
+           "metadata:\n  namespace: other\nspec:\n  mode: active\n"}
+        ] do
+      request =
+        target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+          "method" => "PATCH",
+          "path" => "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one",
+          "content_type" => content_type,
+          "body" => body
+        })
+
+      assert {:error, _} = Targets.clear_target_request(request, actor: context.operator)
+    end
+
+    for namespace <- [nil, "", @namespace] do
+      request =
+        target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+          "method" => "PATCH",
+          "path" => "/apis/example.com/v1/namespaces/#{@namespace}/widgets/widget-one",
+          "body" => Jason.encode!(%{"metadata" => %{"namespace" => namespace}})
+        })
+
+      assert {:ok, _clearance} = Targets.clear_target_request(request, actor: context.operator)
+    end
+
+    assert length(requests(context)) == before
   end
 
   test "HTTP Method carries JSON patch, complete text and DELETE collection", context do

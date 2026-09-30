@@ -29,7 +29,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   def capabilities(state, _invocation) do
-    scope = if state, do: " Namespace: #{state.namespace}.", else: ""
+    scope =
+      if state && state.namespace,
+        do: " Namespace boundary: #{state.namespace}.",
+        else: " Scope: the registered API endpoint, subject to Kubernetes RBAC."
 
     output = %{
       "type" => "object",
@@ -162,7 +165,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          {:ok, content_type} <-
            media_type(Map.get(parameters, "content_type", "application/json")),
          {:ok, accept} <- media_type(Map.get(parameters, "accept", "application/json")),
-         {:ok, body} <- body(kind, Map.get(parameters, "body"), content_type) do
+         {:ok, body} <- body(kind, Map.get(parameters, "body"), content_type),
+         :ok <- body_scope(state.namespace, body, content_type) do
       {:ok,
        %{
          kind: kind,
@@ -199,16 +203,41 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
     supported? =
       case parts do
-        ["api", _version, "namespaces", ^namespace | rest] -> resource_path?(rest)
-        ["apis", _group, _version, "namespaces", ^namespace | rest] -> resource_path?(rest)
-        ["api"] -> kind == :observation
-        ["api", _version] -> kind == :observation
-        ["apis"] -> kind == :observation
-        ["apis", _group] -> kind == :observation
-        ["apis", _group, _version] -> kind == :observation
-        ["version"] -> kind == :observation
-        ["openapi" | _rest] -> kind == :observation
-        _ -> false
+        ["api", _version, "namespaces", selected | rest] when rest != [] ->
+          (is_nil(namespace) or selected == namespace) and resource_path?(rest)
+
+        ["apis", _group, _version, "namespaces", selected | rest] when rest != [] ->
+          (is_nil(namespace) or selected == namespace) and resource_path?(rest)
+
+        ["api"] ->
+          kind == :observation
+
+        ["api", _version] ->
+          kind == :observation
+
+        ["apis"] ->
+          kind == :observation
+
+        ["apis", _group] ->
+          kind == :observation
+
+        ["apis", _group, _version] ->
+          kind == :observation
+
+        ["version"] ->
+          kind == :observation
+
+        ["openapi" | _rest] ->
+          kind == :observation
+
+        ["api", _version | rest] ->
+          is_nil(namespace) and resource_path?(rest)
+
+        ["apis", _group, _version | rest] ->
+          is_nil(namespace) and resource_path?(rest)
+
+        _ ->
+          false
       end
 
     if canonical? and supported?, do: :ok, else: invalid()
@@ -262,6 +291,32 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   defp body(_kind, _body, _type), do: invalid()
+
+  defp body_scope(nil, _body, _type), do: :ok
+  defp body_scope(_namespace, nil, _type), do: :ok
+
+  defp body_scope(namespace, body, type) do
+    media = type |> String.split(";") |> hd() |> String.trim() |> String.downcase()
+
+    decoded =
+      cond do
+        String.ends_with?(media, ["/json", "+json"]) -> Jason.decode(body)
+        String.ends_with?(media, ["/yaml", "+yaml"]) -> YamlElixir.read_from_string(body)
+        true -> {:ok, nil}
+      end
+
+    case decoded do
+      {:ok, %{"metadata" => %{"namespace" => selected}}}
+      when selected not in [nil, "", namespace] ->
+        invalid()
+
+      {:ok, _body} ->
+        :ok
+
+      _error ->
+        invalid()
+    end
+  end
 
   defp schema(methods) do
     properties = %{
