@@ -227,27 +227,29 @@ defmodule Opsonde.Transports.RESTCONF do
   defp origin(uri), do: {uri.scheme, uri.host, uri.port}
 
   defp run_http(state, endpoint, path, operation, cancelled?, phase, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
     cond do
       cancelled?.() ->
         {:error, :cancelled, "RESTCONF request was cancelled before dispatch"}
 
-      System.monotonic_time(:millisecond) >= deadline ->
+      remaining <= 0 ->
         {:error, :timeout, "RESTCONF request timed out before dispatch"}
 
       true ->
-        task = Task.async(fn -> http(state, endpoint, path, operation) end)
-        await(task, cancelled?, phase, deadline)
+        state
+        |> http(endpoint, path, operation, cancelled?, remaining)
+        |> normalize(phase)
     end
   end
 
-  defp http(state, endpoint, path, operation) do
+  defp http(state, endpoint, path, operation, cancelled?, remaining) do
     {:ok, tls} = HTTPS.transport_options(state.ca_certificate, URI.parse(endpoint).host)
 
-    Req.request(
+    options = [
       method: operation.method,
       url: endpoint <> path,
       params: operation.query,
-      body: operation.body,
       headers:
         if(state.auth, do: [{"authorization", state.auth}], else: []) ++
           [
@@ -256,10 +258,10 @@ defmodule Opsonde.Transports.RESTCONF do
             {"accept-encoding", "identity"}
           ],
       connect_options: [
-        timeout: state.connect_timeout,
+        timeout: min(state.connect_timeout, remaining),
         transport_opts: Keyword.merge(tls, state.client_tls)
       ],
-      receive_timeout: state.request_timeout,
+      receive_timeout: remaining,
       retry: false,
       redirect: false,
       raw: true,
@@ -270,43 +272,26 @@ defmodule Opsonde.Transports.RESTCONF do
           do: {:cont, {request, %{response | body: body <> data}}},
           else: {:halt, {request, %{response | body: :too_large}}}
       end
-    )
-  rescue
-    _ -> {:error, :transport_failure}
+    ]
+
+    Opsonde.Transports.HTTP.request(options, operation.body, nil, %{cancelled?: cancelled?})
   end
 
-  defp await(task, cancelled?, phase, deadline) do
-    cond do
-      cancelled?.() ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, failure(phase, :cancelled), "RESTCONF request was cancelled"}
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, failure(phase, :timeout), "RESTCONF request timed out"}
-
-      true ->
-        case Task.yield(task, 20) do
-          {:ok, {:ok, %Req.Response{status: status, headers: headers, body: body}}}
-          when is_binary(body) ->
-            if String.valid?(body),
-              do: {:ok, %{status: status, headers: headers, body: body}},
-              else: {:error, failure(phase, :failed), "RESTCONF response is not UTF-8"}
-
-          {:ok, {:ok, %Req.Response{}}} ->
-            {:error, failure(phase, :failed), "RESTCONF response exceeded its limit"}
-
-          {:ok, {:error, _error}} ->
-            {:error, failure(phase, :unreachable), "RESTCONF endpoint is unreachable"}
-
-          {:exit, _reason} ->
-            {:error, failure(phase, :unreachable), "RESTCONF request failed"}
-
-          nil ->
-            await(task, cancelled?, phase, deadline)
-        end
-    end
+  defp normalize({:ok, %Req.Response{status: status, headers: headers, body: body}}, phase)
+       when is_binary(body) do
+    if String.valid?(body),
+      do: {:ok, %{status: status, headers: headers, body: body}},
+      else: {:error, failure(phase, :failed), "RESTCONF response is not UTF-8"}
   end
+
+  defp normalize({:ok, %Req.Response{}}, phase),
+    do: {:error, failure(phase, :failed), "RESTCONF response exceeded its limit"}
+
+  defp normalize({:error, :retryable, message}, phase),
+    do: {:error, failure(phase, :unreachable), message}
+
+  defp normalize({:error, category, message}, phase),
+    do: {:error, failure(phase, category), message}
 
   defp failure(:effect, _category), do: :unknown_after_dispatch
   defp failure(_phase, category), do: category

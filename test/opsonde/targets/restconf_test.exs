@@ -399,6 +399,48 @@ defmodule Opsonde.Targets.RESTCONFTest do
              )
   end
 
+  test "root discovery and the effect share one request deadline", context do
+    Agent.update(context.agent, &%{&1 | discovery_delay: 200, effect_delay: 400})
+    body = ~s({"example:settings":{"name":"accepted-before-deadline"}})
+
+    effect =
+      request(context, Target.EffectRequest, "request.restconf.effect", "request.execute", %{
+        "method" => "PATCH",
+        "path" => "/data/example:settings",
+        "body" => body
+      })
+
+    assert %Target.EffectResult{status: :unknown} =
+             Providers.target_effect!(context.provider.id, effect, %{},
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert length(
+             Agent.get(context.agent, &Enum.filter(&1.requests, fn r -> r.method == "PATCH" end))
+           ) == 1
+
+    Agent.update(context.agent, &%{&1 | discovery_delay: 0})
+
+    read =
+      request(
+        context,
+        Target.ObservationRequest,
+        "request.restconf.observe",
+        "request.observe",
+        %{
+          "method" => "GET",
+          "path" => "/data/example:settings"
+        }
+      )
+
+    assert %Target.Observation{facts: %{"body" => ^body}} =
+             Providers.target_observe!(context.provider.id, read, %{},
+               actor: context.admin,
+               authorize?: false
+             )
+  end
+
   test "cancellation before dispatch sends nothing and cancellation after acceptance is unknown",
        context do
     effect =
