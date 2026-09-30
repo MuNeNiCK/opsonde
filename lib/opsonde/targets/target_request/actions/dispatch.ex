@@ -40,7 +40,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
          :ok <- classify(request, context),
          :ok <- validate_authority(request),
          :ok <- current_provider(context.access_method, clearance) do
-      invocation = bind_file_reader(arguments.invocation, current_actor, clearance)
+      invocation = bind_file_ports(arguments.invocation, current_actor, clearance)
       invoke(operation, current_actor, context.access_method, clearance, invocation)
     end
   end
@@ -243,31 +243,128 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
     end
   end
 
-  defp bind_file_reader(invocation, actor, clearance) do
+  defp bind_file_ports(invocation, actor, clearance) do
     {:ok, _parameters, files} = ProviderTarget.FileReference.split(clearance.parameters)
 
-    Map.put(invocation, :file_reader, fn label, offset ->
-      read_file(files, actor, invocation, label, offset)
+    invocation
+    |> Map.put(:file_reader, fn label, offset ->
+      file_action(actor, invocation, fn current_actor ->
+        with {:ok, reference} <- Map.fetch(files, label),
+             do: Targets.read_bound_artifact_chunk(reference, offset, actor: current_actor)
+      end)
+    end)
+    |> Map.put(:file_writer, fn response_key, name, media_type ->
+      begin_file_writer(actor, invocation, clearance, response_key, name, media_type)
     end)
   end
 
-  defp read_file(files, actor, invocation, label, offset) do
-    with false <- cancelled?(invocation),
+  defp begin_file_writer(actor, invocation, clearance, response_key, name, media_type) do
+    if bounded_string?(response_key, 120) and String.valid?(response_key) do
+      receipt_key =
+        digest(%{
+          clearance: clearance.digest,
+          response_key: response_key
+        })
+        |> Base.encode16(case: :lower)
+
+      with {:ok, artifact} <-
+             file_action(
+               actor,
+               invocation,
+               fn current_actor ->
+                 Targets.begin_artifact_receipt(
+                   clearance.target_id,
+                   name,
+                   media_type,
+                   receipt_key,
+                   actor: current_actor
+                 )
+               end,
+               :file_transfer_failed
+             ),
+           {:ok, limits} <- Targets.artifact_limits(actor: actor) do
+        {:ok,
+         %ProviderTarget.FileWriter{
+           id: artifact.id,
+           status: artifact.status,
+           offset: artifact.received_bytes,
+           chunk_bytes: limits.chunk_bytes,
+           append: fn offset, bytes ->
+             with {:ok, current} <-
+                    file_action(
+                      actor,
+                      invocation,
+                      fn current_actor ->
+                        Targets.append_artifact_chunk(artifact.id, offset, bytes,
+                          actor: current_actor
+                        )
+                      end,
+                      :file_transfer_failed
+                    ),
+                  do: {:ok, current.received_bytes}
+           end,
+           complete: fn expected_size, expected_hash ->
+             with {:ok, current} <-
+                    file_action(
+                      actor,
+                      invocation,
+                      fn current_actor ->
+                        Targets.complete_artifact_receipt(
+                          artifact.id,
+                          %{expected_size_bytes: expected_size, expected_sha256: expected_hash},
+                          actor: current_actor
+                        )
+                      end,
+                      :file_transfer_failed
+                    ),
+                  do: {:ok, ProviderTarget.FileReference.from_metadata(current)}
+           end,
+           abort: fn ->
+             with {:ok, current} <-
+                    file_action(
+                      actor,
+                      invocation,
+                      fn current_actor ->
+                        Targets.revoke_artifact(artifact.id, actor: current_actor)
+                      end,
+                      :file_transfer_failed,
+                      true
+                    ),
+                  do: {:ok, current.status}
+           end
+         }}
+      end
+    else
+      file_failure(:file_transfer_failed)
+    end
+  end
+
+  defp file_action(
+         actor,
+         invocation,
+         callback,
+         failure \\ :invalid_file,
+         allow_cancelled? \\ false
+       ) do
+    with false <- not allow_cancelled? and cancelled?(invocation),
          {:ok, current_actor} <- current_actor(actor),
-         {:ok, reference} <- Map.fetch(files, label),
-         {:ok, bytes} <-
-           Targets.read_bound_artifact_chunk(reference, offset, actor: current_actor) do
-      {:ok, bytes}
+         {:ok, result} <- callback.(current_actor) do
+      {:ok, result}
     else
       true -> {:error, request_error(:cancelled, "Target invocation was cancelled")}
       {:error, %RequestError{} = error} -> {:error, error}
-      _ -> unavailable_file()
+      _ -> file_failure(failure)
     end
   rescue
-    _ -> unavailable_file()
+    _ -> file_failure(failure)
   catch
-    _, _ -> unavailable_file()
+    _, _ -> file_failure(failure)
   end
+
+  defp file_failure(:invalid_file), do: unavailable_file()
+
+  defp file_failure(:file_transfer_failed),
+    do: {:error, request_error(:file_transfer_failed, "Target file transfer could not be saved")}
 
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback.()
   defp cancelled?(_invocation), do: false

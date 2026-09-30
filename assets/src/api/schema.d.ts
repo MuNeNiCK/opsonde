@@ -2824,7 +2824,7 @@ export interface components {
             };
         };
         TargetFile: {
-            expected_sha256: string;
+            expected_sha256: string | null;
             /** Format: date-time */
             expires_at: string;
             /** Format: uuid */
@@ -2836,9 +2836,9 @@ export interface components {
             received_bytes: number;
             revision: number;
             sha256: string | null;
-            size_bytes: number;
+            size_bytes: number | null;
             /** @enum {string} */
-            status: "uploading" | "ready" | "revoked" | "expired";
+            status: "uploading" | "receiving" | "ready" | "revoked" | "expired";
             /** Format: uuid */
             target_id: string;
             /** Format: date-time */

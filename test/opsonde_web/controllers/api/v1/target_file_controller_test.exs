@@ -53,6 +53,71 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
     assert_operation_response(conn, "createTargetFile")
   end
 
+  test "incoming file metadata and completed bytes use the authenticated file endpoint",
+       context do
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "response.bin",
+        "application/octet-stream",
+        "incoming-api",
+        actor: context.admin
+      )
+
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
+    path = "/api/v1/targets/#{context.target.id}/files/#{receipt.id}"
+
+    shown =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path)
+
+    assert %{
+             "data" => %{
+               "status" => "receiving",
+               "size_bytes" => nil,
+               "expected_sha256" => nil,
+               "received_bytes" => 5,
+               "sha256" => nil
+             }
+           } = json_response(shown, 200)
+
+    assert_operation_response(shown)
+
+    premature =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> post(path <> "/complete")
+
+    assert json_response(premature, 422)["error"]["code"] == "validation_failed"
+    Targets.complete_artifact_receipt!(receipt.id, actor: context.admin)
+
+    ready =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path)
+
+    assert %{
+             "data" => %{
+               "status" => "ready",
+               "size_bytes" => 5,
+               "expected_sha256" => nil,
+               "sha256" => "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+             }
+           } = json_response(ready, 200)
+
+    assert_operation_response(ready)
+
+    downloaded =
+      build_conn()
+      |> put_req_header("accept", "application/octet-stream")
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path <> "/chunks/0")
+
+    assert response(downloaded, 200) == <<255, 0, 1, 2, 255>>
+    assert_operation_response(downloaded)
+  end
+
   test "raw binary chunks cross the authenticated endpoint and persist readable progress",
        context do
     body = %{

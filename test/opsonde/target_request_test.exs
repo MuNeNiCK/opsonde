@@ -492,6 +492,75 @@ defmodule Opsonde.TargetRequestTest do
     Targets.artifact_reference!(upload.id, context.linux.id, actor: context.operator)
   end
 
+  test "a cleared request supplies one scoped incoming file writer", context do
+    input =
+      request(context.linux, context.ssh, :observation, :auto,
+        capability: "observe.command",
+        operation: "system.inspect"
+      )
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    invocation = %{
+      file_writer: fn _, _, _ -> flunk("caller supplied receipt authority was trusted") end,
+      cancelled?: fn -> Process.get(:cancel_file_write, false) end,
+      respond: fn invocation ->
+        {:ok, writer} =
+          invocation.file_writer.("peer-response-1", "response.bin", "application/octet-stream")
+
+        assert writer.status == :receiving
+        assert writer.offset == 0
+        assert {:ok, 5} = writer.append.(0, <<255, 0, 1, 2, 255>>)
+
+        {:ok, same_writer} =
+          invocation.file_writer.("peer-response-1", "response.bin", "application/octet-stream")
+
+        assert same_writer.id == writer.id
+        assert same_writer.offset == 5
+
+        assert {:error, %RequestError{category: :file_transfer_failed}} =
+                 invocation.file_writer.(
+                   "peer-response-1",
+                   "changed.bin",
+                   "application/octet-stream"
+                 )
+
+        assert {:error, _} = same_writer.complete.(6, nil)
+        {:ok, reference} = same_writer.complete.(5, nil)
+        assert reference["target_id"] == context.linux.id
+        assert reference["size_bytes"] == 5
+
+        assert reference["sha256"] ==
+                 "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+        Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+        assert {:error, %RequestError{category: :forbidden}} = writer.complete.(5, nil)
+        assert {:error, %RequestError{category: :forbidden}} = writer.abort.()
+        Accounts.change_role!(context.operator, :operator, actor: context.admin)
+        Process.put(:cancel_file_write, true)
+
+        assert {:error, %RequestError{category: :cancelled}} =
+                 writer.append.(0, <<255, 0, 1, 2, 255>>)
+
+        assert {:error, %RequestError{category: :cancelled}} = writer.complete.(nil, nil)
+        assert {:ok, :revoked} = writer.abort.()
+        Process.delete(:cancel_file_write)
+
+        assert {:error, _} =
+                 Targets.artifact_reference(writer.id, context.linux.id, actor: context.operator)
+
+        {:ok,
+         %ProviderTarget.Observation{
+           facts: %{"file" => reference},
+           observed_at: DateTime.utc_now()
+         }}
+      end
+    }
+
+    assert {:ok, _} =
+             Targets.dispatch_target_observation(clearance, invocation, actor: context.operator)
+  end
+
   defp file_request(context, file) do
     request(context.linux, context.ssh, :observation, :auto,
       capability: "observe.command",

@@ -37,7 +37,7 @@
       "type": "text"
     },
     {
-      "allow_nil?": false,
+      "allow_nil?": true,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -61,7 +61,7 @@
       "type": "bigint"
     },
     {
-      "allow_nil?": false,
+      "allow_nil?": true,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -229,7 +229,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "B16142511D6B0BEAD0688855968E2035AFBB6165427D590685840C70BD16729C",
+  "hash": "2DFA62234D3582B1F4B7FE2B0154AB45A384D9AFEF55B7BE4FB134F5AD474790",
   "identities": [
     {
       "all_tenants?": false,

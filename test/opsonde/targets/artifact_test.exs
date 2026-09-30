@@ -62,6 +62,49 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert reread.status == :ready
   end
 
+  test "unknown-length incoming bytes become a file only after explicit receipt completion",
+       context do
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "response.bin",
+        "application/octet-stream",
+        "response-1",
+        actor: context.admin
+      )
+
+    assert receipt.status == :receiving
+    assert is_nil(receipt.size_bytes)
+    assert is_nil(receipt.expected_sha256)
+    assert is_nil(receipt.sha256)
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0>>, actor: context.admin)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.admin)
+
+    assert {:error, _} = Targets.complete_artifact(receipt.id, actor: context.admin)
+    Targets.append_artifact_chunk!(receipt.id, 2, <<1, 2, 255>>, actor: context.admin)
+
+    completed = Targets.complete_artifact_receipt!(receipt.id, actor: context.admin)
+    assert completed.status == :ready
+    assert completed.size_bytes == 5
+    assert completed.sha256 == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+    reference = Targets.artifact_reference!(receipt.id, context.target.id, actor: context.admin)
+    assert Targets.read_bound_artifact_chunk!(reference, 0, actor: context.admin) == <<255, 0>>
+    assert Targets.read_bound_artifact_chunk!(reference, 2, actor: context.admin) == <<1, 2, 255>>
+
+    assert Targets.begin_artifact_receipt!(
+             context.target.id,
+             "response.bin",
+             "application/octet-stream",
+             "response-1",
+             actor: context.admin
+           ).id == receipt.id
+
+    assert Targets.complete_artifact_receipt!(receipt.id, actor: context.admin).revision ==
+             completed.revision
+  end
+
   test "revoking a completed artifact makes its bytes unavailable", context do
     digest = "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
 
@@ -85,6 +128,170 @@ defmodule Opsonde.Targets.ArtifactTest do
              Targets.read_artifact_chunk(upload.id, context.target.id, 0, actor: context.admin)
 
     assert Targets.get_artifact!(upload.id, actor: context.admin).sha256 == digest
+  end
+
+  test "an empty receipt publishes the empty digest while input uploads still require a manifest",
+       context do
+    receipt = begin_receipt(context, "empty-response")
+
+    ready =
+      Targets.complete_artifact_receipt!(receipt.id, %{expected_size_bytes: 0},
+        actor: context.admin
+      )
+
+    assert ready.size_bytes == 0
+    assert ready.sha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    reference = Targets.artifact_reference!(receipt.id, context.target.id, actor: context.admin)
+    assert Targets.read_bound_artifact_chunk!(reference, 0, actor: context.admin) == <<>>
+
+    assert {:error, _} =
+             Targets.begin_artifact(
+               context.target.id,
+               "input.bin",
+               "application/octet-stream",
+               nil,
+               nil,
+               "missing-manifest",
+               actor: context.admin
+             )
+
+    upload = begin_upload(context, "input-manifest")
+    assert {:error, _} = Targets.complete_artifact_receipt(upload.id, actor: context.admin)
+    assert {:error, _} = Targets.complete_artifact(receipt.id, actor: context.admin)
+  end
+
+  test "receipt bounds and peer promises reject incomplete or changed content", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{chunk_bytes: 3, max_size_bytes: 5})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    receipt = begin_receipt(context, "bounded-response")
+
+    assert {:error, _} =
+             Targets.begin_artifact_receipt(
+               context.target.id,
+               "different.bin",
+               "application/octet-stream",
+               "bounded-response",
+               actor: context.admin
+             )
+
+    assert {:error, _} =
+             Targets.append_artifact_chunk(receipt.id, 0, <<255, 0, 1, 2>>, actor: context.admin)
+
+    assert Targets.get_artifact!(receipt.id, actor: context.admin).received_bytes == 0
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0, 1>>, actor: context.admin)
+
+    assert Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0, 1>>, actor: context.admin).received_bytes ==
+             3
+
+    assert {:error, _} =
+             Targets.append_artifact_chunk(receipt.id, 0, <<255, 0, 2>>, actor: context.admin)
+
+    assert {:error, _} =
+             Targets.append_artifact_chunk(receipt.id, 3, <<2, 255, 0>>, actor: context.admin)
+
+    Targets.append_artifact_chunk!(receipt.id, 3, <<2, 255>>, actor: context.admin)
+
+    assert {:error, _} =
+             Targets.complete_artifact_receipt(receipt.id, %{expected_size_bytes: 6},
+               actor: context.admin
+             )
+
+    assert {:error, _} =
+             Targets.complete_artifact_receipt(
+               receipt.id,
+               %{expected_sha256: String.duplicate("0", 64)},
+               actor: context.admin
+             )
+
+    staged = Targets.get_artifact!(receipt.id, actor: context.admin)
+    assert staged.received_bytes == 5
+    assert staged.status == :receiving
+    assert is_nil(staged.size_bytes)
+    assert is_nil(staged.sha256)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.admin)
+
+    ready =
+      Targets.complete_artifact_receipt!(
+        receipt.id,
+        %{
+          expected_size_bytes: 5,
+          expected_sha256: "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+        },
+        actor: context.admin
+      )
+
+    assert ready.status == :ready
+
+    assert {:error, _} =
+             Targets.complete_artifact_receipt(receipt.id, %{expected_size_bytes: 6},
+               actor: context.admin
+             )
+  end
+
+  test "receipt append and publication failures leave only unpublished durable progress",
+       context do
+    receipt = begin_receipt(context, "failed-response")
+    # Persistence-failure fixture; verification stays at the public action seam.
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_receipt_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.received_bytes <> OLD.received_bytes OR NEW.status <> OLD.status THEN
+        RAISE EXCEPTION 'injected receipt persistence failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    reject_write = """
+    CREATE TRIGGER reject_receipt_write BEFORE UPDATE ON artifacts
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_receipt_write();
+    """
+
+    Opsonde.Repo.query!(reject_write)
+
+    assert {:error, _} =
+             Targets.append_artifact_chunk(receipt.id, 0, <<255, 0, 1, 2, 255>>,
+               actor: context.admin
+             )
+
+    assert Targets.get_artifact!(receipt.id, actor: context.admin).received_bytes == 0
+    Opsonde.Repo.query!("DROP TRIGGER reject_receipt_write ON artifacts")
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
+    Opsonde.Repo.query!(reject_write)
+    assert {:error, _} = Targets.complete_artifact_receipt(receipt.id, actor: context.admin)
+    staged = Targets.get_artifact!(receipt.id, actor: context.admin)
+    assert staged.status == :receiving
+    assert staged.received_bytes == 5
+    assert is_nil(staged.size_bytes)
+    assert is_nil(staged.sha256)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.admin)
+
+    Opsonde.Repo.query!("DROP TRIGGER reject_receipt_write ON artifacts")
+    ready = Targets.complete_artifact_receipt!(receipt.id, actor: context.admin)
+    assert ready.size_bytes == 5
+    assert ready.sha256 == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+  end
+
+  defp begin_receipt(context, key) do
+    Targets.begin_artifact_receipt!(
+      context.target.id,
+      "response.bin",
+      "application/octet-stream",
+      key,
+      actor: context.admin
+    )
   end
 
   test "a ready file has one exact reference for authorized operation reads", context do
@@ -124,6 +331,29 @@ defmodule Opsonde.Targets.ArtifactTest do
 
     Targets.revoke_artifact!(upload.id, actor: context.admin)
     assert {:error, _} = Targets.read_bound_artifact_chunk(reference, 0, actor: context.admin)
+  end
+
+  test "a valid Unicode file name remains usable through its canonical reference", context do
+    name = String.duplicate("機", 90)
+
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        name,
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "unicode-name",
+        actor: context.admin
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
+    Targets.complete_artifact!(upload.id, actor: context.admin)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.admin)
+    assert reference["name"] == name
+
+    assert Targets.read_bound_artifact_chunk!(reference, 0, actor: context.admin) ==
+             <<255, 0, 1, 2, 255>>
   end
 
   test "lost acknowledgements can resume the same upload without replacing bytes", context do
@@ -287,11 +517,13 @@ defmodule Opsonde.Targets.ArtifactTest do
 
     ready = begin_upload(context, "expires-ready")
     interrupted = begin_upload(context, "expires-interrupted")
+    incoming = begin_receipt(context, "expires-incoming")
+    Targets.append_artifact_chunk!(incoming.id, 0, <<255, 0>>, actor: context.admin)
     Targets.append_artifact_chunk!(ready.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
     Targets.complete_artifact!(ready.id, actor: context.admin)
     Targets.append_artifact_chunk!(interrupted.id, 0, <<255, 0>>, actor: context.admin)
 
-    for upload <- [ready, interrupted] do
+    for upload <- [ready, interrupted, incoming] do
       assert_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker, args: %{id: upload.id})
       assert {:error, _} = Targets.expire_artifact(upload.id, actor: context.admin)
     end
@@ -304,7 +536,9 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert {:error, _} =
              Targets.append_artifact_chunk(interrupted.id, 2, <<1, 2, 255>>, actor: context.admin)
 
-    for upload <- [ready, interrupted] do
+    assert {:error, _} = Targets.complete_artifact_receipt(incoming.id, actor: context.admin)
+
+    for upload <- [ready, interrupted, incoming] do
       assert :ok = perform_job(Opsonde.Targets.Artifact.ExpiryWorker, %{id: upload.id})
       assert Targets.get_artifact!(upload.id, actor: context.admin).status == :expired
       assert :ok = perform_job(Opsonde.Targets.Artifact.ExpiryWorker, %{id: upload.id})
@@ -414,6 +648,15 @@ defmodule Opsonde.Targets.ArtifactTest do
                5,
                "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
                "failed-cleanup",
+               actor: context.admin
+             )
+
+    assert {:error, _} =
+             Targets.begin_artifact_receipt(
+               context.target.id,
+               "response.bin",
+               "application/octet-stream",
+               "failed-incoming-cleanup",
                actor: context.admin
              )
 

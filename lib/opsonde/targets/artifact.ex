@@ -78,6 +78,33 @@ defmodule Opsonde.Targets.Artifact do
       run {Lifecycle, operation: :append}
     end
 
+    action :begin_receipt, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :target_id, :uuid, allow_nil?: false
+      argument :name, :string, allow_nil?: false, constraints: [min_length: 1, max_length: 255]
+
+      argument :media_type, :string,
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 256, match: ~r/\A[^\r\n]+\z/]
+
+      argument :receipt_key, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 1, max_length: 120]
+
+      run {Lifecycle, operation: :begin_receipt}
+    end
+
+    action :complete_receipt, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :expected_size_bytes, :integer, constraints: [min: 0]
+      argument :expected_sha256, :string, constraints: [match: ~r/\A[0-9a-f]{64}\z/]
+      run {Lifecycle, operation: :complete_receipt}
+    end
+
     action :complete, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -130,12 +157,13 @@ defmodule Opsonde.Targets.Artifact do
         :size_bytes,
         :expected_sha256,
         :upload_key,
+        :status,
         :expires_at
       ]
     end
 
     update :record_state do
-      accept [:received_bytes, :status, :sha256]
+      accept [:received_bytes, :status, :sha256, :size_bytes]
       change optimistic_lock(:revision)
     end
   end
@@ -151,8 +179,10 @@ defmodule Opsonde.Targets.Artifact do
              :page,
              :limits,
              :begin,
+             :begin_receipt,
              :append,
              :complete,
+             :complete_receipt,
              :chunk,
              :reference,
              :bound_chunk,
@@ -173,7 +203,7 @@ defmodule Opsonde.Targets.Artifact do
 
     attribute :name, :string, allow_nil?: false, public?: true
     attribute :media_type, :string, allow_nil?: false, public?: true
-    attribute :size_bytes, :integer, allow_nil?: false, public?: true, constraints: [min: 0]
+    attribute :size_bytes, :integer, public?: true, constraints: [min: 0]
 
     attribute :received_bytes, :integer,
       allow_nil?: false,
@@ -181,7 +211,7 @@ defmodule Opsonde.Targets.Artifact do
       default: 0,
       constraints: [min: 0]
 
-    attribute :expected_sha256, :string, allow_nil?: false, public?: true
+    attribute :expected_sha256, :string, public?: true
     attribute :sha256, :string, public?: true
     attribute :upload_key, :string, allow_nil?: false, sensitive?: true
     attribute :expires_at, :utc_datetime_usec, allow_nil?: false, public?: true
@@ -190,7 +220,7 @@ defmodule Opsonde.Targets.Artifact do
       allow_nil?: false,
       public?: true,
       default: :uploading,
-      constraints: [one_of: [:uploading, :ready, :revoked, :expired]]
+      constraints: [one_of: [:uploading, :receiving, :ready, :revoked, :expired]]
 
     attribute :revision, :integer,
       allow_nil?: false,

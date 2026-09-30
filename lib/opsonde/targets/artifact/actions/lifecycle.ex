@@ -10,25 +10,57 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
   @impl true
   def run(input, opts, context) do
     case opts[:operation] do
-      :limits -> {:ok, limits()}
-      :begin -> begin_upload(input.arguments, context.actor)
-      :append -> locked(input.arguments.id, context.actor, &append(&1, input.arguments))
-      :complete -> locked(input.arguments.id, context.actor, &complete/1)
-      :revoke -> locked(input.arguments.id, context.actor, &dispose(&1, :revoked), usable?: false)
-      :expire -> locked(input.arguments.id, nil, &expire/1, usable?: false, authorize?: false)
-      :chunk -> read_chunk(input.arguments, context.actor)
-      :reference -> reference(input.arguments, context.actor)
-      :bound_chunk -> bound_chunk(input.arguments, context.actor)
+      :limits ->
+        {:ok, limits()}
+
+      :begin ->
+        begin_upload(input.arguments, context.actor)
+
+      :begin_receipt ->
+        begin_receipt(input.arguments, context.actor)
+
+      :append ->
+        locked(input.arguments.id, context.actor, &append(&1, input.arguments))
+
+      :complete ->
+        locked(input.arguments.id, context.actor, &complete/1)
+
+      :complete_receipt ->
+        locked(input.arguments.id, context.actor, &complete_receipt(&1, input.arguments))
+
+      :revoke ->
+        locked(input.arguments.id, context.actor, &dispose(&1, :revoked), usable?: false)
+
+      :expire ->
+        locked(input.arguments.id, nil, &expire/1, usable?: false, authorize?: false)
+
+      :chunk ->
+        read_chunk(input.arguments, context.actor)
+
+      :reference ->
+        reference(input.arguments, context.actor)
+
+      :bound_chunk ->
+        bound_chunk(input.arguments, context.actor)
     end
   end
 
   defp begin_upload(arguments, actor) do
-    Ash.transact([Target, Artifact], fn -> create_or_resume(arguments, actor) end)
+    Ash.transact([Target, Artifact], fn -> create_or_resume(arguments, actor, :uploading) end)
   end
 
-  defp create_or_resume(arguments, actor) do
+  defp begin_receipt(arguments, actor) do
+    attributes =
+      arguments
+      |> Map.delete(:receipt_key)
+      |> Map.merge(%{upload_key: arguments.receipt_key, size_bytes: nil, expected_sha256: nil})
+
+    Ash.transact([Target, Artifact], fn -> create_or_resume(attributes, actor, :receiving) end)
+  end
+
+  defp create_or_resume(arguments, actor, status) do
     with true <-
-           arguments.size_bytes <= limits().max_size_bytes ||
+           (is_nil(arguments.size_bytes) or arguments.size_bytes <= limits().max_size_bytes) ||
              invalid(:size_bytes, "Artifact exceeds the configured transfer limit"),
          {:ok, %{active: true}} <-
            Target
@@ -42,8 +74,13 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
              not_found_error?: false
            ) do
       if existing do
+        fields =
+          if status == :receiving,
+            do: [:name, :media_type, :expected_sha256],
+            else: [:name, :media_type, :size_bytes, :expected_sha256]
+
         if Enum.all?(
-             [:name, :media_type, :size_bytes, :expected_sha256],
+             fields,
              &(Map.get(existing, &1) == Map.get(arguments, &1))
            ),
            do: existing,
@@ -60,6 +97,7 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
             :upload_key
           ])
           |> Map.merge(%{
+            status: status,
             uploaded_by_id: actor.id,
             expires_at: DateTime.add(DateTime.utc_now(), limits().lifetime_seconds, :second)
           })
@@ -115,14 +153,14 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
       offset < artifact.received_bytes ->
         duplicate_chunk(artifact, offset, bytes)
 
-      artifact.status != :uploading ->
+      artifact.status not in [:uploading, :receiving] ->
         invalid(:id, "Artifact is already complete")
 
       offset != artifact.received_bytes ->
         invalid(:offset, "Chunk must continue the current upload offset")
 
-      offset + size > artifact.size_bytes ->
-        invalid(:bytes, "Chunk exceeds declared artifact length")
+      offset + size > min(artifact.size_bytes || limits().max_size_bytes, limits().max_size_bytes) ->
+        invalid(:bytes, "Chunk exceeds the file transfer limit")
 
       true ->
         with {:ok, _chunk} <-
@@ -154,6 +192,9 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
     end
   end
 
+  defp complete(%{expected_sha256: nil}),
+    do: invalid(:id, "Incoming files require receipt completion")
+
   defp complete(%{status: :ready} = artifact), do: artifact
 
   defp complete(%{status: status}) when status in [:revoked, :expired],
@@ -175,7 +216,39 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
     end
   end
 
-  defp hash_chunks(artifact, offset, hash) when offset == artifact.size_bytes,
+  defp complete_receipt(%{expected_sha256: hash}, _arguments) when not is_nil(hash),
+    do: invalid(:id, "Uploaded files require declared-content completion")
+
+  defp complete_receipt(%{status: status} = artifact, arguments)
+       when status in [:receiving, :ready] do
+    expected_size = Map.get(arguments, :expected_size_bytes)
+    expected_hash = Map.get(arguments, :expected_sha256)
+
+    with true <-
+           (is_nil(expected_size) or
+              expected_size == artifact.received_bytes) ||
+             invalid(:expected_size_bytes, "Incoming file length does not match the response"),
+         {:ok, hash} <- hash_chunks(artifact, 0, :crypto.hash_init(:sha256)),
+         true <-
+           (is_nil(expected_hash) or expected_hash == hash) ||
+             invalid(:expected_sha256, "Incoming file integrity check failed") do
+      if status == :ready do
+        artifact
+      else
+        with {:ok, completed} <-
+               Targets.record_artifact_state(
+                 artifact,
+                 %{status: :ready, size_bytes: artifact.received_bytes, sha256: hash},
+                 authorize?: false
+               ),
+             do: completed
+      end
+    end
+  end
+
+  defp complete_receipt(_artifact, _arguments), do: invalid(:id, "Incoming file is unavailable")
+
+  defp hash_chunks(artifact, offset, hash) when offset == artifact.received_bytes,
     do: {:ok, hash |> :crypto.hash_final() |> Base.encode16(case: :lower)}
 
   defp hash_chunks(artifact, offset, hash) do

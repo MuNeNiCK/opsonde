@@ -5053,6 +5053,7 @@
         "additionalProperties": false,
         "properties": {
           "expected_sha256": {
+            "nullable": true,
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
@@ -5089,11 +5090,13 @@
           },
           "size_bytes": {
             "minimum": 0,
+            "nullable": true,
             "type": "integer"
           },
           "status": {
             "enum": [
               "uploading",
+              "receiving",
               "ready",
               "revoked",
               "expired"

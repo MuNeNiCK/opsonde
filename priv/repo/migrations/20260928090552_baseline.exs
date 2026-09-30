@@ -2075,9 +2075,9 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
       add :name, :text, null: false
       add :media_type, :text, null: false
-      add :size_bytes, :bigint, null: false
+      add :size_bytes, :bigint
       add :received_bytes, :bigint, null: false, default: 0
-      add :expected_sha256, :text, null: false
+      add :expected_sha256, :text
       add :sha256, :text
       add :upload_key, :text, null: false
       add :expires_at, :utc_datetime_usec, null: false

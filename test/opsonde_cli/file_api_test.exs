@@ -165,6 +165,52 @@ defmodule OpsondeCLI.FileAPITest do
              Jason.decode!(output)
   end
 
+  test "CLI reads incoming progress and downloads only the completed receipt", context do
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "response.bin",
+        "application/octet-stream",
+        "incoming-cli",
+        actor: context.admin
+      )
+
+    Targets.append_artifact_chunk!(receipt.id, 0, @bytes, actor: context.admin)
+
+    shown =
+      capture_io(fn ->
+        assert CLI.run(["file", "show", context.target.id, receipt.id], context.runtime) == 0
+      end)
+      |> Jason.decode!()
+      |> Map.fetch!("data")
+
+    assert shown["status"] == "receiving"
+    assert is_nil(shown["size_bytes"])
+    destination = Path.join(context.root, "response.bin")
+
+    capture_io(:stderr, fn ->
+      assert CLI.run(
+               ["file", "download", context.target.id, receipt.id, "--output", destination],
+               context.runtime
+             ) == 4
+    end)
+
+    refute File.exists?(destination)
+    Targets.complete_artifact_receipt!(receipt.id, actor: context.admin)
+
+    output =
+      capture_io(fn ->
+        assert CLI.run(
+                 ["file", "download", context.target.id, receipt.id, "--output", destination],
+                 context.runtime
+               ) == 0
+      end)
+
+    assert %{"outcome" => "succeeded", "data" => %{"sha256" => @digest}} = Jason.decode!(output)
+    assert File.read!(destination) == @bytes
+    assert File.stat!(destination).mode == 0o100600
+  end
+
   test "a lost creation acknowledgement retains the key and a fresh CLI recovers the same file",
        context do
     attempts = start_supervised!({Agent, fn -> 0 end})

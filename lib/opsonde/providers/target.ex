@@ -128,7 +128,15 @@ defmodule Opsonde.Providers.Target do
     defp valid_id?(id), do: is_binary(id) and match?({:ok, ^id}, Ecto.UUID.cast(id))
 
     defp bounded_text?(value, maximum),
-      do: is_binary(value) and byte_size(value) in 1..maximum and String.valid?(value)
+      do:
+        is_binary(value) and String.valid?(value) and
+          length(String.codepoints(value)) in 1..maximum
+  end
+
+  defmodule FileWriter do
+    @moduledoc false
+    @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :abort]
+    defstruct @enforce_keys
   end
 
   defmodule AccessMethodProfile do

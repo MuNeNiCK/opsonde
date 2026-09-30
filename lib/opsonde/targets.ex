@@ -179,6 +179,12 @@ defmodule Opsonde.Targets do
         args: [:target_id, :name, :media_type, :size_bytes, :expected_sha256, :upload_key]
 
       define :append_artifact_chunk, action: :append, args: [:id, :offset, :bytes]
+
+      define :begin_artifact_receipt,
+        action: :begin_receipt,
+        args: [:target_id, :name, :media_type, :receipt_key]
+
+      define :complete_artifact_receipt, action: :complete_receipt, args: [:id]
       define :complete_artifact, action: :complete, args: [:id]
       define :revoke_artifact, action: :revoke, args: [:id]
       define :expire_artifact, action: :expire, args: [:id]
