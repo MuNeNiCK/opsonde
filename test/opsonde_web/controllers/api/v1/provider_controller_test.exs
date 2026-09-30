@@ -78,7 +78,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
             "name" => "public-http-target",
             "kind" => "target",
             "adapter_type" => "http-api",
-            "configuration" => %{"endpoint" => "https://example.test"},
+            "configuration" => %{},
             "credentials" => %{}
           }
         },
@@ -696,11 +696,16 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         |> Map.fetch!("data")
       end)
 
-    for token <- [context.admin_token, context.operator_token] do
+    for token <- [context.admin_token] do
       response =
         post_json(
           "/api/v1/providers/#{provider["id"]}/target-capabilities",
-          %{"provider" => %{"expected_revision" => provider["revision"]}},
+          %{
+            "provider" => %{
+              "expected_revision" => provider["revision"],
+              "endpoint" => "reachable"
+            }
+          },
           token
         )
 
@@ -710,14 +715,21 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
       assert_secret_free(response, ["capability-secret"])
     end
 
-    forbidden =
-      post_json(
-        "/api/v1/providers/#{provider["id"]}/target-capabilities",
-        %{"provider" => %{"expected_revision" => provider["revision"]}},
-        context.viewer_token
-      )
+    for token <- [context.operator_token, context.viewer_token] do
+      forbidden =
+        post_json(
+          "/api/v1/providers/#{provider["id"]}/target-capabilities",
+          %{
+            "provider" => %{
+              "expected_revision" => provider["revision"],
+              "endpoint" => "reachable"
+            }
+          },
+          token
+        )
 
-    assert %{"error" => %{"code" => "forbidden"}} = json_response(forbidden, 403)
+      assert %{"error" => %{"code" => "forbidden"}} = json_response(forbidden, 403)
+    end
 
     bad_body =
       post_json(

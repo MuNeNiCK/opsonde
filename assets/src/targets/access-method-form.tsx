@@ -46,11 +46,7 @@ export function AccessMethodForm({
     (method) => method.adapter_type === provider?.adapter_type,
   )?.protocol;
   const isBMC = protocol === "redfish" || protocol === "ipmi";
-  const fixedEndpoint = provider?.access_method_profile?.configuration_endpoint ?? false;
-  const currentEndpoint =
-    fixedEndpoint && typeof provider?.configuration.endpoint === "string"
-      ? provider.configuration.endpoint
-      : endpoint;
+  const currentEndpoint = endpoint;
   const fieldId = `target-access-${method?.id ?? "new"}`;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -64,7 +60,7 @@ export function AccessMethodForm({
       const response = apiData(
         await apiClient.POST("/api/v1/providers/{id}/target-capabilities", {
           params: { path: { id: provider.id } },
-          body: { provider: { expected_revision: provider.revision } },
+          body: { provider: { expected_revision: provider.revision, endpoint: currentEndpoint } },
         }),
       );
       const advertisedCapabilities = Array.from(
@@ -146,12 +142,7 @@ export function AccessMethodForm({
             value={providerId}
             onValueChange={(id) => {
               setProviderId(id ?? "");
-              const selected = availableProviders.find((item) => item.id === id);
-              setEndpoint(
-                typeof selected?.configuration.endpoint === "string"
-                  ? selected.configuration.endpoint
-                  : "",
-              );
+              setEndpoint("");
             }}
             options={availableProviders.map((item) => ({
               value: item.id,
@@ -171,7 +162,6 @@ export function AccessMethodForm({
           name="endpoint"
           value={currentEndpoint}
           onChange={(event) => setEndpoint(event.target.value)}
-          readOnly={fixedEndpoint}
           required
         />
       </div>

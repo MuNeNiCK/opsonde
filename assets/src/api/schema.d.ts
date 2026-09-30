@@ -1684,7 +1684,6 @@ export interface components {
         };
         Provider: {
             access_method_profile?: {
-                configuration_endpoint: boolean;
                 method: string;
             };
             adapter_type: string;
@@ -1935,6 +1934,12 @@ export interface components {
                 /** Format: uuid */
                 target_id?: string;
                 value?: string;
+            };
+        };
+        TargetCapabilitiesRequest: {
+            provider: {
+                endpoint: string;
+                expected_revision: number;
             };
         };
         CreateCaseRequest: {
@@ -3746,10 +3751,10 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description Provider revision */
+        /** @description Method connection */
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProviderRevisionRequest"];
+                "application/json": components["schemas"]["TargetCapabilitiesRequest"];
             };
         };
         responses: {

@@ -444,6 +444,13 @@ defmodule Opsonde.Transports.SSH do
     end
   end
 
+  def validate_endpoint(%Config{} = config, value) do
+    case endpoint(config, value) do
+      {:ok, _host, _port, _fingerprint} -> :ok
+      error -> error
+    end
+  end
+
   defp endpoint(config, value) when is_binary(value) do
     case {URI.parse(value), Map.fetch(config.host_key_fingerprints, value)} do
       {%URI{scheme: "ssh", host: host} = uri, {:ok, fingerprint}}

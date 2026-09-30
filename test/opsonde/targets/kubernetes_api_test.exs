@@ -850,9 +850,12 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     assert %Target.Capabilities{observations: [observation], effects: [effect]} =
              Providers.target_capabilities!(
                context.provider.id,
-               context.provider.revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
                %{},
-               actor: context.operator
+               actor: context.admin
              )
 
     assert observation.capability == "request.kubernetes.observe"

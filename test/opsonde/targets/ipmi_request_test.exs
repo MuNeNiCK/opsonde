@@ -8,7 +8,9 @@ defmodule Opsonde.Targets.IPMIRequestTest do
 
   test "classify exact IPMI requests without assuming an arbitrary command is read-only" do
     {:ok, state} =
-      IPMI.build(%{"endpoint" => @endpoint}, %{"username" => "fixture", "password" => "fixture"})
+      IPMI.build(%{}, %{"username" => "fixture", "password" => "fixture"})
+
+    {:ok, state} = IPMI.bind_connection(state, %Target.Connection{endpoint: @endpoint})
 
     raw = %Target.MethodRequest{
       provider_revision: 1,
@@ -39,7 +41,9 @@ defmodule Opsonde.Targets.IPMIRequestTest do
 
   test "IPMI advertises one arbitrary command as an effect and validates it before dispatch" do
     {:ok, state} =
-      IPMI.build(%{"endpoint" => @endpoint}, %{"username" => "fixture", "password" => "fixture"})
+      IPMI.build(%{}, %{"username" => "fixture", "password" => "fixture"})
+
+    {:ok, state} = IPMI.bind_connection(state, %Target.Connection{endpoint: @endpoint})
 
     assert {:ok, %Target.Capabilities{observations: observations, effects: effects}} =
              IPMI.capabilities(state, %{})

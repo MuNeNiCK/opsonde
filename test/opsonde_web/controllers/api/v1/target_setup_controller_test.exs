@@ -125,13 +125,18 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
                 else: "https://device.example.test"
               )
 
+        {configuration, credentials} =
+          Opsonde.TargetConnectionFixture.input(descriptor["adapter_type"], endpoint)
+
         provider =
           Providers.create_provider!(
             descriptor["adapter_type"],
             :target,
             descriptor["adapter_type"],
-            %{"endpoint" => endpoint},
-            %{}, actor: context.admin)
+            configuration,
+            credentials,
+            actor: context.admin
+          )
 
         checked =
           Providers.record_provider_check!(provider, provider.revision, :passed, nil, nil,
@@ -201,7 +206,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         "http-binding-provider",
         :target,
         "http-api",
-        %{"endpoint" => endpoint},
+        %{},
         %{},
         actor: context.admin
       )

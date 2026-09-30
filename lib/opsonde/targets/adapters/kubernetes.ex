@@ -19,15 +19,29 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   }
   @max_body_bytes 65_536
 
+  @impl Opsonde.Providers.Adapter
   def type, do: "kubernetes-api"
+  @impl Opsonde.Providers.Adapter
   def kind, do: :target
+  @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Client.build(configuration, credentials)
+  @impl Opsonde.Providers.Adapter
   def check(state, input), do: Client.check(state, input)
 
+  @impl Opsonde.Providers.Target
+  def bind_connection(state, %Target.Connection{endpoint: endpoint}) do
+    case Client.endpoint(state, endpoint) do
+      :ok -> {:ok, state}
+      {:error, _category, message} -> {:error, :failed, message}
+    end
+  end
+
+  @impl Opsonde.Providers.Target
   def access_method_profile do
     %Target.AccessMethodProfile{method: "api", capabilities: [@observe, @effect]}
   end
 
+  @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
     scope =
       if state && state.namespace,
@@ -71,12 +85,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
      }}
   end
 
+  @impl Opsonde.Providers.Target
   def classify_request(%State{} = state, request) do
     with {:ok, operation} <- exact_request(state, request), do: {:ok, operation.kind}
   end
 
   def classify_request(_state, _request), do: invalid()
 
+  @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
     with {:ok, %{kind: :observation} = operation} <- exact_request(state, request),
          {:ok, response} <- Client.run(state, operation, cancelled?(invocation), :read),
@@ -90,6 +106,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   def observe(_state, _request, _invocation), do: invalid()
 
+  @impl Opsonde.Providers.Target
   def effect(%State{} = state, request, invocation) do
     with {:ok, %{kind: :effect} = operation} <- exact_request(state, request) do
       case Client.run(state, operation, cancelled?(invocation), :effect) do
@@ -124,6 +141,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   def effect(_state, _request, _invocation), do: invalid()
 
+  @impl Opsonde.Providers.Target
   def verify(%State{} = state, request, invocation) do
     with {:ok, observation} <- observe(state, request, invocation) do
       status =

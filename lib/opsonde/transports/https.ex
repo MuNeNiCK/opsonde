@@ -3,6 +3,10 @@ defmodule Opsonde.Transports.HTTPS do
 
   @max_ca_bytes 65_536
 
+  def validate_ca_certificate(pem) do
+    with {:ok, _certificates} <- certificates(pem), do: :ok
+  end
+
   def transport_options(ca_certificate, host)
       when (is_nil(ca_certificate) or is_binary(ca_certificate)) and is_binary(host) do
     with {:ok, additional} <- certificates(ca_certificate) do

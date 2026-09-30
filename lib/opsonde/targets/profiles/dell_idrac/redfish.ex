@@ -22,6 +22,9 @@ defmodule Opsonde.Targets.Profiles.DellIDRAC.Redfish do
   defdelegate check(state, input), to: Redfish
 
   @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: Redfish
+
+  @impl Opsonde.Providers.Target
   defdelegate capabilities(state, invocation), to: Redfish
 
   @impl Opsonde.Providers.Target

@@ -19,8 +19,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defmodule State do
     @moduledoc false
-    @enforce_keys [:endpoint, :timeout_ms, :headers, :connect_options]
-    defstruct @enforce_keys
+    @enforce_keys [:timeout_ms, :headers, :ca_certificate]
+    defstruct @enforce_keys ++ [:endpoint, :connect_options]
   end
 
   @impl Opsonde.Providers.Adapter
@@ -33,7 +33,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   def access_method_profile do
     %Target.AccessMethodProfile{
       method: "http",
-      configuration_endpoint?: true,
       capabilities: [@observe, @effect]
     }
   end
@@ -42,18 +41,16 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   def build(configuration, credentials)
       when is_map(configuration) and is_map(credentials) do
     with true <-
-           Enum.all?(Map.keys(configuration), &(&1 in ~w(endpoint timeout_ms ca_certificate))),
-         {:ok, endpoint, uri} <- endpoint(configuration["endpoint"]),
+           Enum.all?(Map.keys(configuration), &(&1 in ~w(timeout_ms ca_certificate))),
          timeout when is_integer(timeout) and timeout in 100..30_000 <-
            Map.get(configuration, "timeout_ms", @default_timeout_ms),
          {:ok, auth_headers} <- auth_headers(credentials),
-         {:ok, connect_options} <- connect_options(uri, configuration["ca_certificate"], timeout) do
+         :ok <- HTTPS.validate_ca_certificate(configuration["ca_certificate"]) do
       {:ok,
        %State{
-         endpoint: endpoint,
          timeout_ms: timeout,
          headers: [{"accept", "*/*"}, {"accept-encoding", "identity"}] ++ auth_headers,
-         connect_options: connect_options
+         ca_certificate: configuration["ca_certificate"]
        }}
     else
       _invalid -> {:error, :invalid_configuration}
@@ -63,7 +60,28 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
   @impl Opsonde.Providers.Adapter
-  def check(%State{} = state, %{"endpoint" => endpoint}) when endpoint == state.endpoint do
+  def check(%State{} = state, %{"endpoint" => endpoint}) do
+    with {:ok, state} <- bind_connection(state, %Target.Connection{endpoint: endpoint}) do
+      check_connection(state)
+    else
+      _ -> {:error, :invalid_configuration, "HTTP Method endpoint is invalid"}
+    end
+  end
+
+  def check(_state, _input),
+    do: {:error, :invalid_configuration, "HTTP check requires a Method endpoint"}
+
+  @impl Opsonde.Providers.Target
+  def bind_connection(%State{} = state, %Target.Connection{endpoint: value}) do
+    with {:ok, endpoint, uri} <- endpoint(value),
+         {:ok, options} <- connect_options(uri, state.ca_certificate, state.timeout_ms) do
+      {:ok, %{state | endpoint: endpoint, connect_options: options}}
+    else
+      _ -> {:error, :failed, "HTTP Method endpoint or trust is invalid"}
+    end
+  end
+
+  defp check_connection(state) do
     case request(state, :get, "/", %{}, nil, %{}) do
       {:ok, %Req.Response{status: status}} when status in [401, 403] ->
         {:error, :authentication, "HTTP endpoint rejected the configured credentials"}
@@ -78,9 +96,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
         {:error, :unreachable, "HTTP endpoint returned an invalid response"}
     end
   end
-
-  def check(_state, _input),
-    do: {:error, :invalid_configuration, "HTTP check endpoint must match Provider configuration"}
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
@@ -297,8 +312,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     parameters = request.parameters
 
     with true <- request.capability == capability and request.operation == operation,
-         true <-
-           not Map.has_key?(request, :connection) or request.connection.endpoint == state.endpoint,
+         true <- same_endpoint?(state, request.connection),
          true <- request.selectors == %{},
          %{"method" => verb, "path" => path} <- parameters,
          true <- Enum.all?(Map.keys(parameters), &(&1 in allowed_keys(kind))),
@@ -311,6 +325,15 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       _ -> {:error, :failed, "HTTP request is invalid"}
     end
   end
+
+  defp same_endpoint?(state, %Target.Connection{endpoint: value}) do
+    case endpoint(value) do
+      {:ok, endpoint, _uri} -> endpoint == state.endpoint
+      _ -> false
+    end
+  end
+
+  defp same_endpoint?(_state, _connection), do: false
 
   defp allowed_keys(:read), do: ~w(method path headers)
   defp allowed_keys(:write), do: ~w(method path headers body)

@@ -111,7 +111,7 @@ test("named controller profile uses the published IPMI form and exact Provider i
             name: "rack-controller",
             kind: "target",
             adapter_type: "hpe-ilo-ipmi",
-            configuration: { endpoint: "ipmi://controller.example:623" },
+            configuration: {},
             credentials: { username: "operator", password: "test-secret" },
           },
         },

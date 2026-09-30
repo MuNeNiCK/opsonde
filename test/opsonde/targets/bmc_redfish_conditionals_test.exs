@@ -221,7 +221,6 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         :target,
         "redfish",
         %{
-          "endpoint" => context.method.endpoint,
           "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
         },
         %{"username" => "tester", "password" => "secret"},
@@ -240,7 +239,15 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
 
     capabilities =
-      Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: context.admin)
+      Providers.target_capabilities!(
+        provider.id,
+        %Target.CapabilitiesRequest{
+          provider_revision: provider.revision,
+          connection: %Target.Connection{endpoint: context.method.endpoint}
+        },
+        %{},
+        actor: context.admin
+      )
 
     assert Target.capability_names(capabilities) == [
              "request.redfish.observe",
@@ -379,7 +386,6 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
           :target,
           type,
           %{
-            "endpoint" => context.method.endpoint,
             "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
           },
           %{"username" => "tester", "password" => "secret"},
@@ -398,7 +404,15 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       provider = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
 
       capabilities =
-        Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: context.admin)
+        Providers.target_capabilities!(
+          provider.id,
+          %Target.CapabilitiesRequest{
+            provider_revision: provider.revision,
+            connection: %Target.Connection{endpoint: context.method.endpoint}
+          },
+          %{},
+          actor: context.admin
+        )
 
       assert Target.capability_names(capabilities) == [
                "request.redfish.observe",
@@ -585,9 +599,12 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert %Target.Capabilities{} =
              Providers.target_capabilities!(
                context.method.provider_id,
-               context.method.provider_revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.method.provider_revision,
+                 connection: %Target.Connection{endpoint: context.method.endpoint}
+               },
                %{},
-               actor: context.operator
+               actor: context.admin
              )
 
     request = %Target.ObservationRequest{
@@ -649,7 +666,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
              )
   end
 
-  test "Provider classifies exact Redfish verbs and rejects endpoint or URI substitution",
+  test "Provider classifies exact Redfish verbs and rejects malformed connection or URI",
        context do
     request = %Target.MethodRequest{
       provider_revision: context.method.provider_revision,
@@ -677,7 +694,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     for invalid <- [
           %{request | parameters: %{"method" => "POST", "uri" => "/redfish/v1/Oem/Plain"}},
-          %{request | connection: %Target.Connection{endpoint: "https://other.example"}},
+          %{request | connection: %Target.Connection{endpoint: "https://other.example/redfish"}},
           %{
             write
             | parameters: %{
@@ -693,16 +710,77 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.writes) == 0
   end
 
+  test "capability discovery is distinct for Methods sharing one Redfish Provider", context do
+    second_agent =
+      start_supervised!(%{
+        id: :second_redfish_state,
+        start:
+          {Agent, :start_link,
+           [
+             fn ->
+               %{revision: 1, name: "second", power: "Unavailable", writes: 0, echo_calls: 0}
+             end
+           ]}
+      })
+
+    second_server =
+      start_supervised!(%{
+        id: :second_redfish_server,
+        start:
+          {Bandit, :start_link,
+           [
+             [
+               plug: {Stub, second_agent},
+               scheme: :https,
+               port: 0,
+               certfile: Path.expand("test/support/certs/kubernetes_fixture.pem"),
+               keyfile: Path.expand("test/support/certs/kubernetes_fixture_key.pem"),
+               startup_log: false
+             ]
+           ]}
+      })
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(second_server)
+    endpoint = "https://127.0.0.1:#{port}"
+
+    second =
+      Targets.create_access_method!(
+        context.target.id,
+        context.method.provider_id,
+        "Second controller",
+        "redfish",
+        endpoint,
+        context.method.provider_revision,
+        200,
+        ["request.redfish.observe", "request.redfish.effect"],
+        actor: context.admin
+      )
+
+    assert {:ok, catalog} =
+             Opsonde.Targets.OperationCatalog.for_methods([context.method, second], %{})
+
+    assert Enum.any?(catalog[context.method.id].observations, &(&1.capability == "observe.power"))
+
+    assert Enum.map(catalog[second.id].observations, & &1.capability) == [
+             "request.redfish.observe"
+           ]
+
+    assert Enum.map(catalog[second.id].effects, & &1.capability) == ["request.redfish.effect"]
+    assert Agent.get(context.agent, & &1.writes) == 0
+    assert Agent.get(second_agent, & &1.writes) == 0
+  end
+
   defp redfish_state(endpoint) do
-    Redfish.build(
-      %{
-        "endpoint" => endpoint,
-        "system_path" => @system_path,
-        "expected_uuid" => @uuid,
-        "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
-      },
-      %{"username" => "tester", "password" => "secret"}
-    )
+    with {:ok, state} <-
+           Redfish.build(
+             %{
+               "system_path" => @system_path,
+               "expected_uuid" => @uuid,
+               "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
+             },
+             %{"username" => "tester", "password" => "secret"}
+           ),
+         do: Redfish.bind_connection(state, %Target.Connection{endpoint: endpoint})
   end
 
   setup do
@@ -738,7 +816,9 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
 
     target =
-      Targets.create_target!("etag-host", "management_plane", "custom-bmc", %{}, nil, actor: admin)
+      Targets.create_target!("etag-host", "management_plane", "custom-bmc", %{}, nil,
+        actor: admin
+      )
 
     provider =
       Providers.create_provider!(
@@ -746,7 +826,6 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         :target,
         "redfish",
         %{
-          "endpoint" => endpoint,
           "system_path" => @system_path,
           "expected_uuid" => @uuid,
           "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")

@@ -30,6 +30,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
   def build(configuration, credentials), do: SSH.build(configuration, credentials)
 
+  @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: Opsonde.Targets.Adapters.SSH
+
   @impl Opsonde.Providers.Adapter
   def check(%SSH.Config{} = state, %{"endpoint" => endpoint}) do
     case NETCONF.check(state, endpoint) do

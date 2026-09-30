@@ -13,9 +13,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defmodule State do
     @moduledoc false
-    @enforce_keys [:endpoint, :host, :port, :user, :password, :timeout]
+    @enforce_keys [:user, :password, :timeout]
     @derive {Inspect, except: [:password]}
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [:endpoint, :host, :port]
   end
 
   @impl Opsonde.Providers.Adapter
@@ -28,25 +28,20 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   def access_method_profile do
     %Target.AccessMethodProfile{
       method: "ipmi",
-      configuration_endpoint?: true,
       capabilities: [@method_effect | Target.capability_names(PowerControl.capabilities())]
     }
   end
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
-    with true <- Enum.sort(Map.keys(configuration)) in [["endpoint"], ["endpoint", "timeout_ms"]],
+    with true <- Enum.all?(Map.keys(configuration), &(&1 == "timeout_ms")),
          true <- Enum.sort(Map.keys(credentials)) == ["password", "username"],
-         {:ok, endpoint, host, port} <- endpoint(configuration["endpoint"]),
          {:ok, user} <- short_secret(credentials["username"]),
          {:ok, password} <- short_secret(credentials["password"]),
          timeout when is_integer(timeout) and timeout in 100..30_000 <-
            Map.get(configuration, "timeout_ms", 3_000) do
       {:ok,
        %State{
-         endpoint: endpoint,
-         host: host,
-         port: port,
          user: user,
          password: password,
          timeout: timeout
@@ -59,8 +54,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
   @impl Opsonde.Providers.Adapter
-  def check(%State{endpoint: endpoint} = state, %{"endpoint" => endpoint}) do
-    with {:ok, 0, device} <- command(state, 0x06, 0x01, []),
+  def check(%State{} = state, %{"endpoint" => endpoint}) do
+    with {:ok, state} <- bind_connection(state, %Target.Connection{endpoint: endpoint}),
+         {:ok, 0, device} <- command(state, 0x06, 0x01, []),
          true <- length(device) >= 11 do
       :ok
     else
@@ -70,7 +66,15 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   def check(_state, _input),
-    do: {:error, :invalid_configuration, "IPMI check endpoint must match Provider configuration"}
+    do: {:error, :invalid_configuration, "IPMI check requires a Method endpoint"}
+
+  @impl Opsonde.Providers.Target
+  def bind_connection(%State{} = state, %Target.Connection{endpoint: value}) do
+    case endpoint(value) do
+      {:ok, endpoint, host, port} -> {:ok, %{state | endpoint: endpoint, host: host, port: port}}
+      _ -> {:error, :failed, "IPMI Method endpoint is invalid"}
+    end
+  end
 
   @impl Opsonde.Providers.Target
   def capabilities(state, invocation) do

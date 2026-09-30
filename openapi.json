@@ -1087,16 +1087,12 @@
           "access_method_profile": {
             "additionalProperties": false,
             "properties": {
-              "configuration_endpoint": {
-                "type": "boolean"
-              },
               "method": {
                 "type": "string"
               }
             },
             "required": [
-              "method",
-              "configuration_endpoint"
+              "method"
             ],
             "type": "object"
           },
@@ -2054,6 +2050,32 @@
         },
         "required": [
           "external_identity"
+        ],
+        "type": "object"
+      },
+      "TargetCapabilitiesRequest": {
+        "properties": {
+          "provider": {
+            "properties": {
+              "endpoint": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "expected_revision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "expected_revision",
+              "endpoint"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "provider"
         ],
         "type": "object"
       },
@@ -7596,11 +7618,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProviderRevisionRequest"
+                "$ref": "#/components/schemas/TargetCapabilitiesRequest"
               }
             }
           },
-          "description": "Provider revision",
+          "description": "Method connection",
           "required": true
         },
         "responses": {

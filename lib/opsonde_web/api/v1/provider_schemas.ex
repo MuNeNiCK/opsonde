@@ -17,6 +17,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       "CheckProviderRequest" => check_provider_request(),
       "ConfigureAIUsageRequest" => configure_ai_usage_request(),
       "TargetCapabilitiesResponse" => Schemas.data(target_capabilities()),
+      "TargetCapabilitiesRequest" => target_capabilities_request(),
       "AIUsageRoleAssignment" => assignment(),
       "AIUsageRoleAssignmentPage" => Schemas.page(ref("AIUsageRoleAssignment"))
     }
@@ -75,10 +76,9 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
   defp access_method_profile do
     object(
       %{
-        method: %Schema{type: :string},
-        configuration_endpoint: %Schema{type: :boolean}
+        method: %Schema{type: :string}
       },
-      [:method, :configuration_endpoint],
+      [:method],
       false
     )
   end
@@ -178,6 +178,22 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
           object(
             %{expected_revision: positive_integer(), check_input: map()},
             [:expected_revision]
+          )
+      },
+      [:provider]
+    )
+  end
+
+  defp target_capabilities_request do
+    object(
+      %{
+        provider:
+          object(
+            %{
+              expected_revision: positive_integer(),
+              endpoint: %Schema{type: :string, minLength: 1, maxLength: 1_024}
+            },
+            [:expected_revision, :endpoint]
           )
       },
       [:provider]

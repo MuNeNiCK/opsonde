@@ -238,7 +238,7 @@ function TargetConnectionForm({
         authMethod === "password" ? "password" : "private_key",
       );
     } else if (family === "http") {
-      configuration = { endpoint };
+      configuration = {};
       if (value(form, "ca_certificate"))
         configuration.ca_certificate = value(form, "ca_certificate");
       credentials = value(form, "token") ? { bearer_token: value(form, "token") } : {};
@@ -247,14 +247,13 @@ function TargetConnectionForm({
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "redfish") {
       configuration = {
-        endpoint,
         ca_certificate: value(form, "ca_certificate"),
       };
       if (value(form, "system_path")) configuration.system_path = value(form, "system_path");
       if (value(form, "expected_uuid")) configuration.expected_uuid = value(form, "expected_uuid");
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "ipmi") {
-      configuration = { endpoint };
+      configuration = {};
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "kubernetes") {
       configuration = value(form, "namespace") ? { namespace: value(form, "namespace") } : {};

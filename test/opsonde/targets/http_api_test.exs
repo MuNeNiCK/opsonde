@@ -22,7 +22,8 @@ defmodule Opsonde.Targets.HTTPAPITest do
     defp route(conn, agent) do
       case {conn.method, conn.request_path} do
         {"GET", "/api/status"} ->
-          conn |> put_resp_header("etag", ~s("rev-1")) |> send_resp(200, "ready")
+          status = Agent.get(agent, &Map.get(&1, :status, "ready"))
+          conn |> put_resp_header("etag", ~s("rev-1")) |> send_resp(200, status)
 
         {"HEAD", "/api/status"} ->
           send_resp(conn, 200, "")
@@ -75,7 +76,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
         "http-api-method",
         :target,
         "http-api",
-        %{"endpoint" => endpoint},
+        %{},
         %{"bearer_token" => "fixture-token"},
         actor: admin
       )
@@ -107,7 +108,8 @@ defmodule Opsonde.Targets.HTTPAPITest do
         actor: admin
       )
 
-    {:ok, state} = HTTP.build(%{"endpoint" => endpoint}, %{"bearer_token" => "fixture-token"})
+    {:ok, state} = HTTP.build(%{}, %{"bearer_token" => "fixture-token"})
+    {:ok, state} = HTTP.bind_connection(state, %Target.Connection{endpoint: endpoint})
 
     %{
       admin: admin,
@@ -121,10 +123,93 @@ defmodule Opsonde.Targets.HTTPAPITest do
     }
   end
 
+  test "two registered Methods share credentials but reach their own HTTP endpoints", context do
+    second_agent =
+      start_supervised!(%{
+        id: :second_http_state,
+        start: {Agent, :start_link, [fn -> %{writes: [], status: "second-device"} end]}
+      })
+
+    second_server =
+      start_supervised!(%{
+        id: :second_http_server,
+        start:
+          {Bandit, :start_link,
+           [[plug: {Stub, second_agent}, scheme: :http, port: 0, startup_log: false]]}
+      })
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(second_server)
+    second_endpoint = "http://127.0.0.1:#{port}"
+
+    provider =
+      Providers.create_provider!(
+        "shared-http-credentials",
+        :target,
+        "http-api",
+        %{},
+        %{"bearer_token" => "fixture-token"},
+        actor: context.admin
+      )
+      |> then(
+        &Providers.check_provider!(&1.id, &1.revision, %{"endpoint" => context.endpoint},
+          actor: context.admin
+        )
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    refute Map.has_key?(provider.configuration, "endpoint")
+
+    for {name, endpoint, body} <- [
+          {"first", context.endpoint, "ready"},
+          {"second", second_endpoint, "second-device"},
+          {"root-alias", context.endpoint <> "/", "ready"}
+        ] do
+      method =
+        Targets.create_access_method!(
+          context.target.id,
+          provider.id,
+          name,
+          "http",
+          endpoint,
+          provider.revision,
+          100,
+          ["request.http.observe"],
+          actor: context.admin
+        )
+
+      request = %Request{
+        kind: :observation,
+        authority_mode: :readonly,
+        target_id: context.target.id,
+        target_revision: context.target.revision,
+        access_method_id: method.id,
+        access_method_revision: method.revision,
+        capability: "request.http.observe",
+        operation: "request.observe",
+        selectors: %{},
+        parameters: %{"method" => "GET", "path" => "/api/status"}
+      }
+
+      observation =
+        request
+        |> Targets.clear_target_request!(actor: context.operator)
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert observation.facts["body"] == body
+      assert observation.facts["url"] == String.trim_trailing(endpoint, "/") <> "/api/status"
+    end
+  end
+
   test "an unlisted device uses the same HTTP Method for reads and effects", context do
     assert %Target.Capabilities{observations: observations, effects: effects} =
-             Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
-               actor: context.operator
+             Providers.target_capabilities!(
+               context.provider.id,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
+               %{},
+               actor: context.admin
              )
 
     assert Enum.any?(observations, &(&1.capability == "request.http.observe"))
@@ -172,8 +257,10 @@ defmodule Opsonde.Targets.HTTPAPITest do
   end
 
   test "HTTP request validation confines origin, credentials, body and response", context do
-    assert {:error, :invalid_configuration} =
-             HTTP.build(%{"endpoint" => context.endpoint <> "/api/status"}, %{})
+    assert {:error, :failed, _} =
+             HTTP.bind_connection(context.state, %Target.Connection{
+               endpoint: context.endpoint <> "/api/status"
+             })
 
     for path <- [
           "http://other.example/api/status",

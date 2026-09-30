@@ -448,8 +448,14 @@ defmodule Opsonde.Targets.IOSXESSHTest do
   test "public SSH route constructs CLI commands, observes, applies and freshly verifies",
        context do
     assert %Target.Capabilities{observations: observations, effects: effects} =
-             Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
-               actor: context.operator
+             Providers.target_capabilities!(
+               context.provider.id,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
+               %{},
+               actor: context.admin
              )
 
     assert Enum.map(observations, & &1.operation) ==

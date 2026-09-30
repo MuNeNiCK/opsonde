@@ -41,20 +41,65 @@ defmodule Opsonde.Providers.TargetTest do
     assert ^capabilities =
              Providers.target_capabilities!(
                context.provider.id,
-               context.provider.revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: "reachable"}
+               },
                invocation(capabilities),
-               actor: context.operator
+               actor: context.admin
              )
 
-    assert_receive {:capabilities, %{token: @token}}
+    assert_receive {:capabilities,
+                    %{token: @token, connection: %Target.Connection{endpoint: "reachable"}}}
 
     assert {:error, %Ash.Error.Forbidden{}} =
              Providers.target_capabilities(
                context.provider.id,
-               context.provider.revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: "reachable"}
+               },
                invocation(capabilities),
                actor: context.viewer
              )
+  end
+
+  test "capability discovery rejects an invalid connection before the adapter", context do
+    for endpoint <- ["", String.duplicate("x", 1_025)] do
+      request = %Target.CapabilitiesRequest{
+        provider_revision: context.provider.revision,
+        connection: %Target.Connection{endpoint: endpoint}
+      }
+
+      assert {:error, error} =
+               Providers.target_capabilities(
+                 context.provider.id,
+                 request,
+                 invocation(flunk_response()),
+                 actor: context.admin
+               )
+
+      assert target_error(error).message == "Invalid Method connection"
+    end
+
+    refute_receive {:capabilities, _state}
+  end
+
+  test "unregistered connection discovery requires registration authority", context do
+    request = %Target.CapabilitiesRequest{
+      provider_revision: context.provider.revision,
+      connection: %Target.Connection{endpoint: "reachable"}
+    }
+
+    assert {:error, %Ash.Error.Forbidden{}} =
+             Providers.target_capabilities(
+               context.provider.id,
+               request,
+               invocation(%Target.Capabilities{observations: [], effects: []}),
+               actor: context.operator
+             )
+
+    refute_receive {:capabilities, _state}
   end
 
   test "capabilities reject malformed or duplicate operations and redact credentials", context do
@@ -140,9 +185,12 @@ defmodule Opsonde.Providers.TargetTest do
       assert {:error, error} =
                Providers.target_capabilities(
                  context.provider.id,
-                 context.provider.revision,
+                 %Target.CapabilitiesRequest{
+                   provider_revision: context.provider.revision,
+                   connection: %Target.Connection{endpoint: "reachable"}
+                 },
                  invocation(capabilities),
-                 actor: context.operator
+                 actor: context.admin
                )
 
       assert target_error(error).message == "Invalid capabilities result"
@@ -163,9 +211,12 @@ defmodule Opsonde.Providers.TargetTest do
     assert %Target.Capabilities{observations: [redacted]} =
              Providers.target_capabilities!(
                context.provider.id,
-               context.provider.revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: "reachable"}
+               },
                invocation(secret_bearing),
-               actor: context.operator
+               actor: context.admin
              )
 
     assert redacted.description == "Inspect using [REDACTED]"
@@ -268,7 +319,7 @@ defmodule Opsonde.Providers.TargetTest do
                authorize?: false
              )
 
-    assert target_error(connection_error).message == "Invalid observation request"
+    assert target_error(connection_error).message == "Invalid Method connection"
     refute_receive {:observe, _, _}
 
     invalid_vocabulary = %{

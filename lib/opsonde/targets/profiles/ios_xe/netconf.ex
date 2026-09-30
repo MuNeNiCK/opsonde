@@ -31,6 +31,9 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   def check(state, input), do: GenericNETCONF.check(state, input)
 
   @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: GenericNETCONF
+
+  @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     capabilities = IOSXE.capabilities()
     {:ok, generic} = GenericNETCONF.capabilities(nil, %{})

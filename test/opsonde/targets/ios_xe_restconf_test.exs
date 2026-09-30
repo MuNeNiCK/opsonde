@@ -211,8 +211,14 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
   test "public RESTCONF route observes, applies, rejects stale state and verifies freshly",
        context do
     assert %Target.Capabilities{observations: observations, effects: effects} =
-             Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
-               actor: context.operator
+             Providers.target_capabilities!(
+               context.provider.id,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.method.endpoint}
+               },
+               %{},
+               actor: context.admin
              )
 
     assert Enum.map(observations, & &1.operation) == [
@@ -345,7 +351,9 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
         context.method.revision,
         %{
           capabilities: @capabilities ++ ["request.restconf.observe", "request.restconf.effect"]
-        }, actor: context.admin)
+        },
+        actor: context.admin
+      )
 
     context = %{context | method: method}
     parameters = %{"method" => "GET", "path" => "/data/Cisco-IOS-XE-native:native/hostname"}

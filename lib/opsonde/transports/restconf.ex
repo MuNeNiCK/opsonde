@@ -34,7 +34,7 @@ defmodule Opsonde.Transports.RESTCONF do
              do: {:ok, nil},
              else: auth(http_credentials)
            ),
-         {:ok, _trust} <- HTTPS.transport_options(configuration["ca_certificate"], "localhost"),
+         :ok <- HTTPS.validate_ca_certificate(configuration["ca_certificate"]),
          root <- configuration["api_root"],
          true <- is_nil(root) or (path?(root) and root != "/"),
          {:ok, connect_timeout} <- timeout(configuration, "connect_timeout_ms", 10_000),

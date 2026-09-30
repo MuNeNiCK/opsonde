@@ -53,16 +53,21 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:method, :capabilities]
     defstruct @enforce_keys ++
                 [
-                  configuration_endpoint?: false,
                   required_capabilities: []
                 ]
 
     @type t :: %__MODULE__{
             method: String.t(),
             capabilities: [String.t()],
-            configuration_endpoint?: boolean(),
             required_capabilities: [String.t()]
           }
+  end
+
+  defmodule CapabilitiesRequest do
+    @moduledoc false
+    @enforce_keys [:provider_revision, :connection]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{provider_revision: pos_integer(), connection: Connection.t()}
   end
 
   defmodule MethodRequest do
@@ -199,6 +204,8 @@ defmodule Opsonde.Providers.Target do
 
   @callback capabilities(state :: term(), invocation()) ::
               {:ok, Capabilities.t()} | read_error()
+  @callback bind_connection(state :: term(), Connection.t()) ::
+              {:ok, term()} | {:error, :failed, String.t()}
   @callback observe(state :: term(), ObservationRequest.t(), invocation()) ::
               {:ok, Observation.t()} | read_error()
   @callback effect(state :: term(), EffectRequest.t(), invocation()) ::

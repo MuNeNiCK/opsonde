@@ -882,8 +882,14 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
 
   test "public NETCONF route constructs RPCs, observes, applies and freshly verifies", context do
     assert %Target.Capabilities{} =
-             Providers.target_capabilities!(context.provider.id, context.provider.revision, %{},
-               actor: context.operator
+             Providers.target_capabilities!(
+               context.provider.id,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
+               %{},
+               actor: context.admin
              )
 
     system = observe!(context, "observe.system", "ios_xe.system.inspect", %{})

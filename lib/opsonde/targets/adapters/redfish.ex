@@ -24,8 +24,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defmodule State do
     @moduledoc false
-    @enforce_keys [:endpoint, :system_path, :expected_uuid, :auth, :cacerts, :timeout]
-    defstruct @enforce_keys
+    @enforce_keys [:system_path, :expected_uuid, :auth, :cacerts, :timeout]
+    defstruct @enforce_keys ++ [:endpoint]
   end
 
   @impl Opsonde.Providers.Adapter
@@ -38,7 +38,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   def access_method_profile do
     %Target.AccessMethodProfile{
       method: "redfish",
-      configuration_endpoint?: true,
       capabilities: [
         @method_read,
         @method_effect | Target.capability_names(PowerControl.capabilities())
@@ -48,11 +47,10 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
-    allowed = ~w(endpoint system_path expected_uuid ca_certificate timeout_ms)
+    allowed = ~w(system_path expected_uuid ca_certificate timeout_ms)
 
     with true <- Enum.all?(Map.keys(configuration), &(&1 in allowed)),
          true <- Enum.sort(Map.keys(credentials)) == ["password", "username"],
-         {:ok, endpoint} <- endpoint(configuration["endpoint"]),
          {:ok, system_path, expected_uuid} <- system_identity(configuration),
          {:ok, username} <- required_string(credentials["username"], 255),
          false <- String.contains?(username, ":"),
@@ -62,7 +60,6 @@ defmodule Opsonde.Targets.Adapters.Redfish do
            Map.get(configuration, "timeout_ms", 10_000) do
       {:ok,
        %State{
-         endpoint: endpoint,
          system_path: system_path,
          expected_uuid: expected_uuid,
          auth: {:basic, username <> ":" <> password},
@@ -77,17 +74,28 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
   @impl Opsonde.Providers.Adapter
-  def check(%State{endpoint: endpoint} = state, %{"endpoint" => endpoint}) do
-    case service_root(state) do
-      {:ok, _root} -> :ok
-      {:error, :authentication, message} -> {:error, :authentication, message}
-      {:error, _category, message} -> {:error, :unreachable, message}
+  def check(%State{} = state, %{"endpoint" => endpoint}) do
+    with {:ok, state} <- bind_connection(state, %Target.Connection{endpoint: endpoint}) do
+      case service_root(state) do
+        {:ok, _root} -> :ok
+        {:error, :authentication, message} -> {:error, :authentication, message}
+        {:error, _category, message} -> {:error, :unreachable, message}
+      end
+    else
+      _ -> {:error, :invalid_configuration, "Redfish Method endpoint is invalid"}
     end
   end
 
   def check(_state, _input),
-    do:
-      {:error, :invalid_configuration, "Redfish check endpoint must match Provider configuration"}
+    do: {:error, :invalid_configuration, "Redfish check requires a Method endpoint"}
+
+  @impl Opsonde.Providers.Target
+  def bind_connection(%State{} = state, %Target.Connection{endpoint: value}) do
+    case endpoint(value) do
+      {:ok, endpoint} -> {:ok, %{state | endpoint: endpoint}}
+      _ -> {:error, :failed, "Redfish Method endpoint is invalid"}
+    end
+  end
 
   @impl Opsonde.Providers.Target
   def capabilities(state, _invocation) do
@@ -745,7 +753,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
           uri
       when is_binary(host) and host != "" and path in [nil, ""] and
              (is_nil(uri.port) or uri.port in 1..65_535) ->
-        {:ok, URI.to_string(%{uri | path: nil})}
+        {:ok, value}
 
       _ ->
         {:error, :invalid_endpoint}

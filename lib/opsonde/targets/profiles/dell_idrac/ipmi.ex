@@ -22,6 +22,9 @@ defmodule Opsonde.Targets.Profiles.DellIDRAC.IPMI do
   defdelegate check(state, input), to: IPMI
 
   @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: IPMI
+
+  @impl Opsonde.Providers.Target
   defdelegate capabilities(state, invocation), to: IPMI
 
   @impl Opsonde.Providers.Target

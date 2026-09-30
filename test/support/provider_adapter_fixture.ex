@@ -68,6 +68,9 @@ defmodule Opsonde.ProviderAdapterFixture do
   def check(_state, _input), do: {:error, :capability, "unsupported fixture endpoint"}
 
   @impl Opsonde.Providers.Target
+  def bind_connection(state, connection), do: {:ok, Map.put(state, :connection, connection)}
+
+  @impl Opsonde.Providers.Target
   def capabilities(state, invocation) do
     notify(invocation, {:capabilities, state})
     respond(invocation)

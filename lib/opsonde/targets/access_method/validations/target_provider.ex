@@ -38,7 +38,7 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
             :ok
 
           %AccessMethodProfile{} = profile ->
-            validate_binding(changeset, provider, profile)
+            validate_binding(changeset, provider, profile, adapter)
 
           _invalid ->
             {:error, field: :provider_id, message: "Target Provider has no binding profile"}
@@ -49,14 +49,17 @@ defmodule Opsonde.Targets.AccessMethod.Validations.TargetProvider do
     end
   end
 
-  defp validate_binding(changeset, provider, profile) do
+  defp validate_binding(changeset, provider, profile, adapter) do
     target_id = Ash.Changeset.get_attribute(changeset, :target_id)
     capabilities = Ash.Changeset.get_attribute(changeset, :capabilities)
-    endpoint = Ash.Changeset.get_attribute(changeset, :endpoint)
+
+    connection = %Providers.Target.Connection{
+      endpoint: Ash.Changeset.get_attribute(changeset, :endpoint)
+    }
 
     with true <- Ash.Changeset.get_attribute(changeset, :method) == profile.method,
-         true <-
-           not profile.configuration_endpoint? or endpoint == provider.configuration["endpoint"],
+         {:ok, state} <- Registry.build(adapter, provider.configuration, provider.credentials),
+         {:ok, _state} <- adapter.bind_connection(state, connection),
          true <- is_list(capabilities) and capabilities != [],
          true <- Enum.uniq(capabilities) == capabilities,
          true <- Enum.all?(capabilities, &(&1 in profile.capabilities)),

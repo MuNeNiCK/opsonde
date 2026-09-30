@@ -21,6 +21,12 @@ defmodule Opsonde.Targets.Adapters.RESTCONF do
   def kind, do: :target
   @impl Opsonde.Providers.Adapter
   defdelegate build(configuration, credentials), to: Transport
+
+  @impl Opsonde.Providers.Target
+  def bind_connection(state, %Target.Connection{endpoint: endpoint}) do
+    with {:ok, _endpoint} <- Transport.endpoint(endpoint), do: {:ok, state}
+  end
+
   @impl Opsonde.Providers.Target
   def access_method_profile,
     do: %Target.AccessMethodProfile{method: "restconf", capabilities: [@read, @effect]}

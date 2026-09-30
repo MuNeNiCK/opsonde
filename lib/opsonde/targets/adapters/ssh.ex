@@ -26,6 +26,11 @@ defmodule Opsonde.Targets.Adapters.SSH do
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Transport.build(configuration, credentials)
 
+  @impl Opsonde.Providers.Target
+  def bind_connection(state, %Target.Connection{endpoint: endpoint}) do
+    with :ok <- Transport.validate_endpoint(state, endpoint), do: {:ok, state}
+  end
+
   @impl Opsonde.Providers.Adapter
   def check(state, %{"endpoint" => endpoint}) do
     case Transport.check(state, endpoint) do

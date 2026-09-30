@@ -22,7 +22,7 @@ defmodule Opsonde.Providers do
 
       define :target_capabilities,
         action: :target_capabilities,
-        args: [:provider_id, :expected_revision, :invocation]
+        args: [:provider_id, :request, :invocation]
 
       define :target_classify,
         action: :target_classify,

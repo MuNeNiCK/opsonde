@@ -144,7 +144,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
     summary: "Get Target capabilities from a Provider",
     parameters: OpsondeWeb.API.Schemas.id_parameter(),
     request_body:
-      {"Provider revision", "application/json", ProviderSchemas.ref("ProviderRevisionRequest"),
+      {"Method connection", "application/json", ProviderSchemas.ref("TargetCapabilitiesRequest"),
        required: true},
     responses:
       [
@@ -327,12 +327,18 @@ defmodule OpsondeWeb.API.V1.ProviderController do
 
   def target_capabilities(
         conn,
-        %{"id" => id, "provider" => %{"expected_revision" => expected_revision}}
+        %{
+          "id" => id,
+          "provider" => %{"expected_revision" => expected_revision, "endpoint" => endpoint}
+        }
       ) do
+    request = %Providers.Target.CapabilitiesRequest{
+      provider_revision: expected_revision,
+      connection: %Providers.Target.Connection{endpoint: endpoint}
+    }
+
     with {:ok, capabilities} <-
-           Providers.target_capabilities(id, expected_revision, %{},
-             actor: conn.assigns.current_user
-           ) do
+           Providers.target_capabilities(id, request, %{}, actor: conn.assigns.current_user) do
       Response.data(conn, ProviderJSON.capabilities(capabilities))
     end
   end

@@ -18,9 +18,17 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     invocation = input.arguments.invocation
 
     with :ok <- ensure_not_cancelled(invocation),
-         {:ok, provider} <- load_provider(input.arguments, opts[:operation]),
+         {:ok, provider} <- load_provider(input.arguments),
          {:ok, adapter} <- fetch_target_adapter(provider.adapter_type),
-         {:ok, state} <- build_state(adapter, provider) do
+         {:ok, state} <- build_state(adapter, provider),
+         :ok <- validate_connection(input.arguments.request.connection),
+         {:ok, state} <-
+           bind_connection(
+             adapter,
+             state,
+             input.arguments.request.connection,
+             provider.credentials
+           ) do
       invoke(opts[:operation], adapter, state, input.arguments, invocation, provider.credentials)
     end
   rescue
@@ -29,16 +37,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     _kind, _reason -> {:error, target_error(:failed, "Target provider failed")}
   end
 
-  defp load_provider(arguments, :capabilities) do
-    Providers.load_provider_for_invocation(
-      arguments.provider_id,
-      arguments.expected_revision,
-      :target,
-      authorize?: false
-    )
-  end
-
-  defp load_provider(arguments, _operation) do
+  defp load_provider(arguments) do
     Providers.load_provider_for_invocation(
       arguments.provider_id,
       arguments.request.provider_revision,
@@ -58,6 +57,19 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     case Registry.build(adapter, provider.configuration, provider.credentials) do
       {:ok, state} -> {:ok, state}
       {:error, _reason} -> {:error, target_error(:failed, "Target configuration is invalid")}
+    end
+  end
+
+  defp validate_connection(connection) do
+    if valid_connection?(connection),
+      do: :ok,
+      else: {:error, target_error(:failed, "Invalid Method connection")}
+  end
+
+  defp bind_connection(adapter, state, connection, credentials) do
+    case safe_call(fn -> adapter.bind_connection(state, connection) end, credentials) do
+      {:ok, bound} -> {:ok, bound}
+      result -> normalize_error(result, [:failed], "Invalid Method connection", credentials)
     end
   end
 

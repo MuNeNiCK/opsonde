@@ -29,6 +29,9 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
   defdelegate check(state, input), to: RESTCONFMethod
 
   @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: RESTCONFMethod
+
+  @impl Opsonde.Providers.Target
   def capabilities(state, invocation) do
     capabilities = IOSXE.capabilities()
 

@@ -38,6 +38,9 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     do: {:error, :invalid_configuration, "IOS XE SSH check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
+  defdelegate bind_connection(state, connection), to: Opsonde.Targets.Adapters.SSH
+
+  @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     capabilities = IOSXE.capabilities()
 

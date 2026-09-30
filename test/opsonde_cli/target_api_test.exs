@@ -66,13 +66,15 @@ defmodule OpsondeCLI.TargetAPITest do
           {"redfish", "redfish", "https://bmc.example.test:8443"},
           {"ipmi", "ipmi", "ipmi://bmc.example.test:623"}
         ] do
+      {configuration, credentials} = Opsonde.TargetConnectionFixture.input(adapter_type, endpoint)
+
       provider =
         Providers.create_provider!(
           "CLI #{method_name}",
           :target,
           adapter_type,
-          %{"endpoint" => endpoint},
-          %{"username" => "admin", "password" => "test-only"},
+          configuration,
+          credentials,
           actor: context.admin
         )
         |> then(

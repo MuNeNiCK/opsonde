@@ -403,7 +403,10 @@ defmodule Opsonde.Targets.RESTCONFTest do
              Providers.target_verify!(
                context.provider.id,
                %{read | expected: %{"body" => body}},
-               %{}, actor: context.admin, authorize?: false)
+               %{},
+               actor: context.admin,
+               authorize?: false
+             )
   end
 
   test "cancellation before dispatch sends nothing and cancellation after acceptance is unknown",

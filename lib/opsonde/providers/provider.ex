@@ -137,9 +137,9 @@ defmodule Opsonde.Providers.Provider do
 
       argument :provider_id, :uuid, allow_nil?: false
 
-      argument :expected_revision, :integer,
+      argument :request, :struct,
         allow_nil?: false,
-        constraints: [min: 1]
+        constraints: [instance_of: Opsonde.Providers.Target.CapabilitiesRequest]
 
       argument :invocation, :map, allow_nil?: false, default: %{}
       run {Opsonde.Providers.Provider.Actions.Target, operation: :capabilities}
@@ -402,7 +402,6 @@ defmodule Opsonde.Providers.Provider do
 
     policy action(:target_capabilities) do
       authorize_if actor_attribute_equals(:role, :admin)
-      authorize_if actor_attribute_equals(:role, :operator)
     end
 
     policy action([:target_classify, :target_observe, :target_effect, :target_verify]) do

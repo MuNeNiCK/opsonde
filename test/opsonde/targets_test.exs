@@ -339,13 +339,15 @@ defmodule Opsonde.TargetsTest do
           {"redfish", "redfish", "https://bmc.example.test:8443"},
           {"ipmi", "ipmi", "ipmi://bmc.example.test:623"}
         ] do
+      {configuration, credentials} = Opsonde.TargetConnectionFixture.input(adapter_type, endpoint)
+
       provider =
         Providers.create_provider!(
           "#{adapter_type}-provider",
           :target,
           adapter_type,
-          %{"endpoint" => endpoint},
-          %{"username" => "admin", "password" => "test-only"},
+          configuration,
+          credentials,
           actor: context.admin
         )
 
@@ -469,15 +471,22 @@ defmodule Opsonde.TargetsTest do
           {"ios-xe-restconf", switch, "restconf", "request.restconf.observe", linux},
           {"ssh", other, "ssh", "request.ssh.effect", nil}
         ] do
+      endpoint =
+        if method in ["ssh", "ssh_cli", "netconf"],
+          do: "ssh://device.example.test:22",
+          else: "https://device.example.test"
+
+      {configuration, credentials} = Opsonde.TargetConnectionFixture.input(type, endpoint)
+
       # Only Access Method registration is under test; Provider check has no remote transport here.
       provider =
-        Providers.create_provider!(type, :target, type, %{}, %{}, actor: context.admin)
+        Providers.create_provider!(type, :target, type, configuration, credentials,
+          actor: context.admin
+        )
         |> then(
           &Providers.record_provider_check!(&1, &1.revision, :passed, nil, nil, authorize?: false)
         )
         |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
-
-      endpoint = "https://example.test/#{type}"
 
       create = fn selected_target, candidate_method ->
         Targets.create_access_method(

@@ -126,9 +126,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert %Target.Capabilities{observations: observations, effects: effects} =
              Providers.target_capabilities!(
                context.provider.id,
-               context.provider.revision,
+               %Target.CapabilitiesRequest{
+                 provider_revision: context.provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
                %{},
-               actor: context.operator
+               actor: context.admin
              )
 
     assert Enum.map(observations, & &1.operation) == [

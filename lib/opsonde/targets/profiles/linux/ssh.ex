@@ -85,6 +85,11 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
 
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
+  @impl Opsonde.Providers.Target
+  def bind_connection(%State{transport: transport} = state, connection) do
+    with {:ok, _transport} <- SSHMethod.bind_connection(transport, connection), do: {:ok, state}
+  end
+
   @impl Opsonde.Providers.Adapter
   def check(%State{transport: transport}, %{"endpoint" => endpoint}) do
     case Transport.check(transport, endpoint) do

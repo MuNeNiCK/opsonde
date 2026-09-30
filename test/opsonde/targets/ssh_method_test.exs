@@ -201,7 +201,15 @@ defmodule Opsonde.Targets.SSHMethodTest do
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
     assert %Target.Capabilities{observations: [], effects: [tool, shell]} =
-             Providers.target_capabilities!(provider.id, provider.revision, %{}, actor: operator)
+             Providers.target_capabilities!(
+               provider.id,
+               %Target.CapabilitiesRequest{
+                 provider_revision: provider.revision,
+                 connection: %Target.Connection{endpoint: context.endpoint}
+               },
+               %{},
+               actor: admin
+             )
 
     assert tool.capability == "request.ssh.effect"
     assert tool.operation == "command.execute"
