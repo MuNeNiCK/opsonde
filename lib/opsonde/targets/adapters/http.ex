@@ -141,7 +141,15 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     with {:ok, method, path, headers, body} <- method_request(state, request, :read),
          :ok <- not_cancelled(invocation),
          {:ok, %Req.Response{} = response} <-
-           request(state, method, path, headers, body, invocation),
+           request(
+             state,
+             method,
+             path,
+             headers,
+             body,
+             invocation,
+             request.parameters["response_file"]
+           ),
          :ok <- not_cancelled(invocation) do
       {:ok, observation(state.endpoint <> path, response)}
     else
@@ -153,8 +161,16 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   def effect(%State{} = state, target_request, invocation) do
     with {:ok, method, path, headers, body} <- method_request(state, target_request, :write),
          :ok <- not_cancelled(invocation) do
-      case request(state, method, path, headers, body, invocation) do
-        {:ok, %Req.Response{status: status, body: response}}
+      case request(
+             state,
+             method,
+             path,
+             headers,
+             body,
+             invocation,
+             target_request.parameters["response_file"]
+           ) do
+        {:ok, %Req.Response{status: status, body: response} = reply}
         when status in 200..299 ->
           details = %{"status" => status}
 
@@ -163,6 +179,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
               do: details,
               else: Map.put(details, "response_redacted", true)
 
+          details = result_file(details, reply)
+
           {:ok,
            %Target.EffectResult{
              status: if(status == 202, do: :unknown, else: :applied),
@@ -170,20 +188,20 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              details: details
            }}
 
-        {:ok, %Req.Response{status: status}} ->
+        {:ok, %Req.Response{status: status} = reply} ->
           {:ok,
            %Target.EffectResult{
              status: :unknown,
              reference: target_request.operation,
-             details: %{"status" => status}
+             details: result_file(%{"status" => status}, reply)
            }}
 
-        {:error, :retryable, _message} ->
+        {:error, :retryable, message} ->
           {:ok,
            %Target.EffectResult{
              status: :unknown,
              reference: target_request.operation,
-             details: %{"reason" => "HTTP response was lost after dispatch"}
+             details: %{"reason" => message}
            }}
 
         {:error, :cancelled, _message} ->
@@ -193,6 +211,9 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              reference: target_request.operation,
              details: %{"reason" => "HTTP effect outcome is unknown after cancellation"}
            }}
+
+        {:error, :failed, _message} = error ->
+          error
       end
     else
       {:error, :cancelled, _message} = error -> error
@@ -205,7 +226,15 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     with {:ok, method, path, headers, body} <- method_request(state, target_request, :read),
          :ok <- not_cancelled(invocation),
          {:ok, %Req.Response{} = response} <-
-           request(state, method, path, headers, body, invocation) do
+           request(
+             state,
+             method,
+             path,
+             headers,
+             body,
+             invocation,
+             target_request.parameters["response_file"]
+           ) do
       observation = observation(state.endpoint <> path, response)
       expected = target_request.expected
 
@@ -267,35 +296,36 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp connect_options(_uri, _certificate, _timeout), do: {:error, :invalid_configuration}
 
-  defp request(state, method, path, headers, body, invocation) do
-    with :ok <- not_cancelled(invocation) do
-      options = [
-        method: method,
-        url: state.endpoint <> path,
-        headers: merge_headers(state.headers, headers),
-        connect_options: state.connect_options,
-        receive_timeout: state.timeout_ms,
-        retry: false,
-        redirect: false,
-        decode_body: false,
-        into: &collect/2
-      ]
+  defp request(state, method, path, headers, body, invocation, output \\ nil) do
+    options = [
+      method: method,
+      url: state.endpoint <> path,
+      headers: merge_headers(state.headers, headers),
+      connect_options: state.connect_options,
+      receive_timeout: state.timeout_ms,
+      retry: false,
+      redirect: false,
+      decode_body: false,
+      raw: true,
+      into: &collect/2
+    ]
 
-      options = if is_nil(body), do: options, else: Keyword.put(options, :body, body)
+    Opsonde.Transports.HTTP.request(options, body, output, invocation)
+  end
 
-      case Req.request(options) do
-        {:ok, %Req.Response{status: status} = response} when status in 100..599 ->
-          {:ok, response}
+  defp result_file(details, response) do
+    case response.private[:opsonde_file] do
+      nil ->
+        details
 
-        {:error, _error} ->
-          {:error, :retryable, "HTTP endpoint request failed"}
-
-        _other ->
-          {:error, :retryable, "HTTP endpoint returned an invalid response"}
-      end
+      reference ->
+        details
+        |> Map.put("file", reference)
+        |> Map.put(
+          "content_encoding",
+          Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
+        )
     end
-  rescue
-    _error -> {:error, :retryable, "HTTP endpoint request failed"}
   end
 
   defp merge_headers(configured, requested) do
@@ -319,7 +349,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          {:ok, method} <- Map.fetch(methods, verb),
          :ok <- relative_path(path),
          {:ok, headers} <- request_headers(Map.get(parameters, "headers", %{})),
-         {:ok, body} <- request_body(kind, method, Map.get(parameters, "body")) do
+         :ok <- response_file(parameters["response_file"]),
+         {:ok, body} <- request_body(kind, method, parameters, request.files) do
       {:ok, method, path, headers, body}
     else
       _ -> {:error, :failed, "HTTP request is invalid"}
@@ -335,8 +366,20 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp same_endpoint?(_state, _connection), do: false
 
-  defp allowed_keys(:read), do: ~w(method path headers)
-  defp allowed_keys(:write), do: ~w(method path headers body)
+  defp allowed_keys(:read), do: ~w(method path headers response_file)
+  defp allowed_keys(:write), do: ~w(method path headers body body_file response_file)
+
+  defp response_file(nil), do: :ok
+
+  defp response_file(%{"name" => name, "media_type" => media} = output) do
+    if map_size(output) == 2 and is_binary(name) and String.valid?(name) and
+         length(String.codepoints(name)) in 1..255 and is_binary(media) and String.valid?(media) and
+         length(String.codepoints(media)) in 1..256 and not String.contains?(media, ["\r", "\n"]),
+       do: :ok,
+       else: {:error, :invalid_response_file}
+  end
+
+  defp response_file(_output), do: {:error, :invalid_response_file}
 
   defp relative_path(path) when is_binary(path) and byte_size(path) in 1..@max_path_bytes do
     uri = URI.parse(path)
@@ -390,14 +433,28 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp safe_header_name?(_name), do: false
 
-  defp request_body(:read, _method, nil), do: {:ok, nil}
-  defp request_body(:write, :delete, nil), do: {:ok, nil}
+  defp request_body(:write, _method, %{"body_file" => label} = parameters, files) do
+    with false <- Map.has_key?(parameters, "body"),
+         true <- is_binary(label),
+         {:ok, reference} <- Map.fetch(files, label),
+         true <- Target.FileReference.valid?(reference) do
+      {:ok, {:file, label, reference}}
+    else
+      _ -> {:error, :invalid_body_file}
+    end
+  end
 
-  defp request_body(:write, _method, body)
+  defp request_body(kind, method, parameters, _files),
+    do: text_body(kind, method, Map.get(parameters, "body"))
+
+  defp text_body(:read, _method, nil), do: {:ok, nil}
+  defp text_body(:write, :delete, nil), do: {:ok, nil}
+
+  defp text_body(:write, _method, body)
        when is_binary(body) and byte_size(body) <= @max_body_bytes,
        do: {:ok, body}
 
-  defp request_body(_kind, _method, _body), do: {:error, :invalid_body}
+  defp text_body(_kind, _method, _body), do: {:error, :invalid_body}
 
   defp collect({:data, data}, {request, response}) do
     previous =
@@ -434,14 +491,18 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       |> then(&String.slice(&1 || "", 0, 256))
 
     %Target.Observation{
-      facts: %{
-        "url" => endpoint,
-        "status" => response.status,
-        "content_type" => content_type,
-        "body_encoding" => encoding,
-        "body" => body,
-        "body_truncated" => truncated?
-      },
+      facts:
+        result_file(
+          %{
+            "url" => endpoint,
+            "status" => response.status,
+            "content_type" => content_type,
+            "body_encoding" => encoding,
+            "body" => body,
+            "body_truncated" => truncated?
+          },
+          response
+        ),
       observed_at: DateTime.utc_now()
     }
   end
@@ -450,12 +511,25 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     properties = %{
       "method" => %{"type" => "string", "enum" => methods},
       "path" => %{"type" => "string", "minLength" => 1, "maxLength" => @max_path_bytes},
-      "headers" => %{"type" => "object", "maxProperties" => 8}
+      "headers" => %{"type" => "object", "maxProperties" => 8},
+      "response_file" => %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string", "minLength" => 1, "maxLength" => 255},
+          "media_type" => %{"type" => "string", "minLength" => 1, "maxLength" => 256}
+        },
+        "required" => ["name", "media_type"],
+        "additionalProperties" => false
+      }
     }
 
     properties =
       if write?,
-        do: Map.put(properties, "body", %{"type" => "string", "maxLength" => @max_body_bytes}),
+        do:
+          properties
+          |> Map.put("body", %{"type" => "string", "maxLength" => @max_body_bytes})
+          |> Map.put("body_file", %{"type" => "string", "minLength" => 1, "maxLength" => 120})
+          |> Map.put("files", Target.FileReference.set_schema()),
         else: properties
 
     %{
@@ -483,7 +557,9 @@ defmodule Opsonde.Targets.Adapters.HTTP do
         "content_type" => %{"type" => "string", "maxLength" => 256},
         "body_encoding" => %{"type" => "string", "enum" => ["utf-8", "base64"]},
         "body" => %{"type" => "string", "maxLength" => 11_000},
-        "body_truncated" => %{"type" => "boolean"}
+        "body_truncated" => %{"type" => "boolean"},
+        "content_encoding" => %{"type" => "string"},
+        "file" => Target.FileReference.schema()
       },
       "required" => ["url", "status", "content_type", "body_encoding", "body", "body_truncated"],
       "additionalProperties" => false

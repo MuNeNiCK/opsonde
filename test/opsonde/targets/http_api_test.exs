@@ -42,6 +42,42 @@ defmodule Opsonde.Targets.HTTPAPITest do
         {"GET", "/api/large"} ->
           send_resp(conn, 200, String.duplicate("x", 30_000))
 
+        {"GET", "/api/binary"} ->
+          digest = Agent.get(agent, &Map.get(&1, :content_digest))
+          conn = if digest, do: put_resp_header(conn, "content-digest", digest), else: conn
+
+          conn
+          |> put_resp_content_type("application/octet-stream")
+          |> send_resp(200, <<255, 0, 1, 2, 255>>)
+
+        {"PUT", "/api/binary"} ->
+          {:ok, body, conn} = read_body(conn)
+          Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
+          conn |> put_resp_content_type("application/octet-stream") |> send_resp(200, body)
+
+        {"GET", "/api/chunked"} ->
+          conn = send_chunked(conn, 200)
+          {:ok, conn} = chunk(conn, <<255, 0>>)
+          {:ok, conn} = chunk(conn, <<1, 2, 255>>)
+          conn
+
+        {"GET", "/api/interrupted"} ->
+          conn = send_chunked(conn, 200)
+          {:ok, _conn} = chunk(conn, <<255, 0>>)
+          Process.sleep(80)
+          Process.exit(self(), :kill)
+
+        {"GET", "/api/cancelled"} ->
+          conn = send_chunked(conn, 200)
+          Agent.update(agent, &Map.put(&1, :cancelled, true))
+          {:ok, conn} = chunk(conn, <<255, 0, 1, 2, 255>>)
+          conn
+
+        {"GET", "/api/encoded"} ->
+          conn
+          |> put_resp_header("content-encoding", "gzip")
+          |> send_resp(200, :zlib.gzip(<<255, 0, 1, 2, 255>>))
+
         _ ->
           send_resp(conn, 404, "missing")
       end
@@ -420,6 +456,357 @@ defmodule Opsonde.Targets.HTTPAPITest do
              HTTP.effect(context.state, write_request(context, "POST", "/api/drop", "{}"), %{})
 
     assert Agent.get(context.agent, & &1.writes) == ["drop"]
+  end
+
+  test "a checked HTTP Method publishes a complete binary response as an immutable file",
+       context do
+    request = %Request{
+      kind: :observation,
+      authority_mode: :readonly,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.http.observe",
+      operation: "request.observe",
+      parameters: %{
+        "method" => "GET",
+        "path" => "/api/binary",
+        "response_file" => %{"name" => "result.bin", "media_type" => "application/octet-stream"}
+      }
+    }
+
+    result =
+      request
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    file = result.facts["file"]
+    assert file["target_id"] == context.target.id
+    assert file["name"] == "result.bin"
+    assert file["size_bytes"] == 5
+    assert file["sha256"] == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+    assert Targets.read_bound_artifact_chunk!(file, 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    assert result.facts["body"] == ""
+    refute result.facts["body_truncated"]
+  end
+
+  test "a checked HTTP effect sends the exact staged bytes and saves its binary reply", context do
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        "input.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "http-upload",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0>>, actor: context.operator)
+    Targets.append_artifact_chunk!(upload.id, 2, <<1, 2, 255>>, actor: context.operator)
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    file = Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
+
+    request = %Request{
+      kind: :effect,
+      authority_mode: :full_access,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.http.effect",
+      operation: "request.execute",
+      operation_id: "http-binary-effect",
+      idempotency_key: "http-binary-effect-1",
+      parameters: %{
+        "method" => "PUT",
+        "path" => "/api/binary",
+        "body_file" => "payload",
+        "files" => %{"payload" => file},
+        "response_file" => %{"name" => "reply.bin", "media_type" => "application/octet-stream"}
+      }
+    }
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    result =
+      clearance
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+    reply = result.details["file"]
+    assert reply["id"] != file["id"]
+    assert reply["sha256"] == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+    assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    operation = hd(context.method.operation_catalog.effects)
+    schema = JSV.build!(operation.input_schema)
+
+    assert {:ok, _} =
+             JSV.validate(%{"selectors" => %{}, "parameters" => request.parameters}, schema)
+
+    for parameters <- [
+          Map.put(request.parameters, "body", "replacement"),
+          Map.put(request.parameters, "body_file", "missing"),
+          Map.put(request.parameters, "path", "https://other.invalid/api/binary")
+        ] do
+      assert {:error, _} =
+               Targets.clear_target_request(%{request | parameters: parameters},
+                 actor: context.operator
+               )
+    end
+
+    Targets.revoke_artifact!(file["id"], actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+  end
+
+  test "a response that contradicts its content digest is not published", context do
+    Agent.update(
+      context.agent,
+      &Map.put(&1, :content_digest, "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:")
+    )
+
+    request = cleared_http(context, "GET", "/api/binary")
+
+    assert {:error, _} =
+             Targets.dispatch_target_observation(request, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert is_nil(receipt.sha256)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "a matching Content-Digest publishes the exact binary content",
+       context do
+    Agent.update(
+      context.agent,
+      &Map.put(&1, :content_digest, "sha-256=:tV8WWcBkX9HO5t+os68GeV6dp+SMtlwrmZ+JbJ9Tnb0=:")
+    )
+
+    result =
+      cleared_http(context, "GET", "/api/binary")
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.facts["file"]["sha256"] ==
+             "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+  end
+
+  test "encoded response files retain the wire content and identify its encoding", context do
+    result =
+      cleared_http(context, "GET", "/api/encoded")
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    bytes = read_file(context, result.facts["file"])
+    assert result.facts["content_encoding"] == "gzip"
+    assert bytes != <<255, 0, 1, 2, 255>>
+    assert :zlib.gunzip(bytes) == <<255, 0, 1, 2, 255>>
+    assert result.facts["file"]["size_bytes"] == byte_size(bytes)
+  end
+
+  test "clean chunked EOF publishes exact bytes and HEAD publishes an empty file", context do
+    for {verb, path, size, hash} <- [
+          {"GET", "/api/chunked", 5,
+           "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"},
+          {"HEAD", "/api/status", 0,
+           "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+        ] do
+      result =
+        cleared_http(context, verb, path)
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert result.facts["file"]["size_bytes"] == size
+      assert result.facts["file"]["sha256"] == hash
+    end
+  end
+
+  test "a file result receives the full response rather than the preview limit", context do
+    result =
+      cleared_http(context, "GET", "/api/large")
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.facts["file"]["size_bytes"] == 30_000
+    assert read_file(context, result.facts["file"]) == String.duplicate("x", 30_000)
+
+    assert {:ok, _} =
+             JSV.validate(
+               result.facts,
+               JSV.build!(hd(context.method.operation_catalog.observations).output_schema)
+             )
+  end
+
+  test "overflow cannot publish bounded-looking truncated bytes", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{chunk_bytes: 3, max_size_bytes: 4})
+    on_exit(fn -> restore_limits(previous) end)
+
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/binary")
+             |> Targets.dispatch_target_observation(%{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert receipt.received_bytes <= 4
+    assert is_nil(receipt.sha256)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "an interrupted response cannot become a file or be joined to a later response", context do
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/interrupted")
+             |> Targets.dispatch_target_observation(%{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    [partial] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert partial.status == :receiving
+    assert partial.received_bytes == 2
+
+    assert {:error, _} =
+             Targets.artifact_reference(partial.id, context.target.id, actor: context.operator)
+
+    result =
+      cleared_http(context, "GET", "/api/binary")
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.facts["file"]["id"] != partial.id
+    assert read_file(context, result.facts["file"]) == <<255, 0, 1, 2, 255>>
+    assert Targets.get_artifact!(partial.id, actor: context.operator).status == :receiving
+  end
+
+  test "cancellation during the response prevents publication", context do
+    invocation = %{
+      cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end
+    }
+
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/cancelled")
+             |> Targets.dispatch_target_observation(invocation,
+               actor: context.operator,
+               authorize?: false
+             )
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "a lost effect reply retains an unusable receipt and is not replayed", context do
+    result =
+      cleared_http(context, "POST", "/api/drop", %{"body" => "{}"})
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    refute Map.has_key?(result.details, "file")
+    assert Agent.get(context.agent, & &1.writes) == ["drop"]
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert result.details["reason"] =~ receipt.id
+  end
+
+  test "failed result publication cannot report a successful effect or repeat the write",
+       context do
+    # A real PostgreSQL failure at the publication boundary; assertions use public actions.
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_http_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'ready' THEN RAISE EXCEPTION 'injected file publication failure'; END IF;
+      RETURN NEW;
+    END $$;
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_http_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_http_file_ready()"
+    )
+
+    result =
+      cleared_http(context, "PUT", "/api/binary", %{"body" => "plain-body"})
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert Agent.get(context.agent, & &1.writes) == ["plain-body"]
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert receipt.received_bytes == 10
+    assert result.details["reason"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  defp read_file(context, file) do
+    size = file["size_bytes"]
+
+    Stream.unfold(0, fn
+      ^size ->
+        nil
+
+      offset ->
+        bytes = Targets.read_bound_artifact_chunk!(file, offset, actor: context.operator)
+        {bytes, offset + byte_size(bytes)}
+    end)
+    |> Enum.to_list()
+    |> IO.iodata_to_binary()
+  end
+
+  defp restore_limits(nil), do: Application.delete_env(:opsonde, :artifact_limits)
+  defp restore_limits(value), do: Application.put_env(:opsonde, :artifact_limits, value)
+
+  defp cleared_http(context, verb, path, options \\ %{}) do
+    kind = if verb in ["GET", "HEAD"], do: :observation, else: :effect
+
+    %Request{
+      kind: kind,
+      authority_mode: :full_access,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: if(kind == :effect, do: "request.http.effect", else: "request.http.observe"),
+      operation: if(kind == :effect, do: "request.execute", else: "request.observe"),
+      operation_id: "http-transfer",
+      idempotency_key: "http-transfer-1",
+      parameters:
+        Map.merge(
+          %{
+            "method" => verb,
+            "path" => path,
+            "response_file" => %{
+              "name" => "response.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          options
+        )
+    }
+    |> Targets.clear_target_request!(actor: context.operator)
   end
 
   defp read_request(context, method, path) do

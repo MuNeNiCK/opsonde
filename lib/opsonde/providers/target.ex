@@ -120,6 +120,31 @@ defmodule Opsonde.Providers.Target do
 
     def valid_set?(_files), do: false
 
+    def schema do
+      %{
+        "type" => "object",
+        "properties" => %{
+          "id" => %{"type" => "string", "format" => "uuid"},
+          "target_id" => %{"type" => "string", "format" => "uuid"},
+          "name" => %{"type" => "string", "minLength" => 1, "maxLength" => 255},
+          "media_type" => %{"type" => "string", "minLength" => 1, "maxLength" => 256},
+          "size_bytes" => %{"type" => "integer", "minimum" => 0},
+          "sha256" => %{"type" => "string", "pattern" => "^[0-9a-f]{64}$"}
+        },
+        "required" => @keys,
+        "additionalProperties" => false
+      }
+    end
+
+    def set_schema do
+      %{
+        "type" => "object",
+        "maxProperties" => 100,
+        "propertyNames" => %{"pattern" => "^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$"},
+        "additionalProperties" => schema()
+      }
+    end
+
     def split(parameters) do
       {files, parameters} = Map.pop(parameters, "files", %{})
       if valid_set?(files), do: {:ok, parameters, files}, else: {:error, :invalid_files}
