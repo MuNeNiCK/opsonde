@@ -113,13 +113,7 @@ config :opsonde,
     Opsonde.Targets.Profiles.Linux.SSH
   ]
 
-config :phoenix, :filter_parameters, [
-  "client_secret",
-  "credentials",
-  "password",
-  "token"
-]
-
+config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
 config :tzdata, :autoupdate, :disabled
 
 # Configure the endpoint

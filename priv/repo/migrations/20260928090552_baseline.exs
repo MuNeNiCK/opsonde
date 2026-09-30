@@ -366,7 +366,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "approvals_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :actor_id, :uuid, null: false
     end
@@ -509,7 +510,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "proposals_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :source_turn_id,
           references(:turns,
@@ -517,7 +519,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "proposals_source_turn_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:proposals, [:source_turn_id], name: "proposals_unique_source_turn_index")
@@ -531,7 +534,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "proposals_target_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :access_method_id, :uuid, null: false
       add :provider_id, :uuid, null: false
@@ -663,7 +667,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "conditions_signal_correlation_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:conditions, [:signal_correlation_id, :occurrence],
@@ -713,7 +718,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "external_identities_target_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:external_identities, [:source, :kind, :value],
@@ -853,7 +859,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "review_decisions_proposal_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:review_decisions, [:proposal_id],
@@ -869,7 +876,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "review_decisions_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :provider_id, :uuid
       add :assignment_id, :uuid
@@ -970,7 +978,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "verification_attempts_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :operation_id, :uuid, null: false
     end
@@ -986,7 +995,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "verification_attempts_proposal_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :actor_id,
           references(:users,
@@ -994,7 +1004,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "verification_attempts_actor_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :target_id,
           references(:targets,
@@ -1002,7 +1013,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "verification_attempts_target_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :access_method_id, :uuid, null: false
       add :provider_id, :uuid, null: false
@@ -1067,7 +1079,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "signal_events_signal_receipt_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :signal_correlation_id,
           references(:signal_correlations,
@@ -1075,7 +1088,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "signal_events_signal_correlation_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:signal_events, [:signal_receipt_id, :signal_correlation_id],
@@ -1319,7 +1333,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "cases_authority_setting_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :initial_target_id,
           references(:targets,
@@ -1388,7 +1403,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "case_events_case_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:case_events, [:case_id, :idempotency_key],
@@ -1479,7 +1495,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "reports_case_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:reports, [:case_id, :case_revision],
@@ -1499,7 +1516,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "user_identities_user_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:user_identities, [:strategy, :user_id],
@@ -1533,7 +1551,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "evidences_case_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:evidences, [:case_id, :idempotency_key],
@@ -1547,7 +1566,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "evidences_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :turn_id,
           references(:turns,
@@ -1621,7 +1641,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "access_methods_target_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:access_methods, [:target_id, :name],
@@ -1678,7 +1699,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "inventory_imports_created_by_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create index(:inventory_imports, [:provider_id])
@@ -1881,7 +1903,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "ai_invocations_case_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:ai_invocations, [:idempotency_key],
@@ -1895,7 +1918,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "ai_invocations_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :turn_id,
           references(:turns,
@@ -1919,7 +1943,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "ai_invocations_provider_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :assignment_id,
           references(:ai_usage_role_assignments,
@@ -1927,7 +1952,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "ai_invocations_assignment_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create index(:ai_invocations, [:case_id])
@@ -1993,7 +2019,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_case_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:operations, [:idempotency_key],
@@ -2007,7 +2034,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_resolution_run_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :proposal_id,
           references(:proposals,
@@ -2015,7 +2043,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_proposal_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create unique_index(:operations, [:proposal_id], name: "operations_unique_proposal_index")
@@ -2027,7 +2056,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_approval_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :actor_id,
           references(:users,
@@ -2035,7 +2065,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_actor_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :target_id,
           references(:targets,
@@ -2043,7 +2074,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_target_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :access_method_id,
           references(:access_methods,
@@ -2051,7 +2083,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_access_method_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
 
       add :provider_id,
           references(:providers,
@@ -2059,7 +2092,8 @@ defmodule Opsonde.Repo.Migrations.Baseline do
             name: "operations_provider_id_fkey",
             type: :uuid,
             prefix: "public"
-          ), null: false
+          ),
+          null: false
     end
 
     create index(:operations, [:case_id])
@@ -2069,7 +2103,6 @@ defmodule Opsonde.Repo.Migrations.Baseline do
     create index(:operations, [:target_id])
 
     create index(:operations, [:target_id, :resource_scope])
-
 
     create table(:artifacts, primary_key: false) do
       add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
