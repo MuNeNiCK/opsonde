@@ -1031,6 +1031,66 @@ defmodule Opsonde.Targets.HTTPAPITest do
              receipt.received_bytes
   end
 
+  test "a non-final chunked coding preserves the close-delimited body and the next response",
+       context do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, {_address, port}} = :inet.sockname(listener)
+    body = "5\r\nLEGIT\r\n0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nSMUGGLED"
+
+    peer =
+      Task.async(fn ->
+        for _ <- 1..3 do
+          {:ok, socket} = :gen_tcp.accept(listener, 2_000)
+          {:ok, request} = :gen_tcp.recv(socket, 0, 2_000)
+
+          response =
+            if String.starts_with?(request, "GET /coding "),
+              do: [
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\nConnection: close\r\n\r\n",
+                body
+              ],
+              else: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nREAL"
+
+          :ok = :gen_tcp.send(socket, response)
+          :gen_tcp.close(socket)
+        end
+      end)
+
+    try do
+      method =
+        Targets.create_access_method!(
+          context.target.id,
+          context.provider.id,
+          "HTTP response boundaries",
+          "http",
+          "http://127.0.0.1:#{port}",
+          context.provider.revision,
+          100,
+          ["request.http.observe", "request.http.effect"],
+          actor: context.admin
+        )
+        |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+      context = %{context | method: method}
+
+      result =
+        cleared_http(context, "GET", "/coding")
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert read_file(context, result.facts["file"]) == body
+
+      subsequent =
+        cleared_http(context, "GET", "/real")
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert read_file(context, subsequent.facts["file"]) == "REAL"
+      Task.await(peer, 2_000)
+    after
+      Task.shutdown(peer, :brutal_kill)
+      :gen_tcp.close(listener)
+    end
+  end
+
   test "chunked response trailers validate the completed file digest", context do
     {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
     {:ok, {_address, port}} = :inet.sockname(listener)
