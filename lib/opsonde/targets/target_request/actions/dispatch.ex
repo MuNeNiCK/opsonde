@@ -277,6 +277,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
                    name,
                    media_type,
                    receipt_key,
+                   %{request_id: clearance.operation_id},
                    actor: current_actor
                  )
                end,

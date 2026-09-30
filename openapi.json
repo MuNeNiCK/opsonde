@@ -5079,6 +5079,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "request_id": {
+            "nullable": true,
+            "type": "string"
+          },
           "revision": {
             "minimum": 1,
             "type": "integer"
@@ -5120,6 +5124,7 @@
           "media_type",
           "name",
           "received_bytes",
+          "request_id",
           "revision",
           "sha256",
           "size_bytes",

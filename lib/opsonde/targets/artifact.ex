@@ -93,6 +93,8 @@ defmodule Opsonde.Targets.Artifact do
         sensitive?: true,
         constraints: [min_length: 1, max_length: 120]
 
+      argument :request_id, :string
+
       run {Lifecycle, operation: :begin_receipt}
     end
 
@@ -157,6 +159,7 @@ defmodule Opsonde.Targets.Artifact do
         :size_bytes,
         :expected_sha256,
         :upload_key,
+        :request_id,
         :status,
         :expires_at
       ]
@@ -214,6 +217,7 @@ defmodule Opsonde.Targets.Artifact do
     attribute :expected_sha256, :string, public?: true
     attribute :sha256, :string, public?: true
     attribute :upload_key, :string, allow_nil?: false, sensitive?: true
+    attribute :request_id, :string, public?: true
     attribute :expires_at, :utc_datetime_usec, allow_nil?: false, public?: true
 
     attribute :status, :atom,

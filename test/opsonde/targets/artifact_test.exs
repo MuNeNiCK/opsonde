@@ -517,7 +517,18 @@ defmodule Opsonde.Targets.ArtifactTest do
 
     ready = begin_upload(context, "expires-ready")
     interrupted = begin_upload(context, "expires-interrupted")
-    incoming = begin_receipt(context, "expires-incoming")
+    request_id = Ecto.UUID.generate()
+
+    incoming =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "expires-incoming.bin",
+        "application/octet-stream",
+        "expires-incoming",
+        %{request_id: request_id},
+        actor: context.admin
+      )
+
     Targets.append_artifact_chunk!(incoming.id, 0, <<255, 0>>, actor: context.admin)
     Targets.append_artifact_chunk!(ready.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
     Targets.complete_artifact!(ready.id, actor: context.admin)
@@ -543,6 +554,39 @@ defmodule Opsonde.Targets.ArtifactTest do
       assert Targets.get_artifact!(upload.id, actor: context.admin).status == :expired
       assert :ok = perform_job(Opsonde.Targets.Artifact.ExpiryWorker, %{id: upload.id})
     end
+
+    assert Targets.get_artifact!(incoming.id, actor: context.admin).request_id == request_id
+  end
+
+  test "receipt provenance cannot be reassigned by reusing a receipt key", context do
+    request_id = Ecto.UUID.generate()
+
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "tracked.bin",
+        "application/octet-stream",
+        "tracked-reply",
+        %{request_id: request_id},
+        actor: context.admin
+      )
+
+    assert {:error, _} =
+             Targets.begin_artifact_receipt(
+               context.target.id,
+               "tracked.bin",
+               "application/octet-stream",
+               "tracked-reply",
+               %{request_id: Ecto.UUID.generate()},
+               actor: context.admin
+             )
+
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
+    ready = Targets.complete_artifact_receipt!(receipt.id, actor: context.admin)
+    assert ready.request_id == request_id
+    disposed = Targets.revoke_artifact!(receipt.id, actor: context.admin)
+    assert disposed.request_id == request_id
+    assert disposed.status == :revoked
   end
 
   test "a failed progress write rolls back the received chunk", context do

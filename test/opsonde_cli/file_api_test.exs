@@ -166,12 +166,15 @@ defmodule OpsondeCLI.FileAPITest do
   end
 
   test "CLI reads incoming progress and downloads only the completed receipt", context do
+    request_id = Ecto.UUID.generate()
+
     receipt =
       Targets.begin_artifact_receipt!(
         context.target.id,
         "response.bin",
         "application/octet-stream",
         "incoming-cli",
+        %{request_id: request_id},
         actor: context.admin
       )
 
@@ -185,6 +188,7 @@ defmodule OpsondeCLI.FileAPITest do
       |> Map.fetch!("data")
 
     assert shown["status"] == "receiving"
+    assert shown["request_id"] == request_id
     assert is_nil(shown["size_bytes"])
     destination = Path.join(context.root, "response.bin")
 
@@ -209,6 +213,30 @@ defmodule OpsondeCLI.FileAPITest do
     assert %{"outcome" => "succeeded", "data" => %{"sha256" => @digest}} = Jason.decode!(output)
     assert File.read!(destination) == @bytes
     assert File.stat!(destination).mode == 0o100600
+  end
+
+  test "CLI lists received files with their original request identity", context do
+    request_id = Ecto.UUID.generate()
+
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "tracked.bin",
+        "application/octet-stream",
+        "tracked-cli",
+        %{request_id: request_id},
+        actor: context.admin
+      )
+
+    listed =
+      capture_io(fn ->
+        assert CLI.run(["file", "list", context.target.id], context.runtime) == 0
+      end)
+      |> Jason.decode!()
+      |> Map.fetch!("data")
+
+    assert [%{"id" => id, "request_id" => ^request_id, "status" => "receiving"}] = listed
+    assert id == receipt.id
   end
 
   test "a lost creation acknowledgement retains the key and a fresh CLI recovers the same file",

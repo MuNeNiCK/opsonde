@@ -2834,6 +2834,7 @@ export interface components {
             media_type: string;
             name: string;
             received_bytes: number;
+            request_id: string | null;
             revision: number;
             sha256: string | null;
             size_bytes: number | null;

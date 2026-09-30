@@ -76,7 +76,7 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
       if existing do
         fields =
           if status == :receiving,
-            do: [:name, :media_type, :expected_sha256],
+            do: [:name, :media_type, :expected_sha256, :request_id],
             else: [:name, :media_type, :size_bytes, :expected_sha256]
 
         if Enum.all?(
@@ -94,6 +94,7 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
             :media_type,
             :size_bytes,
             :expected_sha256,
+            :request_id,
             :upload_key
           ])
           |> Map.merge(%{

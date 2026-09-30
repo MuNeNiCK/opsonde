@@ -15,6 +15,13 @@ defmodule Opsonde.FileOperationTest do
         {"PUT", "/binary"} ->
           {:ok, bytes, conn} = read_body(conn)
           Agent.update(agent, &Map.put(&1, :writes, [bytes | &1.writes]))
+
+          case Agent.get(agent, &Map.get(&1, :after_write)) do
+            :drop -> Process.exit(self(), :kill)
+            callback when is_function(callback, 0) -> callback.()
+            nil -> :ok
+          end
+
           conn |> put_resp_content_type("application/octet-stream") |> send_resp(200, bytes)
 
         _ ->
@@ -224,6 +231,165 @@ defmodule Opsonde.FileOperationTest do
              Enum.map(turns, & &1.id)
 
     assert Agent.get(context.agent, & &1.writes) == []
+  end
+
+  test "an outcome save failure preserves the received file without repeating the effect",
+       context do
+    reference = stage_file(context)
+    proposal = proposal!(context, file_parameters(reference))
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    # Fail only the outcome publication after the real HTTP peer has replied.
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_file_operation_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'applied' THEN
+        RAISE EXCEPTION 'test outcome publication unavailable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_file_operation_outcome BEFORE UPDATE ON operations
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_file_operation_outcome()
+    """)
+
+    assert {:error, _} = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :dispatching
+
+    page = Targets.page_artifacts!(context.target.id, actor: context.operator)
+    received = Enum.find(page.results, &(&1.name == "case-result.bin"))
+    assert received.status == :ready
+    assert Map.get(received, :request_id) == operation.id
+    reply = Targets.artifact_reference!(received.id, context.target.id, actor: context.operator)
+
+    assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    Opsonde.Repo.query!("DROP TRIGGER reject_file_operation_outcome ON operations")
+    assert :ok = Delivery.run(operation.id)
+    recovered = Cases.get_operation!(operation.id, authorize?: false)
+    assert recovered.status == :unknown
+    assert recovered.outcome_category == "dispatch_interrupted"
+    assert recovered.parameters["files"]["payload"] == reference
+    assert Targets.get_artifact!(received.id, actor: context.operator).request_id == operation.id
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+
+    evidence =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.filter(&(&1.source == "operation" and &1.source_ref == operation.id))
+
+    assert [%{content: %{"status" => "unknown"}}] = evidence
+
+    assert Targets.artifact_reference!(received.id, context.target.id, actor: context.operator) ==
+             reply
+  end
+
+  test "a lost file reply remains unknown with a visible receipt and no duplicate send",
+       context do
+    reference = stage_file(context)
+    proposal = proposal!(context, file_parameters(reference))
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    Agent.update(context.agent, &Map.put(&1, :after_write, :drop))
+
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, authorize?: false)
+    assert stored.status == :unknown
+    refute Map.has_key?(stored.result_details, "file")
+    page = Targets.page_artifacts!(context.target.id, actor: context.operator)
+    receipt = Enum.find(page.results, &(&1.name == "case-result.bin"))
+    assert receipt.status == :receiving
+    assert receipt.request_id == operation.id
+    assert stored.result_details["reason"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+  end
+
+  test "Case cancellation before dispatch does not send or open a response file", context do
+    reference = stage_file(context)
+    proposal = proposal!(context, file_parameters(reference))
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    incident = Cases.get_case!(proposal.case_id, actor: context.operator)
+    Cases.request_case_cancellation!(incident.id, incident.revision, actor: context.operator)
+
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :failed
+    assert stored.outcome_category == "cancelled_before_dispatch"
+    assert Agent.get(context.agent, & &1.writes) == []
+    [input] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert input.id == reference["id"]
+  end
+
+  test "Case cancellation after the send leaves an unknown effect and unusable response file",
+       context do
+    reference = stage_file(context)
+    proposal = proposal!(context, file_parameters(reference))
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    Agent.update(context.agent, fn state ->
+      Map.put(state, :after_write, fn ->
+        incident = Cases.get_case!(proposal.case_id, actor: context.operator)
+        Cases.request_case_cancellation!(incident.id, incident.revision, actor: context.operator)
+      end)
+    end)
+
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :unknown
+    refute Map.has_key?(stored.result_details, "file")
+    page = Targets.page_artifacts!(context.target.id, actor: context.operator)
+    receipt = Enum.find(page.results, &(&1.name == "case-result.bin"))
+    assert receipt.status == :receiving
+    assert receipt.request_id == operation.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+  end
+
+  test "an approved input that expires before dispatch cannot be sent", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{lifetime_seconds: 3})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    reference = stage_file(context)
+    proposal = proposal!(context, file_parameters(reference))
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    input = Targets.get_artifact!(reference["id"], actor: context.operator)
+    Process.sleep(max(DateTime.diff(input.expires_at, DateTime.utc_now(), :millisecond), 0) + 20)
+
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :failed
+    assert stored.outcome_category == "authorization_invalidated"
+    assert Agent.get(context.agent, & &1.writes) == []
+
+    assert {:error, _} =
+             Targets.artifact_reference(input.id, context.target.id, actor: context.operator)
+
+    assert [only] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert only.id == input.id
   end
 
   test "changed or cross-Target file references cannot produce a cleared Case proposal",

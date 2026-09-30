@@ -40,6 +40,7 @@ defmodule OpsondeWeb.API.V1.TargetFileSchemas do
     object(%{
       id: Schemas.uuid(),
       target_id: Schemas.uuid(),
+      request_id: %Schema{type: :string, nullable: true},
       name: %Schema{type: :string},
       media_type: %Schema{type: :string},
       size_bytes: %Schema{type: :integer, minimum: 0, nullable: true},

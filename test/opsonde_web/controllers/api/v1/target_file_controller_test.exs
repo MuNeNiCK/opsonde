@@ -35,6 +35,7 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
     assert file["target_id"] == context.target.id
     assert file["status"] == "uploading"
     assert file["received_bytes"] == 0
+    assert Map.fetch!(file, "request_id") == nil
     assert is_nil(file["sha256"])
     refute Map.has_key?(file, "upload_key")
     refute Map.has_key?(file, "uploaded_by_id")
@@ -55,12 +56,15 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
 
   test "incoming file metadata and completed bytes use the authenticated file endpoint",
        context do
+    request_id = Ecto.UUID.generate()
+
     receipt =
       Targets.begin_artifact_receipt!(
         context.target.id,
         "response.bin",
         "application/octet-stream",
         "incoming-api",
+        %{request_id: request_id},
         actor: context.admin
       )
 
@@ -83,6 +87,7 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
            } = json_response(shown, 200)
 
     assert_operation_response(shown)
+    assert json_response(shown, 200)["data"]["request_id"] == request_id
 
     premature =
       build_json_conn()
@@ -107,6 +112,7 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
            } = json_response(ready, 200)
 
     assert_operation_response(ready)
+    assert json_response(ready, 200)["data"]["request_id"] == request_id
 
     downloaded =
       build_conn()
