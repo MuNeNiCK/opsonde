@@ -57,7 +57,7 @@ defmodule OpsondeWeb.API.V1.TargetFileSchemas do
     %Schema{
       type: :object,
       properties: properties,
-      required: Map.keys(properties),
+      required: properties |> Map.keys() |> Enum.sort(),
       additionalProperties: false
     }
   end

@@ -5038,8 +5038,8 @@
             },
             "required": [
               "chunk_bytes",
-              "max_size_bytes",
-              "lifetime_seconds"
+              "lifetime_seconds",
+              "max_size_bytes"
             ],
             "type": "object"
           }
@@ -5106,17 +5106,17 @@
           }
         },
         "required": [
+          "expires_at",
           "id",
+          "inserted_at",
+          "media_type",
           "name",
-          "status",
+          "received_bytes",
           "revision",
           "sha256",
-          "expires_at",
-          "media_type",
           "size_bytes",
+          "status",
           "target_id",
-          "received_bytes",
-          "inserted_at",
           "updated_at"
         ],
         "type": "object"
@@ -5330,10 +5330,10 @@
               }
             },
             "required": [
-              "name",
-              "media_type",
-              "size_bytes",
               "expected_sha256",
+              "media_type",
+              "name",
+              "size_bytes",
               "upload_key"
             ],
             "type": "object"
