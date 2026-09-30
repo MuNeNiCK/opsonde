@@ -29,10 +29,22 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
       if authorized?, do: route(conn, agent, body), else: send_resp(conn, 401, "")
     end
 
+    defp route(%{request_path: "/.well-known/host-meta"} = conn, _agent, _body),
+      do:
+        conn
+        |> put_resp_content_type("application/xrd+xml")
+        |> send_resp(
+          200,
+          ~s(<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0"><Link rel="restconf" href="/custom/api"/></XRD>)
+        )
+
+    defp route(%{request_path: "/custom/api"} = conn, _agent, _body),
+      do: json(conn, 200, %{"ietf-restconf:restconf" => %{}})
+
     defp route(
            %{
              method: "GET",
-             request_path: "/restconf/data/ietf-restconf-monitoring:restconf-state/capabilities"
+             request_path: "/custom/api/data/ietf-restconf-monitoring:restconf-state/capabilities"
            } = conn,
            _agent,
            _body
@@ -40,7 +52,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
          do: json(conn, 200, %{"ietf-restconf-monitoring:capabilities" => %{"capability" => []}})
 
     defp route(
-           %{method: "GET", request_path: "/restconf/data/Cisco-IOS-XE-native:native/hostname"} =
+           %{method: "GET", request_path: "/custom/api/data/Cisco-IOS-XE-native:native/hostname"} =
              conn,
            _agent,
            _body
@@ -48,7 +60,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
          do: json(conn, 200, %{"Cisco-IOS-XE-native:hostname" => "router-one"})
 
     defp route(
-           %{method: "GET", request_path: "/restconf/data/Cisco-IOS-XE-native:native/version"} =
+           %{method: "GET", request_path: "/custom/api/data/Cisco-IOS-XE-native:native/version"} =
              conn,
            _agent,
            _body
@@ -58,7 +70,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     defp route(
            %{
              method: "GET",
-             request_path: "/restconf/data/ietf-interfaces:interfaces/interface=Loopback100"
+             request_path: "/custom/api/data/ietf-interfaces:interfaces/interface=Loopback100"
            } = conn,
            agent,
            _body
@@ -70,7 +82,8 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     defp route(
            %{
              method: "GET",
-             request_path: "/restconf/data/ietf-interfaces:interfaces-state/interface=Loopback100"
+             request_path:
+               "/custom/api/data/ietf-interfaces:interfaces-state/interface=Loopback100"
            } = conn,
            agent,
            _body
@@ -91,7 +104,7 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
     defp route(
            %{
              method: "PATCH",
-             request_path: "/restconf/data/ietf-interfaces:interfaces/interface=Loopback100"
+             request_path: "/custom/api/data/ietf-interfaces:interfaces/interface=Loopback100"
            } = conn,
            agent,
            body
@@ -322,6 +335,57 @@ defmodule Opsonde.Targets.IOSXERESTCONFTest do
 
     assert {:error, :unreachable, _message} =
              Opsonde.Targets.Profiles.IOSXE.RESTCONF.check(state, %{"endpoint" => wrong_hostname})
+  end
+
+  test "registered IOS XE Method dispatches an exact generic request through shared RESTCONF",
+       context do
+    method =
+      Targets.update_access_method!(
+        context.method,
+        context.method.revision,
+        %{
+          capabilities: @capabilities ++ ["request.restconf.observe", "request.restconf.effect"]
+        }, actor: context.admin)
+
+    context = %{context | method: method}
+    parameters = %{"method" => "GET", "path" => "/data/Cisco-IOS-XE-native:native/hostname"}
+
+    read =
+      target_request(
+        context,
+        :observation,
+        "request.restconf.observe",
+        "request.observe",
+        %{},
+        parameters
+      )
+
+    clearance = Targets.clear_target_request!(read, actor: context.operator)
+
+    assert %Target.Observation{facts: %{"http_status" => 200, "body" => body}} =
+             Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
+
+    assert Jason.decode!(body) == %{"Cisco-IOS-XE-native:hostname" => "router-one"}
+
+    patch =
+      target_request(context, :effect, "request.restconf.effect", "request.execute", %{}, %{
+        "method" => "PATCH",
+        "path" => "/data/ietf-interfaces:interfaces/interface=Loopback100",
+        "body" => ~s({"ietf-interfaces:interface":{"description":"generic-change"}})
+      })
+
+    assert %Target.EffectResult{status: :applied} =
+             patch
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert %Target.Verification{status: :verified} =
+             verify!(context, %{"description" => "generic-change"})
+
+    before = length(requests(context))
+    disguised = %{read | parameters: patch.parameters, authority_mode: :readonly}
+    assert {:error, _} = Targets.clear_target_request(disguised, actor: context.operator)
+    assert length(requests(context)) == before
   end
 
   defp observe!(context, capability, operation, selectors) do
