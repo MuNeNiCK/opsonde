@@ -47,7 +47,7 @@ defmodule Opsonde.Transports.Kubernetes do
            body: nil,
            headers: [{"accept", "application/json"}]
          },
-         {:ok, %{status: status}} <- run(state, operation, fn -> false end, :read) do
+         {:ok, %{status: status}} <- run(state, operation, %{}, :read) do
       case status do
         status when status in 200..299 -> :ok
         401 -> {:error, :authentication, "Kubernetes authentication failed"}
@@ -66,7 +66,7 @@ defmodule Opsonde.Transports.Kubernetes do
   def check(_state, _input),
     do: {:error, :invalid_configuration, "Kubernetes check requires an endpoint"}
 
-  defp request(state, operation) do
+  defp request(state, operation, invocation) do
     with {:ok, options} <- K8s.Conn.RequestOptions.generate(state.connection) do
       host = URI.parse(state.endpoint).host
 
@@ -82,11 +82,10 @@ defmodule Opsonde.Transports.Kubernetes do
       headers =
         Enum.map(options.headers, fn {key, value} -> {String.downcase(to_string(key)), value} end)
 
-      Req.request(
+      request_options = [
         method: operation.method,
         url: state.endpoint <> operation.path,
         params: operation.query,
-        body: operation.body,
         headers: headers ++ operation.headers ++ [{"accept-encoding", "identity"}],
         connect_options: [
           timeout: state.request_timeout,
@@ -97,6 +96,13 @@ defmodule Opsonde.Transports.Kubernetes do
         redirect: false,
         raw: true,
         into: &collect/2
+      ]
+
+      Opsonde.Transports.HTTP.request(
+        request_options,
+        operation.body,
+        Map.get(operation, :response_file),
+        invocation
       )
     end
   end
@@ -109,8 +115,14 @@ defmodule Opsonde.Transports.Kubernetes do
       else: {:halt, {request, %{response | body: :too_large}}}
   end
 
-  def run(state, operation, cancelled?, phase) when is_map(operation),
-    do: run_request(state, fn -> request(state, operation) end, cancelled?, phase)
+  def run(state, operation, invocation, phase) when is_map(operation) and is_map(invocation),
+    do:
+      run_request(
+        state,
+        fn -> request(state, operation, invocation) end,
+        cancelled?(invocation),
+        phase
+      )
 
   defp run_request(state, operation, cancelled?, phase) do
     if cancelled?.() do
@@ -158,6 +170,17 @@ defmodule Opsonde.Transports.Kubernetes do
   defp normalize({:ok, %Req.Response{body: :too_large}}, _phase),
     do: {:error, :failed, "Kubernetes response exceeded the inline size limit"}
 
+  defp normalize({:ok, %Req.Response{private: %{opsonde_file: file}} = response}, _phase) do
+    {:ok,
+     %{
+       status: response.status,
+       content_type: List.first(Req.Response.get_header(response, "content-type")) || "",
+       body: "",
+       file: file,
+       content_encoding: Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
+     }}
+  end
+
   defp normalize({:ok, %Req.Response{} = response}, phase) do
     raw = response.body || ""
     content_type = response |> Req.Response.get_header("content-type") |> List.first() || ""
@@ -173,6 +196,11 @@ defmodule Opsonde.Transports.Kubernetes do
       invalid_inline_response(phase)
     end
   end
+
+  defp normalize({:error, _category, message}, :effect),
+    do: {:error, :unknown_after_dispatch, message}
+
+  defp normalize({:error, category, message}, _phase), do: {:error, category, message}
 
   defp normalize({:error, _error}, :effect),
     do: {:error, :unknown_after_dispatch, "Kubernetes effect result is unknown"}
@@ -287,6 +315,8 @@ defmodule Opsonde.Transports.Kubernetes do
   end
 
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
+  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
+  defp cancelled?(_invocation), do: fn -> false end
 
   defp after_dispatch(:effect, :cancelled), do: :cancelled_after_dispatch
   defp after_dispatch(:effect, :timeout), do: :timeout_after_dispatch

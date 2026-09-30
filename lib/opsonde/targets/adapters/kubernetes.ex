@@ -53,7 +53,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
       "properties" => %{
         "response" => %{},
         "http_status" => %{"type" => "integer"},
-        "content_type" => %{"type" => "string"}
+        "content_type" => %{"type" => "string"},
+        "file" => Target.FileReference.schema(),
+        "content_encoding" => %{"type" => "string"}
       },
       "required" => ["response", "http_status", "content_type"],
       "additionalProperties" => false
@@ -77,7 +79,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
            capability: @effect,
            operation: "request.execute",
            description:
-             "Send an exact Kubernetes API HTTP request after review. JSON, YAML, patch and DELETE bodies are literal UTF-8 strings." <>
+             "Send an exact Kubernetes API HTTP request after review. Bodies can be literal UTF-8 strings or immutable files; response_file preserves full binary results." <>
                scope,
            input_schema: schema(["POST", "PUT", "PATCH", "DELETE"])
          }
@@ -95,7 +97,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
     with {:ok, %{kind: :observation} = operation} <- exact_request(state, request),
-         {:ok, response} <- Client.run(state, operation, cancelled?(invocation), :read),
+         {:ok, response} <- Client.run(state, operation, invocation, :read),
          :ok <- read_status(response) do
       {:ok, %Target.Observation{facts: facts(response), observed_at: DateTime.utc_now()}}
     else
@@ -109,7 +111,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, request, invocation) do
     with {:ok, %{kind: :effect} = operation} <- exact_request(state, request) do
-      case Client.run(state, operation, cancelled?(invocation), :effect) do
+      case Client.run(state, operation, invocation, :effect) do
         {:ok, response} ->
           body = response.body
           reference = if is_map(body), do: get_in(body, ["metadata", "resourceVersion"])
@@ -174,8 +176,9 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          true <-
            Enum.all?(
              Map.keys(parameters),
-             &(&1 in ~w(method path query body content_type accept))
+             &(&1 in ~w(method path query body body_file content_type accept response_file))
            ),
+         true <- Target.FileWriter.valid_options?(parameters["response_file"]),
          {:ok, method} <- Map.fetch(@methods, verb),
          {:ok, kind} <- request_kind(request, method),
          :ok <- path_scope(path, state.namespace, kind),
@@ -183,7 +186,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          {:ok, content_type} <-
            media_type(Map.get(parameters, "content_type", "application/json")),
          {:ok, accept} <- media_type(Map.get(parameters, "accept", "application/json")),
-         {:ok, body} <- body(kind, Map.get(parameters, "body"), content_type),
+         {:ok, body} <-
+           request_body(kind, parameters, content_type, Map.get(request, :files, %{})),
          :ok <- body_scope(state.namespace, body, content_type) do
       {:ok,
        %{
@@ -192,6 +196,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          path: path,
          query: query,
          body: body,
+         response_file: parameters["response_file"],
          headers: [{"content-type", content_type}, {"accept", accept}]
        }}
     else
@@ -292,6 +297,23 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   defp media_type(_value), do: invalid()
 
+  defp request_body(:effect, %{"body_file" => label} = parameters, _type, files) do
+    with false <- Map.has_key?(parameters, "body"),
+         true <- is_binary(label),
+         {:ok, reference} <- Map.fetch(files, label),
+         true <- Target.FileReference.valid?(reference) do
+      {:ok, {:file, label, reference}}
+    else
+      _ -> invalid()
+    end
+  end
+
+  defp request_body(kind, parameters, type, _files) do
+    if Map.has_key?(parameters, "body_file"),
+      do: invalid(),
+      else: body(kind, parameters["body"], type)
+  end
+
   defp body(_kind, nil, _type), do: {:ok, nil}
 
   defp body(:effect, body, type) when is_binary(body) and byte_size(body) <= @max_body_bytes do
@@ -312,6 +334,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   defp body_scope(nil, _body, _type), do: :ok
   defp body_scope(_namespace, nil, _type), do: :ok
+
+  # File contents stay opaque. The exact URL enforces the configured namespace;
+  # the API server checks a resource's body namespace against that URL.
+  defp body_scope(_namespace, {:file, _label, _reference}, _type), do: :ok
 
   defp body_scope(namespace, body, type) do
     media = type |> String.split(";") |> hd() |> String.trim() |> String.downcase()
@@ -346,16 +372,20 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
         "additionalProperties" => %{"type" => "string", "maxLength" => 2_048}
       },
       "content_type" => %{"type" => "string", "maxLength" => 256},
-      "accept" => %{"type" => "string", "maxLength" => 256}
+      "accept" => %{"type" => "string", "maxLength" => 256},
+      "response_file" => Target.FileWriter.options_schema()
     }
 
     properties =
       if "PATCH" in methods,
         do:
-          Map.put(properties, "body", %{
+          properties
+          |> Map.put("body", %{
             "type" => ["string", "null"],
             "maxLength" => @max_body_bytes
-          }),
+          })
+          |> Map.put("body_file", %{"type" => "string", "minLength" => 1, "maxLength" => 120})
+          |> Map.put("files", Target.FileReference.set_schema()),
         else: properties
 
     %{
@@ -374,12 +404,21 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     }
   end
 
-  defp facts(response),
-    do: %{
+  defp facts(response) do
+    facts = %{
       "response" => response.body,
       "http_status" => response.status,
       "content_type" => response.content_type
     }
+
+    case response do
+      %{file: file, content_encoding: encoding} ->
+        facts |> Map.put("file", file) |> Map.put("content_encoding", encoding)
+
+      _ ->
+        facts
+    end
+  end
 
   defp read_status(%{status: status}) when status in 200..299, do: :ok
 
@@ -396,7 +435,5 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   defp status_category(404), do: :not_found
   defp status_category(status) when status in 200..299, do: :applied
   defp status_category(_status), do: :api_rejected
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
   defp invalid, do: {:error, :failed, "Kubernetes API request is invalid"}
 end

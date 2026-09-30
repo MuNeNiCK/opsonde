@@ -43,6 +43,33 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     defp route(%{method: "GET", request_path: "/api"} = conn, _agent, _request),
       do: json(conn, 200, %{"kind" => "APIVersions", "versions" => ["v1"]})
 
+    defp route(
+           %{request_path: "/apis/files.example/v1/namespaces/#{@namespace}/bundles/one/content"} =
+             conn,
+           _agent,
+           request
+         ) do
+      conn = put_resp_content_type(conn, "application/octet-stream")
+
+      case request.query["transfer"] do
+        "interrupted" ->
+          conn = send_chunked(conn, 200)
+          {:ok, _conn} = chunk(conn, <<255, 0>>)
+          Process.sleep(50)
+          Process.exit(self(), :kill)
+
+        "delayed" ->
+          conn = send_chunked(conn, 200)
+          {:ok, conn} = chunk(conn, <<255, 0>>)
+          Process.sleep(1_000)
+          conn
+
+        _ ->
+          bytes = if request.method == "GET", do: <<255, 0, 1, 2, 255>>, else: request.body
+          send_resp(conn, 200, bytes)
+      end
+    end
+
     defp route(%{request_path: "/apis/acme.example/v9/racks/rack-a"} = conn, agent, request) do
       if request.method == "PATCH" do
         patch = Jason.decode!(request.body)
@@ -472,6 +499,290 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       agent: agent,
       endpoint: endpoint
     }
+  end
+
+  test "checked API requests publish full binary content without JSON or UTF8 decoding",
+       context do
+    result =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/apis/files.example/v1/namespaces/#{@namespace}/bundles/one/content",
+        "accept" => "application/octet-stream",
+        "response_file" => %{"name" => "bundle.bin", "media_type" => "application/octet-stream"}
+      })
+
+    file = result.facts["file"]
+    assert file["target_id"] == context.target.id
+    assert file["size_bytes"] == 5
+    assert file["sha256"] == "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+    assert Targets.read_bound_artifact_chunk!(file, 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    assert result.facts["response"] == ""
+
+    assert_schema_accepts!(
+      hd(context.method.operation_catalog.observations).output_schema,
+      result.facts
+    )
+  end
+
+  test "checked API effects send immutable binary files and preserve their reply", context do
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        "bundle.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "kube-file-input",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0>>, actor: context.operator)
+    Targets.append_artifact_chunk!(upload.id, 2, <<1, 2, 255>>, actor: context.operator)
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    input = Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
+
+    parameters = %{
+      "method" => "PUT",
+      "path" => "/apis/files.example/v1/namespaces/#{@namespace}/bundles/one/content",
+      "content_type" => "application/octet-stream",
+      "body_file" => "payload",
+      "files" => %{"payload" => input},
+      "response_file" => %{"name" => "reply.bin", "media_type" => "application/octet-stream"}
+    }
+
+    request =
+      target_request(
+        context,
+        :effect,
+        "request.kubernetes.effect",
+        "request.execute",
+        %{},
+        parameters
+      )
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+
+    assert result.details["file"]["sha256"] ==
+             "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+
+    assert Targets.read_bound_artifact_chunk!(result.details["file"], 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    assert Enum.filter(requests(context), &(&1.method == "PUT")) |> Enum.map(& &1.body) == [
+             <<255, 0, 1, 2, 255>>
+           ]
+
+    assert_schema_accepts!(hd(context.method.operation_catalog.effects).input_schema, %{
+      "selectors" => %{},
+      "parameters" => parameters
+    })
+
+    for params <- [
+          Map.put(parameters, "body", "different"),
+          Map.put(parameters, "body_file", "missing"),
+          Map.put(
+            parameters,
+            "path",
+            "/apis/files.example/v1/namespaces/other/bundles/one/content"
+          )
+        ] do
+      assert {:error, _} =
+               Targets.clear_target_request(%{request | parameters: params},
+                 actor: context.operator
+               )
+    end
+
+    Targets.revoke_artifact!(input["id"], actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert length(Enum.filter(requests(context), &(&1.method == "PUT"))) == 1
+  end
+
+  test "file results preserve content beyond the inline response limit", context do
+    result =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/api/v1/namespaces/#{@namespace}/pods/huge/log",
+        "response_file" => %{"name" => "pod.log", "media_type" => "text/plain"}
+      })
+
+    assert result.facts["file"]["size_bytes"] == 70_000
+
+    file = result.facts["file"]
+
+    bytes =
+      Stream.unfold(0, fn
+        70_000 ->
+          nil
+
+        offset ->
+          chunk = Targets.read_bound_artifact_chunk!(file, offset, actor: context.operator)
+          {chunk, offset + byte_size(chunk)}
+      end)
+      |> Enum.to_list()
+      |> IO.iodata_to_binary()
+
+    assert bytes == String.duplicate("x", 70_000)
+  end
+
+  test "overflow cannot publish a truncated Kubernetes file result", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{chunk_bytes: 3, max_size_bytes: 4})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    assert {:error, _} =
+             file_clearance(context, "GET")
+             |> Targets.dispatch_target_observation(%{}, actor: context.operator)
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert receipt.received_bytes <= 4
+    assert is_nil(receipt.sha256)
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "an interrupted Kubernetes response cannot be completed by another response", context do
+    assert {:error, _} =
+             file_clearance(context, "GET", %{"query" => %{"transfer" => "interrupted"}})
+             |> Targets.dispatch_target_observation(%{}, actor: context.operator)
+
+    [partial] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert partial.status == :receiving
+    assert partial.received_bytes == 2
+
+    assert {:error, _} =
+             Targets.artifact_reference(partial.id, context.target.id, actor: context.operator)
+
+    result =
+      file_clearance(context, "GET")
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert result.facts["file"]["id"] != partial.id
+
+    assert Targets.read_bound_artifact_chunk!(result.facts["file"], 0, actor: context.operator) ==
+             <<255, 0, 1, 2, 255>>
+
+    assert Targets.get_artifact!(partial.id, actor: context.operator).status == :receiving
+  end
+
+  test "lost Kubernetes file replies leave effects unknown without replay", context do
+    result =
+      file_clearance(context, "PUT", %{
+        "body" => "changed",
+        "query" => %{"transfer" => "interrupted"}
+      })
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    refute Map.has_key?(result.details, "file")
+
+    assert Enum.filter(requests(context), &(&1.method == "PUT")) |> Enum.map(& &1.body) == [
+             "changed"
+           ]
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert result.details["error"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "Kubernetes cancellation and timeout do not publish file results or replay effects",
+       context do
+    clearance =
+      file_clearance(context, "PUT", %{
+        "body" => "changed",
+        "query" => %{"transfer" => "delayed"}
+      })
+
+    count = length(requests(context))
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: fn -> true end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert length(requests(context)) == count
+    assert Targets.page_artifacts!(context.target.id, actor: context.operator).results == []
+
+    for invocation <- [
+          %{cancelled?: fn -> Enum.any?(requests(context), &(&1.method == "PUT")) end},
+          %{}
+        ] do
+      result =
+        Targets.dispatch_target_effect!(clearance, invocation,
+          actor: context.operator,
+          authorize?: false
+        )
+
+      assert result.status == :unknown
+      refute Map.has_key?(result.details, "file")
+    end
+
+    assert length(Enum.filter(requests(context), &(&1.method == "PUT"))) == 2
+    receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert length(receipts) == 2
+
+    for receipt <- receipts do
+      assert receipt.status == :receiving
+
+      assert {:error, _} =
+               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+    end
+  end
+
+  test "failed Kubernetes result publication cannot report success or repeat a write", context do
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_kubernetes_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'ready' THEN RAISE EXCEPTION 'injected file publication failure'; END IF;
+      RETURN NEW;
+    END $$;
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_kubernetes_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_kubernetes_file_ready()"
+    )
+
+    result =
+      file_clearance(context, "PUT", %{"body" => "changed"})
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+
+    assert Enum.filter(requests(context), &(&1.method == "PUT")) |> Enum.map(& &1.body) == [
+             "changed"
+           ]
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert receipt.received_bytes == 7
+    assert result.details["error"] =~ receipt.id
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
   end
 
   test "generic API request reaches a dynamically discovered custom resource", context do
@@ -1188,6 +1499,29 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     clearance = Targets.clear_target_request!(request, actor: context.operator)
     Targets.dispatch_target_observation!(clearance, %{}, actor: context.operator)
+  end
+
+  defp file_clearance(context, verb, options \\ %{}) do
+    kind = if verb in ["GET", "HEAD"], do: :observation, else: :effect
+
+    capability =
+      if kind == :effect, do: "request.kubernetes.effect", else: "request.kubernetes.observe"
+
+    operation = if kind == :effect, do: "request.execute", else: "request.observe"
+
+    parameters =
+      Map.merge(
+        %{
+          "method" => verb,
+          "path" => "/apis/files.example/v1/namespaces/#{@namespace}/bundles/one/content",
+          "content_type" => "text/plain",
+          "response_file" => %{"name" => "result.bin", "media_type" => "application/octet-stream"}
+        },
+        options
+      )
+
+    target_request(context, kind, capability, operation, %{}, parameters)
+    |> Targets.clear_target_request!(actor: context.operator)
   end
 
   defp deployment_get_parameters do

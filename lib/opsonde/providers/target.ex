@@ -101,15 +101,18 @@ defmodule Opsonde.Providers.Target do
     def valid?(reference) when is_map(reference) do
       Enum.sort(Map.keys(reference)) == Enum.sort(@keys) and
         valid_id?(reference["id"]) and valid_id?(reference["target_id"]) and
-        bounded_text?(reference["name"], 255) and
-        bounded_text?(reference["media_type"], 256) and
-        not String.contains?(reference["media_type"], ["\r", "\n"]) and
+        valid_metadata?(reference["name"], reference["media_type"]) and
         is_integer(reference["size_bytes"]) and reference["size_bytes"] >= 0 and
         is_binary(reference["sha256"]) and
         Regex.match?(~r/\A[0-9a-f]{64}\z/, reference["sha256"])
     end
 
     def valid?(_reference), do: false
+
+    def valid_metadata?(name, media_type),
+      do:
+        bounded_text?(name, 255) and bounded_text?(media_type, 256) and
+          not String.contains?(media_type, ["\r", "\n"])
 
     def valid_set?(files) when is_map(files) and map_size(files) <= 100 do
       Enum.all?(files, fn {label, reference} ->
@@ -162,6 +165,22 @@ defmodule Opsonde.Providers.Target do
     @moduledoc false
     @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :abort]
     defstruct @enforce_keys
+
+    def valid_options?(nil), do: true
+
+    def valid_options?(%{"name" => name, "media_type" => media} = options),
+      do: map_size(options) == 2 and FileReference.valid_metadata?(name, media)
+
+    def valid_options?(_options), do: false
+
+    def options_schema do
+      %{
+        "type" => "object",
+        "properties" => Map.take(FileReference.schema()["properties"], ~w(name media_type)),
+        "required" => ~w(name media_type),
+        "additionalProperties" => false
+      }
+    end
   end
 
   defmodule AccessMethodProfile do

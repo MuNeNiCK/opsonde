@@ -349,7 +349,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          {:ok, method} <- Map.fetch(methods, verb),
          :ok <- relative_path(path),
          {:ok, headers} <- request_headers(Map.get(parameters, "headers", %{})),
-         :ok <- response_file(parameters["response_file"]),
+         true <- Target.FileWriter.valid_options?(parameters["response_file"]),
          {:ok, body} <- request_body(kind, method, parameters, request.files) do
       {:ok, method, path, headers, body}
     else
@@ -368,18 +368,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp allowed_keys(:read), do: ~w(method path headers response_file)
   defp allowed_keys(:write), do: ~w(method path headers body body_file response_file)
-
-  defp response_file(nil), do: :ok
-
-  defp response_file(%{"name" => name, "media_type" => media} = output) do
-    if map_size(output) == 2 and is_binary(name) and String.valid?(name) and
-         length(String.codepoints(name)) in 1..255 and is_binary(media) and String.valid?(media) and
-         length(String.codepoints(media)) in 1..256 and not String.contains?(media, ["\r", "\n"]),
-       do: :ok,
-       else: {:error, :invalid_response_file}
-  end
-
-  defp response_file(_output), do: {:error, :invalid_response_file}
 
   defp relative_path(path) when is_binary(path) and byte_size(path) in 1..@max_path_bytes do
     uri = URI.parse(path)
@@ -512,15 +500,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       "method" => %{"type" => "string", "enum" => methods},
       "path" => %{"type" => "string", "minLength" => 1, "maxLength" => @max_path_bytes},
       "headers" => %{"type" => "object", "maxProperties" => 8},
-      "response_file" => %{
-        "type" => "object",
-        "properties" => %{
-          "name" => %{"type" => "string", "minLength" => 1, "maxLength" => 255},
-          "media_type" => %{"type" => "string", "minLength" => 1, "maxLength" => 256}
-        },
-        "required" => ["name", "media_type"],
-        "additionalProperties" => false
-      }
+      "response_file" => Target.FileWriter.options_schema()
     }
 
     properties =
