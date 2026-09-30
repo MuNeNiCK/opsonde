@@ -15,6 +15,7 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       "Target" => target(),
       "TargetCategory" => target_category(),
       "TargetType" => target_type(),
+      "TargetMethodType" => target_method_type(),
       "TargetTypeCatalog" => target_type_catalog(),
       "TargetTypeCatalogResponse" => Schemas.data(ref("TargetTypeCatalog")),
       "TargetResponse" => Schemas.data(ref("Target")),
@@ -116,11 +117,26 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       type: :object,
       properties: %{
         categories: %Schema{type: :array, items: ref("TargetCategory")},
-        types: %Schema{type: :array, items: ref("TargetType")}
+        types: %Schema{type: :array, items: ref("TargetType")},
+        methods: %Schema{type: :array, items: ref("TargetMethodType")}
       },
-      required: [:categories, :types],
+      required: [:categories, :types, :methods],
       additionalProperties: false
     }
+  end
+
+  defp target_method_type do
+    object(
+      %{
+        adapter_type: string(1, 120),
+        label: string(1, 120),
+        protocol: %Schema{
+          type: :string,
+          enum: ~w(ssh http netconf restconf redfish ipmi kubernetes)
+        }
+      },
+      [:adapter_type, :label, :protocol]
+    )
   end
 
   defp create_target_request do

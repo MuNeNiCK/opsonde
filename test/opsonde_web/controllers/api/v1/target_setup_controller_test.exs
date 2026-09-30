@@ -57,7 +57,9 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   test "Target type catalog publishes custom choices per supported category", context do
     response = get_json("/api/v1/target-types", context.viewer_token)
     assert_operation_response(response)
-    %{"data" => %{"categories" => categories, "types" => types}} = json_response(response, 200)
+
+    %{"data" => %{"categories" => categories, "types" => types, "methods" => methods}} =
+      json_response(response, 200)
 
     assert length(categories) == 9
     assert Enum.any?(categories, &(&1["id"] == "storage"))
@@ -70,16 +72,103 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert by_id["custom-network-device"]["access_method_types"] == [
              "ssh",
              "netconf",
+             "restconf",
              "http-api"
            ]
 
     assert by_id["custom-os"]["category_id"] == "os"
-    assert by_id["bmc"]["access_method_types"] == ["bmc-redfish", "bmc-ipmi"]
+    assert by_id["custom-bmc"]["access_method_types"] == ["redfish", "ipmi"]
+
+    assert by_id["hpe-ilo"]["access_method_types"] == [
+             "redfish",
+             "ipmi",
+             "hpe-ilo-redfish",
+             "hpe-ilo-ipmi"
+           ]
+
+    assert by_id["dell-idrac"]["access_method_types"] == [
+             "redfish",
+             "ipmi",
+             "dell-idrac-redfish",
+             "dell-idrac-ipmi"
+           ]
+
     assert by_id["cisco_ios_xe"]["category_id"] == "network-device"
+    method_ids = Enum.map(methods, & &1["adapter_type"])
+
+    assert Enum.any?(
+             methods,
+             &(&1["adapter_type"] == "hpe-ilo-ipmi" and &1["protocol"] == "ipmi")
+           )
 
     for type <- types, adapter_type <- type["access_method_types"] do
       assert {:ok, adapter} = Registry.fetch(adapter_type, Providers.Target)
       assert %Providers.Target.AccessMethodProfile{} = adapter.access_method_profile()
+      assert adapter_type in method_ids
+    end
+  end
+
+  test "every published compatible Method binds through the same authenticated API", context do
+    %{"data" => catalog} =
+      get_json("/api/v1/target-types", context.admin_token) |> json_response(200)
+
+    # Registration seam only: remote check results are fixtures here. Wire/auth behavior
+    # is proved in each protocol adapter's separate connection tests.
+    providers =
+      for descriptor <- catalog["methods"], into: %{} do
+        endpoint =
+          if descriptor["protocol"] in ["ssh", "netconf"],
+            do: "ssh://device.example.test:22",
+            else:
+              if(descriptor["protocol"] == "ipmi",
+                do: "ipmi://device.example.test:623",
+                else: "https://device.example.test"
+              )
+
+        provider =
+          Providers.create_provider!(
+            descriptor["adapter_type"],
+            :target,
+            descriptor["adapter_type"],
+            %{"endpoint" => endpoint},
+            %{}, actor: context.admin)
+
+        checked =
+          Providers.record_provider_check!(provider, provider.revision, :passed, nil, nil,
+            authorize?: false
+          )
+
+        enabled = Providers.enable_provider!(checked, checked.revision, actor: context.admin)
+        {:ok, adapter} = Registry.fetch(descriptor["adapter_type"], Providers.Target)
+        {descriptor["adapter_type"], {enabled, endpoint, adapter.access_method_profile()}}
+      end
+
+    for type <- catalog["types"] do
+      target = create_target!(context.admin_token, type["id"], type["kind"], type["id"], nil)
+
+      for adapter_type <- type["access_method_types"] do
+        {provider, endpoint, profile} = Map.fetch!(providers, adapter_type)
+
+        method =
+          post_data!(
+            "/api/v1/access-methods",
+            %{
+              "access_method" => %{
+                "target_id" => target["id"],
+                "provider_id" => provider.id,
+                "name" => adapter_type,
+                "method" => profile.method,
+                "endpoint" => endpoint,
+                "provider_revision" => provider.revision,
+                "capabilities" => profile.capabilities
+              }
+            },
+            context.admin_token
+          )
+
+        assert method["target_id"] == target["id"]
+        assert method["provider_id"] == provider.id
+      end
     end
   end
 
@@ -152,7 +241,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
     assert %{"error" => %{"code" => "bad_request"}} = json_response(unknown_field, 400)
 
-    bmc = create_target!(context.admin_token, "bmc-http-mismatch", "management_plane", "bmc", nil)
+    bmc =
+      create_target!(
+        context.admin_token,
+        "bmc-http-mismatch",
+        "management_plane",
+        "custom-bmc",
+        nil
+      )
 
     wrong_target =
       post_json(
@@ -195,7 +291,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
         boundary["id"]
       )
 
-    bmc = create_target!(context.admin_token, "bmc-01", "management_plane", "bmc", boundary["id"])
+    bmc =
+      create_target!(
+        context.admin_token,
+        "bmc-01",
+        "management_plane",
+        "custom-bmc",
+        boundary["id"]
+      )
 
     ios_xe =
       create_target!(

@@ -30,7 +30,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     linux = target!(admin, provider, "linux-01", "host", "linux", "linux-ssh")
     vm = target!(admin, provider, "vm-01", "virtual_machine", "custom-vm", "vm-ssh")
-    bmc = target!(admin, provider, "bmc-01", "management_plane", "bmc", "bmc-redfish")
+    bmc = target!(admin, provider, "bmc-01", "management_plane", "custom-bmc", "redfish")
     kubernetes = target!(admin, provider, "cluster-01", "cluster", "kubernetes", "k8s-api")
 
     switch =

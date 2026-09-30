@@ -30,7 +30,7 @@ defmodule Opsonde.TargetsTest do
     ios_xe =
       create_target!(context.admin, "edge-01", "network_device", "cisco_ios_xe", boundary.id)
 
-    bmc = create_target!(context.admin, "bmc-01", "management_plane", "bmc", boundary.id)
+    bmc = create_target!(context.admin, "bmc-01", "management_plane", "custom-bmc", boundary.id)
 
     hypervisor =
       create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization", boundary.id)
@@ -94,7 +94,7 @@ defmodule Opsonde.TargetsTest do
 
     assert Enum.sort(Enum.map(Targets.list_targets!(actor: context.viewer), & &1.type_id)) ==
              Enum.sort(
-               ~w(bmc cisco_ios_xe custom-network-device custom-virtualization custom-vm kubernetes linux)
+               ~w(custom-bmc cisco_ios_xe custom-network-device custom-virtualization custom-vm kubernetes linux)
              )
 
     assert Enum.map(
@@ -288,7 +288,7 @@ defmodule Opsonde.TargetsTest do
   end
 
   test "relationships are directional and reject self-links", context do
-    bmc = create_target!(context.admin, "bmc-01", "management_plane", "bmc")
+    bmc = create_target!(context.admin, "bmc-01", "management_plane", "custom-bmc")
     hypervisor = create_target!(context.admin, "esxi-01", "hypervisor", "custom-virtualization")
     linux = create_target!(context.admin, "linux-01", "host", "linux")
     cluster = create_target!(context.admin, "cluster-01", "cluster", "kubernetes")
@@ -332,12 +332,12 @@ defmodule Opsonde.TargetsTest do
   end
 
   test "BMC Access Methods bind their checked Provider to a controller", context do
-    physical = create_target!(context.admin, "rack-host-01", "management_plane", "bmc")
+    physical = create_target!(context.admin, "rack-host-01", "management_plane", "custom-bmc")
     virtual = create_target!(context.admin, "vm-01", "virtual_machine", "custom-vm")
 
     for {adapter_type, method, endpoint} <- [
-          {"bmc-redfish", "redfish", "https://bmc.example.test:8443"},
-          {"bmc-ipmi", "ipmi", "ipmi://bmc.example.test:623"}
+          {"redfish", "redfish", "https://bmc.example.test:8443"},
+          {"ipmi", "ipmi", "ipmi://bmc.example.test:623"}
         ] do
       provider =
         Providers.create_provider!(

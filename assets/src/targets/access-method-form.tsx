@@ -42,8 +42,11 @@ export function AccessMethodForm({
       allowedTypes.includes(provider.adapter_type),
   );
   const provider = availableProviders.find((item) => item.id === providerId);
-  const isBMC = provider?.adapter_type.startsWith("bmc-") ?? false;
-  const fixedEndpoint = isBMC || provider?.adapter_type === "http-api";
+  const protocol = catalog.methods.find(
+    (method) => method.adapter_type === provider?.adapter_type,
+  )?.protocol;
+  const isBMC = protocol === "redfish" || protocol === "ipmi";
+  const fixedEndpoint = provider?.access_method_profile?.configuration_endpoint ?? false;
   const currentEndpoint =
     fixedEndpoint && typeof provider?.configuration.endpoint === "string"
       ? provider.configuration.endpoint

@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { ArrowLeft, Boxes, Cable, Database, Network, Plus, Server } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { ArrowLeft, Database, Plus, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiClient, apiData } from "@/api/client";
@@ -13,20 +13,10 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ProviderChoiceCard } from "@/providers/choice-card";
-import { targetAdapter, targetProviderChoice, targetProviderChoices } from "@/targets/adapters";
+import type { TargetTypeCatalog } from "@/targets/data";
 
-const presentations = {
-  linux: { icon: Server, title: "Linux", description: "targets.choiceLinux" },
-  bmc: {
-    icon: Server,
-    title: "BMC",
-    description: "targets.choiceBMC",
-  },
-  "cisco-ios-xe": { icon: Network, title: "Cisco IOS XE", description: "targets.choiceCisco" },
-  kubernetes: { icon: Boxes, title: "Kubernetes", description: "targets.choiceKubernetes" },
-  protocol: { icon: Cable, title: "Protocol access", description: "targets.choiceProtocol" },
-  netbox: { icon: Database, title: "NetBox", description: "targets.choiceNetBox" },
-} as const;
+type Choice = Pick<TargetTypeCatalog["types"][number], "id" | "label" | "access_method_types">;
+const netboxChoice: Choice = { id: "netbox", label: "NetBox", access_method_types: [] };
 
 function value(form: FormData, name: string) {
   const entry = form.get(name);
@@ -39,7 +29,41 @@ export function TargetConnectionCreatePage() {
   const { account } = useAuthentication();
   const navigate = useNavigate();
   const [error, setError] = useState("");
-  const choice = targetProviderChoice(family);
+  const [catalog, setCatalog] = useState<TargetTypeCatalog | null>(null);
+  const choice =
+    family === "netbox" ? netboxChoice : catalog?.types.find((type) => type.id === family);
+
+  useEffect(() => {
+    let active = true;
+    apiClient
+      .GET("/api/v1/target-types")
+      .then(apiData)
+      .then((response) => {
+        if (active) setCatalog(response.data);
+      })
+      .catch(() => {
+        if (active) setError(t("targets.requestFailed"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [t]);
+
+  if (!catalog)
+    return (
+      <div className="flex flex-1 items-center justify-center gap-2 p-6 text-muted-foreground">
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <Spinner />
+            {t("common.loading")}
+          </>
+        )}
+      </div>
+    );
 
   if (family && !choice) return <Navigate to="/targets/connections/new" replace />;
 
@@ -53,11 +77,11 @@ export function TargetConnectionCreatePage() {
           </Link>
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">
-          {choice ? presentations[choice.id].title : t("targets.chooseProviderType")}
+          {choice
+            ? t(`targets.typeLabels.${choice.id}`, { defaultValue: choice.label })
+            : t("targets.chooseProviderType")}
         </h1>
-        <p className="mt-2 text-muted-foreground">
-          {t(choice ? presentations[choice.id].description : "targets.chooseProviderDescription")}
-        </p>
+        <p className="mt-2 text-muted-foreground">{t("targets.chooseProviderDescription")}</p>
       </div>
 
       {error && (
@@ -71,7 +95,9 @@ export function TargetConnectionCreatePage() {
         </Alert>
       ) : choice ? (
         <TargetConnectionForm
+          key={choice.id}
           choice={choice}
+          catalog={catalog}
           onError={setError}
           onCreated={(checkPassed) =>
             void navigate("/targets/connections", {
@@ -82,15 +108,33 @@ export function TargetConnectionCreatePage() {
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {targetProviderChoices.map(({ id }) => {
-            const item = presentations[id];
+          {[...catalog.types, netboxChoice].map((item) => {
+            const category =
+              "category_id" in item
+                ? catalog.categories.find((category) => category.id === item.category_id)
+                : null;
             return (
               <ProviderChoiceCard
-                key={id}
-                to={`/targets/connections/new/${id}`}
-                title={item.title}
-                description={t(item.description)}
-                icon={item.icon}
+                key={item.id}
+                to={`/targets/connections/new/${item.id}`}
+                title={t(`targets.typeLabels.${item.id}`, { defaultValue: item.label })}
+                description={
+                  item.id === "netbox"
+                    ? t("targets.choiceNetBox")
+                    : item.access_method_types
+                        .map(
+                          (type) =>
+                            catalog.methods.find((method) => method.adapter_type === type)?.label ??
+                            type,
+                        )
+                        .join(" · ")
+                }
+                badge={
+                  category
+                    ? t(`targets.categoryLabels.${category.id}`, { defaultValue: category.label })
+                    : undefined
+                }
+                icon={item.id === "netbox" ? Database : Server}
               />
             );
           })}
@@ -102,18 +146,20 @@ export function TargetConnectionCreatePage() {
 
 function TargetConnectionForm({
   choice,
+  catalog,
   onCreated,
   onError,
 }: {
-  choice: NonNullable<ReturnType<typeof targetProviderChoice>>;
+  choice: Choice;
+  catalog: TargetTypeCatalog;
   onCreated: (checkPassed: boolean) => void;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
-  const [adapterType, setAdapterType] = useState<string>(choice.adapterTypes[0]);
+  const [adapterType, setAdapterType] = useState<string>(choice.access_method_types[0] ?? "");
   const [authMethod, setAuthMethod] = useState("password");
   const [pending, setPending] = useState(false);
-  const adapter = targetAdapter(adapterType);
+  const adapter = catalog.methods.find((method) => method.adapter_type === adapterType);
   const isNetBox = choice.id === "netbox";
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -125,7 +171,7 @@ function TargetConnectionForm({
       const checkPassed = isNetBox
         ? await createNetBox(form)
         : adapter
-          ? await createTarget(form, adapter.family)
+          ? await createTarget(form, adapter.protocol)
           : false;
       onCreated(checkPassed);
     } catch {
@@ -172,13 +218,13 @@ function TargetConnectionForm({
 
   async function createTarget(
     form: FormData,
-    family: "ssh" | "http" | "restconf" | "kubernetes" | "bmc-redfish" | "bmc-ipmi",
+    family: TargetTypeCatalog["methods"][number]["protocol"],
   ) {
     const endpoint = value(form, "endpoint");
     let configuration: Record<string, unknown>;
     let credentials: Record<string, unknown>;
 
-    if (family === "ssh") {
+    if (family === "ssh" || family === "netconf") {
       configuration = { host_key_fingerprints: { [endpoint]: value(form, "fingerprint") } };
       const legacyAlgorithms = value(form, "legacy_algorithms")
         .split(",")
@@ -199,7 +245,7 @@ function TargetConnectionForm({
     } else if (family === "restconf") {
       configuration = { ca_certificate: value(form, "ca_certificate") };
       credentials = { username: value(form, "username"), password: value(form, "password") };
-    } else if (family === "bmc-redfish") {
+    } else if (family === "redfish") {
       configuration = {
         endpoint,
         ca_certificate: value(form, "ca_certificate"),
@@ -207,12 +253,14 @@ function TargetConnectionForm({
       if (value(form, "system_path")) configuration.system_path = value(form, "system_path");
       if (value(form, "expected_uuid")) configuration.expected_uuid = value(form, "expected_uuid");
       credentials = { username: value(form, "username"), password: value(form, "password") };
-    } else if (family === "bmc-ipmi") {
+    } else if (family === "ipmi") {
       configuration = { endpoint };
       credentials = { username: value(form, "username"), password: value(form, "password") };
-    } else {
+    } else if (family === "kubernetes") {
       configuration = value(form, "namespace") ? { namespace: value(form, "namespace") } : {};
       credentials = { kubeconfig: value(form, "kubeconfig") };
+    } else {
+      throw new Error(t("targets.requestFailed"));
     }
 
     const response = apiData(
@@ -249,22 +297,25 @@ function TargetConnectionForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{presentations[choice.id].title}</CardTitle>
+        <CardTitle>
+          {t(`targets.typeLabels.${choice.id}`, { defaultValue: choice.label })}
+        </CardTitle>
         <CardDescription>{t("targets.secretDescription")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
           <Field label={t("targets.name")} name="name" required />
-          {choice.adapterTypes.length > 1 && (
+          {choice.access_method_types.length > 1 && (
             <div className="space-y-2">
               <Label htmlFor="target-adapter">{t("targets.connectionType")}</Label>
               <FormSelect
                 id="target-adapter"
                 value={adapterType}
                 onValueChange={(next) => next && setAdapterType(next)}
-                options={choice.adapterTypes.map((type) => ({
+                options={choice.access_method_types.map((type) => ({
                   value: type,
-                  label: targetAdapter(type)?.label ?? type,
+                  label:
+                    catalog.methods.find((method) => method.adapter_type === type)?.label ?? type,
                 }))}
               />
             </div>
@@ -277,28 +328,30 @@ function TargetConnectionForm({
                 label={t("targets.endpoint")}
                 name="endpoint"
                 placeholder={
-                  adapter?.family === "http"
-                    ? "https://service.example.com/health"
-                    : adapter?.family === "restconf" || adapter?.family === "bmc-redfish"
-                      ? "https://bmc.example.com:443"
-                      : adapter?.family === "bmc-ipmi"
+                  adapter?.protocol === "http"
+                    ? "https://service.example.com"
+                    : adapter?.protocol === "restconf" ||
+                        adapter?.protocol === "redfish" ||
+                        adapter?.protocol === "kubernetes"
+                      ? "https://device.example.com:443"
+                      : adapter?.protocol === "ipmi"
                         ? "ipmi://bmc.example.com:623"
                         : "ssh://host:22"
                 }
                 required
               />
-              {adapter?.family === "ssh" && (
+              {(adapter?.protocol === "ssh" || adapter?.protocol === "netconf") && (
                 <SSHFields
                   adapterType={adapterType}
                   authMethod={authMethod}
                   setAuthMethod={setAuthMethod}
                 />
               )}
-              {adapter?.family === "restconf" && <RESTCONFFields />}
-              {adapter?.family === "http" && <HTTPFields />}
-              {adapter?.family === "bmc-redfish" && <RedfishFields />}
-              {adapter?.family === "bmc-ipmi" && <IPMIFields />}
-              {adapter?.family === "kubernetes" && <KubernetesFields />}
+              {adapter?.protocol === "restconf" && <RESTCONFFields />}
+              {adapter?.protocol === "http" && <HTTPFields />}
+              {adapter?.protocol === "redfish" && <RedfishFields />}
+              {adapter?.protocol === "ipmi" && <IPMIFields />}
+              {adapter?.protocol === "kubernetes" && <KubernetesFields />}
             </>
           )}
           <Button type="submit" className="md:col-span-2 md:w-fit" disabled={pending}>

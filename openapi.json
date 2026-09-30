@@ -1087,12 +1087,16 @@
           "access_method_profile": {
             "additionalProperties": false,
             "properties": {
+              "configuration_endpoint": {
+                "type": "boolean"
+              },
               "method": {
                 "type": "string"
               }
             },
             "required": [
-              "method"
+              "method",
+              "configuration_endpoint"
             ],
             "type": "object"
           },
@@ -2337,6 +2341,38 @@
         ],
         "type": "object"
       },
+      "TargetMethodType": {
+        "properties": {
+          "adapter_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "protocol": {
+            "enum": [
+              "ssh",
+              "http",
+              "netconf",
+              "restconf",
+              "redfish",
+              "ipmi",
+              "kubernetes"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "adapter_type",
+          "label",
+          "protocol"
+        ],
+        "type": "object"
+      },
       "EvidencePage": {
         "additionalProperties": false,
         "properties": {
@@ -2853,6 +2889,12 @@
             },
             "type": "array"
           },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/TargetMethodType"
+            },
+            "type": "array"
+          },
           "types": {
             "items": {
               "$ref": "#/components/schemas/TargetType"
@@ -2862,7 +2904,8 @@
         },
         "required": [
           "categories",
-          "types"
+          "types",
+          "methods"
         ],
         "type": "object"
       },

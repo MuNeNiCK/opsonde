@@ -1044,7 +1044,7 @@ const ja = {
         "power-facility": "電源・設備",
       },
       typeLabels: {
-        bmc: "BMC",
+        "custom-bmc": "カスタムBMC",
         "hpe-ilo": "HPE iLO",
         "dell-idrac": "Dell iDRAC",
         "custom-physical-server": "カスタム物理サーバ",
@@ -1057,7 +1057,7 @@ const ja = {
         kubernetes: "Kubernetes",
       },
       typeDescriptions: {
-        bmc: "RedfishまたはIPMIで管理するBMCを登録します。",
+        "custom-bmc": "RedfishまたはIPMIで管理するBMCを登録します。",
         "hpe-ilo": "HPE iLOの管理口を登録します。",
         "dell-idrac": "Dell iDRACの管理口を登録します。",
         "custom-physical-server": "物理サーバを登録します。",

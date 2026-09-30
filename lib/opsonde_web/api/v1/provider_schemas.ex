@@ -75,9 +75,10 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
   defp access_method_profile do
     object(
       %{
-        method: %Schema{type: :string}
+        method: %Schema{type: :string},
+        configuration_endpoint: %Schema{type: :boolean}
       },
-      [:method],
+      [:method, :configuration_endpoint],
       false
     )
   end

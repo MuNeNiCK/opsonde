@@ -219,7 +219,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       Providers.create_provider!(
         "service-root-only",
         :target,
-        "bmc-redfish",
+        "redfish",
         %{
           "endpoint" => context.method.endpoint,
           "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
@@ -738,13 +738,13 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       )
 
     target =
-      Targets.create_target!("etag-host", "management_plane", "bmc", %{}, nil, actor: admin)
+      Targets.create_target!("etag-host", "management_plane", "custom-bmc", %{}, nil, actor: admin)
 
     provider =
       Providers.create_provider!(
         "etag-bmc",
         :target,
-        "bmc-redfish",
+        "redfish",
         %{
           "endpoint" => endpoint,
           "system_path" => @system_path,

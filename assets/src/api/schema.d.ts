@@ -1684,6 +1684,7 @@ export interface components {
         };
         Provider: {
             access_method_profile?: {
+                configuration_endpoint: boolean;
                 method: string;
             };
             adapter_type: string;
@@ -2015,6 +2016,12 @@ export interface components {
                 valid_until?: string | null;
             };
         };
+        TargetMethodType: {
+            adapter_type: string;
+            label: string;
+            /** @enum {string} */
+            protocol: "ssh" | "http" | "netconf" | "restconf" | "redfish" | "ipmi" | "kubernetes";
+        };
         EvidencePage: {
             data: components["schemas"]["Evidence"][];
             page: components["schemas"]["Page"];
@@ -2143,6 +2150,7 @@ export interface components {
         };
         TargetTypeCatalog: {
             categories: components["schemas"]["TargetCategory"][];
+            methods: components["schemas"]["TargetMethodType"][];
             types: components["schemas"]["TargetType"][];
         };
         SignalWebhookPayload: {

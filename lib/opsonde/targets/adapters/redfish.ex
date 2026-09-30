@@ -29,7 +29,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Adapter
-  def type, do: "bmc-redfish"
+  def type, do: "redfish"
 
   @impl Opsonde.Providers.Adapter
   def kind, do: :target

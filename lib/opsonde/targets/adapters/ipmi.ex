@@ -19,7 +19,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   @impl Opsonde.Providers.Adapter
-  def type, do: "bmc-ipmi"
+  def type, do: "ipmi"
 
   @impl Opsonde.Providers.Adapter
   def kind, do: :target

@@ -37,12 +37,24 @@ defmodule OpsondeCLI.TargetAPITest do
   end
 
   test "CLI registers both BMC Methods through the authenticated API", context do
-    catalog = capture_io(fn -> assert CLI.run(["target-type", "list"], context.runtime) == 0 end)
-    assert catalog =~ "bmc-redfish"
+    catalog =
+      capture_io(fn -> assert CLI.run(["target-type", "list"], context.runtime) == 0 end)
+      |> Jason.decode!()
+      |> Map.fetch!("data")
+
+    assert Enum.any?(
+             catalog["methods"],
+             &(&1["adapter_type"] == "hpe-ilo-ipmi" and &1["protocol"] == "ipmi")
+           )
+
+    assert Enum.any?(
+             catalog["types"],
+             &(&1["id"] == "custom-bmc" and &1["access_method_types"] == ["redfish", "ipmi"])
+           )
 
     target =
       capture_io(
-        ~s({"name":"rack-bmc","kind":"management_plane","type_id":"bmc","facts":{}}),
+        ~s({"name":"rack-bmc","kind":"management_plane","type_id":"custom-bmc","facts":{}}),
         fn ->
           assert CLI.run(["target", "create", "--input", "-"], context.runtime) == 0
         end
@@ -51,8 +63,8 @@ defmodule OpsondeCLI.TargetAPITest do
       |> get_in(["data"])
 
     for {adapter_type, method_name, endpoint} <- [
-          {"bmc-redfish", "redfish", "https://bmc.example.test:8443"},
-          {"bmc-ipmi", "ipmi", "ipmi://bmc.example.test:623"}
+          {"redfish", "redfish", "https://bmc.example.test:8443"},
+          {"ipmi", "ipmi", "ipmi://bmc.example.test:623"}
         ] do
       provider =
         Providers.create_provider!(

@@ -35,7 +35,8 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
     with {:ok, adapter} <- Registry.fetch(type, Providers.Target),
          %AccessMethodProfile{} = profile <- adapter.access_method_profile() do
       %{
-        method: profile.method
+        method: profile.method,
+        configuration_endpoint: profile.configuration_endpoint?
       }
     else
       _unrestricted -> nil

@@ -1070,7 +1070,7 @@ const en = {
         "power-facility": "Power / facility",
       },
       typeLabels: {
-        bmc: "BMC",
+        "custom-bmc": "Custom BMC",
         "hpe-ilo": "HPE iLO",
         "dell-idrac": "Dell iDRAC",
         "custom-physical-server": "Custom physical server",
@@ -1083,7 +1083,7 @@ const en = {
         kubernetes: "Kubernetes",
       },
       typeDescriptions: {
-        bmc: "Register a BMC managed with Redfish or IPMI.",
+        "custom-bmc": "Register a BMC managed with Redfish or IPMI.",
         "hpe-ilo": "Register an HPE iLO management endpoint.",
         "dell-idrac": "Register a Dell iDRAC management endpoint.",
         "custom-physical-server": "Register a physical server.",

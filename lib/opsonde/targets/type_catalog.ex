@@ -1,6 +1,24 @@
 defmodule Opsonde.Targets.TypeCatalog do
   @moduledoc false
 
+  @methods [
+    %{adapter_type: "ssh", label: "SSH", protocol: "ssh"},
+    %{adapter_type: "http-api", label: "HTTP API", protocol: "http"},
+    %{adapter_type: "netconf", label: "NETCONF", protocol: "netconf"},
+    %{adapter_type: "restconf", label: "RESTCONF", protocol: "restconf"},
+    %{adapter_type: "redfish", label: "Redfish", protocol: "redfish"},
+    %{adapter_type: "ipmi", label: "IPMI (RMCP+)", protocol: "ipmi"},
+    %{adapter_type: "kubernetes-api", label: "Kubernetes API", protocol: "kubernetes"},
+    %{adapter_type: "linux-ssh", label: "Linux SSH", protocol: "ssh"},
+    %{adapter_type: "ios-xe-ssh", label: "Cisco IOS XE SSH/CLI", protocol: "ssh"},
+    %{adapter_type: "ios-xe-netconf", label: "Cisco IOS XE NETCONF", protocol: "netconf"},
+    %{adapter_type: "ios-xe-restconf", label: "Cisco IOS XE RESTCONF", protocol: "restconf"},
+    %{adapter_type: "hpe-ilo-redfish", label: "HPE iLO Redfish", protocol: "redfish"},
+    %{adapter_type: "hpe-ilo-ipmi", label: "HPE iLO IPMI", protocol: "ipmi"},
+    %{adapter_type: "dell-idrac-redfish", label: "Dell iDRAC Redfish", protocol: "redfish"},
+    %{adapter_type: "dell-idrac-ipmi", label: "Dell iDRAC IPMI", protocol: "ipmi"}
+  ]
+
   @categories [
     %{id: "physical-server", label: "Physical server"},
     %{id: "network-device", label: "Network device"},
@@ -15,25 +33,25 @@ defmodule Opsonde.Targets.TypeCatalog do
 
   @types [
     %{
-      id: "bmc",
-      label: "BMC",
+      id: "custom-bmc",
+      label: "Custom BMC",
       category_id: "physical-server",
       kind: "management_plane",
-      access_method_types: ["bmc-redfish", "bmc-ipmi"]
+      access_method_types: ["redfish", "ipmi"]
     },
     %{
       id: "hpe-ilo",
       label: "HPE iLO",
       category_id: "physical-server",
       kind: "management_plane",
-      access_method_types: ["bmc-redfish", "bmc-ipmi"]
+      access_method_types: ["redfish", "ipmi", "hpe-ilo-redfish", "hpe-ilo-ipmi"]
     },
     %{
       id: "dell-idrac",
       label: "Dell iDRAC",
       category_id: "physical-server",
       kind: "management_plane",
-      access_method_types: ["bmc-redfish", "bmc-ipmi"]
+      access_method_types: ["redfish", "ipmi", "dell-idrac-redfish", "dell-idrac-ipmi"]
     },
     %{
       id: "custom-physical-server",
@@ -52,6 +70,7 @@ defmodule Opsonde.Targets.TypeCatalog do
         "ios-xe-netconf",
         "ios-xe-restconf",
         "netconf",
+        "restconf",
         "ssh",
         "http-api"
       ]
@@ -61,7 +80,7 @@ defmodule Opsonde.Targets.TypeCatalog do
       label: "Custom network device",
       category_id: "network-device",
       kind: "network_device",
-      access_method_types: ["ssh", "netconf", "http-api"]
+      access_method_types: ["ssh", "netconf", "restconf", "http-api"]
     },
     %{
       id: "linux",
@@ -100,7 +119,7 @@ defmodule Opsonde.Targets.TypeCatalog do
     }
   ]
 
-  def snapshot, do: %{categories: @categories, types: @types}
+  def snapshot, do: %{categories: @categories, types: @types, methods: @methods}
   def fetch(id) when is_binary(id), do: Enum.find(@types, &(&1.id == id))
   def fetch(_id), do: nil
 
