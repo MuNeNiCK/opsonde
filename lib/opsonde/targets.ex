@@ -183,6 +183,8 @@ defmodule Opsonde.Targets do
       define :revoke_artifact, action: :revoke, args: [:id]
       define :expire_artifact, action: :expire, args: [:id]
       define :read_artifact_chunk, action: :chunk, args: [:id, :target_id, :offset]
+      define :artifact_reference, action: :reference, args: [:id, :target_id]
+      define :read_bound_artifact_chunk, action: :bound_chunk, args: [:reference, :offset]
       define :create_artifact_record, action: :create_record
       define :record_artifact_state, action: :record_state
 

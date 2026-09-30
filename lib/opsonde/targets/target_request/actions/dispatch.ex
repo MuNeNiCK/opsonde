@@ -22,6 +22,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
     with {:ok, current_actor} <- current_actor(actor),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
+         :ok <- admit_files(request, current_actor),
          :ok <- classify(request, context) do
       {:ok, build_clearance(current_actor, request, context)}
     end
@@ -35,10 +36,12 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
          request <- request_from_clearance(clearance),
          :ok <- validate_request(request),
          {:ok, context} <- resolve(request),
+         :ok <- admit_files(request, current_actor),
          :ok <- classify(request, context),
          :ok <- validate_authority(request),
          :ok <- current_provider(context.access_method, clearance) do
-      invoke(operation, current_actor, context.access_method, clearance, arguments.invocation)
+      invocation = bind_file_reader(arguments.invocation, current_actor, clearance)
+      invoke(operation, current_actor, context.access_method, clearance, invocation)
     end
   end
 
@@ -72,13 +75,16 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   end
 
   defp classify(request, %{access_method: method}) do
+    {:ok, parameters, files} = ProviderTarget.FileReference.split(request.parameters)
+
     input = %ProviderTarget.MethodRequest{
       provider_revision: method.provider_revision,
       connection: %ProviderTarget.Connection{endpoint: method.endpoint},
       capability: request.capability,
       operation: request.operation,
       selectors: request.selectors,
-      parameters: request.parameters
+      parameters: parameters,
+      files: files
     }
 
     expected = if request.kind == :effect, do: :effect, else: :observation
@@ -142,6 +148,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   end
 
   defp invoke(:observe, actor, method, clearance, invocation) do
+    {:ok, parameters, files} = ProviderTarget.FileReference.split(clearance.parameters)
+
     request = %ProviderTarget.ObservationRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -154,7 +162,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       authorization_digest: clearance.digest,
       authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
-      parameters: clearance.parameters,
+      parameters: parameters,
+      files: files,
       max_attempts: clearance.max_attempts
     }
 
@@ -165,6 +174,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   end
 
   defp invoke(:effect, actor, method, clearance, invocation) do
+    {:ok, parameters, files} = ProviderTarget.FileReference.split(clearance.parameters)
+
     request = %ProviderTarget.EffectRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -177,7 +188,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       authorization_digest: clearance.digest,
       authority_mode: clearance.authority_mode,
       selectors: clearance.selectors,
-      parameters: clearance.parameters,
+      parameters: parameters,
+      files: files,
       operation_id: clearance.operation_id,
       idempotency_key: clearance.idempotency_key
     }
@@ -189,6 +201,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   end
 
   defp invoke(:verify, actor, method, clearance, invocation) do
+    {:ok, parameters, files} = ProviderTarget.FileReference.split(clearance.parameters)
+
     request = %ProviderTarget.VerificationRequest{
       provider_revision: clearance.provider_revision,
       target_id: clearance.target_id,
@@ -200,7 +214,8 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       operation: clearance.operation,
       authorization_digest: clearance.digest,
       selectors: clearance.selectors,
-      parameters: clearance.parameters,
+      parameters: parameters,
+      files: files,
       operation_id: clearance.operation_id,
       reference: clearance.reference,
       expected: clearance.expected
@@ -211,6 +226,54 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       authorize?: false
     )
   end
+
+  defp admit_files(request, actor) do
+    with {:ok, _parameters, files} <- ProviderTarget.FileReference.split(request.parameters) do
+      Enum.reduce_while(files, :ok, fn {_label, reference}, :ok ->
+        with true <- reference["target_id"] == request.target_id,
+             {:ok, ^reference} <-
+               Targets.artifact_reference(reference["id"], request.target_id, actor: actor) do
+          {:cont, :ok}
+        else
+          _ -> {:halt, unavailable_file()}
+        end
+      end)
+    else
+      _ -> unavailable_file()
+    end
+  end
+
+  defp bind_file_reader(invocation, actor, clearance) do
+    {:ok, _parameters, files} = ProviderTarget.FileReference.split(clearance.parameters)
+
+    Map.put(invocation, :file_reader, fn label, offset ->
+      read_file(files, actor, invocation, label, offset)
+    end)
+  end
+
+  defp read_file(files, actor, invocation, label, offset) do
+    with false <- cancelled?(invocation),
+         {:ok, current_actor} <- current_actor(actor),
+         {:ok, reference} <- Map.fetch(files, label),
+         {:ok, bytes} <-
+           Targets.read_bound_artifact_chunk(reference, offset, actor: current_actor) do
+      {:ok, bytes}
+    else
+      true -> {:error, request_error(:cancelled, "Target invocation was cancelled")}
+      {:error, %RequestError{} = error} -> {:error, error}
+      _ -> unavailable_file()
+    end
+  rescue
+    _ -> unavailable_file()
+  catch
+    _, _ -> unavailable_file()
+  end
+
+  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback.()
+  defp cancelled?(_invocation), do: false
+
+  defp unavailable_file,
+    do: {:error, request_error(:invalid_file, "Target file reference is invalid or unavailable")}
 
   defp validate_request(%Request{} = request) do
     cond do

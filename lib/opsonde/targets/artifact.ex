@@ -93,6 +93,20 @@ defmodule Opsonde.Targets.Artifact do
       run {Lifecycle, operation: :chunk}
     end
 
+    action :reference, :map do
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :target_id, :uuid, allow_nil?: false
+      run {Lifecycle, operation: :reference}
+    end
+
+    action :bound_chunk, :binary do
+      transaction? false
+      argument :reference, :map, allow_nil?: false, sensitive?: true
+      argument :offset, :integer, allow_nil?: false, constraints: [min: 0]
+      run {Lifecycle, operation: :bound_chunk}
+    end
+
     action :revoke, :struct do
       constraints instance_of: __MODULE__
       transaction? false
@@ -140,6 +154,8 @@ defmodule Opsonde.Targets.Artifact do
              :append,
              :complete,
              :chunk,
+             :reference,
+             :bound_chunk,
              :revoke
            ]) do
       authorize_if actor_attribute_equals(:role, :admin)

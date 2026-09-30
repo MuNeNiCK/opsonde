@@ -89,6 +89,48 @@ defmodule Opsonde.Providers.Target do
     @type t :: %__MODULE__{endpoint: String.t()}
   end
 
+  defmodule FileReference do
+    @moduledoc false
+    @fields ~w(id target_id name media_type size_bytes sha256)a
+    @keys Enum.map(@fields, &Atom.to_string/1)
+
+    # Pure wire value shared by storage and protocol ports; it performs no I/O.
+    def from_metadata(metadata),
+      do: Map.new(@fields, &{Atom.to_string(&1), Map.fetch!(metadata, &1)})
+
+    def valid?(reference) when is_map(reference) do
+      Enum.sort(Map.keys(reference)) == Enum.sort(@keys) and
+        valid_id?(reference["id"]) and valid_id?(reference["target_id"]) and
+        bounded_text?(reference["name"], 255) and
+        bounded_text?(reference["media_type"], 256) and
+        not String.contains?(reference["media_type"], ["\r", "\n"]) and
+        is_integer(reference["size_bytes"]) and reference["size_bytes"] >= 0 and
+        is_binary(reference["sha256"]) and
+        Regex.match?(~r/\A[0-9a-f]{64}\z/, reference["sha256"])
+    end
+
+    def valid?(_reference), do: false
+
+    def valid_set?(files) when is_map(files) and map_size(files) <= 100 do
+      Enum.all?(files, fn {label, reference} ->
+        is_binary(label) and Regex.match?(~r/\A[A-Za-z0-9][A-Za-z0-9_.-]{0,119}\z/, label) and
+          valid?(reference)
+      end)
+    end
+
+    def valid_set?(_files), do: false
+
+    def split(parameters) do
+      {files, parameters} = Map.pop(parameters, "files", %{})
+      if valid_set?(files), do: {:ok, parameters, files}, else: {:error, :invalid_files}
+    end
+
+    defp valid_id?(id), do: is_binary(id) and match?({:ok, ^id}, Ecto.UUID.cast(id))
+
+    defp bounded_text?(value, maximum),
+      do: is_binary(value) and byte_size(value) in 1..maximum and String.valid?(value)
+  end
+
   defmodule AccessMethodProfile do
     @moduledoc false
     @enforce_keys [:method, :capabilities]
@@ -117,7 +159,7 @@ defmodule Opsonde.Providers.Target do
       :selectors,
       :parameters
     ]
-    defstruct @enforce_keys
+    defstruct @enforce_keys ++ [files: %{}]
   end
 
   defmodule RequestClassification do
@@ -145,6 +187,7 @@ defmodule Opsonde.Providers.Target do
                 [
                   selectors: %{},
                   parameters: %{},
+                  files: %{},
                   max_attempts: 1,
                   authority_mode: nil
                 ]
@@ -180,6 +223,7 @@ defmodule Opsonde.Providers.Target do
                 [
                   selectors: %{},
                   parameters: %{},
+                  files: %{},
                   authority_mode: nil
                 ]
 
@@ -213,6 +257,7 @@ defmodule Opsonde.Providers.Target do
                 [
                   selectors: %{},
                   parameters: %{},
+                  files: %{},
                   reference: nil,
                   expected: %{}
                 ]
@@ -298,7 +343,8 @@ defmodule Opsonde.Providers.Target do
       bounded_binary?(request.connection.endpoint, 1_024) and
       bounded_binary?(request.capability, 120) and
       bounded_binary?(request.operation, 120) and
-      bounded_map?(request.selectors) and bounded_map?(request.parameters)
+      bounded_map?(request.selectors) and bounded_map?(request.parameters) and
+      FileReference.valid_set?(request.files)
   end
 
   defp bounded_binary?(value, maximum),

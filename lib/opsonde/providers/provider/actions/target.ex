@@ -155,7 +155,8 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       capability: request.capability,
       operation: request.operation,
       selectors: request.selectors,
-      parameters: request.parameters
+      parameters: request.parameters,
+      files: request.files
     }
   end
 

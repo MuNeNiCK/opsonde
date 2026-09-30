@@ -87,6 +87,45 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert Targets.get_artifact!(upload.id, actor: context.admin).sha256 == digest
   end
 
+  test "a ready file has one exact reference for authorized operation reads", context do
+    upload = begin_upload(context, "operation-file")
+
+    assert {:error, _} =
+             Targets.artifact_reference(upload.id, context.target.id, actor: context.admin)
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
+    Targets.complete_artifact!(upload.id, actor: context.admin)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.admin)
+
+    assert reference == %{
+             "id" => upload.id,
+             "target_id" => context.target.id,
+             "name" => "device.bin",
+             "media_type" => "application/octet-stream",
+             "size_bytes" => 5,
+             "sha256" => "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+           }
+
+    assert Targets.read_bound_artifact_chunk!(reference, 0, actor: context.admin) ==
+             <<255, 0, 1, 2, 255>>
+
+    for {key, value} <- [
+          {"sha256", String.duplicate("0", 64)},
+          {"size_bytes", 6},
+          {"target_id", Ash.UUID.generate()},
+          {"media_type", "text/plain"},
+          {"name", "replacement.bin"}
+        ] do
+      assert {:error, _} =
+               Targets.read_bound_artifact_chunk(Map.put(reference, key, value), 0,
+                 actor: context.admin
+               )
+    end
+
+    Targets.revoke_artifact!(upload.id, actor: context.admin)
+    assert {:error, _} = Targets.read_bound_artifact_chunk(reference, 0, actor: context.admin)
+  end
+
   test "lost acknowledgements can resume the same upload without replacing bytes", context do
     upload = begin_upload(context, "resume-upload")
     assert begin_upload(context, "resume-upload").id == upload.id

@@ -5,6 +5,7 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
 
   alias Opsonde.Targets
   alias Opsonde.Targets.{Artifact, ArtifactChunk, Target}
+  alias Opsonde.Providers.Target.FileReference
 
   @impl true
   def run(input, opts, context) do
@@ -16,6 +17,8 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
       :revoke -> locked(input.arguments.id, context.actor, &dispose(&1, :revoked), usable?: false)
       :expire -> locked(input.arguments.id, nil, &expire/1, usable?: false, authorize?: false)
       :chunk -> read_chunk(input.arguments, context.actor)
+      :reference -> reference(input.arguments, context.actor)
+      :bound_chunk -> bound_chunk(input.arguments, context.actor)
     end
   end
 
@@ -188,13 +191,41 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
 
   defp read_chunk(arguments, actor) do
     with {:ok, artifact} <- Targets.get_artifact(arguments.id, actor: actor),
-         true <-
-           artifact.target_id == arguments.target_id ||
-             invalid(:target_id, "Artifact does not belong to this Target"),
-         true <- artifact.status == :ready || invalid(:id, "Artifact upload is incomplete"),
-         :ok <- unexpired(artifact) do
+         :ok <- ready_for_target(artifact, arguments.target_id) do
       read_verified_chunk(artifact, arguments.offset)
     end
+  end
+
+  defp reference(arguments, actor) do
+    with {:ok, artifact} <- Targets.get_artifact(arguments.id, actor: actor),
+         :ok <- ready_for_target(artifact, arguments.target_id) do
+      {:ok, FileReference.from_metadata(artifact)}
+    end
+  end
+
+  defp bound_chunk(%{reference: reference, offset: offset}, actor) do
+    if FileReference.valid?(reference) do
+      locked(reference["id"], actor, fn artifact ->
+        with :ok <- ready_for_target(artifact, reference["target_id"]),
+             true <-
+               FileReference.from_metadata(artifact) == reference ||
+                 invalid(:reference, "File reference does not match the stored content"),
+             {:ok, bytes} <- read_verified_chunk(artifact, offset) do
+          bytes
+        end
+      end)
+    else
+      invalid(:reference, "File reference is invalid")
+    end
+  end
+
+  defp ready_for_target(artifact, target_id) do
+    with true <-
+           artifact.target_id == target_id ||
+             invalid(:target_id, "Artifact does not belong to this Target"),
+         true <- artifact.status == :ready || invalid(:id, "Artifact is not ready"),
+         :ok <- unexpired(artifact),
+         do: :ok
   end
 
   defp read_verified_chunk(%{size_bytes: 0}, 0), do: {:ok, <<>>}

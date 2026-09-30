@@ -252,6 +252,254 @@ defmodule Opsonde.TargetRequestTest do
     refute_receive {:effect, _, _}
   end
 
+  test "exact clearance supplies an authorized reader for immutable file bytes", context do
+    file = operation_file!(context)
+    base = file_request(context, file)
+    clearance = Targets.clear_target_request!(base, actor: context.operator)
+    assert clearance.parameters == base.parameters
+
+    response = %ProviderTarget.Observation{facts: %{}, observed_at: DateTime.utc_now()}
+
+    invocation = %{
+      test_pid: self(),
+      file_reader: fn _, _ -> flunk("caller supplied file authority was trusted") end,
+      respond: fn invocation ->
+        assert {:ok, <<255, 0, 1, 2, 255>>} = invocation.file_reader.("payload", 0)
+        assert {:error, _} = invocation.file_reader.("unbound", 0)
+        assert {:error, _} = invocation.file_reader.("payload", -1)
+        {:ok, response}
+      end
+    }
+
+    assert ^response =
+             Targets.dispatch_target_observation!(clearance, invocation, actor: context.operator)
+
+    assert_receive {:observe, _, dispatched}
+    assert dispatched.files == %{"payload" => file}
+    assert dispatched.parameters == %{"command" => "inspect file"}
+  end
+
+  test "file scope, ownership and metadata are checked before clearance and dispatch", context do
+    file = operation_file!(context)
+    base = file_request(context, file)
+    clearance = Targets.clear_target_request!(base, actor: context.operator)
+
+    for changed <- [
+          Map.put(file, "target_id", Ash.UUID.generate()),
+          Map.put(file, "sha256", String.duplicate("0", 64)),
+          Map.put(file, "size_bytes", 6),
+          Map.put(file, "path", "/tmp/not-file-authority")
+        ] do
+      assert {:error, error} =
+               Targets.clear_target_request(file_request(context, changed),
+                 actor: context.operator
+               )
+
+      assert request_error(error).category == :invalid_file
+    end
+
+    other_operator =
+      Accounts.create_user!(
+        "other-operator@example.com",
+        @password,
+        :operator,
+        actor: context.admin
+      )
+
+    assert {:error, error} = Targets.clear_target_request(base, actor: other_operator)
+    assert request_error(error).category == :invalid_file
+
+    assert {:error, error} =
+             Targets.dispatch_target_observation(clearance, invocation(flunk_response()),
+               actor: other_operator
+             )
+
+    assert request_error(error).category == :clearance_mismatch
+
+    tampered = %{
+      clearance
+      | parameters: put_in(base.parameters, ["files", "payload", "size_bytes"], 6)
+    }
+
+    assert {:error, error} =
+             Targets.dispatch_target_observation(
+               tampered,
+               invocation(flunk_response()),
+               actor: context.operator
+             )
+
+    assert request_error(error).category == :clearance_mismatch
+
+    Targets.revoke_artifact!(file["id"], actor: context.operator)
+
+    assert {:error, error} =
+             Targets.dispatch_target_observation(
+               clearance,
+               invocation(flunk_response()),
+               actor: context.operator
+             )
+
+    assert request_error(error).category == :invalid_file
+    refute_receive {:observe, _, _}
+  end
+
+  test "effect and verification ports retain the same bound file identity", context do
+    file = operation_file!(context)
+
+    for {kind, capability, operation, response, dispatch} <- [
+          {:effect, "effect.command", "command.execute",
+           %ProviderTarget.EffectResult{status: :applied}, &Targets.dispatch_target_effect/3},
+          {:verification, "observe.command", "filesystem.verify",
+           %ProviderTarget.Verification{status: :verified, observed_at: DateTime.utc_now()},
+           &Targets.dispatch_target_verification/3}
+        ] do
+      input =
+        request(context.linux, context.ssh, kind, :full_access,
+          capability: capability,
+          operation: operation,
+          parameters: %{"files" => %{"payload" => file}}
+        )
+
+      clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+      invocation = %{
+        test_pid: self(),
+        respond: fn invocation ->
+          assert {:ok, <<255, 0, 1, 2, 255>>} = invocation.file_reader.("payload", 0)
+          {:ok, response}
+        end
+      }
+
+      assert {:ok, ^response} =
+               dispatch.(clearance, invocation, actor: context.operator, authorize?: false)
+
+      assert_receive {_, _, dispatched}
+      assert dispatched.parameters == %{}
+      assert dispatched.files == %{"payload" => file}
+    end
+  end
+
+  test "a file reader rechecks cancellation, current role and revocation at each read", context do
+    file = operation_file!(context)
+
+    clearance =
+      Targets.clear_target_request!(file_request(context, file), actor: context.operator)
+
+    response = %ProviderTarget.Observation{facts: %{}, observed_at: DateTime.utc_now()}
+
+    invocation = %{
+      cancelled?: fn -> Process.get(:cancel_file_read, false) end,
+      respond: fn invocation ->
+        assert {:ok, <<255, 0, 1, 2, 255>>} = invocation.file_reader.("payload", 0)
+        Process.put(:cancel_file_read, true)
+
+        assert {:error, %RequestError{category: :cancelled}} =
+                 invocation.file_reader.("payload", 0)
+
+        Process.delete(:cancel_file_read)
+        Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+
+        assert {:error, %RequestError{category: :forbidden}} =
+                 invocation.file_reader.("payload", 0)
+
+        Accounts.change_role!(context.operator, :operator, actor: context.admin)
+        assert {:ok, <<255, 0, 1, 2, 255>>} = invocation.file_reader.("payload", 0)
+        Targets.revoke_artifact!(file["id"], actor: context.admin)
+
+        assert {:error, %RequestError{category: :invalid_file}} =
+                 invocation.file_reader.("payload", 0)
+
+        {:ok, response}
+      end
+    }
+
+    assert ^response =
+             Targets.dispatch_target_observation!(clearance, invocation, actor: context.operator)
+  end
+
+  test "unfinished and expired files cannot enter a cleared request", context do
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{lifetime_seconds: 1})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    upload =
+      Targets.begin_artifact!(
+        context.linux.id,
+        "device.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "unfinished",
+        actor: context.operator
+      )
+
+    incomplete = %{
+      "id" => upload.id,
+      "target_id" => context.linux.id,
+      "name" => "device.bin",
+      "media_type" => "application/octet-stream",
+      "size_bytes" => 5,
+      "sha256" => upload.expected_sha256
+    }
+
+    assert {:error, error} =
+             Targets.clear_target_request(file_request(context, incomplete),
+               actor: context.operator
+             )
+
+    assert request_error(error).category == :invalid_file
+
+    file = operation_file!(context, "expires")
+
+    clearance =
+      Targets.clear_target_request!(file_request(context, file), actor: context.operator)
+
+    Process.sleep(1_100)
+
+    assert {:error, error} =
+             Targets.clear_target_request(file_request(context, file), actor: context.operator)
+
+    assert request_error(error).category == :invalid_file
+
+    assert {:error, error} =
+             Targets.dispatch_target_observation(clearance, invocation(flunk_response()),
+               actor: context.operator
+             )
+
+    assert request_error(error).category == :invalid_file
+    refute_receive {:observe, _, _}
+  end
+
+  defp operation_file!(context, key \\ "operation-file") do
+    upload =
+      Targets.begin_artifact!(
+        context.linux.id,
+        "device.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        key,
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: context.operator)
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    Targets.artifact_reference!(upload.id, context.linux.id, actor: context.operator)
+  end
+
+  defp file_request(context, file) do
+    request(context.linux, context.ssh, :observation, :auto,
+      capability: "observe.command",
+      operation: "system.inspect",
+      parameters: %{"command" => "inspect file", "files" => %{"payload" => file}}
+    )
+  end
+
   defp request(target, method, kind, mode, opts) do
     struct!(Request,
       kind: kind,

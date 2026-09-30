@@ -108,6 +108,9 @@ defmodule Opsonde.ProviderAdapterFixture do
 
   defp respond(%{respond: respond}) when is_function(respond, 0), do: respond.()
 
+  defp respond(%{respond: respond} = invocation) when is_function(respond, 1),
+    do: respond.(invocation)
+
   defp respond(_invocation) do
     # Protocol fixture support is independent of each registered Method's grants.
     schema = %{"type" => "object", "properties" => %{}, "additionalProperties" => false}
