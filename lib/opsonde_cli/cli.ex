@@ -1,7 +1,7 @@
 defmodule OpsondeCLI.CLI do
   @moduledoc false
 
-  alias OpsondeCLI.{BrowserLogin, Client, Commands, Config}
+  alias OpsondeCLI.{BrowserLogin, Client, Commands, Config, FileTransfer}
   alias OpsondeCLI.Commands.Route
 
   @exit %{
@@ -26,7 +26,12 @@ defmodule OpsondeCLI.CLI do
     target_id: :string,
     interval: :integer,
     timeout: :integer,
-    server: :string
+    server: :string,
+    file: :string,
+    upload_key: :string,
+    media_type: :string,
+    resume: :string,
+    output: :string
   ]
 
   def run(args, runtime_options \\ [])
@@ -135,6 +140,28 @@ defmodule OpsondeCLI.CLI do
     end
   end
 
+  defp request_once(
+         client,
+         %Route{outcome: :file_upload},
+         [target_id],
+         _body,
+         options,
+         _runtime_options
+       ) do
+    file_result(FileTransfer.upload(client, target_id, options))
+  end
+
+  defp request_once(
+         client,
+         %Route{outcome: :file_download},
+         [target_id, id],
+         _body,
+         options,
+         _runtime_options
+       ) do
+    file_result(FileTransfer.download(client, target_id, id, options))
+  end
+
   defp request_once(client, route, ids, body, options, runtime_options) do
     case Client.request(
            client,
@@ -159,6 +186,26 @@ defmodule OpsondeCLI.CLI do
       {:error, :transport, message} ->
         transport_error(message)
     end
+  end
+
+  defp file_result({:ok, response}) do
+    print(with_outcome(response, :succeeded))
+    0
+  end
+
+  defp file_result({:error, :local, message, context}), do: local_error(message, context)
+  defp file_result({:error, :http, status, body, context}), do: http_error(status, body, context)
+  defp file_result({:error, :transport, message, context}), do: transport_error(message, context)
+
+  defp file_result({:error, :protocol, message, context}) do
+    print_error(
+      Map.merge(
+        %{"outcome" => "unknown", "error" => %{"code" => "protocol_error", "message" => message}},
+        context
+      )
+    )
+
+    15
   end
 
   defp wait(client, route, ids, options) do
@@ -364,25 +411,35 @@ defmodule OpsondeCLI.CLI do
 
   defp print_response(_route, response, result), do: print(with_outcome(response, result))
 
-  defp http_error(status, body) do
-    print_error(Map.merge(%{"outcome" => "failed", "http_status" => status}, map_body(body)))
+  defp http_error(status, body, context \\ %{}) do
+    print_error(
+      Map.merge(%{"outcome" => "failed", "http_status" => status}, map_body(body))
+      |> Map.merge(context)
+    )
+
     if status == 401, do: 3, else: 4
   end
 
-  defp transport_error(message) do
-    print_error(%{
-      "outcome" => "unknown",
-      "error" => %{"code" => "transport_error", "message" => message}
-    })
+  defp transport_error(message, context \\ %{}) do
+    print_error(
+      %{
+        "outcome" => "unknown",
+        "error" => %{"code" => "transport_error", "message" => message}
+      }
+      |> Map.merge(context)
+    )
 
     5
   end
 
-  defp local_error(message) do
-    print_error(%{
-      "outcome" => "failed",
-      "error" => %{"code" => "local_error", "message" => message}
-    })
+  defp local_error(message, context \\ %{}) do
+    print_error(
+      %{
+        "outcome" => "failed",
+        "error" => %{"code" => "local_error", "message" => message}
+      }
+      |> Map.merge(context)
+    )
 
     4
   end
@@ -408,10 +465,14 @@ defmodule OpsondeCLI.CLI do
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report read ID
+      opsonde file list TARGET_ID
+      opsonde file show|revoke TARGET_ID FILE_ID
+      opsonde file upload TARGET_ID --file PATH (--upload-key KEY | --resume FILE_ID) [--media-type TYPE]
+      opsonde file download TARGET_ID FILE_ID --output PATH
 
     Resources:
       account provider ai-role boundary target-type target identity access-method relationship
-      inventory authority case proposal operation verification signal audit audit-run report delivery
+      inventory authority case proposal operation verification signal audit audit-run report delivery file
 
     Input JSON contains the resource fields directly; the CLI adds the API envelope.
     Output is fixed-English JSON, except report read ID prints the Report language text.

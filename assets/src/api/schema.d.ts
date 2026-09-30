@@ -2824,6 +2824,7 @@ export interface components {
             };
         };
         TargetFile: {
+            expected_sha256: string;
             /** Format: date-time */
             expires_at: string;
             /** Format: uuid */

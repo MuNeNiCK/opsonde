@@ -44,6 +44,7 @@ defmodule OpsondeWeb.API.V1.TargetFileSchemas do
       media_type: %Schema{type: :string},
       size_bytes: %Schema{type: :integer, minimum: 0},
       received_bytes: %Schema{type: :integer, minimum: 0},
+      expected_sha256: %Schema{type: :string, pattern: "^[0-9a-f]{64}$"},
       sha256: %Schema{type: :string, pattern: "^[0-9a-f]{64}$", nullable: true},
       status: %Schema{type: :string, enum: ~w(uploading ready revoked expired)},
       revision: %Schema{type: :integer, minimum: 1},

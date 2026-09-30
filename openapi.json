@@ -5052,6 +5052,10 @@
       "TargetFile": {
         "additionalProperties": false,
         "properties": {
+          "expected_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
           "expires_at": {
             "format": "date-time",
             "type": "string"
@@ -5106,6 +5110,7 @@
           }
         },
         "required": [
+          "expected_sha256",
           "expires_at",
           "id",
           "inserted_at",

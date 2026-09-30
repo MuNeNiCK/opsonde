@@ -39,7 +39,9 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
     refute Map.has_key?(file, "upload_key")
     refute Map.has_key?(file, "uploaded_by_id")
     refute Map.has_key?(file, "bytes")
-    refute Map.has_key?(file, "expected_sha256")
+
+    assert file["expected_sha256"] ==
+             "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
   end
 
   test "authentication precedes body decoding on protected API routes", context do

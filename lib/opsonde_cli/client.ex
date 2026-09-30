@@ -10,6 +10,26 @@ defmodule OpsondeCLI.Client do
   end
 
   def request(%__MODULE__{} = client, method, path, body \\ nil, query \\ []) do
+    wire_options = if is_nil(body), do: [], else: [json: body]
+    perform(client, method, path, query, wire_options, :json)
+  end
+
+  def request_binary(%__MODULE__{} = client, method, path, body \\ nil) do
+    wire_options = [decode_body: false]
+
+    wire_options =
+      if is_nil(body),
+        do: Keyword.put(wire_options, :headers, [{"accept", "application/octet-stream"}]),
+        else:
+          Keyword.merge(wire_options,
+            body: body,
+            headers: [{"content-type", "application/octet-stream"}]
+          )
+
+    perform(client, method, path, [], wire_options, :binary)
+  end
+
+  defp perform(client, method, path, query, wire_options, format) do
     options = [
       method: method,
       url: client.server <> "/api/v1" <> path,
@@ -19,19 +39,34 @@ defmodule OpsondeCLI.Client do
       retry: false
     ]
 
-    options = if is_nil(body), do: options, else: Keyword.put(options, :json, body)
+    headers =
+      Enum.reduce(wire_options[:headers] || [], headers(client.token), fn {key, value}, current ->
+        List.keystore(current, key, 0, {key, value})
+      end)
+
+    options = Keyword.merge(options, Keyword.delete(wire_options, :headers))
+    options = Keyword.put(options, :headers, headers)
 
     case Req.request(Keyword.merge(options, client.request_options)) do
       {:ok, %Req.Response{status: status, body: response}} when status in 200..299 ->
-        {:ok, status, normalize_body(response)}
+        {:ok, status, if(format == :binary, do: response, else: normalize_body(response))}
 
       {:ok, %Req.Response{status: status, body: response}} ->
-        {:error, :http, status, normalize_body(response)}
+        {:error, :http, status, error_body(response, format)}
 
       {:error, error} ->
         {:error, :transport, Exception.message(error)}
     end
   end
+
+  defp error_body(body, :binary) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _ -> %{"error" => %{"message" => "Server rejected the binary transfer"}}
+    end
+  end
+
+  defp error_body(body, _format), do: normalize_body(body)
 
   defp normalize_server(server) when is_binary(server) do
     uri = URI.parse(server)

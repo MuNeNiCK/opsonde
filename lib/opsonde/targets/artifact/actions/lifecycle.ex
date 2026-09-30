@@ -192,9 +192,16 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
            artifact.target_id == arguments.target_id ||
              invalid(:target_id, "Artifact does not belong to this Target"),
          true <- artifact.status == :ready || invalid(:id, "Artifact upload is incomplete"),
-         :ok <- unexpired(artifact),
-         {:ok, chunk} <-
-           Targets.artifact_chunk_at_offset(artifact.id, arguments.offset,
+         :ok <- unexpired(artifact) do
+      read_verified_chunk(artifact, arguments.offset)
+    end
+  end
+
+  defp read_verified_chunk(%{size_bytes: 0}, 0), do: {:ok, <<>>}
+
+  defp read_verified_chunk(artifact, offset) do
+    with {:ok, chunk} <-
+           Targets.artifact_chunk_at_offset(artifact.id, offset,
              authorize?: false,
              load: [:bytes]
            ),

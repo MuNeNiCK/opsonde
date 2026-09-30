@@ -49,6 +49,12 @@ defmodule OpsondeCLI.Commands do
     {"target", "create"} => Route.new(:post, "/targets", 0, "target"),
     {"target", "update"} => Route.new(:patch, "/targets/:id", 1, "target"),
     {"target", "deactivate"} => Route.new(:post, "/targets/:id/deactivate", 1, "target"),
+    {"file", "list"} => Route.page("/targets/:id/files", 1),
+    {"file", "show"} => Route.new(:get, "/targets/:id/files/:id", 2),
+    {"file", "revoke"} => Route.new(:delete, "/targets/:id/files/:id", 2),
+    {"file", "upload"} => Route.new(:post, "/targets/:id/files", 1, nil, outcome: :file_upload),
+    {"file", "download"} =>
+      Route.new(:get, "/targets/:id/files/:id", 2, nil, outcome: :file_download),
     {"identity", "list"} => Route.page("/external-identities"),
     {"identity", "create"} => Route.new(:post, "/external-identities", 0, "external_identity"),
     {"identity", "update"} =>

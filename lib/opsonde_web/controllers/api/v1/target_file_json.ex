@@ -9,6 +9,7 @@ defmodule OpsondeWeb.API.V1.TargetFileJSON do
       :media_type,
       :size_bytes,
       :received_bytes,
+      :expected_sha256,
       :sha256,
       :status,
       :revision,

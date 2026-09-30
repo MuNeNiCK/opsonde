@@ -165,7 +165,7 @@ defmodule Opsonde.Targets.Artifact do
       default: 0,
       constraints: [min: 0]
 
-    attribute :expected_sha256, :string, allow_nil?: false
+    attribute :expected_sha256, :string, allow_nil?: false, public?: true
     attribute :sha256, :string, public?: true
     attribute :upload_key, :string, allow_nil?: false, sensitive?: true
     attribute :expires_at, :utc_datetime_usec, allow_nil?: false, public?: true
