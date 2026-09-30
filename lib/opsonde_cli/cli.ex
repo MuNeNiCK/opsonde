@@ -229,6 +229,16 @@ defmodule OpsondeCLI.CLI do
   defp outcome(:proposal, %{"data" => %{"status" => "awaiting_human"}}),
     do: :approval_required
 
+  defp outcome(:method_check, %{
+         "data" => %{"check" => %{"status" => "passed", "current" => true}}
+       }),
+       do: :succeeded
+
+  defp outcome(:method_check, %{"data" => %{"check" => %{"status" => "failed"}}}),
+    do: :failed
+
+  defp outcome(:method_check, _response), do: :unknown
+
   defp outcome(_kind, _response), do: :succeeded
 
   defp case_outcome(%{"cancel_requested" => true}, _snapshot), do: :cancel_requested

@@ -59,7 +59,7 @@ defmodule OpsondeCLI.Commands do
     {"access-method", "create"} => Route.new(:post, "/access-methods", 0, "access_method"),
     {"access-method", "update"} => Route.new(:patch, "/access-methods/:id", 1, "access_method"),
     {"access-method", "check"} =>
-      Route.new(:post, "/access-methods/:id/check", 1, "access_method"),
+      Route.new(:post, "/access-methods/:id/check", 1, "access_method", outcome: :method_check),
     {"access-method", "deactivate"} =>
       Route.new(:post, "/access-methods/:id/deactivate", 1, "access_method"),
     {"relationship", "list"} => Route.page("/target-relationships"),
