@@ -12,7 +12,7 @@ defmodule Opsonde.FileOperationTest do
 
     def call(conn, agent) do
       case {conn.method, conn.request_path} do
-        {"PUT", "/binary"} ->
+        {method, "/binary"} when method in ["PUT", "OPS!V2"] ->
           {:ok, bytes, conn} = read_body(conn)
           Agent.update(agent, &Map.put(&1, :writes, [bytes | &1.writes]))
 
@@ -130,7 +130,7 @@ defmodule Opsonde.FileOperationTest do
     }
   end
 
-  test "Reviewer approval binds file identity through persisted Case execution and evidence",
+  test "Reviewer approval binds native HTTP verb and file identity through Case execution",
        context do
     file =
       Targets.begin_artifact!(
@@ -148,7 +148,7 @@ defmodule Opsonde.FileOperationTest do
     reference = Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
 
     parameters = %{
-      "method" => "PUT",
+      "method" => "OPS!V2",
       "path" => "/binary",
       "body_file" => "payload",
       "files" => %{"payload" => reference},

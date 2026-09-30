@@ -55,6 +55,20 @@ defmodule Opsonde.Targets.HTTPAPITest do
           Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
           conn |> put_resp_content_type("application/octet-stream") |> send_resp(200, body)
 
+        {method, "/api/native"} when method in ["PROPFIND", "OPS!V2"] ->
+          {:ok, body, conn} = read_body(conn)
+          request = %{method: method, body: body, headers: conn.req_headers}
+          Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [request | writes] end))
+          conn |> put_resp_content_type("application/octet-stream") |> send_resp(200, body)
+
+        {"OPS!V2", "/api/native-drop"} ->
+          Agent.update(
+            agent,
+            &Map.update!(&1, :writes, fn writes -> ["native-drop" | writes] end)
+          )
+
+          Process.exit(self(), :kill)
+
         {"GET", "/api/chunked"} ->
           conn = send_chunked(conn, 200)
           {:ok, conn} = chunk(conn, <<255, 0>>)
@@ -371,6 +385,144 @@ defmodule Opsonde.Targets.HTTPAPITest do
     }
 
     assert {:ok, %{status: :verified}} = HTTP.verify(context.state, verify, %{})
+  end
+
+  test "a checked native HTTP verb and standard headers preserve exact file bytes", context do
+    file =
+      Targets.begin_artifact!(
+        context.target.id,
+        "native.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "native-input",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(file.id, 0, <<255, 0, 1, 2, 255>>, actor: context.operator)
+    Targets.complete_artifact!(file.id, actor: context.operator)
+    reference = Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
+    headers = %{"Depth" => "1", "Prefer" => "return=minimal", "X-Resource-Key" => "public-id"}
+
+    parameters = %{
+      "headers" => headers,
+      "body_file" => "input",
+      "files" => %{"input" => reference}
+    }
+
+    clearance = cleared_http(context, "PROPFIND", "/api/native", parameters)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+    assert read_file(context, result.details["file"]) == <<255, 0, 1, 2, 255>>
+
+    assert [%{method: "PROPFIND", body: <<255, 0, 1, 2, 255>>, headers: sent}] =
+             Agent.get(context.agent, & &1.writes)
+
+    assert {"depth", "1"} in sent
+    assert {"prefer", "return=minimal"} in sent
+    assert {"x-resource-key", "public-id"} in sent
+    assert {"authorization", "Bearer fixture-token"} in sent
+    schema = hd(context.method.operation_catalog.effects).input_schema
+
+    assert {:ok, _} =
+             JSV.validate(
+               %{"selectors" => %{}, "parameters" => clearance.parameters},
+               JSV.build!(schema)
+             )
+  end
+
+  test "an extension verb retains its spelling and follows effect authority even without a body",
+       context do
+    request = %Request{
+      kind: :effect,
+      authority_mode: :full_access,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.http.effect",
+      operation: "request.execute",
+      operation_id: "native-empty-body",
+      idempotency_key: "native-empty-body-1",
+      parameters: %{"method" => "OPS!V2", "path" => "/api/native"}
+    }
+
+    readonly = %{request | authority_mode: :readonly}
+
+    observation = %{
+      readonly
+      | kind: :observation,
+        capability: "request.http.observe",
+        operation: "request.observe"
+    }
+
+    readonly_clearance = Targets.clear_target_request!(readonly, actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(readonly_clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert {:error, _} = Targets.clear_target_request(observation, actor: context.operator)
+    assert Agent.get(context.agent, & &1.writes) == []
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+    assert [%{method: "OPS!V2", body: ""}] = Agent.get(context.agent, & &1.writes)
+
+    unknown = cleared_http(context, "OPS!V2", "/api/native-drop")
+
+    assert %{status: :unknown} =
+             Targets.dispatch_target_effect!(unknown, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert ["native-drop", _completed] = Agent.get(context.agent, & &1.writes)
+  end
+
+  test "native headers cannot override connection credentials or HTTP framing", context do
+    for headers <- [
+          %{"HOST" => "other.invalid"},
+          %{"Content-Length" => "999"},
+          %{"Transfer-Encoding" => "chunked"},
+          %{"Authorization" => "Bearer other"},
+          %{"Proxy-Authorization" => "Basic other"},
+          %{"Cookie" => "session=other"},
+          %{"Depth" => "1\r\nHost: other.invalid"},
+          %{"Bad Header" => "1"},
+          %{"Depth" => "1", "depth" => "2"}
+        ] do
+      assert {:error, _} =
+               %Request{
+                 kind: :effect,
+                 authority_mode: :full_access,
+                 target_id: context.target.id,
+                 target_revision: context.target.revision,
+                 access_method_id: context.method.id,
+                 access_method_revision: context.method.revision,
+                 capability: "request.http.effect",
+                 operation: "request.execute",
+                 operation_id: "native-header-denial",
+                 idempotency_key: "native-header-denial-1",
+                 parameters: %{
+                   "method" => "PROPFIND",
+                   "path" => "/api/native",
+                   "headers" => headers
+                 }
+               }
+               |> Targets.clear_target_request(actor: context.operator)
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == []
   end
 
   test "HTTP request validation confines origin, credentials, body and response", context do

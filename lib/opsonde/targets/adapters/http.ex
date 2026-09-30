@@ -10,7 +10,11 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   @observe "request.http.observe"
   @effect "request.http.effect"
   @read_methods %{"GET" => :get, "HEAD" => :head}
-  @write_methods %{"POST" => :post, "PATCH" => :patch, "PUT" => :put, "DELETE" => :delete}
+  @token ~r/\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
+  @token_pattern "^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$"
+  @max_method_bytes 256
+  # Connection authority, framing and credentials are composed by this Method.
+  @owned_headers ~w(host content-length transfer-encoding authorization proxy-authorization cookie)
   @max_preview_bytes 8_192
   @max_body_bytes 65_536
   @max_path_bytes 2_048
@@ -115,8 +119,9 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          %Target.Operation{
            capability: @effect,
            operation: "request.execute",
-           description: "Send one exact relative HTTP API write after authority review",
-           input_schema: input_schema(Map.keys(@write_methods), true)
+           description:
+             "Send any exact HTTP method token other than GET/HEAD after authority review",
+           input_schema: input_schema(nil, true)
          }
        ]
      }}
@@ -336,7 +341,6 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   end
 
   defp method_request(state, request, kind) do
-    methods = if kind == :read, do: @read_methods, else: @write_methods
     capability = if kind == :read, do: @observe, else: @effect
     operation = if kind == :read, do: "request.observe", else: "request.execute"
     parameters = request.parameters
@@ -346,7 +350,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          true <- request.selectors == %{},
          %{"method" => verb, "path" => path} <- parameters,
          true <- Enum.all?(Map.keys(parameters), &(&1 in allowed_keys(kind))),
-         {:ok, method} <- Map.fetch(methods, verb),
+         {:ok, method} <- request_method(kind, verb),
          :ok <- relative_path(path),
          {:ok, headers} <- request_headers(Map.get(parameters, "headers", %{})),
          true <- Target.FileWriter.valid_options?(parameters["response_file"]),
@@ -356,6 +360,17 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       _ -> {:error, :failed, "HTTP request is invalid"}
     end
   end
+
+  defp request_method(:read, verb), do: Map.fetch(@read_methods, verb)
+
+  defp request_method(:write, verb) when is_binary(verb) do
+    if byte_size(verb) in 1..@max_method_bytes and Regex.match?(@token, verb) and
+         not Map.has_key?(@read_methods, verb),
+       do: {:ok, verb},
+       else: {:error, :invalid_method}
+  end
+
+  defp request_method(_kind, _verb), do: {:error, :invalid_method}
 
   defp same_endpoint?(state, %Target.Connection{endpoint: value}) do
     case endpoint(value) do
@@ -398,7 +413,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          length(Enum.uniq_by(normalized, &elem(&1, 0))) == length(normalized) and
          Enum.all?(normalized, fn {name, value} ->
            safe_header_name?(name) and is_binary(value) and byte_size(value) <= 1_024 and
-             not String.match?(value, ~r/[\x00-\x1f\x7f]/)
+             not String.match?(value, ~r/[\x00-\x08\x0a-\x1f\x7f]/)
          end) do
       {:ok, Map.new(normalized)}
     else
@@ -410,16 +425,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp request_headers(_headers), do: {:error, :invalid_headers}
 
-  defp safe_header_name?(name)
-       when name in ["accept", "content-type", "if-match", "if-none-match"],
-       do: true
-
-  defp safe_header_name?("x-" <> name) do
-    byte_size(name) in 1..64 and Regex.match?(~r/\A[a-z0-9-]+\z/, name) and
-      not Enum.any?(~w(auth token secret key cookie credential), &String.contains?(name, &1))
-  end
-
-  defp safe_header_name?(_name), do: false
+  defp safe_header_name?(name),
+    do: byte_size(name) in 1..256 and Regex.match?(@token, name) and name not in @owned_headers
 
   defp request_body(:write, _method, %{"body_file" => label} = parameters, files) do
     with false <- Map.has_key?(parameters, "body"),
@@ -436,7 +443,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
     do: text_body(kind, method, Map.get(parameters, "body"))
 
   defp text_body(:read, _method, nil), do: {:ok, nil}
-  defp text_body(:write, :delete, nil), do: {:ok, nil}
+  defp text_body(:write, _method, nil), do: {:ok, nil}
 
   defp text_body(:write, _method, body)
        when is_binary(body) and byte_size(body) <= @max_body_bytes,
@@ -496,8 +503,19 @@ defmodule Opsonde.Targets.Adapters.HTTP do
   end
 
   defp input_schema(methods, write? \\ false) do
+    method_schema =
+      if write?,
+        do: %{
+          "type" => "string",
+          "minLength" => 1,
+          "maxLength" => @max_method_bytes,
+          "pattern" => @token_pattern,
+          "not" => %{"enum" => Map.keys(@read_methods)}
+        },
+        else: %{"type" => "string", "enum" => methods}
+
     properties = %{
-      "method" => %{"type" => "string", "enum" => methods},
+      "method" => method_schema,
       "path" => %{"type" => "string", "minLength" => 1, "maxLength" => @max_path_bytes},
       "headers" => %{"type" => "object", "maxProperties" => 8},
       "response_file" => Target.FileWriter.options_schema()
