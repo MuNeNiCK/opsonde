@@ -167,5 +167,32 @@ defmodule Opsonde.Targets do
         action: :for_import,
         args: [:inventory_import_id]
     end
+
+    resource Opsonde.Targets.Artifact do
+      define :get_artifact, action: :read, get_by: [:id]
+      define :page_artifacts, action: :page, args: [:target_id]
+      define :artifact_limits, action: :limits
+
+      define :begin_artifact,
+        action: :begin,
+        args: [:target_id, :name, :media_type, :size_bytes, :expected_sha256, :upload_key]
+
+      define :append_artifact_chunk, action: :append, args: [:id, :offset, :bytes]
+      define :complete_artifact, action: :complete, args: [:id]
+      define :revoke_artifact, action: :revoke, args: [:id]
+      define :expire_artifact, action: :expire, args: [:id]
+      define :read_artifact_chunk, action: :chunk, args: [:id, :target_id, :offset]
+      define :create_artifact_record, action: :create_record
+      define :record_artifact_state, action: :record_state
+
+      define :artifact_by_upload,
+        action: :by_upload,
+        args: [:target_id, :uploaded_by_id, :upload_key]
+    end
+
+    resource Opsonde.Targets.ArtifactChunk do
+      define :create_artifact_chunk_record, action: :create_record
+      define :artifact_chunk_at_offset, action: :at_offset, args: [:artifact_id, :offset]
+    end
   end
 end

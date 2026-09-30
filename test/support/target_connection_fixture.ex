@@ -12,7 +12,9 @@ defmodule Opsonde.TargetConnectionFixture do
         provider_revision: provider.revision,
         connection: %Opsonde.Providers.Target.Connection{endpoint: endpoint}
       },
-      %{}, authorize?: false)
+      %{},
+      authorize?: false
+    )
   end
 
   def input(adapter_type, endpoint) do

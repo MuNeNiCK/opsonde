@@ -1382,7 +1382,9 @@ defmodule Opsonde.SignalIngressTest do
           "network_device",
           "custom-network-device",
           %{},
-          nil, actor: context.admin)
+          nil,
+          actor: context.admin
+        )
 
       Targets.create_relationship!(anchor.id, neighbour.id, "connected_to", %{}, nil,
         actor: context.admin

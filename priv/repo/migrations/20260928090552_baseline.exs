@@ -2071,9 +2071,98 @@ defmodule Opsonde.Repo.Migrations.Baseline do
     create index(:operations, [:target_id, :resource_scope])
 
 
+    create table(:artifacts, primary_key: false) do
+      add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
+      add :name, :text, null: false
+      add :media_type, :text, null: false
+      add :size_bytes, :bigint, null: false
+      add :received_bytes, :bigint, null: false, default: 0
+      add :expected_sha256, :text, null: false
+      add :sha256, :text
+      add :upload_key, :text, null: false
+      add :expires_at, :utc_datetime_usec, null: false
+      add :status, :text, null: false, default: "uploading"
+      add :revision, :bigint, null: false, default: 1
+
+      add :inserted_at, :utc_datetime_usec,
+        null: false,
+        default: fragment("(now() AT TIME ZONE 'utc')")
+
+      add :updated_at, :utc_datetime_usec,
+        null: false,
+        default: fragment("(now() AT TIME ZONE 'utc')")
+
+      add :target_id,
+          references(:targets,
+            column: :id,
+            name: "artifacts_target_id_fkey",
+            type: :uuid,
+            prefix: "public"
+          ),
+          null: false
+
+      add :uploaded_by_id,
+          references(:users,
+            column: :id,
+            name: "artifacts_uploaded_by_id_fkey",
+            type: :uuid,
+            prefix: "public"
+          ),
+          null: false
+    end
+
+    create unique_index(:artifacts, [:target_id, :uploaded_by_id, :upload_key],
+             name: "artifacts_unique_upload_index"
+           )
+
+    create table(:artifact_chunks, primary_key: false) do
+      add :id, :uuid, null: false, default: fragment("gen_random_uuid()"), primary_key: true
+      add :offset, :bigint, null: false
+      add :size_bytes, :bigint, null: false
+      add :sha256, :text, null: false
+
+      add :artifact_id,
+          references(:artifacts,
+            column: :id,
+            name: "artifact_chunks_artifact_id_fkey",
+            type: :uuid,
+            prefix: "public"
+          ),
+          null: false
+    end
+
+    create unique_index(:artifact_chunks, [:artifact_id, :offset],
+             name: "artifact_chunks_unique_offset_index"
+           )
+
+    alter table(:artifact_chunks) do
+      add :encrypted_bytes, :binary, null: false
+    end
   end
 
   def down do
+    drop constraint(:artifact_chunks, "artifact_chunks_artifact_id_fkey")
+
+    alter table(:artifact_chunks) do
+      remove :encrypted_bytes
+    end
+
+    drop_if_exists unique_index(:artifact_chunks, [:artifact_id, :offset],
+                     name: "artifact_chunks_unique_offset_index"
+                   )
+
+    drop table(:artifact_chunks)
+
+    drop constraint(:artifacts, "artifacts_uploaded_by_id_fkey")
+
+    drop constraint(:artifacts, "artifacts_target_id_fkey")
+
+    drop_if_exists unique_index(:artifacts, [:target_id, :uploaded_by_id, :upload_key],
+                     name: "artifacts_unique_upload_index"
+                   )
+
+    drop table(:artifacts)
+
     drop_if_exists index(:operations, [:target_id, :resource_scope])
 
     drop_if_exists index(:operations, [:target_id])
