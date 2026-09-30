@@ -59,7 +59,6 @@ defmodule Opsonde.Transports.Kubernetes do
       {:error, :forbidden, message} -> {:error, :capability, message}
       {:error, :invalid_configuration, message} -> {:error, :invalid_configuration, message}
       {:error, _category, message} -> {:error, :unreachable, message}
-      _ -> {:error, :capability, "Kubernetes API rejected the connection check"}
     end
   end
 
@@ -115,51 +114,16 @@ defmodule Opsonde.Transports.Kubernetes do
       else: {:halt, {request, %{response | body: :too_large}}}
   end
 
-  def run(state, operation, invocation, phase) when is_map(operation) and is_map(invocation),
-    do:
-      run_request(
-        state,
-        fn -> request(state, operation, invocation) end,
-        cancelled?(invocation),
-        phase
-      )
-
-  defp run_request(state, operation, cancelled?, phase) do
-    if cancelled?.() do
+  def run(state, operation, invocation, phase) when is_map(operation) and is_map(invocation) do
+    if cancelled?(invocation).() do
       {:error, :cancelled, "Kubernetes operation was cancelled"}
     else
-      task = Task.async(fn -> safely(operation) end)
-      await(task, cancelled?, System.monotonic_time(:millisecond) + state.request_timeout, phase)
+      normalize(request(state, operation, invocation), phase)
     end
   rescue
-    _error -> {:error, :failed, "Kubernetes operation failed"}
-  end
-
-  defp await(task, cancelled?, deadline, phase) do
-    cond do
-      cancelled?.() ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, after_dispatch(phase, :cancelled), "Kubernetes operation was cancelled"}
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, after_dispatch(phase, :timeout), "Kubernetes operation timed out"}
-
-      true ->
-        case Task.yield(task, 20) do
-          {:ok, result} -> normalize(result, phase)
-          {:exit, _reason} -> operation_failure(phase)
-          nil -> await(task, cancelled?, deadline, phase)
-        end
-    end
-  end
-
-  defp safely(operation) do
-    operation.()
-  rescue
-    error -> {:error, error}
+    _error -> operation_failure(phase)
   catch
-    _kind, reason -> {:error, reason}
+    _kind, _reason -> operation_failure(phase)
   end
 
   defp normalize({:ok, %Req.Response{body: :too_large}}, :effect),
@@ -317,10 +281,6 @@ defmodule Opsonde.Transports.Kubernetes do
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end
-
-  defp after_dispatch(:effect, :cancelled), do: :cancelled_after_dispatch
-  defp after_dispatch(:effect, :timeout), do: :timeout_after_dispatch
-  defp after_dispatch(_phase, category), do: category
 
   def valid_name?(value),
     do: is_binary(value) and byte_size(value) in 1..253 and Regex.match?(@name_pattern, value)

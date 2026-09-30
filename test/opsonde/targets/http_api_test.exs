@@ -87,6 +87,46 @@ defmodule Opsonde.Targets.HTTPAPITest do
           {:ok, conn} = chunk(conn, <<255, 0, 1, 2, 255>>)
           conn
 
+        {"GET", "/api/idle"} ->
+          conn = send_chunked(conn, 200)
+          {:ok, conn} = chunk(conn, <<255, 0>>)
+          Agent.update(agent, &Map.update(&1, :idle_calls, 1, fn count -> count + 1 end))
+          send(Agent.get(agent, & &1.observer), {:idle_peer, self()})
+
+          receive do
+            :finish_idle -> conn
+          after
+            2_000 -> conn
+          end
+
+        {"GET", "/api/headers-idle"} ->
+          Agent.update(agent, &Map.update(&1, :idle_calls, 1, fn count -> count + 1 end))
+          send(Agent.get(agent, & &1.observer), {:idle_peer, self()})
+
+          receive do
+            :finish_idle -> send_resp(conn, 200, "")
+          after
+            2_000 -> send_resp(conn, 200, "")
+          end
+
+        {"POST", "/api/continuous"} ->
+          {:ok, body, conn} = read_body(conn)
+          Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
+          conn = send_chunked(conn, 200)
+
+          {conn, count} =
+            Enum.reduce_while(1..40, {conn, 0}, fn _, {conn, count} ->
+              Process.sleep(20)
+
+              case chunk(conn, <<0>>) do
+                {:ok, conn} -> {:cont, {conn, count + 1}}
+                {:error, _} -> {:halt, {conn, count}}
+              end
+            end)
+
+          send(Agent.get(agent, & &1.observer), {:continuous_end, count})
+          conn
+
         {"GET", "/api/encoded"} ->
           conn
           |> put_resp_header("content-encoding", "gzip")
@@ -99,7 +139,8 @@ defmodule Opsonde.Targets.HTTPAPITest do
   end
 
   setup do
-    agent = start_supervised!({Agent, fn -> %{writes: []} end})
+    observer = self()
+    agent = start_supervised!({Agent, fn -> %{writes: [], observer: observer} end})
 
     server =
       start_supervised!({Bandit, plug: {Stub, agent}, scheme: :http, port: 0, startup_log: false})
@@ -849,6 +890,145 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert result.facts["file"]["id"] != partial.id
     assert read_file(context, result.facts["file"]) == <<255, 0, 1, 2, 255>>
     assert Targets.get_artifact!(partial.id, actor: context.operator).status == :receiving
+  end
+
+  test "a silent response cancels without waiting for the idle timeout or publishing its prefix",
+       context do
+    clearance = cleared_http(context, "GET", "/api/idle")
+
+    invocation = %{
+      cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end
+    }
+
+    task =
+      Task.async(fn ->
+        Targets.dispatch_target_observation(clearance, invocation,
+          actor: context.operator,
+          authorize?: false
+        )
+      end)
+
+    try do
+      assert_receive {:idle_peer, peer}, 1_000
+
+      receipt =
+        Enum.reduce_while(1..100, nil, fn _, _ ->
+          case Targets.page_artifacts!(context.target.id, actor: context.operator).results do
+            [%{received_bytes: 2} = file] ->
+              {:halt, file}
+
+            _ ->
+              Process.sleep(10)
+              {:cont, nil}
+          end
+        end)
+
+      assert receipt.status == :receiving
+      Agent.update(context.agent, &Map.put(&1, :cancelled, true))
+      assert {:ok, {:error, _}} = Task.yield(task, 400)
+      send(peer, :finish_idle)
+      assert Targets.get_artifact!(receipt.id, actor: context.operator).status == :receiving
+
+      assert {:error, _} =
+               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+      assert Agent.get(context.agent, & &1.idle_calls) == 1
+    after
+      Task.shutdown(task, :brutal_kill)
+    end
+  end
+
+  test "cancellation while awaiting headers leaves an empty receipt and permits a later request",
+       context do
+    clearance = cleared_http(context, "GET", "/api/headers-idle")
+
+    invocation = %{
+      cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end
+    }
+
+    task =
+      Task.async(fn ->
+        Targets.dispatch_target_observation(clearance, invocation,
+          actor: context.operator,
+          authorize?: false
+        )
+      end)
+
+    try do
+      assert_receive {:idle_peer, peer}, 1_000
+      Agent.update(context.agent, &Map.put(&1, :cancelled, true))
+      assert {:ok, {:error, _}} = Task.yield(task, 400)
+      send(peer, :finish_idle)
+
+      assert [%{status: :receiving, received_bytes: 0} = receipt] =
+               Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+      assert {:error, _} =
+               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+      result =
+        cleared_http(context, "GET", "/api/status")
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+      assert read_file(context, result.facts["file"]) == "ready"
+      assert Agent.get(context.agent, & &1.idle_calls) == 1
+    after
+      Task.shutdown(task, :brutal_kill)
+    end
+  end
+
+  test "continuous data cannot extend the whole HTTP deadline or publish an effect reply",
+       context do
+    provider =
+      Providers.create_provider!(
+        "finite HTTP",
+        :target,
+        "http-api",
+        %{"timeout_ms" => 250},
+        %{"bearer_token" => "fixture-token"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        provider.id,
+        "finite HTTP",
+        "http",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.http.observe", "request.http.effect"],
+        actor: context.admin
+      )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+    context = %{context | method: method, provider: provider}
+    clearance = cleared_http(context, "POST", "/api/continuous", %{"body" => "{}"})
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert result.details["reason"] =~ "time limit"
+    refute Map.has_key?(result.details, "file")
+
+    assert [%{status: :receiving} = receipt] =
+             Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+    assert receipt.received_bytes > 0 and receipt.received_bytes < 40
+    assert receipt.request_id == "http-transfer"
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert_receive {:continuous_end, count}, 1_000
+    assert count < 40
+    assert Agent.get(context.agent, & &1.writes) == ["{}"]
+
+    assert Targets.get_artifact!(receipt.id, actor: context.operator).received_bytes ==
+             receipt.received_bytes
   end
 
   test "cancellation during the response prevents publication", context do

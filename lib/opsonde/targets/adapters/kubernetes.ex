@@ -124,12 +124,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
                Map.put(facts(response), "category", to_string(status_category(response.status)))
            }}
 
-        {:error, category, message}
-        when category in [
-               :unknown_after_dispatch,
-               :cancelled_after_dispatch,
-               :timeout_after_dispatch
-             ] ->
+        {:error, :unknown_after_dispatch, message} ->
           {:ok, %Target.EffectResult{status: :unknown, details: %{"error" => message}}}
 
         error ->

@@ -2,6 +2,7 @@ defmodule Opsonde.Transports.HTTP do
   @moduledoc false
 
   alias Opsonde.Providers.Target
+  @poll_interval 20
 
   # Wire I/O only. Storage and authorization remain in the supplied file ports.
   def request(options, body, output, invocation) do
@@ -18,23 +19,62 @@ defmodule Opsonde.Transports.HTTP do
 
       options = if is_nil(body), do: options, else: Keyword.put(options, :body, body)
 
-      try do
-        case Req.request(options) do
-          {:ok, %Req.Response{status: status} = response} when status in 100..599 ->
-            complete_response(response, writer, invocation, options[:method])
+      case exchange(options, writer, invocation) do
+        {:ok, %Req.Response{status: status} = response} when status in 100..599 ->
+          complete_response(response, writer, invocation, options[:method])
 
-          _other ->
-            response_failure(writer)
-        end
-      rescue
-        _error -> response_failure(writer)
-      catch
-        {:http_file_failure, _message} -> response_failure(writer)
-        :http_cancelled -> {:error, :cancelled, "HTTP request was cancelled"}
+        {:error, _category, _message} = error ->
+          error
+
+        _other ->
+          response_failure(writer)
       end
     end
   rescue
     _error -> {:error, :retryable, "HTTP endpoint request failed"}
+  end
+
+  defp exchange(options, writer, invocation) do
+    deadline = System.monotonic_time(:millisecond) + Keyword.fetch!(options, :receive_timeout)
+    task = Task.async(fn -> wire_request(options, writer) end)
+
+    try do
+      await_wire(task, deadline, writer, invocation)
+    after
+      Task.shutdown(task, :brutal_kill)
+    end
+  end
+
+  defp wire_request(options, writer) do
+    case Req.request(options) do
+      {:error, %Req.TransportError{reason: :timeout}} -> timeout_failure(writer)
+      result -> result
+    end
+  rescue
+    _error -> response_failure(writer)
+  catch
+    {:http_file_failure, _message} -> response_failure(writer)
+    :http_cancelled -> {:error, :cancelled, "HTTP request was cancelled"}
+    _kind, _reason -> response_failure(writer)
+  end
+
+  defp await_wire(task, deadline, writer, invocation) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      not_cancelled(invocation) != :ok ->
+        {:error, :cancelled, "HTTP request was cancelled"}
+
+      remaining <= 0 ->
+        timeout_failure(writer)
+
+      true ->
+        case Task.yield(task, min(@poll_interval, remaining)) do
+          {:ok, result} -> result
+          {:exit, _reason} -> response_failure(writer)
+          nil -> await_wire(task, deadline, writer, invocation)
+        end
+    end
   end
 
   defp wire_body({:file, label, reference}, headers, %{file_reader: reader} = invocation)
@@ -188,6 +228,11 @@ defmodule Opsonde.Transports.HTTP do
 
   defp response_failure(nil), do: {:error, :retryable, "HTTP response was lost after dispatch"}
   defp response_failure(writer), do: {:error, :retryable, file_failure_message(writer)}
+
+  defp timeout_failure(nil), do: {:error, :retryable, "HTTP request reached its time limit"}
+
+  defp timeout_failure(writer),
+    do: {:error, :retryable, "HTTP request reached its time limit (file " <> writer.id <> ")"}
 
   defp file_failure_message(writer),
     do: "HTTP response file is incomplete (file " <> writer.id <> ")"
