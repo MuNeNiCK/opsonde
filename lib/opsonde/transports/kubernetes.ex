@@ -219,7 +219,8 @@ defmodule Opsonde.Transports.Kubernetes do
   def check(_state, _input),
     do: {:error, :invalid_configuration, "Kubernetes check requires an endpoint"}
 
-  defp request(state, operation, invocation) do
+  # Both HTTP and upgraded sessions use the same credential and TLS owner.
+  def connection_options(%State{} = state) do
     with {:ok, options} <- K8s.Conn.RequestOptions.generate(state.connection) do
       host = URI.parse(state.endpoint).host
 
@@ -235,6 +236,12 @@ defmodule Opsonde.Transports.Kubernetes do
       headers =
         Enum.map(options.headers, fn {key, value} -> {String.downcase(to_string(key)), value} end)
 
+      {:ok, headers, Keyword.merge(options.ssl_options, tls)}
+    end
+  end
+
+  defp request(state, operation, invocation) do
+    with {:ok, headers, tls} <- connection_options(state) do
       request_options = [
         method: operation.method,
         url: state.endpoint <> operation.path,
@@ -242,7 +249,7 @@ defmodule Opsonde.Transports.Kubernetes do
         headers: headers ++ operation.headers ++ [{"accept-encoding", "identity"}],
         connect_options: [
           timeout: state.request_timeout,
-          transport_opts: Keyword.merge(options.ssl_options, tls)
+          transport_opts: tls
         ],
         receive_timeout: state.request_timeout,
         retry: false,

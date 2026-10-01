@@ -6,6 +6,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.Kubernetes, as: Client
   alias Opsonde.Transports.Kubernetes.State
+  alias Opsonde.Targets.Adapters.Kubernetes.Session
 
   @observe "request.kubernetes.observe"
   @effect "request.kubernetes.effect"
@@ -112,7 +113,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
              "Send an exact Kubernetes API HTTP request after review. Bodies can be literal UTF-8 strings or immutable files; response_file preserves full binary results." <>
                scope,
            input_schema: schema(["POST", "PUT", "PATCH", "DELETE"])
-         }
+         },
+         Session.effect()
        ]
      }}
   end
@@ -141,35 +143,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, request, invocation) do
     with {:ok, %{kind: :effect} = operation} <- exact_request(state, request) do
-      case Client.run(state, operation, invocation, :effect) do
-        {:ok, response} ->
-          body = response.body
-          reference = if is_map(body), do: get_in(body, ["metadata", "resourceVersion"])
-
-          {:ok,
-           %Target.EffectResult{
-             status:
-               cond do
-                 Map.get(response, :completion_reason) in ~w(byte_limit duration_limit event_limit) ->
-                   :unknown
-
-                 response.status in 200..299 ->
-                   :applied
-
-                 true ->
-                   :failed
-               end,
-             reference: reference,
-             details:
-               Map.put(facts(response), "category", to_string(status_category(response.status)))
-           }}
-
-        {:error, :unknown_after_dispatch, message} ->
-          {:ok, %Target.EffectResult{status: :unknown, details: %{"error" => message}}}
-
-        error ->
-          error
-      end
+      execute_effect(state, operation, invocation)
     else
       {:ok, _observation} -> invalid()
       error -> error
@@ -177,6 +151,41 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   def effect(_state, _request, _invocation), do: invalid()
+
+  defp execute_effect(state, %{transport: :websocket} = operation, invocation),
+    do: Opsonde.Transports.Kubernetes.Session.request(state, operation, invocation)
+
+  defp execute_effect(state, operation, invocation) do
+    case Client.run(state, operation, invocation, :effect) do
+      {:ok, response} ->
+        body = response.body
+        reference = if is_map(body), do: get_in(body, ["metadata", "resourceVersion"])
+
+        {:ok,
+         %Target.EffectResult{
+           status:
+             cond do
+               Map.get(response, :completion_reason) in ~w(byte_limit duration_limit event_limit) ->
+                 :unknown
+
+               response.status in 200..299 ->
+                 :applied
+
+               true ->
+                 :failed
+             end,
+           reference: reference,
+           details:
+             Map.put(facts(response), "category", to_string(status_category(response.status)))
+         }}
+
+      {:error, :unknown_after_dispatch, message} ->
+        {:ok, %Target.EffectResult{status: :unknown, details: %{"error" => message}}}
+
+      error ->
+        error
+    end
+  end
 
   @impl Opsonde.Providers.Target
   def verify(%State{} = state, request, invocation) do
@@ -203,6 +212,17 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   def verify(_state, _request, _invocation), do: invalid()
+
+  defp exact_request(state, %{operation: "websocket.session", capability: @effect} = request) do
+    with :ok <- Client.endpoint(state, request.connection.endpoint),
+         true <- request.selectors == %{},
+         :ok <- path_scope(request.parameters["path"], state.namespace, :effect, :websocket),
+         {:ok, operation} <- Session.compile(request) do
+      {:ok, operation}
+    else
+      _ -> invalid()
+    end
+  end
 
   defp exact_request(state, request) do
     with :ok <- Client.endpoint(state, request.connection.endpoint),
@@ -251,7 +271,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
   defp request_kind(_request, _method), do: invalid()
 
-  defp path_scope(path, namespace, kind) when is_binary(path) and byte_size(path) in 1..2_048 do
+  defp path_scope(path, namespace, kind, transport \\ :http)
+
+  defp path_scope(path, namespace, kind, transport)
+       when is_binary(path) and byte_size(path) in 1..2_048 do
     uri = URI.parse(path)
     parts = String.split(path, "/", trim: true)
 
@@ -264,10 +287,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     supported? =
       case parts do
         ["api", _version, "namespaces", selected | rest] when rest != [] ->
-          (is_nil(namespace) or selected == namespace) and resource_path?(rest)
+          (is_nil(namespace) or selected == namespace) and resource_path?(rest, transport)
 
         ["apis", _group, _version, "namespaces", selected | rest] when rest != [] ->
-          (is_nil(namespace) or selected == namespace) and resource_path?(rest)
+          (is_nil(namespace) or selected == namespace) and resource_path?(rest, transport)
 
         ["api"] ->
           kind == :observation
@@ -291,10 +314,10 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
           kind == :observation
 
         ["api", _version | rest] ->
-          is_nil(namespace) and resource_path?(rest)
+          is_nil(namespace) and resource_path?(rest, transport)
 
         ["apis", _group, _version | rest] ->
-          is_nil(namespace) and resource_path?(rest)
+          is_nil(namespace) and resource_path?(rest, transport)
 
         _ ->
           false
@@ -303,14 +326,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
     if canonical? and supported?, do: :ok, else: invalid()
   end
 
-  defp path_scope(_path, _namespace, _kind), do: invalid()
+  defp path_scope(_path, _namespace, _kind, _transport), do: invalid()
 
   # These Kubernetes protocol subresources require a maintained connection;
   # they cannot be admitted as an ordinary bounded HTTP observation.
-  defp resource_path?([_resource, _name, subresource | _rest])
+  defp resource_path?([_resource, _name, subresource | _rest], :http)
        when subresource in ["exec", "attach", "portforward", "proxy"], do: false
 
-  defp resource_path?(parts), do: parts != []
+  defp resource_path?(parts, _transport), do: parts != []
 
   defp query(query) when is_map(query) and map_size(query) <= 32 do
     if Enum.all?(query, fn {key, value} ->

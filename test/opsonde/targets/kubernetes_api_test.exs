@@ -1537,7 +1537,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
   end
 
   test "one generic Method observes built-in resources without fixed capabilities", context do
-    assert %Target.Capabilities{observations: [observation], effects: [effect]} =
+    assert %Target.Capabilities{observations: [observation], effects: [effect, session]} =
              Providers.target_capabilities!(
                context.provider.id,
                %Target.CapabilitiesRequest{
@@ -1548,6 +1548,8 @@ defmodule Opsonde.Targets.KubernetesAPITest do
                actor: context.admin
              )
 
+    assert session.operation == "websocket.session"
+    assert session.capability == "request.kubernetes.effect"
     assert observation.capability == "request.kubernetes.observe"
     assert observation.operation == "request.observe"
     assert effect.capability == "request.kubernetes.effect"

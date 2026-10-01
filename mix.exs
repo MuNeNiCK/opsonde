@@ -63,6 +63,7 @@ defmodule Opsonde.MixProject do
       {:req, "~> 0.7"},
       {:finch, "~> 0.23.0"},
       {:mint, "~> 1.10.2"},
+      {:mint_web_socket, "~> 1.0.6"},
       {:rustler, "== 0.38.0", runtime: false},
       {:saxy, "~> 1.6"},
       {:tzdata, "~> 1.1"},
