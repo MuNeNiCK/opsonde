@@ -253,6 +253,85 @@ defmodule Opsonde.AI.ReqLLMTest do
     %{agent: agent, endpoint: "http://127.0.0.1:#{port}"}
   end
 
+  test "generate_object binds an offered file range to its exact source", context do
+    reference = %{
+      "id" => "05a8c403-9e38-4f1b-a037-c464e0385b66",
+      "target_id" => "16e3f9a0-66b1-48e1-ae07-d5552f4e90f8",
+      "name" => "native-response.bin",
+      "media_type" => "application/octet-stream",
+      "size_bytes" => 5,
+      "sha256" => "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+    }
+
+    source = %AI.Evidence{
+      id: "source-1",
+      kind: "observation",
+      target_id: reference["target_id"],
+      content: %{"facts" => %{"steps" => [%{"file" => reference}]}}
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: reference["target_id"],
+        selected_target_revision: 1,
+        evidence: [source],
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: [reference["target_id"]],
+            allowed_evidence_kinds: ["observation"]
+        }
+    }
+
+    for provider <- ["openai", "anthropic"] do
+      endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
+      state = state!(provider, endpoint, %{"api_key" => "file-secret"})
+
+      set_mode(
+        context.agent,
+        {:decision,
+         %{
+           "type" => "file_read",
+           "file_ref" => "file-1",
+           "offset" => 1,
+           "length" => 3,
+           "reason" => "Inspect the response"
+         }}
+      )
+
+      assert {:ok,
+              %AI.ResolverDecision{
+                intent: %AI.FileRead{
+                  source_evidence_id: "source-1",
+                  reference: ^reference,
+                  offset: 1,
+                  length: 3
+                },
+                usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+              }} = Adapter.resolve(state, request, %{})
+
+      [sent] = requests(context.agent)
+      payload = user_payload(sent)
+
+      assert payload["file_read_options"] == [
+               %{
+                 "file_ref" => "file-1",
+                 "source_evidence_id" => "source-1",
+                 "reference" => reference
+               }
+             ]
+
+      variant =
+        Enum.find(
+          output_schema(sent)["properties"]["intent"]["anyOf"],
+          &(get_in(&1, ["properties", "type", "enum"]) == ["file_read"])
+        )
+
+      assert variant["properties"]["file_ref"]["enum"] == ["file-1"]
+      assert variant["properties"]["length"]["maximum"] == 8192
+      refute sent.body =~ "file-secret"
+    end
+  end
+
   test "one adapter handles OpenAI and Anthropic without putting credentials in prompts",
        context do
     providers = [

@@ -261,6 +261,13 @@ defmodule Opsonde.Providers.AI do
     @type t :: %__MODULE__{}
   end
 
+  defmodule FileRead do
+    @moduledoc false
+    @enforce_keys [:source_evidence_id, :reference, :offset, :length, :reason]
+    defstruct @enforce_keys
+    @type t :: %__MODULE__{}
+  end
+
   defmodule TargetSelection do
     @moduledoc false
     @enforce_keys [:target_id, :target_revision, :evidence_ids, :reason]
@@ -646,13 +653,40 @@ defmodule Opsonde.Providers.AI do
     def message(error), do: error.message
   end
 
+  def file_read_options(%ResolverRequest{} = request) do
+    alias Opsonde.Providers.Target.FileReference
+
+    unavailable =
+      request.evidence
+      |> Enum.filter(&(&1.kind == "file_read" and &1.content["status"] == "unavailable"))
+      |> Enum.map(&get_in(&1.content, ["reference", "id"]))
+      |> MapSet.new()
+
+    (request.evidence ++ request.observation_results)
+    |> Enum.flat_map(fn source ->
+      source.content
+      |> FileReference.references_in()
+      |> Enum.uniq()
+      |> Enum.filter(fn reference ->
+        reference["target_id"] == request.selected_target_id and
+          not MapSet.member?(unavailable, reference["id"])
+      end)
+      |> Enum.map(&%{"source_evidence_id" => source.id, "reference" => &1})
+    end)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {option, index} -> Map.put(option, "file_ref", "file-#{index}") end)
+  end
+
   def resolver_disclosure_items(%ResolverRequest{} = request) do
     request.conditions ++
       request.evidence ++
       request.historical_evidence ++
       request.target_candidates ++
       request.observation_results ++
-      request.target_relations ++ request.observation_tools ++ request.proposal_tools
+      request.target_relations ++
+      request.observation_tools ++
+      request.proposal_tools ++
+      file_read_options(request)
   end
 
   def resolver_disclosure_size(%ResolverRequest{} = request) do

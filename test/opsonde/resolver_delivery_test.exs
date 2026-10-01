@@ -120,6 +120,289 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
+  test "Resolver chooses a file range and receives exact citable contents next turn", context do
+    {turn, run, source, reference} = file_turn!(context)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert Enum.any?(request.evidence, &(&1.id == source.id))
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent:
+                        struct!(AI.FileRead,
+                          source_evidence_id: source.id,
+                          reference: reference,
+                          offset: 1,
+                          length: 3,
+                          reason: "Inspect the native response"
+                        ),
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    [receipt] =
+      Cases.list_evidence!(actor: context.operator) |> Enum.filter(&(&1.kind == "file_read"))
+
+    refute Map.has_key?(receipt.content, "value")
+
+    [next] =
+      Cases.list_turns!(actor: context.operator)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.id != turn.id))
+
+    assert next.status == :started
+    assert next.intent["file_read_evidence_id"] == receipt.id
+
+    assert :ok =
+             ResolverDelivery.run(next.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   slice = Enum.find(request.evidence, &(&1.id == receipt.id))
+                   assert slice.kind == "file_read"
+                   assert slice.content["value"] == <<0, 1, 2>>
+                   assert slice.content["encoding"] == "utf8"
+                   assert slice.content["offset"] == 1
+                   assert slice.content["byte_count"] == 3
+                   assert slice.content["next_offset"] == 4
+                   assert slice.content["eof"] == false
+                   assert slice.content["source_evidence_id"] == source.id
+
+                   assert slice.content["source_observed_at"] ==
+                            DateTime.to_iso8601(source.observed_at)
+
+                   assert slice.content["source_completion_reason"] == "upload"
+                   assert AI.resolver_disclosure_size(request) <= request.disclosure.max_bytes
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{
+                        query: "resolver-file-host",
+                        reason: "Continue the investigation"
+                      },
+                      usage: %AI.Usage{input_tokens: 11, output_tokens: 3}
+                    }}
+                 end
+               }
+             )
+
+    current = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert current.turn_count == 2
+    assert current.target_request_count == 0
+    assert current.effect_count == 0
+    assert current.ai_usage_units == 26
+    assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
+  end
+
+  test "an unavailable file reaches the next Resolver without a human handoff", context do
+    {turn, run, source, reference} = file_turn!(context)
+    file_decision!(turn, source, reference)
+    Targets.revoke_artifact!(reference["id"], actor: context.operator)
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    [next] =
+      Cases.list_turns!(actor: context.operator)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.id != turn.id))
+
+    assert :ok =
+             ResolverDelivery.run(next.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   receipt = Enum.find(request.evidence, &(&1.kind == "file_read"))
+                   assert receipt.content["status"] == "unavailable"
+                   refute Map.has_key?(receipt.content, "value")
+                   assert AI.file_read_options(request) == []
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{
+                        query: "resolver-file-host",
+                        reason: "Seek another source"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    incident = Cases.get_case!(turn.case_id, authorize?: false)
+    assert incident.status == :running
+    assert incident.required_human_input == nil
+    assert Cases.get_turn!(next.id, authorize?: false).result["intent"]["type"] == "target_search"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 24
+  end
+
+  test "file receipt persistence failure retries routing without a second AI charge", context do
+    {turn, run, source, reference} = file_turn!(context)
+    file_decision!(turn, source, reference)
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_routed_file_event() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.event_type = 'evidence_added' AND NEW.data->>'kind' = 'file_read' THEN
+        RAISE EXCEPTION 'injected routed file receipt failure';
+      END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_routed_file_event BEFORE INSERT ON case_events
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_routed_file_event();
+    """)
+
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    assert {:error, _} = DecisionRouteWorker.perform(job)
+    assert Cases.get_case!(turn.case_id, authorize?: false).status == :running
+    refute Enum.any?(Cases.list_evidence!(actor: context.operator), &(&1.kind == "file_read"))
+    Opsonde.Repo.query!("DROP TRIGGER reject_routed_file_event ON case_events")
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+
+    assert Enum.count(Cases.list_evidence!(actor: context.operator), &(&1.kind == "file_read")) ==
+             1
+
+    assert Enum.count(
+             Cases.list_turns!(actor: context.operator),
+             &(&1.resolution_run_id == run.id)
+           ) == 2
+
+    current = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert current.ai_usage_units == 12
+    assert current.target_request_count == 0
+    assert current.effect_count == 0
+  end
+
+  test "routing resumes after the file receipt committed but the successor failed", context do
+    {turn, run, source, reference} = file_turn!(context)
+    file_decision!(turn, source, reference)
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_file_successor() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.event_type = 'turn_started' THEN
+        RAISE EXCEPTION 'injected successor persistence failure';
+      END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_file_successor BEFORE INSERT ON case_events
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_file_successor();
+    """)
+
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    assert {:error, _} = DecisionRouteWorker.perform(job)
+
+    [receipt] =
+      Cases.list_evidence!(actor: context.operator) |> Enum.filter(&(&1.kind == "file_read"))
+
+    assert Enum.count(
+             Cases.list_turns!(actor: context.operator),
+             &(&1.resolution_run_id == run.id)
+           ) == 1
+
+    Opsonde.Repo.query!("DROP TRIGGER reject_file_successor ON case_events")
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+
+    assert [^receipt] =
+             Cases.list_evidence!(actor: context.operator)
+             |> Enum.filter(&(&1.kind == "file_read"))
+
+    assert Enum.count(
+             Cases.list_turns!(actor: context.operator),
+             &(&1.resolution_run_id == run.id)
+           ) == 2
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+  end
+
+  test "a cancelled Case cannot route a saved file-read decision", context do
+    {turn, run, source, reference} = file_turn!(context)
+    file_decision!(turn, source, reference)
+    incident = Cases.get_case!(turn.case_id, authorize?: false)
+    Cases.request_case_cancellation!(incident.id, incident.revision, actor: context.operator)
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    refute Enum.any?(Cases.list_evidence!(actor: context.operator), &(&1.kind == "file_read"))
+
+    assert Enum.count(
+             Cases.list_turns!(actor: context.operator),
+             &(&1.resolution_run_id == run.id)
+           ) == 1
+  end
+
+  test "requested file contents have priority over optional evidence within disclosure limits",
+       context do
+    bytes = :binary.copy(<<0>>, 8192)
+
+    {turn, run, source, reference} =
+      file_turn!(context,
+        chunks: [bytes],
+        sha256: "9f1dcbc35c350d6027f98be0f5c8b43b42ca52b7604459c0c42be3aa88913d47"
+      )
+
+    file_decision!(turn, source, reference)
+
+    Cases.append_evidence!(
+      turn.case_id,
+      run.id,
+      nil,
+      "optional-long-context",
+      "observation",
+      "fixture",
+      "optional",
+      %{
+        "target_id" => reference["target_id"],
+        "facts" => %{"optional_data" => String.duplicate("x", 62000)}
+      },
+      DateTime.utc_now(),
+      authorize?: false
+    )
+
+    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    [next] =
+      Cases.list_turns!(actor: context.operator)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.id != turn.id))
+
+    assert :ok =
+             ResolverDelivery.run(next.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   receipt = Enum.find(request.evidence, &(&1.kind == "file_read"))
+                   assert receipt.content["value"] == bytes
+                   assert receipt.content["encoding"] == "utf8"
+                   assert AI.resolver_disclosure_size(request) <= 65536
+
+                   refute Enum.any?(
+                            request.evidence,
+                            &get_in(&1.content, ["facts", "optional_data"])
+                          )
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{query: "resolver-file-host", reason: "Continue"},
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.get_turn!(next.id, authorize?: false).result["intent"]["type"] == "target_search"
+  end
+
   test "Resolver repeating an already selected Target is charged as no progress", context do
     target =
       Targets.create_target!(
@@ -912,6 +1195,86 @@ defmodule Opsonde.ResolverDeliveryTest do
              Targets.available_access_methods_for_target!(vm.id, authorize?: false)
 
     assert available_method.id == vm_method.id
+  end
+
+  defp file_turn!(context, opts \\ []) do
+    chunks = Keyword.get(opts, :chunks, [<<255, 0>>, <<1, 2, 255>>])
+
+    sha256 =
+      Keyword.get(
+        opts,
+        :sha256,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+      )
+
+    target =
+      Targets.create_target!("resolver-file-host", "host", "custom-os", %{}, nil,
+        actor: context.admin
+      )
+
+    turn = selected_turn!("file-inspection", context.operator, target)
+    run = Cases.get_resolution_run!(turn.resolution_run_id, authorize?: false)
+
+    upload =
+      Targets.begin_artifact!(
+        target.id,
+        "native-response.bin",
+        "application/octet-stream",
+        Enum.sum(Enum.map(chunks, &byte_size/1)),
+        sha256,
+        "resolver-file",
+        actor: context.operator
+      )
+
+    Enum.reduce(chunks, 0, fn bytes, offset ->
+      Targets.append_artifact_chunk!(upload.id, offset, bytes, actor: context.operator)
+      offset + byte_size(bytes)
+    end)
+
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    reference = Targets.artifact_reference!(upload.id, target.id, actor: context.operator)
+
+    source =
+      Cases.append_evidence!(
+        turn.case_id,
+        run.id,
+        nil,
+        "resolver-native-file",
+        "observation",
+        "fixture",
+        "native-response",
+        %{
+          "target_id" => target.id,
+          "status" => "applied",
+          "facts" => %{"steps" => [%{"file" => reference}]}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    {turn, run, source, reference}
+  end
+
+  defp file_decision!(turn, source, reference) do
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.FileRead{
+                        source_evidence_id: source.id,
+                        reference: reference,
+                        offset: 0,
+                        length: reference["size_bytes"],
+                        reason: "Inspect the response"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
   end
 
   defp turn!(source_ref, actor) do

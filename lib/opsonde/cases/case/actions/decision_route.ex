@@ -20,9 +20,11 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
           :ok
 
         {:error, error} ->
-          if rejected_target_selection?(turn_id, error),
-            do: reconsider_target_selection(turn_id),
-            else: require_attention(turn_id, error)
+          cond do
+            file_route?(turn_id) -> {:error, error}
+            rejected_target_selection?(turn_id, error) -> reconsider_target_selection(turn_id)
+            true -> require_attention(turn_id, error)
+          end
       end
 
     case result do
@@ -35,7 +37,57 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
   defp route(turn_id) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
          {:ok, type} <- decision_type(turn) do
-      if type == "case_split", do: route_split_turn(turn), else: route_locked(turn_id)
+      case type do
+        "case_split" -> route_split_turn(turn)
+        "file_read" -> route_file_turn(turn)
+        _other -> route_locked(turn_id)
+      end
+    end
+  end
+
+  defp file_route?(turn_id) do
+    case Cases.get_turn(turn_id, authorize?: false) do
+      {:ok, turn} -> decision_type(turn) == {:ok, "file_read"}
+      _unavailable -> false
+    end
+  end
+
+  defp route_file_turn(turn) do
+    with {:ok, superseded?} <- superseded_by_split?(turn) do
+      if superseded? do
+        {:ok, :superseded}
+      else
+        with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
+             {:ok, current?} <- current_conditions?(incident, turn) do
+          cond do
+            incident.status != :running or incident.cancel_requested ->
+              {:ok, :superseded}
+
+            current? ->
+              with {:ok, evidence} <- Cases.capture_file_read(turn.id, authorize?: false) do
+                locked_continuation(turn, fn current_turn ->
+                  with {:ok, incident} <- Cases.get_case(current_turn.case_id, authorize?: false),
+                       {:ok, current?} <- current_conditions?(incident, current_turn) do
+                    if current? do
+                      continue_with_turn(
+                        current_turn,
+                        "file-read",
+                        "Continue investigation with the current file-read result",
+                        %{"file_read_evidence_id" => evidence.id},
+                        "Review Resolver limits"
+                      )
+                    else
+                      supersede_stale_route(current_turn)
+                    end
+                  end
+                end)
+              end
+
+            true ->
+              locked_continuation(turn, &supersede_stale_route/1)
+          end
+        end
+      end
     end
   end
 
@@ -284,6 +336,7 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
               "target_selection",
               "target_traversal",
               "proposal",
+              "file_read",
               "case_split",
               "recovery_conclusion",
               "handoff"

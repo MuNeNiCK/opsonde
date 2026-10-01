@@ -579,6 +579,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp progress_kind(%AI.Proposal{request_kind: :observation}, _request),
     do: :observation_pending
 
+  defp progress_kind(%AI.FileRead{}, _request), do: :observation_pending
+
   defp progress_kind(%AI.Proposal{}, _request), do: :proposal
   defp progress_kind(%AI.RecoveryConclusion{}, _request), do: :source_change
   defp progress_kind(%AI.Handoff{}, _request), do: :human_input

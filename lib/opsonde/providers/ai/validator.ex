@@ -588,6 +588,20 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(_operation, _decision, _request),
     do: {:error, ai_error(:invalid_output, "AI output is invalid", "invalid_output")}
 
+  defp validate_resolver_intent(%AI.FileRead{} = read, request) do
+    available? =
+      Enum.any?(AI.file_read_options(request), fn option ->
+        option["source_evidence_id"] == read.source_evidence_id and
+          option["reference"] == read.reference
+      end)
+
+    if available? and is_integer(read.offset) and read.offset >= 0 and
+         read.offset <= read.reference["size_bytes"] and is_integer(read.length) and
+         read.length in 1..AI.file_read_bytes() and AI.valid_resolver_reason?(read.reason),
+       do: :ok,
+       else: {:error, ai_error(:invalid_output, "AI file read is invalid", "file_read")}
+  end
+
   defp validate_resolver_intent(%AI.TargetSearch{} = search, request) do
     if request.budget.remaining_target_requests > 0 and
          bounded_text?(search.query, SearchQuery.max_codepoints()) and

@@ -33,6 +33,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, incident, conditions, continuity),
+         {:ok, continuity} <- project_file_contents(continuity, incident),
          request <-
            request(
              selection,
@@ -49,6 +50,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
              traversable_relation_ids,
              tools
            ),
+         :ok <- requested_file_visible(request, turn),
          :ok <- AI.Validator.validate_request(:resolve, request) do
       {:ok, request}
     end
@@ -56,6 +58,40 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
   def build(_turn_id, _selection),
     do: {:error, "Resolver AI selection is invalid"}
+
+  defp project_file_contents(evidence, incident) do
+    evidence
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, loaded} ->
+      if item.kind == "file_read" and
+           item.content["target_id"] == incident.selected_target_id do
+        case Cases.read_file_content(item.id, incident.id, authorize?: false) do
+          {:ok, content} -> {:cont, {:ok, [%{item | content: content} | loaded]}}
+          {:error, _error} = error -> {:halt, error}
+        end
+      else
+        {:cont, {:ok, [item | loaded]}}
+      end
+    end)
+    |> case do
+      {:ok, loaded} -> {:ok, Enum.reverse(loaded)}
+      error -> error
+    end
+  end
+
+  defp requested_file_visible(request, turn) do
+    requested = turn.intent["file_read_evidence_id"]
+
+    if is_nil(requested) or
+         Enum.any?(request.evidence, fn evidence ->
+           evidence.id == requested and evidence.kind == "file_read" and
+             evidence.target_id == request.selected_target_id and
+             (evidence.content["status"] == "unavailable" or
+                is_binary(evidence.content["value"]))
+         end),
+       do: :ok,
+       else:
+         {:error, "Requested file contents are unavailable within the Resolver disclosure limit"}
+  end
 
   defp current_recovery_evidence(_incident, []), do: {:ok, []}
 
@@ -522,6 +558,11 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     {source_evidence, other_evidence} =
       Enum.split_with(evidence, &(&1.kind == "signal_event"))
 
+    {file_reads, other_evidence} =
+      Enum.split_with(other_evidence, &(&1.kind == "file_read"))
+
+    file_reads = Enum.sort_by(file_reads, &(&1.id != turn.intent["file_read_evidence_id"]))
+
     manual_recovery_ids =
       if (incident.trigger_kind in [:manual, :audit] and target) &&
            is_struct(recovery_baseline, DateTime) do
@@ -533,6 +574,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       end
 
     base
+    |> add_items(:evidence, generic_evidence(file_reads, base.disclosure.allowed_target_ids))
     |> add_items(
       :evidence,
       generic_evidence(source_evidence, base.disclosure.allowed_target_ids)

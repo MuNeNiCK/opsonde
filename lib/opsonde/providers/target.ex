@@ -112,6 +112,13 @@ defmodule Opsonde.Providers.Target do
     def present_in?(value, reference),
       do: valid?(reference) and contains_reference?(value, reference)
 
+    def references_in(value) when is_map(value) do
+      if valid?(value), do: [value], else: Enum.flat_map(Map.values(value), &references_in/1)
+    end
+
+    def references_in(value) when is_list(value), do: Enum.flat_map(value, &references_in/1)
+    def references_in(_value), do: []
+
     defp contains_reference?(value, reference) when value == reference, do: true
 
     defp contains_reference?(value, reference) when is_map(value),
