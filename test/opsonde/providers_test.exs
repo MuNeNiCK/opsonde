@@ -9,6 +9,19 @@ defmodule Opsonde.ProvidersTest do
   @password "correct horse battery staple"
   @token "private-provider-token"
 
+  defmodule IncompleteTarget do
+    @behaviour Opsonde.Providers.Adapter
+
+    @impl true
+    def type, do: "incomplete-target"
+    @impl true
+    def kind, do: :target
+    @impl true
+    def build(_configuration, _credentials), do: {:ok, %{}}
+    @impl true
+    def check(_state, _input), do: :ok
+  end
+
   setup do
     admin = Accounts.bootstrap!("admin@example.com", @password, @password, authorize?: true)
 
@@ -18,6 +31,46 @@ defmodule Opsonde.ProvidersTest do
     viewer = Accounts.create_user!("viewer@example.com", @password, :viewer, actor: admin)
 
     %{admin: admin, operator: operator, viewer: viewer}
+  end
+
+  test "registration rejects a Target adapter without its role contract", context do
+    adapters = Application.fetch_env!(:opsonde, :provider_adapters)
+    Application.put_env(:opsonde, :provider_adapters, adapters ++ [IncompleteTarget])
+    on_exit(fn -> Application.put_env(:opsonde, :provider_adapters, adapters) end)
+
+    assert {:error, error} =
+             Providers.create_provider(
+               "Incomplete Target",
+               :target,
+               "incomplete-target",
+               %{},
+               %{},
+               actor: context.admin
+             )
+
+    assert Exception.message(error) =~ "is not available"
+    assert Providers.list_providers!(actor: context.admin) == []
+  end
+
+  test "every configured Target adapter can be registered through the domain action", context do
+    providers =
+      Application.fetch_env!(:opsonde, :provider_adapters)
+      |> Enum.filter(&(&1.kind() == :target))
+      |> Enum.map(fn adapter ->
+        Providers.create_provider!(
+          "Credentials for #{adapter.type()}",
+          :target,
+          adapter.type(),
+          %{},
+          %{},
+          actor: context.admin
+        )
+      end)
+
+    assert providers != []
+
+    assert MapSet.new(Providers.list_providers!(actor: context.admin), & &1.id) ==
+             MapSet.new(providers, & &1.id)
   end
 
   test "Target credentials enable after pure validation and remote checks belong to Methods",

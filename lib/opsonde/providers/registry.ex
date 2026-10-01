@@ -1,7 +1,7 @@
 defmodule Opsonde.Providers.Registry do
   @moduledoc false
 
-  alias Opsonde.Providers.Adapter
+  alias Opsonde.Providers.{Adapter, Target}
 
   @kinds [:ai, :signal, :target, :inventory, :notification]
   @check_failures [:invalid_configuration, :authentication, :unreachable, :capability]
@@ -70,7 +70,8 @@ defmodule Opsonde.Providers.Registry do
       function_exported?(adapter, :kind, 0) and
       function_exported?(adapter, :build, 2) and
       function_exported?(adapter, :check, 2) and
-      adapter.kind() in @kinds
+      adapter.kind() in @kinds and
+      (adapter.kind() != :target or implements?(adapter, Target))
   end
 
   defp behaviours(adapter) do
