@@ -455,8 +455,9 @@ defmodule Opsonde.AI.ReqLLM do
         "context, and has no verification or expected result. Before the first observation, " <>
         "evidence_ids may be empty: use the supplied Case objective and current Target to select " <>
         "the investigation; never invent prior observations. Never call a modification investigation. " <>
-        "For remediation, intent.verification contains only tool_id, selectors, parameters, and " <>
-        "expected_result_json. Do not add explanatory keys inside action or verification. " <>
+        "For remediation, intent.verification contains either only expected_result_json for " <>
+        "later investigation, or tool_id, selectors, parameters, and expected_result_json for " <>
+        "a supplied observation request. Do not add explanatory keys inside action or verification. " <>
         "Propose remediation only for an unresolved Condition or a manual/audit desired_outcome " <>
         "shown unmet by current Target Evidence. Do not propose remediation when the desired " <>
         "outcome is already met or no current fault is observed. A recovered monitoring Condition may still have a " <>
@@ -614,7 +615,8 @@ defmodule Opsonde.AI.ReqLLM do
         output_retry_instructions() <>
         "Write the human-facing reason in the report_language supplied in the user payload. " <>
         "Return approved, rejected, or needs_human with a concise reason of at most " <>
-        "#{AI.reviewer_reason_codepoints()} characters.",
+        "#{AI.reviewer_reason_codepoints()} characters. Aim for at most 300 characters: " <>
+        "state the decisive evidence and authorization concern in one or two short sentences.",
       Jason.encode!(payload)
     )
   end
@@ -623,6 +625,8 @@ defmodule Opsonde.AI.ReqLLM do
     "If retry_context is present, the previous response was rejected before any decision " <>
       "was accepted. When its rejection_code is schema_validation, check the next response " <>
       "against the current output schema. If rejection_path is present, correct that field. " <>
+      "When rejection_path is reason or /reason, replace the explanation with one short " <>
+      "sentence well below its character limit; do not expand it or repeat the Case history. " <>
       "Copy enum values exactly, include every required field, and add no field that the " <>
       "schema does not allow. When rejection_code is missing_structured_object, the previous " <>
       "response contained no complete JSON object; return exactly one complete object that " <>
