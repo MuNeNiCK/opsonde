@@ -190,8 +190,7 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
            content: %{"status" => "applied", "target_id" => target_id}
          }}
         when case_id == operation.case_id and target_id == operation.target_id ->
-          DateTime.compare(observed_at, prior.completed_at) == :gt and
-            source_observation_current?(source_ref, operation, prior)
+          source_observation_current?(source_ref, observed_at, operation, prior)
 
         _other ->
           false
@@ -199,19 +198,31 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     end)
   end
 
-  defp source_observation_current?(source_ref, operation, prior) do
+  defp source_observation_current?(source_ref, observed_at, operation, prior) do
     case Cases.get_operation(source_ref, authorize?: false) do
       {:ok,
        %{
          purpose: :investigation,
          status: :applied,
          target_id: target_id,
+         target_revision: target_revision,
          case_id: case_id,
+         resolution_run_id: run_id,
          resource_scope: scope,
          completed_at: completed_at
        }}
       when target_id == operation.target_id and case_id == operation.case_id ->
-        DateTime.compare(completed_at, prior.completed_at) == :gt and
+        current =
+          if source_ref == prior.id do
+            run_id == operation.resolution_run_id and
+              target_revision == operation.target_revision and
+              DateTime.compare(observed_at, completed_at) == :eq
+          else
+            DateTime.compare(observed_at, prior.completed_at) == :gt and
+              DateTime.compare(completed_at, prior.completed_at) == :gt
+          end
+
+        current and
           (scope == "target" or
              (scope == operation.resource_scope and scope == prior.resource_scope))
 
