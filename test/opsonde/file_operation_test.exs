@@ -205,6 +205,39 @@ defmodule Opsonde.FileOperationTest do
     assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
   end
 
+  test "Reviewer approved capture limits remain bound to the Case result without replay",
+       context do
+    reference = stage_file(context)
+
+    parameters =
+      file_parameters(reference)
+      |> Map.put("capture", %{"duration_ms" => 500, "max_bytes" => 3})
+
+    proposal = proposal!(context, parameters)
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.parameters == parameters
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :unknown
+    assert stored.parameters == parameters
+    assert stored.result_details["completion_reason"] == "byte_limit"
+    reply = stored.result_details["file"]
+    assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) == <<255, 0, 1>>
+
+    assert Targets.get_artifact!(reply["id"], actor: context.operator).completion_reason ==
+             :byte_limit
+
+    evidence =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.find(&(&1.source == "operation" and &1.source_ref == operation.id))
+
+    assert evidence.content["parameters"]["capture"] == parameters["capture"]
+    assert evidence.content["details"]["completion_reason"] == "byte_limit"
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
+  end
+
   test "a revoked approved file is rejected before Case dispatch", context do
     reference = stage_file(context)
     proposal = proposal!(context, file_parameters(reference))
@@ -236,7 +269,12 @@ defmodule Opsonde.FileOperationTest do
   test "an outcome save failure preserves the received file without repeating the effect",
        context do
     reference = stage_file(context)
-    proposal = proposal!(context, file_parameters(reference))
+
+    parameters =
+      file_parameters(reference)
+      |> Map.put("capture", %{"duration_ms" => 500, "max_bytes" => 3})
+
+    proposal = proposal!(context, parameters)
     approve!(proposal)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
@@ -244,7 +282,7 @@ defmodule Opsonde.FileOperationTest do
     Opsonde.Repo.query!("""
     CREATE FUNCTION pg_temp.reject_file_operation_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
-      IF NEW.status = 'applied' THEN
+      IF NEW.status = 'unknown' THEN
         RAISE EXCEPTION 'test outcome publication unavailable';
       END IF;
       RETURN NEW;
@@ -264,11 +302,12 @@ defmodule Opsonde.FileOperationTest do
     page = Targets.page_artifacts!(context.target.id, actor: context.operator)
     received = Enum.find(page.results, &(&1.name == "case-result.bin"))
     assert received.status == :ready
+    assert received.completion_reason == :byte_limit
     assert Map.get(received, :request_id) == operation.id
     reply = Targets.artifact_reference!(received.id, context.target.id, actor: context.operator)
 
     assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) ==
-             <<255, 0, 1, 2, 255>>
+             <<255, 0, 1>>
 
     Opsonde.Repo.query!("DROP TRIGGER reject_file_operation_outcome ON operations")
     assert :ok = Delivery.run(operation.id)
@@ -276,6 +315,7 @@ defmodule Opsonde.FileOperationTest do
     assert recovered.status == :unknown
     assert recovered.outcome_category == "dispatch_interrupted"
     assert recovered.parameters["files"]["payload"] == reference
+    assert recovered.parameters["capture"] == parameters["capture"]
     assert Targets.get_artifact!(received.id, actor: context.operator).request_id == operation.id
     assert :ok = Delivery.run(operation.id)
     assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
@@ -335,7 +375,13 @@ defmodule Opsonde.FileOperationTest do
   test "Case cancellation after the send leaves an unknown effect and unusable response file",
        context do
     reference = stage_file(context)
-    proposal = proposal!(context, file_parameters(reference))
+
+    proposal =
+      proposal!(
+        context,
+        Map.put(file_parameters(reference), "capture", %{"duration_ms" => 500, "max_bytes" => 3})
+      )
+
     approve!(proposal)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 

@@ -104,6 +104,12 @@ defmodule Opsonde.Targets.Artifact do
       argument :id, :uuid, allow_nil?: false
       argument :expected_size_bytes, :integer, constraints: [min: 0]
       argument :expected_sha256, :string, constraints: [match: ~r/\A[0-9a-f]{64}\z/]
+
+      argument :completion_reason, :atom,
+        allow_nil?: false,
+        default: :eof,
+        constraints: [one_of: [:eof, :byte_limit, :duration_limit]]
+
       run {Lifecycle, operation: :complete_receipt}
     end
 
@@ -166,7 +172,7 @@ defmodule Opsonde.Targets.Artifact do
     end
 
     update :record_state do
-      accept [:received_bytes, :status, :sha256, :size_bytes]
+      accept [:received_bytes, :status, :sha256, :size_bytes, :completion_reason]
       change optimistic_lock(:revision)
     end
   end
@@ -218,6 +224,11 @@ defmodule Opsonde.Targets.Artifact do
     attribute :sha256, :string, public?: true
     attribute :upload_key, :string, allow_nil?: false, sensitive?: true
     attribute :request_id, :string, public?: true
+
+    attribute :completion_reason, :atom,
+      public?: true,
+      constraints: [one_of: [:upload, :eof, :byte_limit, :duration_limit]]
+
     attribute :expires_at, :utc_datetime_usec, allow_nil?: false, public?: true
 
     attribute :status, :atom,

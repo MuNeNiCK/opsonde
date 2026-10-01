@@ -2114,6 +2114,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :sha256, :text
       add :upload_key, :text, null: false
       add :request_id, :text
+      add :completion_reason, :text
       add :expires_at, :utc_datetime_usec, null: false
       add :status, :text, null: false, default: "uploading"
       add :revision, :bigint, null: false, default: 1

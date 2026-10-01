@@ -525,8 +525,8 @@ defmodule Opsonde.TargetRequestTest do
                    "application/octet-stream"
                  )
 
-        assert {:error, _} = same_writer.complete.(6, nil)
-        {:ok, reference} = same_writer.complete.(5, nil)
+        assert {:error, _} = same_writer.complete.(6, nil, :eof)
+        {:ok, reference} = same_writer.complete.(5, nil, :eof)
         assert reference["target_id"] == context.linux.id
         assert reference["size_bytes"] == 5
 
@@ -534,7 +534,7 @@ defmodule Opsonde.TargetRequestTest do
                  "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
 
         Accounts.change_role!(context.operator, :viewer, actor: context.admin)
-        assert {:error, %RequestError{category: :forbidden}} = writer.complete.(5, nil)
+        assert {:error, %RequestError{category: :forbidden}} = writer.complete.(5, nil, :eof)
         assert {:error, %RequestError{category: :forbidden}} = writer.abort.()
         Accounts.change_role!(context.operator, :operator, actor: context.admin)
         Process.put(:cancel_file_write, true)
@@ -542,7 +542,7 @@ defmodule Opsonde.TargetRequestTest do
         assert {:error, %RequestError{category: :cancelled}} =
                  writer.append.(0, <<255, 0, 1, 2, 255>>)
 
-        assert {:error, %RequestError{category: :cancelled}} = writer.complete.(nil, nil)
+        assert {:error, %RequestError{category: :cancelled}} = writer.complete.(nil, nil, :eof)
         assert {:ok, :revoked} = writer.abort.()
         Process.delete(:cancel_file_write)
 

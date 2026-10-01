@@ -6,6 +6,7 @@ defmodule OpsondeWeb.API.V1.TargetFileJSON do
       :id,
       :target_id,
       :request_id,
+      :completion_reason,
       :name,
       :media_type,
       :size_bytes,

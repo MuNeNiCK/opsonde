@@ -109,6 +109,15 @@ defmodule Opsonde.Targets.HTTPAPITest do
             2_000 -> send_resp(conn, 200, "")
           end
 
+        {"GET", "/api/zero-events"} ->
+          conn = conn |> put_resp_content_type("text/event-stream") |> send_chunked(200)
+
+          receive do
+            :finish_idle -> conn
+          after
+            2_000 -> conn
+          end
+
         {"POST", "/api/continuous"} ->
           {:ok, body, conn} = read_body(conn)
           Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
@@ -816,6 +825,169 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert result.facts["file"]["size_bytes"] == byte_size(bytes)
   end
 
+  test "an explicit byte sample preserves an exact binary prefix and its completion reason",
+       context do
+    result =
+      cleared_http(context, "GET", "/api/binary", %{
+        "capture" => %{"duration_ms" => 250, "max_bytes" => 3}
+      })
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    file = result.facts["file"]
+    assert read_file(context, file) == <<255, 0, 1>>
+    assert result.facts["body_truncated"]
+    metadata = Targets.get_artifact!(file["id"], actor: context.operator)
+    assert Map.get(metadata, :completion_reason) == :byte_limit
+    assert result.facts["completion_reason"] == "byte_limit"
+  end
+
+  test "capture limits require a response file and cannot change after clearance", context do
+    clearance =
+      cleared_http(context, "GET", "/api/binary", %{
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
+      })
+
+    for parameters <- [
+          put_in(clearance.parameters, ["capture", "max_bytes"], 5),
+          put_in(clearance.parameters, ["capture", "duration_ms"], 1_000)
+        ] do
+      assert {:error, _} =
+               Targets.dispatch_target_observation(%{clearance | parameters: parameters}, %{},
+                 actor: context.operator,
+                 authorize?: false
+               )
+    end
+
+    for parameters <- [
+          Map.delete(clearance.parameters, "response_file"),
+          put_in(clearance.parameters, ["capture", "max_bytes"], 0),
+          put_in(clearance.parameters, ["capture", "duration_ms"], 0),
+          put_in(clearance.parameters, ["capture", "duration_ms"], 30_001),
+          put_in(clearance.parameters, ["capture", "extra"], true)
+        ] do
+      request = %Request{
+        kind: :observation,
+        authority_mode: :readonly,
+        target_id: context.target.id,
+        target_revision: context.target.revision,
+        access_method_id: context.method.id,
+        access_method_revision: context.method.revision,
+        capability: "request.http.observe",
+        operation: "request.observe",
+        parameters: parameters
+      }
+
+      assert {:error, _} = Targets.clear_target_request(request, actor: context.operator)
+    end
+
+    assert Targets.page_artifacts!(context.target.id, actor: context.operator).results == []
+  end
+
+  test "an explicit duration sample stops a silent response and publishes only its received bytes",
+       context do
+    started = System.monotonic_time(:millisecond)
+
+    result =
+      cleared_http(context, "GET", "/api/idle", %{
+        "capture" => %{"duration_ms" => 100, "max_bytes" => 100}
+      })
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert System.monotonic_time(:millisecond) - started < 500
+    assert read_file(context, result.facts["file"]) == <<255, 0>>
+    metadata = Targets.get_artifact!(result.facts["file"]["id"], actor: context.operator)
+    assert Map.get(metadata, :completion_reason) == :duration_limit
+    assert result.facts["completion_reason"] == "duration_limit"
+  end
+
+  test "a zero-event sample requires received headers and never publishes a missing response",
+       context do
+    result =
+      cleared_http(context, "GET", "/api/zero-events", %{
+        "capture" => %{"duration_ms" => 100, "max_bytes" => 100}
+      })
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.facts["status"] == 200
+    assert read_file(context, result.facts["file"]) == ""
+    assert result.facts["completion_reason"] == "duration_limit"
+
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/headers-idle", %{
+               "capture" => %{"duration_ms" => 100, "max_bytes" => 100}
+             })
+             |> Targets.dispatch_target_observation(%{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert [%{status: :receiving, received_bytes: 0, sha256: nil} = incomplete | _] =
+             Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+    assert {:error, _} =
+             Targets.artifact_reference(incomplete.id, context.target.id, actor: context.operator)
+  end
+
+  test "a sampled effect reply stays unknown and an early transport loss stays unpublished",
+       context do
+    effect =
+      cleared_http(context, "PUT", "/api/binary", %{
+        "body" => "whole-body",
+        "capture" => %{"duration_ms" => 250, "max_bytes" => 3}
+      })
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert effect.status == :unknown
+    assert effect.details["completion_reason"] == "byte_limit"
+    assert read_file(context, effect.details["file"]) == "who"
+    assert Agent.get(context.agent, & &1.writes) == ["whole-body"]
+
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/interrupted", %{
+               "capture" => %{"duration_ms" => 250, "max_bytes" => 100}
+             })
+             |> Targets.dispatch_target_observation(%{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert [%{status: :receiving, received_bytes: 2, completion_reason: nil} = incomplete | _] =
+             Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+    assert {:error, _} =
+             Targets.artifact_reference(incomplete.id, context.target.id, actor: context.operator)
+  end
+
+  test "a capture that reaches EOF validates the whole response digest", context do
+    capture = %{"capture" => %{"duration_ms" => 500, "max_bytes" => 100}}
+
+    result =
+      cleared_http(context, "GET", "/api/binary", capture)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert read_file(context, result.facts["file"]) == <<255, 0, 1, 2, 255>>
+    assert result.facts["completion_reason"] == "eof"
+    refute result.facts["body_truncated"]
+
+    Agent.update(
+      context.agent,
+      &Map.put(&1, :content_digest, "sha-256=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=:")
+    )
+
+    assert {:error, _} =
+             cleared_http(context, "GET", "/api/binary", capture)
+             |> Targets.dispatch_target_observation(%{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert [%{status: :receiving, completion_reason: nil} = incomplete | _] =
+             Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+    assert {:error, _} =
+             Targets.artifact_reference(incomplete.id, context.target.id, actor: context.operator)
+  end
+
   test "clean chunked EOF publishes exact bytes and HEAD publishes an empty file", context do
     for {verb, path, size, hash} <- [
           {"GET", "/api/chunked", 5,
@@ -894,7 +1066,10 @@ defmodule Opsonde.Targets.HTTPAPITest do
 
   test "a silent response cancels without waiting for the idle timeout or publishing its prefix",
        context do
-    clearance = cleared_http(context, "GET", "/api/idle")
+    clearance =
+      cleared_http(context, "GET", "/api/idle", %{
+        "capture" => %{"duration_ms" => 1_000, "max_bytes" => 100}
+      })
 
     invocation = %{
       cancelled?: fn -> Agent.get(context.agent, &Map.get(&1, :cancelled, false)) end
@@ -928,6 +1103,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
       assert {:ok, {:error, _}} = Task.yield(task, 400)
       send(peer, :finish_idle)
       assert Targets.get_artifact!(receipt.id, actor: context.operator).status == :receiving
+      assert Targets.get_artifact!(receipt.id, actor: context.operator).completion_reason == nil
 
       assert {:error, _} =
                Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
@@ -1210,14 +1386,18 @@ defmodule Opsonde.Targets.HTTPAPITest do
     )
 
     result =
-      cleared_http(context, "PUT", "/api/binary", %{"body" => "plain-body"})
+      cleared_http(context, "PUT", "/api/binary", %{
+        "body" => "plain-body",
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
+      })
       |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
 
     assert result.status == :unknown
     assert Agent.get(context.agent, & &1.writes) == ["plain-body"]
     [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
     assert receipt.status == :receiving
-    assert receipt.received_bytes == 10
+    assert receipt.received_bytes == 3
+    assert receipt.completion_reason == nil
     assert result.details["reason"] =~ receipt.id
 
     assert {:error, _} =

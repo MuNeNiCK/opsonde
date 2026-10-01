@@ -5052,6 +5052,16 @@
       "TargetFile": {
         "additionalProperties": false,
         "properties": {
+          "completion_reason": {
+            "enum": [
+              "upload",
+              "eof",
+              "byte_limit",
+              "duration_limit"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "expected_sha256": {
             "nullable": true,
             "pattern": "^[0-9a-f]{64}$",
@@ -5117,6 +5127,7 @@
           }
         },
         "required": [
+          "completion_reason",
           "expected_sha256",
           "expires_at",
           "id",

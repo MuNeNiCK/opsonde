@@ -210,7 +210,9 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
            hash == artifact.expected_sha256 ||
              invalid(:expected_sha256, "Artifact integrity check failed"),
          {:ok, completed} <-
-           Targets.record_artifact_state(artifact, %{status: :ready, sha256: hash},
+           Targets.record_artifact_state(
+             artifact,
+             %{status: :ready, sha256: hash, completion_reason: :upload},
              authorize?: false
            ) do
       completed
@@ -224,8 +226,12 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
        when status in [:receiving, :ready] do
     expected_size = Map.get(arguments, :expected_size_bytes)
     expected_hash = Map.get(arguments, :expected_sha256)
+    reason = arguments.completion_reason
 
     with true <-
+           (status != :ready or artifact.completion_reason == reason) ||
+             invalid(:completion_reason, "Incoming file completion reason cannot be changed"),
+         true <-
            (is_nil(expected_size) or
               expected_size == artifact.received_bytes) ||
              invalid(:expected_size_bytes, "Incoming file length does not match the response"),
@@ -239,7 +245,12 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
         with {:ok, completed} <-
                Targets.record_artifact_state(
                  artifact,
-                 %{status: :ready, size_bytes: artifact.received_bytes, sha256: hash},
+                 %{
+                   status: :ready,
+                   size_bytes: artifact.received_bytes,
+                   sha256: hash,
+                   completion_reason: reason
+                 },
                  authorize?: false
                ),
              do: completed

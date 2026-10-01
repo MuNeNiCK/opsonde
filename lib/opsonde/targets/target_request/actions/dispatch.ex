@@ -304,7 +304,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
                     ),
                   do: {:ok, current.received_bytes}
            end,
-           complete: fn expected_size, expected_hash ->
+           complete: fn expected_size, expected_hash, completion_reason ->
              with {:ok, current} <-
                     file_action(
                       actor,
@@ -312,7 +312,11 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
                       fn current_actor ->
                         Targets.complete_artifact_receipt(
                           artifact.id,
-                          %{expected_size_bytes: expected_size, expected_sha256: expected_hash},
+                          %{
+                            expected_size_bytes: expected_size,
+                            expected_sha256: expected_hash,
+                            completion_reason: completion_reason
+                          },
                           actor: current_actor
                         )
                       end,

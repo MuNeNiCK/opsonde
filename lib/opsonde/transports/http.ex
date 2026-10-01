@@ -13,7 +13,9 @@ defmodule Opsonde.Transports.HTTP do
       collector =
         if is_nil(writer),
           do: Keyword.fetch!(options, :into),
-          else: fn event, acc -> collect_response(event, acc, writer, invocation) end
+          else: fn event, acc ->
+            collect_response(event, acc, writer, invocation, options[:capture])
+          end
 
       options =
         options |> Keyword.put(:headers, Map.to_list(headers)) |> Keyword.put(:into, collector)
@@ -36,18 +38,40 @@ defmodule Opsonde.Transports.HTTP do
   end
 
   defp exchange(options, writer, invocation) do
-    deadline = System.monotonic_time(:millisecond) + Keyword.fetch!(options, :receive_timeout)
-    task = Task.async(fn -> wire_request(options, writer) end)
+    started = System.monotonic_time(:millisecond)
+    deadline = started + Keyword.fetch!(options, :receive_timeout)
+    channel = make_ref()
+    owner = self()
+
+    capture =
+      if options[:capture],
+        do: %{
+          deadline: started + options[:capture]["duration_ms"],
+          channel: channel,
+          response: nil
+        }
+
+    notify = if capture, do: fn response -> send(owner, {channel, response}) end
+    task = Task.async(fn -> wire_request(options, writer, notify) end)
 
     try do
-      await_wire(task, deadline, writer, invocation)
+      await_wire(task, deadline, writer, invocation, capture)
     after
       Task.shutdown(task, :brutal_kill)
+      clear_headers(channel)
     end
   end
 
-  defp wire_request(options, writer) do
-    case Req.request(Keyword.put(options, :adapter, __MODULE__)) do
+  defp wire_request(options, writer, notify) do
+    request =
+      options |> Keyword.delete(:capture) |> Keyword.put(:adapter, __MODULE__) |> Req.new()
+
+    request =
+      if notify,
+        do: Req.Request.put_private(request, :opsonde_response_headers, notify),
+        else: request
+
+    case Req.request(request) do
       {:error, %Req.TransportError{reason: :timeout}} -> timeout_failure(writer)
       {:error, %Finch.TransportError{reason: :timeout}} -> timeout_failure(writer)
       result -> result
@@ -100,8 +124,14 @@ defmodule Opsonde.Transports.HTTP do
   defp stream_event({:status, status}, {request, response}),
     do: {:cont, {request, %{response | status: status}}}
 
-  defp stream_event({:headers, fields}, {request, response}),
-    do: {:cont, {request, %{response | headers: Req.Response.new(headers: fields).headers}}}
+  defp stream_event({:headers, fields}, {request, response}) do
+    response = %{response | headers: Req.Response.new(headers: fields).headers}
+
+    if response.status in 200..599 && request.private[:opsonde_response_headers],
+      do: request.private[:opsonde_response_headers].(response)
+
+    {:cont, {request, response}}
+  end
 
   defp stream_event({:trailers, fields}, {request, response}),
     do: {:cont, {request, %{response | trailers: Req.Response.new(trailers: fields).trailers}}}
@@ -109,22 +139,62 @@ defmodule Opsonde.Transports.HTTP do
   defp stream_event({:data, _bytes} = event, {request, _response} = acc),
     do: request.into.(event, acc)
 
-  defp await_wire(task, deadline, writer, invocation) do
+  defp await_wire(task, deadline, writer, invocation, capture) do
+    capture = take_headers(capture)
     remaining = deadline - System.monotonic_time(:millisecond)
+    sample_remaining = if capture, do: capture.deadline - System.monotonic_time(:millisecond)
+    finished = Task.yield(task, 0)
 
     cond do
       not_cancelled(invocation) != :ok ->
         {:error, :cancelled, "HTTP request was cancelled"}
 
+      match?({:ok, _}, finished) ->
+        elem(finished, 1)
+
+      match?({:exit, _}, finished) ->
+        response_failure(writer)
+
+      capture && sample_remaining <= 0 ->
+        case capture.response do
+          nil ->
+            timeout_failure(writer)
+
+          response ->
+            private = Map.put(response.private, :opsonde_completion_reason, :duration_limit)
+            {:ok, %{response | private: private}}
+        end
+
       remaining <= 0 ->
         timeout_failure(writer)
 
       true ->
-        case Task.yield(task, min(@poll_interval, remaining)) do
+        wait =
+          min(@poll_interval, if(capture, do: min(remaining, sample_remaining), else: remaining))
+
+        case Task.yield(task, wait) do
           {:ok, result} -> result
           {:exit, _reason} -> response_failure(writer)
-          nil -> await_wire(task, deadline, writer, invocation)
+          nil -> await_wire(task, deadline, writer, invocation, capture)
         end
+    end
+  end
+
+  defp take_headers(nil), do: nil
+
+  defp take_headers(%{channel: channel} = capture) do
+    receive do
+      {^channel, response} -> take_headers(%{capture | response: response})
+    after
+      0 -> capture
+    end
+  end
+
+  defp clear_headers(channel) do
+    receive do
+      {^channel, _response} -> clear_headers(channel)
+    after
+      0 -> :ok
     end
   end
 
@@ -186,9 +256,15 @@ defmodule Opsonde.Transports.HTTP do
   defp response_writer(_output, _invocation),
     do: {:error, :failed, "HTTP response file writer is unavailable"}
 
-  defp collect_response({:data, bytes}, {request, response}, writer, invocation) do
+  defp collect_response({:data, bytes}, {request, response}, writer, invocation, capture) do
     if not_cancelled(invocation) != :ok, do: throw(:http_cancelled)
     offset = Map.get(response.private, :opsonde_received_bytes, 0)
+
+    bytes =
+      if capture,
+        do: binary_part(bytes, 0, min(byte_size(bytes), capture["max_bytes"] - offset)),
+        else: bytes
+
     offset = append_response(writer, offset, bytes)
 
     response = %{
@@ -197,7 +273,16 @@ defmodule Opsonde.Transports.HTTP do
         private: Map.put(response.private, :opsonde_received_bytes, offset)
     }
 
-    {:cont, {request, response}}
+    if capture && offset == capture["max_bytes"] do
+      response = %{
+        response
+        | private: Map.put(response.private, :opsonde_completion_reason, :byte_limit)
+      }
+
+      {:halt, {request, response}}
+    else
+      {:cont, {request, response}}
+    end
   end
 
   defp append_response(_writer, offset, <<>>), do: offset
@@ -215,11 +300,27 @@ defmodule Opsonde.Transports.HTTP do
   defp complete_response(response, nil, _invocation, _method), do: {:ok, response}
 
   defp complete_response(response, writer, invocation, method) do
+    reason = Map.get(response.private, :opsonde_completion_reason, :eof)
+    sample? = reason in [:byte_limit, :duration_limit]
+
+    expected_size =
+      cond do
+        sample? -> {:ok, nil}
+        method == :head -> {:ok, 0}
+        true -> content_length(response)
+      end
+
     with :ok <- not_cancelled(invocation),
-         {:ok, size} <- if(method == :head, do: {:ok, 0}, else: content_length(response)),
-         {:ok, hash} <- if(method == :head, do: {:ok, nil}, else: content_digest(response)),
-         {:ok, reference} <- writer.complete.(size, hash) do
-      {:ok, %{response | private: Map.put(response.private, :opsonde_file, reference)}}
+         {:ok, size} <- expected_size,
+         {:ok, hash} <-
+           if(method == :head or sample?, do: {:ok, nil}, else: content_digest(response)),
+         {:ok, reference} <- writer.complete.(size, hash, reason) do
+      private =
+        response.private
+        |> Map.put(:opsonde_file, reference)
+        |> Map.put(:opsonde_completion_reason, reason)
+
+      {:ok, %{response | private: private}}
     else
       {:error, :cancelled, _} = error -> error
       _ -> response_failure(writer)

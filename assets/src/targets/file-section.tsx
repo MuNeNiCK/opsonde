@@ -130,6 +130,11 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
               <p className="text-sm text-muted-foreground">
                 {file.received_bytes} / {file.size_bytes ?? "—"} B · {file.media_type}
               </p>
+              {file.completion_reason && (
+                <p className="text-xs text-muted-foreground">
+                  {t(`files.completion.${file.completion_reason}`)}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 {t("files.expires", { date: new Date(file.expires_at).toLocaleString() })}
               </p>

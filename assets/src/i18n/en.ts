@@ -14,6 +14,12 @@ const en = {
       transferring: "Transferring file…",
       expires: "Expires {{date}}",
       source: "Source request: {{id}}",
+      completion: {
+        upload: "Upload completed",
+        eof: "Response completed",
+        byte_limit: "Sample stopped at byte limit",
+        duration_limit: "Sample stopped at time limit",
+      },
       failed: "File transfer failed. Refresh to check progress before trying again.",
       tooLarge: "The file exceeds the server transfer limit.",
       differentFile: "Select the same file to resume this upload.",

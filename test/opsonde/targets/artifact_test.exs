@@ -105,6 +105,41 @@ defmodule Opsonde.Targets.ArtifactTest do
              completed.revision
   end
 
+  test "a captured file keeps one immutable completion reason", context do
+    receipt =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "sample.bin",
+        "application/octet-stream",
+        "captured-response",
+        actor: context.admin
+      )
+
+    Targets.append_artifact_chunk!(receipt.id, 0, <<255, 0>>, actor: context.admin)
+
+    completed =
+      Targets.complete_artifact_receipt!(receipt.id, %{completion_reason: :byte_limit},
+        actor: context.admin
+      )
+
+    assert completed.completion_reason == :byte_limit
+
+    assert Targets.complete_artifact_receipt!(receipt.id, %{completion_reason: :byte_limit},
+             actor: context.admin
+           ).revision == completed.revision
+
+    assert {:error, _} =
+             Targets.complete_artifact_receipt(receipt.id, %{completion_reason: :eof},
+               actor: context.admin
+             )
+
+    assert Targets.get_artifact!(receipt.id, actor: context.admin).completion_reason ==
+             :byte_limit
+
+    assert Targets.read_artifact_chunk!(receipt.id, context.target.id, 0, actor: context.admin) ==
+             <<255, 0>>
+  end
+
   test "revoking a completed artifact makes its bytes unavailable", context do
     digest = "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
 

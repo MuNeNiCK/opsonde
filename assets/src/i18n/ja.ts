@@ -14,6 +14,12 @@ const ja = {
       transferring: "ファイルを転送中…",
       expires: "有効期限 {{date}}",
       source: "取得元リクエスト: {{id}}",
+      completion: {
+        upload: "アップロード完了",
+        eof: "応答の受信完了",
+        byte_limit: "指定サイズまで採取",
+        duration_limit: "指定時間まで採取",
+      },
       failed: "転送に失敗しました。更新して進捗を確認してください。",
       tooLarge: "ファイルが転送上限を超えています。",
       differentFile: "再開するには同じファイルを選択してください。",

@@ -153,7 +153,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              headers,
              body,
              invocation,
-             request.parameters["response_file"]
+             request.parameters["response_file"],
+             request.parameters["capture"]
            ),
          :ok <- not_cancelled(invocation) do
       {:ok, observation(state.endpoint <> path, response)}
@@ -173,7 +174,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              headers,
              body,
              invocation,
-             target_request.parameters["response_file"]
+             target_request.parameters["response_file"],
+             target_request.parameters["capture"]
            ) do
         {:ok, %Req.Response{status: status, body: response} = reply}
         when status in 200..299 ->
@@ -188,7 +190,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
           {:ok,
            %Target.EffectResult{
-             status: if(status == 202, do: :unknown, else: :applied),
+             status: if(status == 202 or partial_response?(reply), do: :unknown, else: :applied),
              reference: target_request.operation,
              details: details
            }}
@@ -238,7 +240,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              headers,
              body,
              invocation,
-             target_request.parameters["response_file"]
+             target_request.parameters["response_file"],
+             target_request.parameters["capture"]
            ) do
       observation = observation(state.endpoint <> path, response)
       expected = target_request.expected
@@ -301,7 +304,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp connect_options(_uri, _certificate, _timeout), do: {:error, :invalid_configuration}
 
-  defp request(state, method, path, headers, body, invocation, output \\ nil) do
+  defp request(state, method, path, headers, body, invocation, output \\ nil, capture \\ nil) do
     options = [
       method: method,
       url: state.endpoint <> path,
@@ -312,6 +315,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       redirect: false,
       decode_body: false,
       raw: true,
+      capture: capture,
       into: &collect/2
     ]
 
@@ -327,11 +331,20 @@ defmodule Opsonde.Targets.Adapters.HTTP do
         details
         |> Map.put("file", reference)
         |> Map.put(
+          "completion_reason",
+          Atom.to_string(response.private[:opsonde_completion_reason])
+        )
+        |> Map.put(
           "content_encoding",
           Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
         )
     end
   end
+
+  defp partial_response?(response),
+    do:
+      response.private[:opsonde_completion_reason] in [:byte_limit, :duration_limit] or
+        match?({:truncated, _}, response.body)
 
   defp merge_headers(configured, requested) do
     configured
@@ -354,6 +367,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
          :ok <- relative_path(path),
          {:ok, headers} <- request_headers(Map.get(parameters, "headers", %{})),
          true <- Target.FileWriter.valid_options?(parameters["response_file"]),
+         true <-
+           valid_capture?(parameters["capture"], parameters["response_file"], state.timeout_ms),
          {:ok, body} <- request_body(kind, method, parameters, request.files) do
       {:ok, method, path, headers, body}
     else
@@ -381,8 +396,22 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp same_endpoint?(_state, _connection), do: false
 
-  defp allowed_keys(:read), do: ~w(method path headers response_file)
-  defp allowed_keys(:write), do: ~w(method path headers body body_file response_file)
+  defp allowed_keys(:read), do: ~w(method path headers response_file capture)
+  defp allowed_keys(:write), do: ~w(method path headers body body_file response_file capture)
+
+  defp valid_capture?(nil, _file, _timeout), do: true
+
+  defp valid_capture?(
+         %{"duration_ms" => duration, "max_bytes" => bytes} = capture,
+         file,
+         timeout
+       ),
+       do:
+         map_size(capture) == 2 and is_map(file) and is_integer(duration) and
+           duration in 1..timeout and
+           is_integer(bytes) and bytes > 0
+
+  defp valid_capture?(_capture, _file, _timeout), do: false
 
   defp relative_path(path) when is_binary(path) and byte_size(path) in 1..@max_path_bytes do
     uri = URI.parse(path)
@@ -494,7 +523,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
             "content_type" => content_type,
             "body_encoding" => encoding,
             "body" => body,
-            "body_truncated" => truncated?
+            "body_truncated" => truncated? or partial_response?(response)
           },
           response
         ),
@@ -518,7 +547,16 @@ defmodule Opsonde.Targets.Adapters.HTTP do
       "method" => method_schema,
       "path" => %{"type" => "string", "minLength" => 1, "maxLength" => @max_path_bytes},
       "headers" => %{"type" => "object", "maxProperties" => 8},
-      "response_file" => Target.FileWriter.options_schema()
+      "response_file" => Target.FileWriter.options_schema(),
+      "capture" => %{
+        "type" => "object",
+        "properties" => %{
+          "duration_ms" => %{"type" => "integer", "minimum" => 1, "maximum" => 30_000},
+          "max_bytes" => %{"type" => "integer", "minimum" => 1}
+        },
+        "required" => ["duration_ms", "max_bytes"],
+        "additionalProperties" => false
+      }
     }
 
     properties =
@@ -557,7 +595,11 @@ defmodule Opsonde.Targets.Adapters.HTTP do
         "body" => %{"type" => "string", "maxLength" => 11_000},
         "body_truncated" => %{"type" => "boolean"},
         "content_encoding" => %{"type" => "string"},
-        "file" => Target.FileReference.schema()
+        "file" => Target.FileReference.schema(),
+        "completion_reason" => %{
+          "type" => "string",
+          "enum" => ["eof", "byte_limit", "duration_limit"]
+        }
       },
       "required" => ["url", "status", "content_type", "body_encoding", "body", "body_truncated"],
       "additionalProperties" => false
