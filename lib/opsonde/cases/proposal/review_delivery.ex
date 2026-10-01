@@ -378,6 +378,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       assignment_id: selection.assignment_id,
       outcome: :decision,
       verdict: decision.verdict,
+      purpose_assessment: decision.purpose_assessment,
       category: nil,
       reason: decision.reason,
       selection_source: selection.source,

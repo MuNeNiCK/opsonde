@@ -126,9 +126,14 @@ defmodule Opsonde.Cases.Case.ConditionContext do
       ) do
     with {:ok, {conditions, _recovery_ids}} <-
            current_condition_context(incident, exclude_operation_id) do
+      condition_kind =
+        if action_value(action, :purpose) in [:investigation, "investigation"],
+          do: :observation,
+          else: request_kind
+
       {:ok,
-       AI.valid_affected_conditions?(request_kind, claims, conditions, evidence_ids) and
-         current_effect_scope?(incident, request_kind, claims, conditions, evidence_ids, action)}
+       AI.valid_affected_conditions?(condition_kind, claims, conditions, evidence_ids) and
+         current_effect_scope?(incident, condition_kind, claims, conditions, evidence_ids, action)}
     end
   end
 
@@ -223,14 +228,11 @@ defmodule Opsonde.Cases.Case.ConditionContext do
          {:ok, observation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
          true <-
            observation.case_id == incident.id and
-             observation.request_kind == :observation and
+             observation.purpose == :investigation and
              observation.target_id == condition.target_id and
              observation.target_revision == target_revision and
              observation.status in [:applied, :failed] and
              evidence.content["status"] == to_string(observation.status),
-         true <-
-           evidence.content["category"] ==
-             if(observation.status == :applied, do: "target_observed", else: "observation_failed"),
          true <-
            condition.state != :recovered or
              (observation.status == :applied and
@@ -249,13 +251,12 @@ defmodule Opsonde.Cases.Case.ConditionContext do
            evidence.case_id == case_id and evidence.kind == "observation" and
              evidence.source == "operation",
          {:ok, observation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
-         true <- observation.request_kind == :observation and observation.status == :applied,
+         true <- observation.purpose == :investigation and observation.status == :applied,
          true <- observation.case_id == case_id,
          true <- observation.target_id == action_value(action, :target_id),
          true <- observation.target_revision == action_value(action, :target_revision),
          true <-
-           evidence.content["status"] == "applied" and
-             evidence.content["category"] == "target_observed",
+           evidence.content["status"] == "applied",
          {:ok, action_method} <-
            Opsonde.Targets.get_access_method(action_value(action, :access_method_id),
              authorize?: false

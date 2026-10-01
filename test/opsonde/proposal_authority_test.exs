@@ -183,6 +183,7 @@ defmodule Opsonde.ProposalAuthorityTest do
                  respond: fn _request ->
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :rejected,
                       reason: "Gather more direct evidence",
                       usage: %AI.Usage{input_tokens: 1, output_tokens: 1}
@@ -618,6 +619,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
     response = %AI.ReviewDecision{
+      purpose_assessment: :remediation,
       verdict: :approved,
       reason: "The exact effect follows the cited evidence",
       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1008,6 +1010,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     end
 
     response = %AI.ReviewDecision{
+      purpose_assessment: :remediation,
       verdict: :rejected,
       reason: "The guest was reachable before reset; the later failure may be caused by it",
       usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
@@ -1173,6 +1176,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
     response = %AI.ReviewDecision{
+      purpose_assessment: :remediation,
       verdict: :approved,
       reason: "Approve the action based on the former firing Condition",
       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1411,6 +1415,7 @@ defmodule Opsonde.ProposalAuthorityTest do
              )
 
     response = %AI.ReviewDecision{
+      purpose_assessment: :remediation,
       verdict: :approved,
       reason: "The assigned Reviewer accepted the cited Target evidence",
       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1627,6 +1632,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :rejected,
                       reason: "The alternate Reviewer rejected the proposal",
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1706,6 +1712,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
 
     response = %AI.ReviewDecision{
+      purpose_assessment: :remediation,
       verdict: :approved,
       reason: "The bounded retry recovered the independent review",
       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1759,6 +1766,7 @@ defmodule Opsonde.ProposalAuthorityTest do
                  respond: fn _request ->
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :approved,
                       reason: "The exact observation is safe",
                       usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
@@ -2131,6 +2139,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
@@ -2182,6 +2191,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "investigation",
       "request_kind" => "observation",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],

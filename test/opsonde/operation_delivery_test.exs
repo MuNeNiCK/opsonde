@@ -101,6 +101,124 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  test "auto diagnostic effects are independently reviewed and return to investigation without repair verification",
+       context do
+    configure_mode!(context.admin, :auto)
+
+    {incident, run, proposal} =
+      authorized_proposal!("diagnostic-effect", context, purpose: :investigation)
+
+    assert proposal.status == :reviewing
+    assert proposal.request_kind == :effect
+    assert proposal.purpose == :investigation
+    assert proposal.verification_intent == %{}
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.proposal.purpose == :investigation
+                   assert request.proposal.parameters == %{"command" => "service nginx status"}
+                   assert request.proposal.verification_intent == nil
+
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :approved,
+                      purpose_assessment: :investigation,
+                      reason: "The exact request collects service status",
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    decision = Cases.review_decision_by_proposal!(proposal.id, authorize?: false)
+    assert decision.purpose_assessment == :investigation
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.request_kind == :effect
+    assert operation.purpose == :investigation
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :applied,
+                      details: %{"facts" => %{"stdout" => "nginx is running"}}
+                    }}
+                 )
+             )
+
+    refute Cases.verification_attempt_by_operation!(operation.id,
+             authorize?: false,
+             not_found_error?: false
+           )
+
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    assert current.status == :running
+    assert current.pending_intent["action"] == "resolve_turn"
+    evidence = Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+    assert evidence.kind == "observation"
+    assert evidence.content["request_kind"] == "effect"
+    assert evidence.content["purpose"] == "investigation"
+    assert evidence.content["facts"]["stdout"] == "nginx is running"
+    assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("diagnostic effect replayed") end)
+             )
+  end
+
+  test "opaque investigation preserves readonly refusal and ask operator approval", context do
+    for {mode, status} <- [{:readonly, :recommended}, {:ask, :awaiting_human}] do
+      configure_mode!(context.admin, mode)
+
+      {incident, _run, proposal} =
+        authorized_proposal!("diagnostic-#{mode}", context, purpose: :investigation)
+
+      assert proposal.purpose == :investigation
+      assert proposal.request_kind == :effect
+      assert proposal.status == status
+      assert Cases.operations_for_case!(incident.id, actor: context.operator) == []
+
+      refute Cases.review_decision_by_proposal!(proposal.id,
+               authorize?: false,
+               not_found_error?: false
+             )
+
+      assert {:error, _} = Cases.accept_operation(proposal.id, authorize?: false)
+    end
+  end
+
+  test "interrupted diagnostic dispatch returns uncertainty to Resolver without replay or repair verification",
+       context do
+    {incident, _run, proposal} =
+      authorized_proposal!("diagnostic-interrupted", context, purpose: :investigation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert %{state: :claimed} = Cases.claim_operation_dispatch!(operation.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("interrupted diagnostic replayed") end)
+             )
+
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :unknown
+    assert stored.outcome_category == "dispatch_interrupted"
+
+    assert Cases.get_case!(incident.id, actor: context.operator).pending_intent["action"] ==
+             "resolve_turn"
+
+    refute Cases.verification_attempt_by_operation!(operation.id,
+             authorize?: false,
+             not_found_error?: false
+           )
+  end
+
   test "accepting an authorized Proposal is atomic and idempotent", context do
     {_incident, run, proposal} = authorized_proposal!("accept", context)
 
@@ -2820,6 +2938,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
                      {:ok,
                       %AI.ReviewDecision{
+                        purpose_assessment: :remediation,
                         verdict: :approved,
                         reason: "The cited service state is active",
                         desired_outcome_assessment:
@@ -3285,6 +3404,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :rejected,
                       reason: "Machine identity does not establish service availability",
                       usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
@@ -4046,6 +4166,26 @@ defmodule Opsonde.OperationDeliveryTest do
       }
 
     result =
+      if Keyword.get(opts, :purpose) == :investigation and request_kind == :effect do
+        intent = result["intent"]
+        tool = %{intent["tool"] | "operation" => "command.execute"}
+
+        intent =
+          intent
+          |> Map.put("purpose", "investigation")
+          |> Map.put("operation", "command.execute")
+          |> Map.put("tool", tool)
+          |> Map.put("parameters", %{"command" => "service nginx status"})
+          |> Map.put("expected_result", %{})
+          |> Map.put("verification_intent", %{})
+          |> Map.put("verification_tool", %{})
+
+        Map.put(result, "intent", intent)
+      else
+        result
+      end
+
+    result =
       if trigger_kind == :signal do
         {:ok, revisions} = ConditionContext.current_condition_revisions(incident)
         result = Map.put(result, "condition_revisions", revisions)
@@ -4143,6 +4283,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
@@ -4196,6 +4337,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "investigation",
       "request_kind" => "observation",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],
@@ -4432,6 +4574,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
                        {:ok,
                         %AI.ReviewDecision{
+                          purpose_assessment: :remediation,
                           verdict: :approved,
                           reason:
                             "The cited observation directly checks the stated service state",

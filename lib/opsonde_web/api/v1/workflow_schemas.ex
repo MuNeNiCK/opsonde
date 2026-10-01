@@ -268,7 +268,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       completed_at: nullable_timestamp()
     }
 
-    object(properties, Map.keys(properties), false)
+    object(properties, properties |> Map.keys() |> Enum.sort(), false)
   end
 
   defp case_condition do
@@ -480,6 +480,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         provider_id: nullable_uuid(),
         outcome: enum(~w(decision delivery_failed)),
         verdict: enum(~w(approved rejected needs_human)),
+        purpose_assessment: nullable_enum(~w(investigation remediation unknown)),
         category: nullable_string(80),
         reason: string(1, 1_000),
         selection_source: nullable_enum(~w(assignment)),
@@ -489,7 +490,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         decided_at: Schemas.timestamp(),
         inserted_at: Schemas.timestamp()
       },
-      ~w(id proposal_id case_id resolution_run_id provider_id outcome verdict category reason selection_source provider_revision input_tokens output_tokens decided_at inserted_at)a,
+      ~w(id proposal_id case_id resolution_run_id provider_id outcome verdict purpose_assessment category reason selection_source provider_revision input_tokens output_tokens decided_at inserted_at)a,
       false
     )
   end
@@ -515,6 +516,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         access_method_revision: positive_integer(),
         provider_revision: positive_integer(),
         request_kind: enum(~w(observation effect)),
+        purpose: nullable_enum(~w(investigation remediation)),
         tool_id: string(1, 200),
         capability: string(1, 120),
         operation: string(1, 120),
@@ -548,7 +550,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind tool_id capability operation selectors parameters reason evidence_ids affected_conditions expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind purpose tool_id capability operation selectors parameters reason evidence_ids affected_conditions expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
       false
     )
   end
@@ -582,6 +584,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         case_generation: positive_integer(),
         authority_mode: authority_mode(),
         request_kind: enum(~w(observation effect)),
+        purpose: nullable_enum(~w(investigation remediation)),
         capability: string(1, 120),
         operation: string(1, 120),
         selectors: map(),
@@ -596,7 +599,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at completed_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind purpose capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at completed_at revision inserted_at updated_at)a,
       false
     )
   end

@@ -276,6 +276,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => "effect-tool",
       "target_id" => target_id,

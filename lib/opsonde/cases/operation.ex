@@ -56,7 +56,7 @@ defmodule Opsonde.Cases.Operation do
                  target_id == ^arg(:target_id) and
                  access_method_id == ^arg(:access_method_id) and
                  access_method_revision == ^arg(:access_method_revision) and
-                 request_kind == :observation and
+                 purpose == :investigation and
                  status in [:applied, :failed]
              )
 
@@ -89,6 +89,7 @@ defmodule Opsonde.Cases.Operation do
         :access_method_revision,
         :provider_revision,
         :request_kind,
+        :purpose,
         :capability,
         :operation,
         :selectors,
@@ -101,6 +102,7 @@ defmodule Opsonde.Cases.Operation do
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
       validate {Opsonde.Validations.BoundedMap, attribute: :parameters}
       change Opsonde.Cases.Operation.Changes.SetResourceScope
+      validate present(:purpose)
     end
 
     update :mark_dispatching do
@@ -215,6 +217,11 @@ defmodule Opsonde.Cases.Operation do
       allow_nil?: false,
       public?: true,
       constraints: [min: 1]
+
+    attribute :purpose, :atom do
+      public? true
+      constraints one_of: [:investigation, :remediation]
+    end
 
     attribute :request_kind, :atom,
       allow_nil?: false,

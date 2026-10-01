@@ -3102,6 +3102,14 @@
             "format": "uuid",
             "type": "string"
           },
+          "purpose": {
+            "enum": [
+              "investigation",
+              "remediation"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "reference": {
             "maxLength": 500,
             "nullable": true,
@@ -3164,6 +3172,7 @@
           "case_generation",
           "authority_mode",
           "request_kind",
+          "purpose",
           "capability",
           "operation",
           "selectors",
@@ -3245,6 +3254,15 @@
             "nullable": true,
             "type": "integer"
           },
+          "purpose_assessment": {
+            "enum": [
+              "investigation",
+              "remediation",
+              "unknown"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "reason": {
             "maxLength": 1000,
             "minLength": 1,
@@ -3278,6 +3296,7 @@
           "provider_id",
           "outcome",
           "verdict",
+          "purpose_assessment",
           "category",
           "reason",
           "selection_source",
@@ -4732,6 +4751,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "purpose": {
+            "enum": [
+              "investigation",
+              "remediation"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "proposed_for_id": {
             "format": "uuid",
             "type": "string"
@@ -4798,6 +4825,7 @@
           "access_method_revision",
           "provider_revision",
           "request_kind",
+          "purpose",
           "tool_id",
           "capability",
           "operation",
@@ -5777,22 +5805,22 @@
           }
         },
         "required": [
-          "id",
-          "status",
-          "role",
-          "case_id",
-          "provider_id",
           "cached_tokens",
+          "case_id",
           "completed_at",
           "dispatch_confirmed",
           "dispatch_started_at",
           "finish_reason",
+          "id",
           "input_tokens",
           "output_tokens",
           "proposal_id",
+          "provider_id",
           "reasoning_tokens",
           "reserved_units",
           "resolution_run_id",
+          "role",
+          "status",
           "turn_id",
           "usage_status"
         ],

@@ -51,6 +51,7 @@ defmodule Opsonde.Cases.Proposal do
         :access_method_revision,
         :provider_revision,
         :request_kind,
+        :purpose,
         :tool_id,
         :capability,
         :operation,
@@ -80,6 +81,7 @@ defmodule Opsonde.Cases.Proposal do
       validate {Opsonde.Validations.BoundedMap, attribute: :verification_tool}
       validate {Opsonde.Validations.BoundedMap, attribute: :resolver_identity}
       validate {Opsonde.Validations.BoundedMap, attribute: :preflight_context}
+      validate present(:purpose)
     end
 
     update :transition do
@@ -235,6 +237,11 @@ defmodule Opsonde.Cases.Proposal do
       allow_nil? false
       public? true
       constraints min: 1
+    end
+
+    attribute :purpose, :atom do
+      public? true
+      constraints one_of: [:investigation, :remediation]
     end
 
     attribute :request_kind, :atom do

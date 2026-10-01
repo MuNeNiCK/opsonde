@@ -141,9 +141,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       positive?(intent["access_method_revision"]) and
       is_map(intent["selectors"]) and is_map(intent["parameters"]) and
       is_list(intent["affected_conditions"]) and
-      request_kind(intent) in [:observation, :effect] and
+      Providers.AI.valid_proposal_purpose?(request_kind(intent), purpose(intent)) and
       exact_request_tool?(intent, request_tool) and
-      valid_verification?(request_kind(intent), intent, verification_intent, verification_tool)
+      valid_verification?(purpose(intent), intent, verification_intent, verification_tool)
   end
 
   defp exact_request_tool?(intent, tool) do
@@ -156,11 +156,11 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       intent["operation"] == tool["operation"] and positive?(tool["provider_revision"])
   end
 
-  defp valid_verification?(:observation, intent, verification_intent, verification_tool),
+  defp valid_verification?(:investigation, intent, verification_intent, verification_tool),
     do:
       intent["expected_result"] == %{} and verification_intent == %{} and verification_tool == %{}
 
-  defp valid_verification?(:effect, intent, verification_intent, verification_tool),
+  defp valid_verification?(:remediation, intent, verification_intent, verification_tool),
     do:
       is_map(intent["expected_result"]) and
         exact_verification?(verification_intent, verification_tool)
@@ -299,6 +299,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       access_method_revision: intent["access_method_revision"],
       provider_revision: request_tool["provider_revision"],
       request_kind: request_kind(intent),
+      purpose: purpose(intent),
       tool_id: intent["tool_id"],
       capability: intent["capability"],
       operation: intent["operation"],
@@ -321,6 +322,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       revision: 1
     }
   end
+
+  defp purpose(%{"purpose" => "investigation"}), do: :investigation
+  defp purpose(%{"purpose" => "remediation"}), do: :remediation
+  defp purpose(_intent), do: nil
 
   defp request_kind(%{"request_kind" => "observation"}), do: :observation
   defp request_kind(%{"request_kind" => "effect"}), do: :effect

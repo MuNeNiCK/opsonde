@@ -183,13 +183,17 @@ defmodule Opsonde.AI.ReqLLM do
          result <-
            decode_decision(response, schema, fn value ->
              with {:ok, verdict} <- verdict(value),
-                  do: {:ok, {verdict, value["reason"], value["desired_outcome_assessment"]}}
+                  do:
+                    {:ok,
+                     {verdict, value["reason"], value["desired_outcome_assessment"],
+                      value["purpose_assessment"]}}
            end) do
       case result do
-        {:ok, {verdict, reason, assessment}, usage} ->
+        {:ok, {verdict, reason, assessment, purpose}, usage} ->
           {:ok,
            %AI.ReviewDecision{
              verdict: verdict,
+             purpose_assessment: purpose_assessment(purpose),
              reason: reason,
              desired_outcome_assessment: assessment,
              usage: usage
@@ -423,7 +427,7 @@ defmodule Opsonde.AI.ReqLLM do
         "If a Condition has no recovery_evidence_ids, its recovery status is unknown and " <>
         "recovery evidence_ids is empty. failed_observation_ids identify current direct " <>
         "observation attempts that failed; they do not prove recovery or the cause. Inspect " <>
-        "their diagnostics and obtain independent evidence before an effect. If neither " <>
+        "their diagnostics and obtain independent evidence before remediation. If neither " <>
         "kind is present, request a new observation before judging the symptom. These " <>
         "assessments are advisory " <>
         "and do not close the Case. If you include them with a recovery intent, each " <>
@@ -446,24 +450,28 @@ defmodule Opsonde.AI.ReqLLM do
         "every Target request is reviewed after you return it. In a proposal, intent.action " <>
         "contains only tool_id, selectors, and parameters. Put reason at the response root, " <>
         "and put evidence_ids and affected_conditions in intent, never inside action. " <>
-        "For an effect, intent.verification contains only tool_id, selectors, parameters, and " <>
+        "Every proposal declares intent.purpose as investigation or remediation. Protocol effect " <>
+        "means a request may change state; it does not establish its purpose. Investigation " <>
+        "collects evidence, may use an effect-capable tool after authority review, cites current " <>
+        "context, and has no verification or expected result. Never call a modification investigation. " <>
+        "For remediation, intent.verification contains only tool_id, selectors, parameters, and " <>
         "expected_result_json. Do not add explanatory keys inside action or verification. " <>
-        "Propose an effect only for an unresolved Condition or a manual/audit desired_outcome " <>
-        "shown unmet by current Target Evidence. Do not propose an effect when the desired " <>
+        "Propose remediation only for an unresolved Condition or a manual/audit desired_outcome " <>
+        "shown unmet by current Target Evidence. Do not propose remediation when the desired " <>
         "outcome is already met or no current fault is observed. A recovered monitoring Condition may still have a " <>
-        "failing Target symptom; propose an effect for it only when a current direct " <>
+        "failing Target symptom; propose remediation for it only when a current direct " <>
         "observation proves that symptom persists. For a Signal Case, put the exact ID and " <>
-        "revision of each Condition addressed by an effect in affected_conditions. " <>
-        "If an effect acts on a different Target than an affected Condition, include " <>
+        "revision of each Condition addressed by remediation in affected_conditions. " <>
+        "If remediation acts on a different Target than an affected Condition, include " <>
         "the current direct relationship_id and relationship_revision in that Condition claim. " <>
         "Cite both a direct observation of that Condition's symptom and a direct " <>
-        "observation of the effect Target's exact resource scope. A relationship alone " <>
+        "observation of the remediation Target's exact resource scope. A relationship alone " <>
         "does not establish a shared cause; the Reviewer must judge the proposed link. " <>
-        "For an effect, take evidence_ids only from effect_evidence_ids in the user payload; " <>
+        "For remediation, take evidence_ids only from effect_evidence_ids in the user payload; " <>
         "these are current Target observations. A signal_event identifies a Condition but " <>
-        "cannot be cited as evidence for an effect. " <>
-        "Observation proposals may name current Conditions being investigated or leave that " <>
-        "list empty; naming them does not authorize an effect. A proposal's verification must use an observation " <>
+        "cannot be cited as remediation evidence; it may justify investigation. " <>
+        "Investigation proposals may name current Conditions being investigated or leave that " <>
+        "list empty; naming them does not authorize an effect. A remediation proposal's verification must use an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
         "tool's verification_schema in the user payload. Base every intent only on supplied " <>
@@ -472,8 +480,8 @@ defmodule Opsonde.AI.ReqLLM do
         "unresolved condition, no proposal tool is available, and a suitable observation " <>
         "tool is supplied, choose that observation request before handoff. Select the narrowest " <>
         "request whose output directly examines the unresolved condition. When a typed " <>
-        "observation and a generic command answer the same question, choose the typed " <>
-        "observation; a generic command may be rejected when its read-only nature cannot " <>
+        "observation and an arbitrary command answer the same question, choose the typed " <>
+        "observation; an arbitrary command may be rejected when its read-only nature cannot " <>
         "be proven. Fill its " <>
         "selectors and parameters from matching values in the supplied objective or Evidence. " <>
         "A monitoring job, instance, or alert name does not establish an OS resource name. " <>
@@ -581,6 +589,14 @@ defmodule Opsonde.AI.ReqLLM do
         "exact proposal is justified by the supplied evidence, consistent with the operator's " <>
         "Target operating_instructions, " <>
         "proportional to its explicitly affected current Conditions, and acceptably safe. " <>
+        "Independently assess purpose_assessment: investigation only collects facts without " <>
+        "intended state changes; remediation changes state to address the fault; unknown " <>
+        "means insufficient evidence. Inspect exact command/RPC/body/channel bytes rather than " <>
+        "trusting the Resolver's purpose label. Approve only when the assessed purpose equals " <>
+        "proposal.purpose. Investigation need not establish the root cause before collecting " <>
+        "facts and must not invent unrelated post-change verification. Its effect classification " <>
+        "still means the protocol permits changes and needs authority review; your assessment " <>
+        "is not a remote RBAC guarantee. " <>
         "The initial Case title is historical context, not the only fault in this Case. " <>
         "A recovered Condition does not negate a different still-firing Condition. " <>
         "A recovered monitoring event also does not negate a fresh direct observation " <>
@@ -730,7 +746,10 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
          claims when is_list(claims) <- Map.get(value, "affected_conditions", []),
-         {:ok, expected_result, verification} <- request_verification(value, tool, request) do
+         {:ok, purpose} <- proposal_purpose(value["purpose"]),
+         true <- AI.valid_proposal_purpose?(tool.request_kind, purpose),
+         {:ok, expected_result, verification} <-
+           request_verification(value, purpose, tool, request) do
       {:ok,
        %AI.Proposal{
          tool_id: tool.id,
@@ -739,6 +758,7 @@ defmodule Opsonde.AI.ReqLLM do
          access_method_id: tool.access_method_id,
          access_method_revision: tool.access_method_revision,
          request_kind: tool.request_kind,
+         purpose: purpose,
          capability: tool.capability,
          operation: tool.operation,
          selectors: selectors,
@@ -816,10 +836,14 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp verification_intent(_value, _request), do: invalid_output()
 
-  defp request_verification(_value, %{request_kind: :observation}, _request),
+  defp proposal_purpose("investigation"), do: {:ok, :investigation}
+  defp proposal_purpose("remediation"), do: {:ok, :remediation}
+  defp proposal_purpose(_value), do: invalid_output()
+
+  defp request_verification(_value, :investigation, _tool, _request),
     do: {:ok, %{}, nil}
 
-  defp request_verification(value, %{request_kind: :effect}, request) do
+  defp request_verification(value, :remediation, %{request_kind: :effect}, request) do
     with {:ok, verification} <- verification_intent(value["verification"], request) do
       {:ok, verification.expected_result, verification}
     end
@@ -995,7 +1019,7 @@ defmodule Opsonde.AI.ReqLLM do
     intent = if is_map(value["intent"]), do: value["intent"], else: %{}
 
     known_intent_keys =
-      ~w(type action evidence_ids affected_conditions candidate_ref file_ref offset length target_id relationship_id query required_input condition_claims verification expected_result_json)
+      ~w(type purpose action evidence_ids affected_conditions candidate_ref file_ref offset length target_id relationship_id query required_input condition_claims verification expected_result_json)
 
     intent_type =
       if intent["type"] in @resolver_intent_types,
@@ -1187,7 +1211,7 @@ defmodule Opsonde.AI.ReqLLM do
     |> Map.keys()
     |> Enum.filter(fn key ->
       Map.has_key?(properties, key) and
-        key in ~w(type action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors parameters) and
+        key in ~w(type purpose action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors parameters) and
         not schema_field_valid?(value[key], properties[key])
     end)
     |> Enum.sort()
@@ -1264,6 +1288,10 @@ defmodule Opsonde.AI.ReqLLM do
     |> get_in(["properties", "intent"])
     |> intent_variants()
     |> Enum.filter(&(type in (get_in(&1, ["properties", "type", "enum"]) || [])))
+    |> Enum.filter(fn variant ->
+      purposes = get_in(variant, ["properties", "purpose", "enum"])
+      is_nil(purposes) or intent["purpose"] in purposes
+    end)
     |> case do
       [] ->
         nil
@@ -1295,7 +1323,7 @@ defmodule Opsonde.AI.ReqLLM do
 
         case Regex.run(~r/property '([A-Za-z_]+)' is required/, message) do
           [_, field]
-          when field in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors parameters) ->
+          when field in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors parameters) ->
             "/intent/" <> field
 
           _other ->
@@ -1356,7 +1384,7 @@ defmodule Opsonde.AI.ReqLLM do
         []
     end)
     |> Enum.filter(
-      &(&1 in ~w(reason intent type action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors parameters required_input))
+      &(&1 in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors parameters required_input))
     )
     |> Enum.uniq()
     |> Enum.sort()
@@ -1449,6 +1477,10 @@ defmodule Opsonde.AI.ReqLLM do
         handoff_schema()
       ]
       |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(fn
+        %{"anyOf" => alternatives} -> alternatives
+        variant -> [variant]
+      end)
 
     properties = %{
       "reason" => bounded_string_schema(AI.resolver_reason_codepoints()),
@@ -1713,6 +1745,7 @@ defmodule Opsonde.AI.ReqLLM do
     observation_schema =
       if observation_variants != [] do
         intent_schema("proposal", %{
+          "purpose" => enum_schema(["investigation"]),
           "action" => %{"anyOf" => observation_variants},
           "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),
           "affected_conditions" => condition_claims_schema(request.conditions, 0)
@@ -1724,6 +1757,7 @@ defmodule Opsonde.AI.ReqLLM do
            AI.effect_target_evidence_ids(request) != [] and
            (request.conditions == [] or actionable_conditions != []) do
         intent_schema("proposal", %{
+          "purpose" => enum_schema(["remediation"]),
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
           "affected_conditions" =>
@@ -1732,7 +1766,25 @@ defmodule Opsonde.AI.ReqLLM do
         })
       end
 
-    case Enum.reject([observation_schema, effect_schema], &is_nil/1) do
+    investigation_variants =
+      if request.budget.remaining_effects > 0,
+        do:
+          request.proposal_tools
+          |> Enum.filter(&(&1.request_kind == :effect))
+          |> tool_input_variants(),
+        else: []
+
+    investigation_schema =
+      if investigation_variants != [] and observation_evidence_ids != [] do
+        intent_schema("proposal", %{
+          "purpose" => enum_schema(["investigation"]),
+          "action" => %{"anyOf" => investigation_variants},
+          "evidence_ids" => identifier_array_schema(observation_evidence_ids),
+          "affected_conditions" => condition_claims_schema(request.conditions, 0)
+        })
+      end
+
+    case Enum.reject([observation_schema, investigation_schema, effect_schema], &is_nil/1) do
       [] -> nil
       [single] -> single
       variants -> %{"anyOf" => variants}
@@ -1957,7 +2009,23 @@ defmodule Opsonde.AI.ReqLLM do
       "description" => "A JSON-encoded object"
     }
 
+  defp purpose_assessment("investigation"), do: :investigation
+  defp purpose_assessment("remediation"), do: :remediation
+  defp purpose_assessment("unknown"), do: :unknown
+  defp purpose_assessment(_value), do: nil
+
   defp reviewer_schema do
+    object_schema(
+      %{
+        "verdict" => enum_schema(~w(approved rejected needs_human)),
+        "reason" => bounded_string_schema(AI.reviewer_reason_codepoints()),
+        "purpose_assessment" => enum_schema(~w(investigation remediation unknown))
+      },
+      ~w(verdict reason purpose_assessment)
+    )
+  end
+
+  defp verdict_schema do
     object_schema(
       %{
         "verdict" => enum_schema(~w(approved rejected needs_human)),
@@ -1967,7 +2035,7 @@ defmodule Opsonde.AI.ReqLLM do
     )
   end
 
-  defp recovery_reviewer_schema(%{case_symptom: nil}), do: reviewer_schema()
+  defp recovery_reviewer_schema(%{case_symptom: nil}), do: verdict_schema()
 
   defp recovery_reviewer_schema(request) do
     claim_ids =

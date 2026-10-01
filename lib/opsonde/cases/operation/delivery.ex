@@ -203,7 +203,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
-  defp account_observation_progress(%Operation{request_kind: :observation} = operation) do
+  defp account_observation_progress(%Operation{purpose: :investigation} = operation) do
     case Cases.account_observation_progress(operation.id, authorize?: false) do
       {:ok, %BudgetResult{status: :exhausted}} ->
         {:ok, :exhausted}
@@ -287,7 +287,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
-  defp continue_handoff(%{request_kind: :effect} = operation, _proposal, _evidence, incident) do
+  defp continue_handoff(%{purpose: :remediation} = operation, _proposal, _evidence, incident) do
     pending = %{
       "action" => "verify_operation",
       "operation_id" => operation.id,
@@ -326,7 +326,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
   end
 
   defp continue_handoff(
-         %{request_kind: :observation} = operation,
+         %{purpose: :investigation} = operation,
          proposal,
          evidence,
          incident
@@ -444,6 +444,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
       "category" => operation.outcome_category,
       "reference" => operation.reference,
       "request_kind" => to_string(operation.request_kind),
+      "purpose" => to_string(operation.purpose),
       "capability" => operation.capability,
       "operation" => operation.operation,
       "selectors" => operation.selectors,
@@ -457,11 +458,11 @@ defmodule Opsonde.Cases.Operation.Delivery do
     }
   end
 
-  defp evidence_kind(%{request_kind: :observation}), do: "observation"
-  defp evidence_kind(%{request_kind: :effect}), do: "operation_outcome"
+  defp evidence_kind(%{purpose: :investigation}), do: "observation"
+  defp evidence_kind(%{purpose: :remediation}), do: "operation_outcome"
 
-  defp evidence_turn_id(%{request_kind: :observation}, proposal), do: proposal.source_turn_id
-  defp evidence_turn_id(%{request_kind: :effect}, _proposal), do: nil
+  defp evidence_turn_id(%{purpose: :investigation}, proposal), do: proposal.source_turn_id
+  defp evidence_turn_id(%{purpose: :remediation}, _proposal), do: nil
 
   defp current_actor(operation) do
     case Accounts.get_user(operation.actor_id, authorize?: false) do

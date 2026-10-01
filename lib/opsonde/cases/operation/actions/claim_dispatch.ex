@@ -121,6 +121,14 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
 
   defp effect_conflict(%{request_kind: :observation}, _proposal), do: {:ok, :clear}
 
+  defp effect_conflict(%{purpose: :investigation} = operation, _proposal) do
+    case conflicting_effect(operation, [:dispatching]) do
+      {:ok, nil} -> {:ok, :clear}
+      {:ok, active} -> {:ok, {:busy, active}}
+      {:error, _error} = error -> error
+    end
+  end
+
   defp effect_conflict(operation, proposal) do
     with {:ok, active} <- conflicting_effect(operation, [:dispatching]),
          {:ok, prior} <- conflicting_effect(operation, [:applied, :partial, :failed, :unknown]) do
@@ -195,7 +203,7 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     case Cases.get_operation(source_ref, authorize?: false) do
       {:ok,
        %{
-         request_kind: :observation,
+         purpose: :investigation,
          status: :applied,
          target_id: target_id,
          case_id: case_id,

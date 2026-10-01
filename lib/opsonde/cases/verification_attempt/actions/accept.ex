@@ -72,7 +72,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
       "proposal_id" => operation.proposal_id
     }
 
-    if operation.status in @verifiable and incident.status == :running and
+    if operation.purpose == :remediation and operation.status in @verifiable and
+         incident.status == :running and
          not incident.cancel_requested and incident.pending_intent == expected_pending and
          run.active and run.status == :running and run.generation == operation.case_generation and
          run.authority_mode == operation.authority_mode,

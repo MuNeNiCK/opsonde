@@ -633,7 +633,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
             resolution_run_id: ^run_id,
             target_id: ^target_id,
             target_revision: ^target_revision,
-            request_kind: :observation,
+            purpose: :investigation,
             status: :applied,
             dispatch_started_at: %DateTime{} = dispatch_started_at
           }} <- Cases.get_operation(operation_id, authorize?: false) do

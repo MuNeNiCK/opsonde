@@ -160,6 +160,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         access_method_revision: proposal.access_method_revision,
         provider_revision: proposal.provider_revision,
         request_kind: proposal.request_kind,
+        purpose: proposal.purpose,
         capability: proposal.capability,
         operation: proposal.operation,
         selectors: proposal.selectors,

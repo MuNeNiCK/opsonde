@@ -682,6 +682,29 @@ defmodule Opsonde.Providers.AITest do
     assert {:error, _error} = Providers.select_resolver_ai(actor: context.operator)
   end
 
+  test "an opaque investigation can collect facts before remediation verification exists",
+       context do
+    request = resolver_request(context.provider.revision)
+    tool = Enum.find(request.proposal_tools, &(&1.request_kind == :effect))
+    tool = %{tool | capability: "request.ssh.effect", operation: "command.execute"}
+    request = %{request | proposal_tools: [tool], observation_tools: []}
+
+    investigation =
+      proposal()
+      |> Map.put(:purpose, :investigation)
+      |> Map.put(:capability, tool.capability)
+      |> Map.put(:operation, tool.operation)
+      |> Map.put(:selectors, %{})
+      |> Map.put(:parameters, %{"command" => "service nginx status"})
+      |> Map.put(:expected_result, %{})
+      |> Map.put(:verification_intent, nil)
+
+    assert %AI.ResolverDecision{intent: ^investigation} =
+             resolve!(context, request, fn _request ->
+               {:ok, %AI.ResolverDecision{intent: investigation, usage: usage()}}
+             end)
+  end
+
   test "Resolver returns exactly one Target request, recovery or handoff intent",
        context do
     request = resolver_request(context.provider.revision)
@@ -693,6 +716,7 @@ defmodule Opsonde.Providers.AITest do
       access_method_id: "access-method-observe",
       access_method_revision: 1,
       request_kind: :observation,
+      purpose: :investigation,
       capability: "observe.command",
       operation: "system.inspect",
       selectors: %{},
@@ -1129,6 +1153,7 @@ defmodule Opsonde.Providers.AITest do
       access_method_id: observation_request_tool.access_method_id,
       access_method_revision: observation_request_tool.access_method_revision,
       request_kind: :observation,
+      purpose: :investigation,
       capability: observation_request_tool.capability,
       operation: observation_request_tool.operation,
       selectors: %{"service" => "api"},
@@ -1435,6 +1460,38 @@ defmodule Opsonde.Providers.AITest do
     assert ai_error(kind_error).category == :invalid_input
   end
 
+  test "Reviewer cannot approve an opaque investigation whose assessed purpose is modification",
+       context do
+    request = review_request(context.provider.revision)
+
+    proposal = %{
+      request.proposal
+      | purpose: :investigation,
+        expected_result: %{},
+        verification_intent: nil
+    }
+
+    request = %{request | proposal: proposal}
+
+    for assessment <- [:remediation, :unknown, nil] do
+      assert {:error, error} =
+               review(context, request, fn _ ->
+                 {:ok,
+                  Map.put(
+                    %AI.ReviewDecision{
+                      verdict: :approved,
+                      reason: "Insufficiently justified",
+                      usage: usage()
+                    },
+                    :purpose_assessment,
+                    assessment
+                  )}
+               end)
+
+      assert ai_error(error).category == :invalid_output
+    end
+  end
+
   test "Reviewer receives isolated source and Proposal evidence", context do
     request = review_request(context.provider.revision)
 
@@ -1460,6 +1517,7 @@ defmodule Opsonde.Providers.AITest do
 
                {:ok,
                 %AI.ReviewDecision{
+                  purpose_assessment: :remediation,
                   verdict: :approved,
                   reason: "Proposal matches the cited evidence and policy",
                   usage: usage()
@@ -1474,6 +1532,7 @@ defmodule Opsonde.Providers.AITest do
              review!(context, final_turn, fn _received ->
                {:ok,
                 %AI.ReviewDecision{
+                  purpose_assessment: :remediation,
                   verdict: :approved,
                   reason: "Review does not consume a Resolver Turn",
                   usage: usage()
@@ -1577,6 +1636,7 @@ defmodule Opsonde.Providers.AITest do
              review!(context, review_request(context.provider.revision), fn _request ->
                {:ok,
                 %AI.ReviewDecision{
+                  purpose_assessment: :remediation,
                   verdict: :approved,
                   reason: reviewer_reason,
                   usage: usage()
@@ -1870,6 +1930,7 @@ defmodule Opsonde.Providers.AITest do
       access_method_id: "access-method-effect",
       access_method_revision: 1,
       request_kind: :effect,
+      purpose: :remediation,
       capability: "effect.command",
       operation: "service.restart",
       selectors: %{service: "api"},

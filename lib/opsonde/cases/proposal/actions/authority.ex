@@ -373,9 +373,16 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
                decision.proposal_digest == proposal.proposal_digest ||
                  {:error, "ReviewDecision Proposal digest changed"} do
           case decision.verdict do
-            :approved -> approve_review(proposal, decision, incident, run)
-            :rejected -> reject_review(proposal, decision, incident, run)
-            :needs_human -> await_human_review(proposal, decision, incident)
+            :approved ->
+              if decision.purpose_assessment == proposal.purpose,
+                do: approve_review(proposal, decision, incident, run),
+                else: {:error, "Reviewer purpose assessment does not authorize this Proposal"}
+
+            :rejected ->
+              reject_review(proposal, decision, incident, run)
+
+            :needs_human ->
+              await_human_review(proposal, decision, incident)
           end
         end
       else

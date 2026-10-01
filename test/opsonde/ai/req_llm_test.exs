@@ -209,6 +209,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => reason,
         "intent" => %{
           "type" => "proposal",
+          "purpose" => decision["purpose"],
           "action" => Map.take(decision, ~w(tool_id selectors parameters)),
           "evidence_ids" => decision["evidence_ids"],
           "affected_conditions" => decision["affected_conditions"],
@@ -367,7 +368,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert Enum.all?(requests, fn request ->
              String.contains?(request.body, "Recovery is a terminal intent") and
                String.contains?(request.body, "current observation") and
-               String.contains?(request.body, "Do not propose an effect when") and
+               String.contains?(request.body, "Do not propose remediation when") and
                String.contains?(request.body, "returned facts can directly establish") and
                String.contains?(request.body, "tool's verification_schema")
            end)
@@ -665,7 +666,11 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:decision, %{"status" => "ready"}})
     assert :ok = Adapter.check(state, %{})
 
-    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+    set_mode(
+      context.agent,
+      {:decision,
+       %{"verdict" => "approved", "purpose_assessment" => "remediation", "reason" => "bounded"}}
+    )
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
              Adapter.review(state, review_request(), %{})
@@ -742,7 +747,10 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert get_in(body, ["tools", Access.at(0), "function", "name"]) == "structured_output"
     refute Map.has_key?(body, "response_format")
 
-    set_mode(context.agent, {:raw_text, ~s({"verdict":"rejected","reason":"証拠不足"})})
+    set_mode(
+      context.agent,
+      {:raw_text, ~s({"verdict":"rejected","purpose_assessment":"unknown","reason":"証拠不足"})}
+    )
 
     assert {:ok,
             %AI.ReviewDecision{
@@ -822,7 +830,12 @@ defmodule Opsonde.AI.ReqLLMTest do
     }
 
     request = %{request | initial_target_id: guest.id, target_relations: [relation]}
-    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "linked"}})
+
+    set_mode(
+      context.agent,
+      {:decision,
+       %{"verdict" => "approved", "purpose_assessment" => "remediation", "reason" => "linked"}}
+    )
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved}} = Adapter.review(state, request, %{})
 
@@ -854,7 +867,12 @@ defmodule Opsonde.AI.ReqLLMTest do
         }
     }
 
-    set_mode(context.agent, {:decision, %{"verdict" => "rejected", "reason" => "No proof"}})
+    set_mode(
+      context.agent,
+      {:decision,
+       %{"verdict" => "rejected", "purpose_assessment" => "unknown", "reason" => "No proof"}}
+    )
+
     assert {:ok, %AI.ReviewDecision{verdict: :rejected}} = Adapter.review(state, request, %{})
 
     assert reviewer_payload(hd(requests(context.agent)))["retry_context"] ==
@@ -1029,7 +1047,6 @@ defmodule Opsonde.AI.ReqLLMTest do
       provider_request
       |> output_schema()
       |> get_in(["properties", "intent", "anyOf"])
-      |> Enum.flat_map(&Map.get(&1, "anyOf", []))
       |> Enum.find(&Map.has_key?(Map.get(&1, "properties", %{}), "verification"))
 
     effect_action =
@@ -1074,7 +1091,6 @@ defmodule Opsonde.AI.ReqLLMTest do
       |> List.last()
       |> output_schema()
       |> get_in(["properties", "intent", "anyOf"])
-      |> Enum.flat_map(&Map.get(&1, "anyOf", []))
       |> Enum.find(&Map.has_key?(Map.get(&1, "properties", %{}), "verification"))
 
     assert get_in(recovered_schema, [
@@ -1356,7 +1372,11 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(context.agent, {
       :decision,
-      %{"verdict" => "approved", "reason" => String.duplicate("界", 1_000)}
+      %{
+        "verdict" => "approved",
+        "purpose_assessment" => "remediation",
+        "reason" => String.duplicate("界", 1_000)
+      }
     })
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved}} =
@@ -1917,7 +1937,12 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   test "review uses an isolated prompt without resolver sessions or Target tools", context do
-    set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+    set_mode(
+      context.agent,
+      {:decision,
+       %{"verdict" => "approved", "purpose_assessment" => "remediation", "reason" => "bounded"}}
+    )
+
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     assert {:ok,
@@ -2106,7 +2131,12 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     set_mode(
       context.agent,
-      {:decision, %{"verdict" => "approved", "reason" => "Measured inactive"}}
+      {:decision,
+       %{
+         "verdict" => "approved",
+         "purpose_assessment" => "remediation",
+         "reason" => "Measured inactive"
+       }}
     )
 
     assert {:ok, %AI.ReviewDecision{verdict: :approved}} = Adapter.review(state, request, %{})
@@ -2119,6 +2149,73 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute Map.has_key?(visible, "recovery_status")
     refute Map.has_key?(visible, "recovery_evidence_ids")
     refute Map.has_key?(visible, "state")
+  end
+
+  test "generate_object offers opaque investigation without a remediation verification tool",
+       context do
+    {:ok, methods} = Opsonde.Targets.Adapters.SSH.capabilities(nil, %{})
+    command = Enum.find(methods.effects, &(&1.operation == "command.execute"))
+
+    tool = %{
+      proposal_tool()
+      | operation: command.operation,
+        capability: command.capability,
+        input_schema: command.input_schema
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 4,
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: ["target-1"],
+            allowed_evidence_kinds: ["signal"]
+        },
+        proposal_tools: [tool],
+        evidence: [
+          %AI.Evidence{
+            id: "evidence-1",
+            kind: "signal",
+            target_id: "target-1",
+            content: %{"predicate" => "service unavailable"}
+          }
+        ],
+        observation_tools: []
+    }
+
+    response = %{
+      "reason" => "Inspect service status before selecting a repair",
+      "intent" => %{
+        "type" => "proposal",
+        "purpose" => "investigation",
+        "action" => %{
+          "tool_id" => tool.id,
+          "selectors" => %{},
+          "parameters" => %{"command" => "service nginx status"}
+        },
+        "evidence_ids" => ["evidence-1"],
+        "affected_conditions" => []
+      }
+    }
+
+    for provider <- ["openai", "anthropic"] do
+      endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
+      state = state!(provider, endpoint, %{"api_key" => "diagnostic-secret"})
+      set_mode(context.agent, {:decision, response})
+
+      assert {:ok,
+              %AI.ResolverDecision{
+                intent: %AI.Proposal{
+                  purpose: :investigation,
+                  request_kind: :effect,
+                  verification_intent: nil,
+                  expected_result: %{}
+                }
+              } = decision} = Adapter.resolve(state, request, %{})
+
+      assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
+    end
   end
 
   test "tool choices are rebound to the exact registered Target and Access Method", context do
@@ -2157,6 +2254,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     decision = %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "reason" => "Restore availability",
       "tool_id" => "proposal-tool",
       "selectors" => %{"service" => "api"},
@@ -2184,6 +2282,7 @@ defmodule Opsonde.AI.ReqLLMTest do
                 access_method_id: "access-1",
                 access_method_revision: 3,
                 request_kind: :effect,
+                purpose: :remediation,
                 capability: "effect.command",
                 operation: "service.restart",
                 expected_result: %{"status" => "running"},
@@ -2202,7 +2301,8 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     proposal_variant =
       Enum.find(schema["properties"]["intent"]["anyOf"], fn variant ->
-        get_in(variant, ["properties", "type", "enum"]) == ["proposal"]
+        get_in(variant, ["properties", "type", "enum"]) == ["proposal"] and
+          get_in(variant, ["properties", "purpose", "enum"]) == ["remediation"]
       end)
 
     refute Map.has_key?(proposal_variant["properties"], "expected_result_json")
@@ -2245,6 +2345,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "Restore availability",
       "intent" => %{
         "type" => "proposal",
+        "purpose" => "remediation",
         "action" => Map.take(decision, ~w(tool_id selectors parameters)),
         "evidence_ids" => ["source-evidence-1"],
         "affected_conditions" => [],
@@ -2322,6 +2423,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => "Inspect this service",
         "intent" => %{
           "type" => "proposal",
+          "purpose" => "investigation",
           "action" => %{
             "tool_id" => tool.id,
             "selectors" => %{"service" => "api"},
@@ -2339,6 +2441,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             %AI.ResolverDecision{
               intent: %AI.Proposal{
                 request_kind: :observation,
+                purpose: :investigation,
                 affected_conditions: [^claim],
                 verification_intent: nil
               }
@@ -2439,6 +2542,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "The guest remains unavailable while its controller reports power off",
       "intent" => %{
         "type" => "proposal",
+        "purpose" => "remediation",
         "action" => %{
           "tool_id" => "proposal-tool",
           "selectors" => %{"service" => "api"},
@@ -2481,7 +2585,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     proposal_schema =
       output_schema(wire)["properties"]["intent"]["anyOf"]
-      |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["proposal"]))
+      |> Enum.find(&(get_in(&1, ["properties", "purpose", "enum"]) == ["remediation"]))
 
     assert get_in(proposal_schema, [
              "properties",
@@ -2775,7 +2879,11 @@ defmodule Opsonde.AI.ReqLLMTest do
       assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{reason: "probe"}}} =
                Providers.ai_resolve(provider.id, resolver_request(), %{}, actor: admin)
 
-      set_mode(context.agent, {:decision, %{"verdict" => "approved", "reason" => "bounded"}})
+      set_mode(
+        context.agent,
+        {:decision,
+         %{"verdict" => "approved", "purpose_assessment" => "remediation", "reason" => "bounded"}}
+      )
 
       assert {:ok, %AI.ReviewDecision{verdict: :approved, reason: "bounded"}} =
                Providers.ai_review(provider.id, review_request(), %{}, actor: admin)
@@ -2887,6 +2995,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       access_method_id: "access-1",
       access_method_revision: 1,
       request_kind: :effect,
+      purpose: :remediation,
       capability: "effect.command",
       operation: "service.restart",
       selectors: %{"service" => "api"},

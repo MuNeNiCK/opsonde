@@ -1075,6 +1075,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                  respond: fn _request ->
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :approved,
                       reason: "The cited evidence supports this exact change",
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1191,6 +1192,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                  respond: fn _request ->
                    {:ok,
                     %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
                       verdict: :needs_human,
                       reason: "The evidence requires an operator decision",
                       usage: %AI.Usage{input_tokens: 2, output_tokens: 2}
@@ -1403,6 +1405,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => tool["id"],
       "target_id" => tool["target_id"],

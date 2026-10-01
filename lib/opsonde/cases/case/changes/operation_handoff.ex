@@ -27,7 +27,7 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
     end
   end
 
-  defp pending(changeset, %{request_kind: :effect} = operation) do
+  defp pending(changeset, %{purpose: :remediation} = operation) do
     if arg(changeset, :kind) == :verification do
       {:ok,
        %{
@@ -40,7 +40,7 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
     end
   end
 
-  defp pending(changeset, %{request_kind: :observation} = operation) do
+  defp pending(changeset, %{purpose: :investigation} = operation) do
     if arg(changeset, :kind) == :observation do
       with {:ok, source} <- Cases.get_turn(arg(changeset, :source_turn_id), authorize?: false),
            {:ok, evidence} <- Cases.get_evidence(arg(changeset, :evidence_id), authorize?: false),

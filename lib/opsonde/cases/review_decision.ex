@@ -43,6 +43,7 @@ defmodule Opsonde.Cases.ReviewDecision do
         :assignment_id,
         :outcome,
         :verdict,
+        :purpose_assessment,
         :category,
         :reason,
         :selection_source,
@@ -56,6 +57,8 @@ defmodule Opsonde.Cases.ReviewDecision do
         :result_digest,
         :decided_at
       ]
+
+      validate present(:purpose_assessment), where: [attribute_equals(:outcome, :decision)]
     end
   end
 
@@ -78,6 +81,11 @@ defmodule Opsonde.Cases.ReviewDecision do
       allow_nil? false
       public? true
       constraints one_of: [:decision, :delivery_failed]
+    end
+
+    attribute :purpose_assessment, :atom do
+      public? true
+      constraints one_of: [:investigation, :remediation, :unknown]
     end
 
     attribute :verdict, :atom do

@@ -2334,6 +2334,8 @@ export interface components {
             proposal_id: string;
             /** Format: uuid */
             provider_id: string;
+            /** @enum {string|null} */
+            purpose: "investigation" | "remediation" | null;
             reference: string | null;
             /** @enum {string} */
             request_kind: "observation" | "effect";
@@ -2375,6 +2377,8 @@ export interface components {
             /** Format: uuid */
             provider_id: string | null;
             provider_revision: number | null;
+            /** @enum {string|null} */
+            purpose_assessment: "investigation" | "remediation" | "unknown" | null;
             reason: string;
             /** Format: uuid */
             resolution_run_id: string;
@@ -2754,6 +2758,8 @@ export interface components {
                 [key: string]: unknown;
             };
             operation: string;
+            /** @enum {string|null} */
+            purpose: "investigation" | "remediation" | null;
             /** Format: uuid */
             proposed_for_id: string;
             capability: string;

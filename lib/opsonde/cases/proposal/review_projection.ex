@@ -227,6 +227,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
       access_method_id: proposal.access_method_id,
       access_method_revision: proposal.access_method_revision,
       request_kind: proposal.request_kind,
+      purpose: proposal.purpose,
       capability: proposal.capability,
       operation: proposal.operation,
       selectors: proposal.selectors,
@@ -239,7 +240,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
     }
   end
 
-  defp verification_intent(%{request_kind: :observation}), do: nil
+  defp verification_intent(%{purpose: :investigation}), do: nil
 
   defp verification_intent(proposal) do
     %AI.VerificationIntent{

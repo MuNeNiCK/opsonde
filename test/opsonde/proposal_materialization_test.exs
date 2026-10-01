@@ -436,6 +436,7 @@ defmodule Opsonde.ProposalMaterializationTest do
   defp proposal_intent(evidence_id, context) do
     %{
       "type" => "proposal",
+      "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => "effect-tool",
       "target_id" => context.target.id,

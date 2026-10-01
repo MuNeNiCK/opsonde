@@ -213,6 +213,9 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_review_relations?(_request), do: false
 
+  defp valid_effect_link_claims?(%AI.Proposal{purpose: :investigation}, _conditions, _relations),
+    do: true
+
   defp valid_effect_link_claims?(
          %AI.Proposal{request_kind: :observation},
          _conditions,
@@ -248,7 +251,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_effect_link_claims?(_proposal, _conditions, _relations), do: false
 
-  defp valid_effect_citations?(%AI.Proposal{request_kind: :observation}, _request), do: true
+  defp valid_effect_citations?(%AI.Proposal{purpose: :investigation}, _request), do: true
 
   defp valid_effect_citations?(%AI.Proposal{} = proposal, request) do
     cited = MapSet.new(proposal.evidence_ids)
@@ -547,6 +550,10 @@ defmodule Opsonde.Providers.AI.Validator do
   def validate_decision(:review, %AI.ReviewDecision{} = decision, request) do
     with :ok <- validate_usage(decision.usage, request.budget),
          true <- decision.verdict in [:approved, :rejected, :needs_human],
+         true <- decision.purpose_assessment in [:investigation, :remediation, :unknown],
+         true <-
+           decision.verdict != :approved or
+             decision.purpose_assessment == request.proposal.purpose,
          true <- bounded_text?(decision.reason, AI.reviewer_reason_codepoints()),
          true <- review_decision_size(decision) <= @max_output_bytes do
       :ok
@@ -661,16 +668,17 @@ defmodule Opsonde.Providers.AI.Validator do
   defp validate_resolver_intent(%AI.Proposal{} = proposal, request) do
     case Enum.find(request.proposal_tools, &(&1.id == proposal.tool_id)) do
       %AI.ProposalTool{} = tool ->
-        evidence_ids = request_evidence_ids(tool, request)
+        evidence_ids = request_evidence_ids(proposal, request)
 
         if request_budget_available?(tool, request) and
              valid_tool_input?(proposal.selectors, proposal.parameters, tool.input_schema) and
-             AI.proposal_requirements_match?(
-               tool,
-               request,
-               proposal.evidence_ids,
-               proposal.parameters
-             ) and
+             (proposal.purpose == :investigation or
+                AI.proposal_requirements_match?(
+                  tool,
+                  request,
+                  proposal.evidence_ids,
+                  proposal.parameters
+                )) and
              exact_proposal?(proposal, tool) and
              AI.valid_affected_conditions?(proposal, request.conditions) and
              valid_effect_link_claims?(proposal, request.conditions, request.target_relations) and
@@ -904,7 +912,8 @@ defmodule Opsonde.Providers.AI.Validator do
     nonempty?(proposal.tool_id) and nonempty?(proposal.target_id) and
       positive?(proposal.target_revision) and nonempty?(proposal.access_method_id) and
       positive?(proposal.access_method_revision) and
-      proposal.request_kind in [:observation, :effect] and nonempty?(proposal.capability) and
+      AI.valid_proposal_purpose?(proposal.request_kind, proposal.purpose) and
+      nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and
       AI.valid_resolver_reason?(proposal.reason) and is_map(proposal.selectors) and
       valid_request_evidence_ids?(proposal, evidence_ids) and
@@ -914,6 +923,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp review_decision_size(decision) do
     case Jason.encode(%{
            verdict: decision.verdict,
+           purpose_assessment: decision.purpose_assessment,
            reason: decision.reason,
            usage: Map.from_struct(decision.usage)
          }) do
@@ -946,7 +956,8 @@ defmodule Opsonde.Providers.AI.Validator do
   defp valid_preselection_tools?(_request), do: true
 
   defp exact_proposal?(proposal, tool) do
-    proposal.request_kind == tool.request_kind and proposal.target_id == tool.target_id and
+    AI.valid_proposal_purpose?(proposal.request_kind, proposal.purpose) and
+      proposal.request_kind == tool.request_kind and proposal.target_id == tool.target_id and
       proposal.target_revision == tool.target_revision and
       proposal.access_method_id == tool.access_method_id and
       proposal.access_method_revision == tool.access_method_revision and
@@ -959,7 +970,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp request_budget_available?(%{request_kind: :effect}, request),
     do: request.budget.remaining_effects > 0
 
-  defp request_evidence_ids(%{request_kind: :observation}, request),
+  defp request_evidence_ids(%{purpose: :investigation}, request),
     do: available_evidence_ids(request)
 
   defp request_evidence_ids(%{request_kind: :effect}, request),
@@ -972,7 +983,7 @@ defmodule Opsonde.Providers.AI.Validator do
     do: nonempty_list?(ids) and unique?(ids) and Enum.all?(ids, &(&1 in available))
 
   defp valid_request_verification?(
-         %AI.Proposal{request_kind: :observation} = proposal,
+         %AI.Proposal{purpose: :investigation} = proposal,
          _tool,
          _tools
        ),
@@ -983,7 +994,7 @@ defmodule Opsonde.Providers.AI.Validator do
       is_map(proposal.expected_result) and
         valid_verification_intent?(proposal.verification_intent, tools)
 
-  defp valid_review_verification?(%AI.Proposal{request_kind: :observation} = proposal),
+  defp valid_review_verification?(%AI.Proposal{purpose: :investigation} = proposal),
     do: proposal.expected_result == %{} and is_nil(proposal.verification_intent)
 
   defp valid_review_verification?(%AI.Proposal{request_kind: :effect} = proposal),

@@ -62,7 +62,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
          true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"} do
       operations
-      |> Enum.filter(&(&1.request_kind == :effect))
+      |> Enum.filter(&(&1.purpose == :remediation))
       |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
       |> case do
         [] ->
@@ -200,7 +200,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   defp scoped_effects(operations, exclude_operation_id) do
     operations
     |> Enum.filter(fn operation ->
-      operation.id != exclude_operation_id and operation.request_kind == :effect and
+      operation.id != exclude_operation_id and operation.purpose == :remediation and
         not (operation.status == :failed and is_nil(operation.dispatch_started_at))
     end)
     |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
@@ -242,12 +242,11 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <-
            evidence.kind == "observation" and
              evidence.content["target_id"] == condition.target_id and
-             evidence.content["status"] == "failed" and
-             evidence.content["category"] == "observation_failed",
+             evidence.content["status"] == "failed",
          {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
          true <- operation.id == evidence.source_ref and operation.case_id == evidence.case_id,
          true <-
-           operation.request_kind == :observation and operation.status == :failed and
+           operation.purpose == :investigation and operation.status == :failed and
              is_struct(operation.dispatch_started_at, DateTime),
          true <-
            operation.target_id == condition.target_id and
@@ -267,10 +266,10 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          condition,
          revision
        ) do
-    with true <- content["status"] == "applied" and content["category"] == "target_observed",
+    with true <- content["status"] == "applied",
          true <- content["target_id"] == condition.target_id,
          {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
-         true <- operation.request_kind == :observation and operation.status == :applied,
+         true <- operation.purpose == :investigation and operation.status == :applied,
          true <- operation.case_id == evidence.case_id and operation.id == evidence.source_ref,
          true <-
            operation.target_id == condition.target_id and operation.target_revision == revision,
@@ -290,7 +289,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
        ) do
     with true <- content["status"] == "verified" and content["target_id"] == condition.target_id,
          {:ok, operation} <- Cases.get_operation(content["operation_id"], authorize?: false),
-         true <- operation.request_kind == :effect and operation.status == :applied,
+         true <- operation.purpose == :remediation and operation.status == :applied,
          true <-
            operation.case_id == evidence.case_id and operation.target_id == condition.target_id,
          true <- operation.target_revision == revision,

@@ -175,10 +175,15 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           label: t("cases.workflow.fields.decision"),
           value: translatedToken(t, "decision", item.verdict),
         },
+        item.purpose_assessment && {
+          label: t("cases.workflow.fields.purpose"),
+          value: t(`cases.purpose.${item.purpose_assessment}`),
+        },
         item.category && { label: t("cases.workflow.fields.category"), value: item.category },
       ]),
       technical: {
         verdict: item.verdict,
+        purpose_assessment: item.purpose_assessment,
         selection_source: item.selection_source,
         category: item.category,
         usage: { input_tokens: item.input_tokens, output_tokens: item.output_tokens },

@@ -329,6 +329,7 @@ const en = {
       },
     },
     cases: {
+      purpose: { investigation: "Investigation", remediation: "Remediation", unknown: "Uncertain" },
       title: "Cases",
       aiUsage: {
         title: "AI usage",
@@ -623,6 +624,7 @@ const en = {
           recoveredEdge: "Recovered",
         },
         fields: {
+          purpose: "Assessed purpose",
           decision: "AI decision",
           selectedAction: "Next selected action",
           target: "Target",

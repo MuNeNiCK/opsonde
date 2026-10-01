@@ -57,6 +57,11 @@ export function ProposalCard({
           </Badge>
         </div>
         <CardDescription>
+          {proposal.purpose && (
+            <Badge variant="outline" className="mr-2">
+              {t(`cases.purpose.${proposal.purpose}`)}
+            </Badge>
+          )}
           {target} · {method} · {provider} · {t(`setup.modes.${proposal.authority_mode}.name`)}
         </CardDescription>
       </CardHeader>
@@ -83,14 +88,14 @@ export function ProposalCard({
         )}
         <div
           className={
-            proposal.request_kind === "effect" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4"
+            proposal.purpose === "remediation" ? "grid gap-4 lg:grid-cols-3" : "grid gap-4"
           }
         >
           <DataBlock
             title={t("cases.effectRequest")}
             value={{ selectors: proposal.selectors, parameters: proposal.parameters }}
           />
-          {proposal.request_kind === "effect" && (
+          {proposal.purpose === "remediation" && (
             <>
               <DataBlock title={t("cases.expectedResult")} value={proposal.expected_result} />
               <DataBlock

@@ -870,7 +870,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         %{
           kind: "observation",
           source_ref: operation_id,
-          content: %{"status" => "applied", "category" => "target_observed", "facts" => facts}
+          content: %{"status" => "applied", "facts" => facts}
         }
         when is_map(facts) and map_size(facts) > 0 ->
           case Cases.get_operation(operation_id, authorize?: false) do
@@ -878,7 +878,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
               evidence.resolution_run_id == run.id and operation.case_id == incident.id and
                 operation.resolution_run_id == run.id and
                 operation.target_id == target.id and operation.target_revision == target.revision and
-                operation.request_kind == :observation and operation.status == :applied and
+                operation.purpose == :investigation and operation.status == :applied and
                 is_struct(operation.dispatch_started_at, DateTime) and
                 DateTime.compare(operation.dispatch_started_at, baseline) != :lt
 
@@ -895,7 +895,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
                  Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
             operation.case_id == incident.id and operation.target_id == target.id and
               operation.target_revision == target.revision and
-              operation.request_kind == :effect and operation.status == :applied and
+              operation.purpose == :remediation and operation.status == :applied and
               attempt.status == :verified and attempt.case_id == incident.id and
               attempt.observed_at == evidence.observed_at
           else
@@ -921,6 +921,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         "parameters",
         "reference",
         "request_kind",
+        "purpose",
         "selectors",
         "status",
         "target_id",

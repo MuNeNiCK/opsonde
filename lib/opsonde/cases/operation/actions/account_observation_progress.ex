@@ -29,7 +29,7 @@ defmodule Opsonde.Cases.Operation.Actions.AccountObservationProgress do
     end)
   end
 
-  defp terminal_observation(%Operation{request_kind: :observation, status: status})
+  defp terminal_observation(%Operation{purpose: :investigation, status: status})
        when status in @terminal,
        do: :ok
 

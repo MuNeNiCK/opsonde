@@ -324,6 +324,7 @@ const ja = {
       },
     },
     cases: {
+      purpose: { investigation: "調査", remediation: "修復", unknown: "判断できず" },
       title: "ケース",
       aiUsage: {
         title: "AI使用量",
@@ -609,6 +610,7 @@ const ja = {
           recoveredEdge: "復旧",
         },
         fields: {
+          purpose: "審査した目的",
           decision: "AIの判断",
           selectedAction: "次に選んだ処理",
           target: "Target",

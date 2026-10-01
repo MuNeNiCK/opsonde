@@ -565,6 +565,7 @@ defmodule Opsonde.FileOperationTest do
 
         {:ok,
          %AI.ReviewDecision{
+           purpose_assessment: :remediation,
            verdict: :approved,
            reason: "Approve this exact immutable payload",
            usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -959,6 +960,7 @@ defmodule Opsonde.FileOperationTest do
 
             {:ok,
              %AI.ReviewDecision{
+               purpose_assessment: :remediation,
                verdict: :approved,
                reason: "Approve this exact immutable payload",
                usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
@@ -1017,6 +1019,7 @@ defmodule Opsonde.FileOperationTest do
 
     intent = %{
       "type" => "proposal",
+      "purpose" => if(kind == "observation", do: "investigation", else: "remediation"),
       "request_kind" => kind,
       "tool_id" => tool["id"],
       "target_id" => context.target.id,

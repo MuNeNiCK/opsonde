@@ -378,6 +378,7 @@ defmodule Opsonde.Providers.AI do
       :access_method_id,
       :access_method_revision,
       :request_kind,
+      :purpose,
       :capability,
       :operation,
       :selectors,
@@ -391,6 +392,22 @@ defmodule Opsonde.Providers.AI do
 
     @type t :: %__MODULE__{}
   end
+
+  def valid_proposal_purpose?(:observation, :investigation), do: true
+
+  def valid_proposal_purpose?(:effect, purpose) when purpose in [:investigation, :remediation],
+    do: true
+
+  def valid_proposal_purpose?(_kind, _purpose), do: false
+
+  def valid_affected_conditions?(%Proposal{purpose: :investigation} = proposal, conditions),
+    do:
+      valid_affected_conditions?(
+        :observation,
+        proposal.affected_conditions,
+        conditions,
+        proposal.evidence_ids
+      )
 
   def valid_affected_conditions?(%Proposal{} = proposal, conditions),
     do:
@@ -622,7 +639,7 @@ defmodule Opsonde.Providers.AI do
   defmodule ReviewDecision do
     @moduledoc false
     @enforce_keys [:verdict, :reason, :usage]
-    defstruct @enforce_keys ++ [desired_outcome_assessment: nil]
+    defstruct @enforce_keys ++ [purpose_assessment: nil, desired_outcome_assessment: nil]
     @type t :: %__MODULE__{}
   end
 
