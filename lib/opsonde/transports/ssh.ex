@@ -8,7 +8,9 @@ defmodule Opsonde.Transports.SSH do
   @default_max_output_bytes 32_768
   @maximum_timeout 600_000
   @maximum_output_bytes 60_000
-  @maximum_command_bytes 4_096
+  # Method admission bounds the caller's script. Profiles may quote that input
+  # into a larger wire envelope, which retains its own finite transport bound.
+  @maximum_command_bytes 32_768
   @poll_interval 20
 
   defmodule Config do

@@ -157,12 +157,15 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   def effect(%State{} = state, %{capability: capability} = request, invocation)
       when capability in @ssh_capabilities do
     with {:ok, :effect} <- SSHMethod.classify_request(state.transport, request) do
-      parameters =
-        if request.operation == "command.execute",
-          do: Map.update!(request.parameters, "command", &privileged(state.privilege, &1)),
-          else: request.parameters
-
-      SSHMethod.effect(state.transport, %{request | parameters: parameters}, invocation)
+      if request.operation == "command.execute" do
+        with {:ok, command} <- SSHMethod.effect_command(request, capability) do
+          state
+          |> execute_raw(request, privileged(state.privilege, command), invocation)
+          |> effect_result()
+        end
+      else
+        SSHMethod.effect(state.transport, request, invocation)
+      end
     else
       _invalid -> {:error, :failed, "Linux SSH effect request is invalid"}
     end
@@ -171,7 +174,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   def effect(%State{} = state, request, invocation) do
     with {:ok, command} <- restart_command(state.privilege, request),
          result <- execute_raw(state, request, command, invocation) do
-      effect_result(result)
+      effect_result(result, true)
     else
       {:error, category, message} -> read_error(category, message)
     end
@@ -222,11 +225,13 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
     )
   end
 
-  defp effect_result({:ok, %Transport.Result{exit_status: 0} = result}) do
+  defp effect_result(result, definition_guard? \\ false)
+
+  defp effect_result({:ok, %Transport.Result{exit_status: 0} = result}, _definition_guard?) do
     {:ok, %Target.EffectResult{status: :applied, details: evidence(result)}}
   end
 
-  defp effect_result({:ok, %Transport.Result{exit_status: 65} = result}) do
+  defp effect_result({:ok, %Transport.Result{exit_status: 65} = result}, true) do
     {:ok,
      %Target.EffectResult{
        status: :failed,
@@ -234,11 +239,11 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
      }}
   end
 
-  defp effect_result({:ok, %Transport.Result{} = result}) do
+  defp effect_result({:ok, %Transport.Result{} = result}, _definition_guard?) do
     {:ok, %Target.EffectResult{status: :failed, details: evidence(result)}}
   end
 
-  defp effect_result({:error, category, message})
+  defp effect_result({:error, category, message}, _definition_guard?)
        when category in [
               :timeout_after_dispatch,
               :cancelled_after_dispatch,
@@ -247,8 +252,11 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
             ],
        do: {:ok, %Target.EffectResult{status: :unknown, details: %{"error" => message}}}
 
-  defp effect_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
-  defp effect_result({:error, _category, message}), do: {:error, :failed, message}
+  defp effect_result({:error, :cancelled, message}, _definition_guard?),
+    do: {:error, :cancelled, message}
+
+  defp effect_result({:error, _category, message}, _definition_guard?),
+    do: {:error, :failed, message}
 
   defp read_error(:cancelled, message), do: {:error, :cancelled, message}
 
@@ -770,19 +778,19 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
       operation
       | description:
           operation.description <>
-            "; the Access Method prefixes this command with configured non-interactive sudo, so do not add sudo"
+            "; the Access Method runs the entire script in a configured non-interactive sudo shell, so do not add sudo"
     }
   end
 
   defp describe_privilege(operation, "none"), do: operation
 
-  defp privileged("sudo", command), do: "sudo -n " <> command
+  defp privileged("sudo", command), do: "sudo -n -- sh -c " <> shell_quote(command)
   defp privileged("none", command), do: command
 
   defp valid_unit?(value),
     do: is_binary(value) and byte_size(value) <= 255 and Regex.match?(@unit_pattern, value)
 
-  defp shell_quote(value), do: "'" <> value <> "'"
+  defp shell_quote(value), do: "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   defp nonempty?(value), do: is_binary(value) and byte_size(value) > 0
 
   defp invalid_request, do: {:error, :failed, "Linux SSH request is invalid"}

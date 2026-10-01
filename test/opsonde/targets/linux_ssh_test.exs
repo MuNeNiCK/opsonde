@@ -266,7 +266,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     [command] = commands(context)
     assert command =~ "actual="
     assert command =~ @definition
-    assert command =~ "systemctl restart -- 'discovered@42.service'"
+    assert command =~ "systemctl restart --"
+    assert command =~ unit
 
     verification =
       target_request(
@@ -298,7 +299,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
   end
 
-  test "configured privilege applies to arbitrary Method effects", context do
+  test "configured privilege preserves shell variables and quoted compound commands", context do
     effect =
       target_request(
         context,
@@ -306,18 +307,21 @@ defmodule Opsonde.Targets.LinuxSSHTest do
         "request.ssh.effect",
         "command.execute",
         %{},
-        %{"command" => "systemctl restart opsonde-validation.service"}
+        %{"command" => "V=\"opsonde-shell-semantics 'quoted'\"; printf '%s' \"$V\""}
       )
 
     effect_clearance = Targets.clear_target_request!(effect, actor: context.operator)
 
-    assert %Target.EffectResult{status: :applied} =
+    assert %Target.EffectResult{status: :applied, details: details} =
              Targets.dispatch_target_effect!(effect_clearance, %{},
                actor: context.operator,
                authorize?: false
              )
 
-    assert commands(context) == ["sudo -n systemctl restart opsonde-validation.service"]
+    assert details["stdout"] == %{
+             "encoding" => "utf-8",
+             "value" => "opsonde-shell-semantics 'quoted'"
+           }
   end
 
   test "raw SSH command cannot be cleared as an observation", context do
@@ -334,6 +338,30 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert {:error, error} = Targets.clear_target_request(request, actor: context.operator)
     assert Exception.message(error) =~ "kind does not match Method classification"
     assert commands(context) == []
+  end
+
+  test "a full-size accepted script retains literal quotes under configured privilege", context do
+    prefix = "V=\"opsonde-shell-semantics "
+    suffix = "\"; printf '%s' \"$V\""
+    quotes = String.duplicate("'", 4_096 - byte_size(prefix) - byte_size(suffix))
+
+    request =
+      target_request(context, :effect, "request.ssh.effect", "command.execute", %{}, %{
+        "command" => prefix <> quotes <> suffix
+      })
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert %Target.EffectResult{status: :applied, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert details["stdout"] == %{
+             "encoding" => "utf-8",
+             "value" => "opsonde-shell-semantics " <> quotes
+           }
   end
 
   test "unlisted shell command is an effect and cannot borrow another Target's Method", context do
@@ -474,6 +502,16 @@ defmodule Opsonde.Targets.LinuxSSHTest do
       Agent.update(commands, &[command | &1])
 
       cond do
+        String.contains?(command, "opsonde-shell-semantics") ->
+          # The SSH peer runs a real shell. This forwarding substitute exercises
+          # script semantics without requiring privileged host access.
+          forwarding = "sudo() { [ \"$1\" = -n ] && shift; [ \"$1\" = -- ] && shift; \"$@\"; }; "
+
+          {output, status} =
+            System.cmd("sh", ["-c", forwarding <> command], stderr_to_stdout: true)
+
+          if status == 0, do: {:ok, output}, else: {:error, output}
+
         command in ["uname -a", "sudo -n uname -a"] ->
           {:ok, "Linux fixture\n"}
 
