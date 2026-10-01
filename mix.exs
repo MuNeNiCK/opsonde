@@ -83,7 +83,7 @@ defmodule Opsonde.MixProject do
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:ash_phoenix, "~> 2.0"},
       {:ash_postgres, "~> 2.0"},
-      {:ash, "~> 3.0"},
+      {:ash, "~> 3.33.11"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:phoenix, "~> 1.8.14"},
       {:phoenix_ecto, "~> 4.5"},
