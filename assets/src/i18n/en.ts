@@ -19,6 +19,7 @@ const en = {
         eof: "Response completed",
         byte_limit: "Sample stopped at byte limit",
         duration_limit: "Sample stopped at time limit",
+        event_limit: "Sample stopped at event limit",
       },
       failed: "File transfer failed. Refresh to check progress before trying again.",
       tooLarge: "The file exceeds the server transfer limit.",

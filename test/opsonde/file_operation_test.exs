@@ -12,6 +12,22 @@ defmodule Opsonde.FileOperationTest do
 
     def call(conn, agent) do
       case {conn.method, conn.request_path} do
+        {"GET", "/api"} ->
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, ~s({"versions":["v1"]}))
+
+        {"GET", "/api/v1/namespaces/default/configmaps"} ->
+          Agent.update(agent, &Map.update(&1, :watches, 1, fn count -> count + 1 end))
+
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(
+            200,
+            ~s({"type":"ADDED","object":{"metadata":{"resourceVersion":"opaque-7"}}}\n) <>
+              ~s({"type":"BOOKMARK","object":{"metadata":{"resourceVersion":"opaque-9"}}}\n)
+          )
+
         {method, "/binary"} when method in ["PUT", "OPS!V2"] ->
           {:ok, bytes, conn} = read_body(conn)
           Agent.update(agent, &Map.put(&1, :writes, [bytes | &1.writes]))
@@ -126,8 +142,111 @@ defmodule Opsonde.FileOperationTest do
       method: method,
       ai: ai,
       assignments: assignments,
-      agent: agent
+      agent: agent,
+      endpoint: "https://127.0.0.1:#{port}"
     }
+  end
+
+  test "Case observations retain bounded native watch cursor and file without replay", context do
+    certificate = File.read!("test/support/certs/kubernetes_fixture_ca.pem") |> Base.encode64()
+
+    kubeconfig = """
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: target
+        cluster:
+          server: #{context.endpoint}
+          certificate-authority-data: #{certificate}
+    users:
+      - name: operator
+        user:
+          token: static-test-token
+    contexts:
+      - name: target
+        context:
+          cluster: target
+          user: operator
+          namespace: default
+    current-context: target
+    """
+
+    provider =
+      Providers.create_provider!(
+        "Case watch",
+        :target,
+        "kubernetes-api",
+        %{"namespace" => "default", "request_timeout_ms" => 1_000},
+        %{"kubeconfig" => kubeconfig},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!("watch-cluster", "cluster", "kubernetes", %{}, nil,
+        actor: context.admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "Watch API",
+        "api",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.kubernetes.observe"],
+        actor: context.admin
+      )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+    context = %{context | provider: provider, target: target, method: method}
+
+    parameters = %{
+      "method" => "GET",
+      "path" => "/api/v1/namespaces/default/configmaps",
+      "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+      "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 1},
+      "response_file" => %{"name" => "case-watch.jsonl", "media_type" => "application/json"}
+    }
+
+    proposal =
+      proposal!(context, parameters,
+        kind: "observation",
+        capability: "request.kubernetes.observe",
+        operation: "request.observe"
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert operation.parameters == parameters
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :applied
+    facts = stored.result_details["facts"]
+    assert facts["completion_reason"] == "event_limit"
+
+    assert facts["watch"] == %{
+             "event_count" => 1,
+             "resource_version" => "opaque-7",
+             "partial_event" => false,
+             "resume_strategy" => "cursor",
+             "error" => nil
+           }
+
+    file = facts["file"]
+
+    assert Targets.read_bound_artifact_chunk!(file, 0, actor: context.operator) ==
+             ~s({"type":"ADDED","object":{"metadata":{"resourceVersion":"opaque-7"}}}\n)
+
+    evidence =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.find(&(&1.source == "operation" and &1.source_ref == operation.id))
+
+    assert evidence.content["parameters"] == parameters
+    assert evidence.content["details"]["facts"] == facts
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.watches) == 1
   end
 
   test "Reviewer approval binds native HTTP verb and file identity through Case execution",
@@ -515,6 +634,10 @@ defmodule Opsonde.FileOperationTest do
   end
 
   defp proposal!(context, parameters, opts \\ []) do
+    kind = Keyword.get(opts, :kind, "effect")
+    capability = Keyword.get(opts, :capability, "request.http.effect")
+    operation = Keyword.get(opts, :operation, "request.execute")
+
     incident =
       Cases.open_case!(
         :manual,
@@ -546,27 +669,27 @@ defmodule Opsonde.FileOperationTest do
 
     tool = %{
       "id" => "file-effect",
-      "request_kind" => "effect",
+      "request_kind" => kind,
       "target_id" => context.target.id,
       "target_revision" => context.target.revision,
       "access_method_id" => context.method.id,
       "access_method_revision" => context.method.revision,
       "provider_id" => context.provider.id,
       "provider_revision" => context.provider.revision,
-      "capability" => "request.http.effect",
-      "operation" => "request.execute"
+      "capability" => capability,
+      "operation" => operation
     }
 
     intent = %{
       "type" => "proposal",
-      "request_kind" => "effect",
+      "request_kind" => kind,
       "tool_id" => tool["id"],
       "target_id" => context.target.id,
       "target_revision" => context.target.revision,
       "access_method_id" => context.method.id,
       "access_method_revision" => context.method.revision,
-      "capability" => "request.http.effect",
-      "operation" => "request.execute",
+      "capability" => capability,
+      "operation" => operation,
       "tool" => tool,
       "selectors" => %{},
       "parameters" => parameters,
@@ -588,6 +711,15 @@ defmodule Opsonde.FileOperationTest do
           "operation" => "request.observe"
       }
     }
+
+    intent =
+      if kind == "observation",
+        do:
+          intent
+          |> Map.put("expected_result", %{})
+          |> Map.put("verification_intent", %{})
+          |> Map.put("verification_tool", %{}),
+        else: intent
 
     turn =
       Cases.start_turn!(

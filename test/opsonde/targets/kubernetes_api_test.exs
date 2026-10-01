@@ -43,6 +43,30 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     defp route(%{method: "GET", request_path: "/api"} = conn, _agent, _request),
       do: json(conn, 200, %{"kind" => "APIVersions", "versions" => ["v1"]})
 
+    defp route(%{method: "GET"} = conn, agent, %{query: %{"watch" => "true"}}) do
+      bytes = Agent.get(agent, & &1.watch_body)
+      status = Agent.get(agent, &Map.get(&1, :watch_status, 200))
+      media = Agent.get(agent, &Map.get(&1, :watch_media, "application/json"))
+      conn = put_resp_content_type(conn, media)
+
+      if status == 200 do
+        conn = send_chunked(conn, status)
+        first = min(17, byte_size(bytes))
+        conn = if first > 0, do: elem(chunk(conn, binary_part(bytes, 0, first)), 1), else: conn
+
+        conn =
+          if byte_size(bytes) > first,
+            do: elem(chunk(conn, binary_part(bytes, first, byte_size(bytes) - first)), 1),
+            else: conn
+
+        Process.sleep(Agent.get(agent, &Map.get(&1, :watch_delay_ms, 0)))
+        if Agent.get(agent, &Map.get(&1, :watch_drop, false)), do: Process.exit(self(), :kill)
+        conn
+      else
+        send_resp(conn, status, bytes)
+      end
+    end
+
     defp route(
            %{request_path: "/apis/files.example/v1/namespaces/#{@namespace}/bundles/one/content"} =
              conn,
@@ -525,6 +549,369 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       hd(context.method.operation_catalog.observations).output_schema,
       result.facts
     )
+  end
+
+  test "checked API watches preserve exact built-in and CRD streams without an implicit list",
+       context do
+    bytes =
+      "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n" <>
+        "{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-9\"}}}\n"
+
+    Agent.update(context.agent, &Map.put(&1, :watch_body, bytes))
+    before = length(requests(context))
+    query = %{"watch" => "true", "resourceVersion" => "opaque-4", "allowWatchBookmarks" => "true"}
+
+    for path <- [
+          "/api/v1/namespaces/#{@namespace}/events",
+          "/apis/example.com/v1/namespaces/#{@namespace}/widgets"
+        ] do
+      observed =
+        observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+          "method" => "GET",
+          "path" => path,
+          "query" => query,
+          "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 10},
+          "response_file" => %{"name" => "watch.jsonl", "media_type" => "application/json"}
+        })
+
+      assert observed.facts["completion_reason"] == "eof"
+      assert observed.facts["watch"]["event_count"] == 2
+      assert observed.facts["watch"]["resource_version"] == "opaque-9"
+      refute observed.facts["watch"]["partial_event"]
+      assert observed.facts["response"] == ""
+      file = observed.facts["file"]
+
+      received =
+        Stream.unfold(0, fn offset ->
+          if offset == file["size_bytes"] do
+            nil
+          else
+            chunk = Targets.read_bound_artifact_chunk!(file, offset, actor: context.operator)
+            {chunk, offset + byte_size(chunk)}
+          end
+        end)
+        |> Enum.to_list()
+        |> IO.iodata_to_binary()
+
+      assert received == bytes
+      assert Enum.any?(requests(context), &(&1.path == path and &1.query == query))
+    end
+
+    assert length(requests(context)) == before + 2
+  end
+
+  test "an event limit stops at a complete watch frame rather than the network chunk", context do
+    prefix =
+      "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n" <>
+        "{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-9\"}}}\n"
+
+    bytes =
+      prefix <>
+        "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-12\"}}}\n"
+
+    Agent.update(context.agent, &Map.put(&1, :watch_body, bytes))
+
+    observed =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/apis/example.com/v1/namespaces/#{@namespace}/widgets",
+        "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 2},
+        "response_file" => %{"name" => "watch-bounded.jsonl", "media_type" => "application/json"}
+      })
+
+    assert observed.facts["completion_reason"] == "event_limit"
+    file = observed.facts["file"]
+    assert file["size_bytes"] == byte_size(prefix)
+    first = Targets.read_bound_artifact_chunk!(file, 0, actor: context.operator)
+    second = Targets.read_bound_artifact_chunk!(file, byte_size(first), actor: context.operator)
+    assert first <> second == prefix
+
+    assert Targets.get_artifact!(file["id"], actor: context.operator).completion_reason ==
+             :event_limit
+  end
+
+  test "watch cursors use complete events and an expired history requires a fresh list",
+       context do
+    complete =
+      "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n"
+
+    Agent.update(
+      context.agent,
+      &Map.put(
+        &1,
+        :watch_body,
+        complete <>
+          "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-12\"}}}\n"
+      )
+    )
+
+    parameters = %{
+      "method" => "GET",
+      "path" => "/apis/example.com/v1/namespaces/#{@namespace}/widgets",
+      "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+      "capture" => %{
+        "duration_ms" => 500,
+        "max_bytes" => byte_size(complete) + 12,
+        "max_events" => 10
+      },
+      "response_file" => %{"name" => "watch-partial.jsonl", "media_type" => "application/json"}
+    }
+
+    before = length(requests(context))
+    partial = observe!(context, "request.kubernetes.observe", "request.observe", %{}, parameters)
+    assert partial.facts["completion_reason"] == "byte_limit"
+    assert partial.facts["watch"]["event_count"] == 1
+    assert partial.facts["watch"]["resource_version"] == "opaque-7"
+    assert partial.facts["watch"]["partial_event"]
+    assert partial.facts["watch"]["resume_strategy"] == "cursor"
+
+    Agent.update(
+      context.agent,
+      &Map.put(
+        &1,
+        :watch_body,
+        "{\"type\":\"ERROR\",\"object\":{\"kind\":\"Status\",\"code\":410,\"reason\":\"Expired\"}}\n" <>
+          complete
+      )
+    )
+
+    parameters = parameters |> put_in(["capture", "max_bytes"], 4_096)
+    expired = observe!(context, "request.kubernetes.observe", "request.observe", %{}, parameters)
+    assert expired.facts["watch"]["event_count"] == 2
+    assert expired.facts["watch"]["resource_version"] == nil
+    assert expired.facts["watch"]["resume_strategy"] == "list"
+    assert expired.facts["watch"]["error"] == %{"code" => 410, "reason" => "Expired"}
+    assert length(requests(context)) == before + 2
+  end
+
+  test "an HTTP expired watch preserves the status and instructs a fresh list without reconnecting",
+       context do
+    Agent.update(
+      context.agent,
+      &Map.merge(&1, %{
+        watch_body: "{\"kind\":\"Status\",\"code\":410,\"reason\":\"Expired\"}",
+        watch_status: 410
+      })
+    )
+
+    before = length(requests(context))
+
+    observed =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/api/v1/namespaces/#{@namespace}/events",
+        "query" => %{"watch" => "true", "resourceVersion" => "opaque-old"},
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 10},
+        "response_file" => %{"name" => "watch-expired.jsonl", "media_type" => "application/json"}
+      })
+
+    assert observed.facts["http_status"] == 410
+    assert observed.facts["watch"]["error"] == %{"code" => 410, "reason" => "Expired"}
+    assert observed.facts["watch"]["resource_version"] == nil
+    assert observed.facts["watch"]["resume_strategy"] == "list"
+    assert length(requests(context)) == before + 1
+  end
+
+  test "a watch frame beyond the metadata parser bound preserves the file and earlier event count",
+       context do
+    complete =
+      "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n"
+
+    bytes =
+      complete <>
+        "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-12\"},\"payload\":\"" <>
+        String.duplicate("x", 1_048_577) <> "\"}}\n"
+
+    Agent.update(context.agent, &Map.put(&1, :watch_body, bytes))
+
+    observed =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/apis/example.com/v1/namespaces/#{@namespace}/widgets",
+        "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 2_097_152, "max_events" => 10},
+        "response_file" => %{"name" => "watch-large.jsonl", "media_type" => "application/json"}
+      })
+
+    assert observed.facts["completion_reason"] == "eof"
+    assert observed.facts["file"]["size_bytes"] == byte_size(bytes)
+    assert observed.facts["watch"]["event_count"] == 1
+    assert observed.facts["watch"]["error"] == %{"reason" => "frame_too_large"}
+    assert observed.facts["watch"]["resume_strategy"] == "unavailable"
+    assert observed.facts["watch"]["resource_version"] == nil
+  end
+
+  test "a zero-event watch sample is distinct from a dropped response", context do
+    Agent.update(context.agent, &Map.merge(&1, %{watch_body: "", watch_delay_ms: 1_000}))
+
+    parameters = %{
+      "method" => "GET",
+      "path" => "/api/v1/namespaces/#{@namespace}/events",
+      "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+      "capture" => %{"duration_ms" => 100, "max_bytes" => 4_096, "max_events" => 10},
+      "response_file" => %{"name" => "watch-empty.jsonl", "media_type" => "application/json"}
+    }
+
+    empty = observe!(context, "request.kubernetes.observe", "request.observe", %{}, parameters)
+    assert empty.facts["completion_reason"] == "duration_limit"
+    assert empty.facts["file"]["size_bytes"] == 0
+    assert empty.facts["watch"]["event_count"] == 0
+    assert empty.facts["watch"]["resource_version"] == "opaque-4"
+    assert empty.facts["watch"]["error"] == nil
+    refute empty.facts["watch"]["partial_event"]
+
+    Agent.update(
+      context.agent,
+      &Map.merge(&1, %{
+        watch_body:
+          "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n",
+        watch_delay_ms: 80,
+        watch_drop: true
+      })
+    )
+
+    parameters =
+      parameters
+      |> put_in(["capture", "duration_ms"], 500)
+      |> put_in(["response_file", "name"], "watch-dropped.jsonl")
+
+    request =
+      target_request(
+        context,
+        :observation,
+        "request.kubernetes.observe",
+        "request.observe",
+        %{},
+        parameters
+      )
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+
+    receipt =
+      Targets.page_artifacts!(context.target.id, actor: context.operator).results
+      |> Enum.find(&(&1.name == "watch-dropped.jsonl"))
+
+    assert receipt.status == :receiving
+    assert receipt.completion_reason == nil
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+  end
+
+  test "an unrecognized watch encoding retains raw bytes without inventing decoded events",
+       context do
+    Agent.update(
+      context.agent,
+      &Map.merge(&1, %{watch_body: <<255, 10, 0, 10>>, watch_media: "application/octet-stream"})
+    )
+
+    observed =
+      observe!(context, "request.kubernetes.observe", "request.observe", %{}, %{
+        "method" => "GET",
+        "path" => "/api/v1/namespaces/#{@namespace}/events",
+        "query" => %{"watch" => "true", "resourceVersion" => "opaque-4"},
+        "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 1},
+        "accept" => "application/octet-stream",
+        "response_file" => %{
+          "name" => "watch-raw.bin",
+          "media_type" => "application/octet-stream"
+        }
+      })
+
+    assert observed.facts["completion_reason"] == "eof"
+    assert observed.facts["file"]["size_bytes"] == 4
+    assert observed.facts["watch"]["event_count"] == 0
+    assert observed.facts["watch"]["error"] == %{"reason" => "unsupported_framing"}
+    assert observed.facts["watch"]["resume_strategy"] == "unavailable"
+
+    assert Targets.read_bound_artifact_chunk!(observed.facts["file"], 0, actor: context.operator) ==
+             <<255, 10, 0, 10>>
+  end
+
+  test "watch admission requires explicit valid bounds before any wire request", context do
+    parameters = %{
+      "method" => "GET",
+      "path" => "/api/v1/namespaces/#{@namespace}/events",
+      "query" => %{"watch" => "true"},
+      "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 10},
+      "response_file" => %{"name" => "watch.jsonl", "media_type" => "application/json"}
+    }
+
+    before = length(requests(context))
+
+    for invalid <- [
+          Map.delete(parameters, "capture"),
+          Map.delete(parameters, "response_file"),
+          put_in(parameters, ["capture", "max_events"], 0),
+          put_in(parameters, ["capture", "max_events"], 4_097),
+          put_in(parameters, ["capture", "duration_ms"], 501),
+          put_in(parameters, ["capture", "max_bytes"], 0)
+        ] do
+      request =
+        target_request(
+          context,
+          :observation,
+          "request.kubernetes.observe",
+          "request.observe",
+          %{},
+          invalid
+        )
+
+      assert {:error, _} = Targets.clear_target_request(request, actor: context.operator)
+    end
+
+    assert length(requests(context)) == before
+    assert Targets.page_artifacts!(context.target.id, actor: context.operator).results == []
+  end
+
+  test "cancelled watches cannot publish a completed sample or reconnect", context do
+    Agent.update(
+      context.agent,
+      &Map.merge(&1, %{
+        watch_body:
+          "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-7\"}}}\n",
+        watch_delay_ms: 1_000
+      })
+    )
+
+    parameters = %{
+      "method" => "GET",
+      "path" => "/api/v1/namespaces/#{@namespace}/events",
+      "query" => %{"watch" => "true"},
+      "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 10},
+      "response_file" => %{"name" => "watch-cancelled.jsonl", "media_type" => "application/json"}
+    }
+
+    clearance =
+      target_request(
+        context,
+        :observation,
+        "request.kubernetes.observe",
+        "request.observe",
+        %{},
+        parameters
+      )
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    cancelled = fn -> Enum.any?(requests(context), &(&1.query["watch"] == "true")) end
+
+    assert {:error, _} =
+             Targets.dispatch_target_observation(clearance, %{cancelled?: cancelled},
+               actor: context.operator
+             )
+
+    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    assert receipt.status == :receiving
+    assert receipt.completion_reason == nil
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    assert Enum.count(requests(context), &(&1.query["watch"] == "true")) == 1
   end
 
   test "checked API effects send immutable binary files and preserve their reply", context do

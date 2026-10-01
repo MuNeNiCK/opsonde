@@ -5057,7 +5057,8 @@
               "upload",
               "eof",
               "byte_limit",
-              "duration_limit"
+              "duration_limit",
+              "event_limit"
             ],
             "nullable": true,
             "type": "string"

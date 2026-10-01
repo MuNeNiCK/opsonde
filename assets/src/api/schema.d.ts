@@ -2825,7 +2825,7 @@ export interface components {
         };
         TargetFile: {
             /** @enum {string|null} */
-            completion_reason: "upload" | "eof" | "byte_limit" | "duration_limit" | null;
+            completion_reason: "upload" | "eof" | "byte_limit" | "duration_limit" | "event_limit" | null;
             expected_sha256: string | null;
             /** Format: date-time */
             expires_at: string;

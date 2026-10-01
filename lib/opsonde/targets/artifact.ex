@@ -108,7 +108,7 @@ defmodule Opsonde.Targets.Artifact do
       argument :completion_reason, :atom,
         allow_nil?: false,
         default: :eof,
-        constraints: [one_of: [:eof, :byte_limit, :duration_limit]]
+        constraints: [one_of: [:eof, :byte_limit, :duration_limit, :event_limit]]
 
       run {Lifecycle, operation: :complete_receipt}
     end
@@ -227,7 +227,7 @@ defmodule Opsonde.Targets.Artifact do
 
     attribute :completion_reason, :atom,
       public?: true,
-      constraints: [one_of: [:upload, :eof, :byte_limit, :duration_limit]]
+      constraints: [one_of: [:upload, :eof, :byte_limit, :duration_limit, :event_limit]]
 
     attribute :expires_at, :utc_datetime_usec, allow_nil?: false, public?: true
 

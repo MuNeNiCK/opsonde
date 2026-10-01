@@ -55,7 +55,37 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
         "http_status" => %{"type" => "integer"},
         "content_type" => %{"type" => "string"},
         "file" => Target.FileReference.schema(),
-        "content_encoding" => %{"type" => "string"}
+        "content_encoding" => %{"type" => "string"},
+        "watch" => %{
+          "type" => "object",
+          "properties" => %{
+            "event_count" => %{
+              "type" => "integer",
+              "minimum" => 0,
+              "description" =>
+                "Number of complete decoded JSON events; exact event bytes remain in the file."
+            },
+            "resource_version" => %{"type" => ["string", "null"]},
+            "partial_event" => %{"type" => "boolean"},
+            "resume_strategy" => %{
+              "type" => "string",
+              "enum" => ["cursor", "list", "unavailable"]
+            },
+            "error" => %{"type" => ["object", "null"]}
+          },
+          "required" => [
+            "event_count",
+            "resource_version",
+            "partial_event",
+            "resume_strategy",
+            "error"
+          ],
+          "additionalProperties" => false
+        },
+        "completion_reason" => %{
+          "type" => "string",
+          "enum" => ["eof", "byte_limit", "duration_limit", "event_limit"]
+        }
       },
       "required" => ["response", "http_status", "content_type"],
       "additionalProperties" => false
@@ -118,7 +148,17 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
 
           {:ok,
            %Target.EffectResult{
-             status: if(response.status in 200..299, do: :applied, else: :failed),
+             status:
+               cond do
+                 Map.get(response, :completion_reason) in ~w(byte_limit duration_limit event_limit) ->
+                   :unknown
+
+                 response.status in 200..299 ->
+                   :applied
+
+                 true ->
+                   :failed
+               end,
              reference: reference,
              details:
                Map.put(facts(response), "category", to_string(status_category(response.status)))
@@ -171,13 +211,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          true <-
            Enum.all?(
              Map.keys(parameters),
-             &(&1 in ~w(method path query body body_file content_type accept response_file))
+             &(&1 in ~w(method path query body body_file content_type accept response_file capture))
            ),
          true <- Target.FileWriter.valid_options?(parameters["response_file"]),
          {:ok, method} <- Map.fetch(@methods, verb),
          {:ok, kind} <- request_kind(request, method),
          :ok <- path_scope(path, state.namespace, kind),
          {:ok, query} <- query(Map.get(parameters, "query", %{})),
+         true <- valid_capture?(parameters, state.request_timeout),
          {:ok, content_type} <-
            media_type(Map.get(parameters, "content_type", "application/json")),
          {:ok, accept} <- media_type(Map.get(parameters, "accept", "application/json")),
@@ -192,6 +233,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          query: query,
          body: body,
          response_file: parameters["response_file"],
+         capture: parameters["capture"],
          headers: [{"content-type", content_type}, {"accept", accept}]
        }}
     else
@@ -275,7 +317,7 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
          is_binary(key) and byte_size(key) in 1..120 and is_binary(value) and
            byte_size(value) <= 2_048 and String.valid?(value) and
            not Regex.match?(~r/[\x00-\x1f\x7f]/, key <> value)
-       end) and String.downcase(Map.get(query, "watch", "false")) not in ["true", "t", "1"] do
+       end) do
       {:ok, Map.to_list(query)}
     else
       invalid()
@@ -283,6 +325,30 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   defp query(_query), do: invalid()
+
+  defp valid_capture?(parameters, timeout) do
+    watch? =
+      String.downcase(get_in(parameters, ["query", "watch"]) || "false") in ["true", "t", "1"]
+
+    capture = parameters["capture"]
+
+    cond do
+      is_nil(capture) ->
+        not watch?
+
+      not is_map(capture) or not is_map(parameters["response_file"]) ->
+        false
+
+      true ->
+        keys =
+          if watch?, do: ~w(duration_ms max_bytes max_events), else: ~w(duration_ms max_bytes)
+
+        Enum.sort(Map.keys(capture)) == Enum.sort(keys) and
+          is_integer(capture["duration_ms"]) and capture["duration_ms"] in 1..timeout and
+          is_integer(capture["max_bytes"]) and capture["max_bytes"] > 0 and
+          (not watch? or (is_integer(capture["max_events"]) and capture["max_events"] in 1..4_096))
+    end
+  end
 
   defp media_type(value) when is_binary(value) and byte_size(value) in 1..256 do
     if String.contains?(value, "/") and Regex.match?(~r/\A[\x20-\x7e]+\z/, value),
@@ -368,7 +434,17 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
       },
       "content_type" => %{"type" => "string", "maxLength" => 256},
       "accept" => %{"type" => "string", "maxLength" => 256},
-      "response_file" => Target.FileWriter.options_schema()
+      "response_file" => Target.FileWriter.options_schema(),
+      "capture" => %{
+        "type" => "object",
+        "properties" => %{
+          "duration_ms" => %{"type" => "integer", "minimum" => 1, "maximum" => 30_000},
+          "max_bytes" => %{"type" => "integer", "minimum" => 1},
+          "max_events" => %{"type" => "integer", "minimum" => 1, "maximum" => 4_096}
+        },
+        "required" => ["duration_ms", "max_bytes"],
+        "additionalProperties" => false
+      }
     }
 
     properties =
@@ -406,9 +482,14 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
       "content_type" => response.content_type
     }
 
+    facts = if response[:watch], do: Map.put(facts, "watch", response.watch), else: facts
+
     case response do
-      %{file: file, content_encoding: encoding} ->
-        facts |> Map.put("file", file) |> Map.put("content_encoding", encoding)
+      %{file: file, content_encoding: encoding, completion_reason: reason} ->
+        facts
+        |> Map.put("file", file)
+        |> Map.put("content_encoding", encoding)
+        |> Map.put("completion_reason", reason)
 
       _ ->
         facts
@@ -416,6 +497,8 @@ defmodule Opsonde.Targets.Adapters.Kubernetes do
   end
 
   defp read_status(%{status: status}) when status in 200..299, do: :ok
+
+  defp read_status(%{status: 410, watch: %{"error" => %{"code" => 410}}}), do: :ok
 
   defp read_status(%{status: status}),
     do:

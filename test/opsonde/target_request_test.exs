@@ -510,6 +510,7 @@ defmodule Opsonde.TargetRequestTest do
 
         assert writer.status == :receiving
         assert writer.offset == 0
+        assert {:error, _} = writer.read.(0)
         assert {:ok, 5} = writer.append.(0, <<255, 0, 1, 2, 255>>)
 
         {:ok, same_writer} =
@@ -533,11 +534,15 @@ defmodule Opsonde.TargetRequestTest do
         assert reference["sha256"] ==
                  "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
 
+        assert {:ok, <<255, 0, 1, 2, 255>>} = writer.read.(0)
+
         Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+        assert {:error, %RequestError{category: :forbidden}} = writer.read.(0)
         assert {:error, %RequestError{category: :forbidden}} = writer.complete.(5, nil, :eof)
         assert {:error, %RequestError{category: :forbidden}} = writer.abort.()
         Accounts.change_role!(context.operator, :operator, actor: context.admin)
         Process.put(:cancel_file_write, true)
+        assert {:error, %RequestError{category: :cancelled}} = writer.read.(0)
 
         assert {:error, %RequestError{category: :cancelled}} =
                  writer.append.(0, <<255, 0, 1, 2, 255>>)
@@ -545,6 +550,7 @@ defmodule Opsonde.TargetRequestTest do
         assert {:error, %RequestError{category: :cancelled}} = writer.complete.(nil, nil, :eof)
         assert {:ok, :revoked} = writer.abort.()
         Process.delete(:cancel_file_write)
+        assert {:error, _} = writer.read.(0)
 
         assert {:error, _} =
                  Targets.artifact_reference(writer.id, context.linux.id, actor: context.operator)

@@ -163,7 +163,7 @@ defmodule Opsonde.Providers.Target do
 
   defmodule FileWriter do
     @moduledoc false
-    @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :abort]
+    @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :read, :abort]
     defstruct @enforce_keys
 
     def valid_options?(nil), do: true

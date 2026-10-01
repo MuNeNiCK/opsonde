@@ -63,12 +63,22 @@ defmodule Opsonde.Transports.HTTP do
   end
 
   defp wire_request(options, writer, notify) do
+    limiter = options[:data_limiter]
+
     request =
-      options |> Keyword.delete(:capture) |> Keyword.put(:adapter, __MODULE__) |> Req.new()
+      options
+      |> Keyword.drop([:capture, :data_limiter])
+      |> Keyword.put(:adapter, __MODULE__)
+      |> Req.new()
 
     request =
       if notify,
         do: Req.Request.put_private(request, :opsonde_response_headers, notify),
+        else: request
+
+    request =
+      if limiter,
+        do: Req.Request.put_private(request, :opsonde_data_limiter, limiter),
         else: request
 
     case Req.request(request) do
@@ -265,6 +275,11 @@ defmodule Opsonde.Transports.HTTP do
         do: binary_part(bytes, 0, min(byte_size(bytes), capture["max_bytes"] - offset)),
         else: bytes
 
+    {bytes, response} =
+      if request.private[:opsonde_data_limiter],
+        do: request.private[:opsonde_data_limiter].(bytes, response),
+        else: {bytes, response}
+
     offset = append_response(writer, offset, bytes)
 
     response = %{
@@ -273,10 +288,14 @@ defmodule Opsonde.Transports.HTTP do
         private: Map.put(response.private, :opsonde_received_bytes, offset)
     }
 
-    if capture && offset == capture["max_bytes"] do
+    reason =
+      response.private[:opsonde_completion_reason] ||
+        if(capture && offset == capture["max_bytes"], do: :byte_limit)
+
+    if reason do
       response = %{
         response
-        | private: Map.put(response.private, :opsonde_completion_reason, :byte_limit)
+        | private: Map.put(response.private, :opsonde_completion_reason, reason)
       }
 
       {:halt, {request, response}}
@@ -301,7 +320,7 @@ defmodule Opsonde.Transports.HTTP do
 
   defp complete_response(response, writer, invocation, method) do
     reason = Map.get(response.private, :opsonde_completion_reason, :eof)
-    sample? = reason in [:byte_limit, :duration_limit]
+    sample? = reason in [:byte_limit, :duration_limit, :event_limit]
 
     expected_size =
       cond do
@@ -319,6 +338,7 @@ defmodule Opsonde.Transports.HTTP do
         response.private
         |> Map.put(:opsonde_file, reference)
         |> Map.put(:opsonde_completion_reason, reason)
+        |> Map.put(:opsonde_file_reader, writer.read)
 
       {:ok, %{response | private: private}}
     else

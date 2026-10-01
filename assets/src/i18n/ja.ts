@@ -19,6 +19,7 @@ const ja = {
         eof: "応答の受信完了",
         byte_limit: "指定サイズまで採取",
         duration_limit: "指定時間まで採取",
+        event_limit: "指定イベント数まで採取",
       },
       failed: "転送に失敗しました。更新して進捗を確認してください。",
       tooLarge: "ファイルが転送上限を超えています。",

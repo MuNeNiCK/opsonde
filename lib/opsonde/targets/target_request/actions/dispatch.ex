@@ -324,6 +324,18 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
                     ),
                   do: {:ok, ProviderTarget.FileReference.from_metadata(current)}
            end,
+           read: fn offset ->
+             file_action(
+               actor,
+               invocation,
+               fn current_actor ->
+                 Targets.read_artifact_chunk(artifact.id, clearance.target_id, offset,
+                   actor: current_actor
+                 )
+               end,
+               :invalid_file
+             )
+           end,
            abort: fn ->
              with {:ok, current} <-
                     file_action(

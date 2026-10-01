@@ -11,6 +11,171 @@ defmodule Opsonde.Transports.Kubernetes do
     defstruct @enforce_keys
   end
 
+  defmodule Watch do
+    @moduledoc false
+    @max_frame_bytes 1_048_576
+
+    # Interpret a completed bounded file through the supplied receipt reader.
+    # The file remains the source for exact event content and order.
+    def read(response, reader, query) do
+      if json?(response.content_type, response.content_encoding) do
+        read_events(response, reader, query)
+      else
+        {:ok,
+         %{
+           "event_count" => 0,
+           "resource_version" => nil,
+           "partial_event" => true,
+           "resume_strategy" => "unavailable",
+           "error" => %{"reason" => "unsupported_framing"}
+         }}
+      end
+    end
+
+    def limit(bytes, response, maximum) do
+      media = List.first(Req.Response.get_header(response, "content-type")) || ""
+      encoding = Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
+
+      if json?(media, encoding) do
+        previous = Map.get(response.private, :opsonde_watch_events, 0)
+        positions = :binary.matches(bytes, "\n")
+        remaining = maximum - previous
+        boundary = Enum.at(positions, remaining - 1)
+        count = previous + min(length(positions), remaining)
+        private = Map.put(response.private, :opsonde_watch_events, count)
+
+        if boundary do
+          {position, 1} = boundary
+          private = Map.put(private, :opsonde_completion_reason, :event_limit)
+          {binary_part(bytes, 0, position + 1), %{response | private: private}}
+        else
+          {bytes, %{response | private: private}}
+        end
+      else
+        {bytes, response}
+      end
+    end
+
+    defp json?(media, encoding) do
+      media = media |> String.split(";") |> hd() |> String.trim() |> String.downcase()
+
+      String.ends_with?(media, ["/json", "+json"]) and
+        String.downcase(encoding) in ["", "identity"]
+    end
+
+    defp read_events(response, reader, query) do
+      cursor = query["resourceVersion"]
+      cursor = if cursor in [nil, "", "0"], do: nil, else: cursor
+
+      initial = %{
+        "event_count" => 0,
+        "resource_version" => cursor,
+        "partial_event" => false,
+        "error" => nil
+      }
+
+      bytes =
+        Stream.unfold(0, fn offset ->
+          if offset == response.file["size_bytes"] do
+            nil
+          else
+            case reader.(offset) do
+              {:ok, chunk} when is_binary(chunk) and byte_size(chunk) > 0 ->
+                {{:data, chunk}, offset + byte_size(chunk)}
+
+              {:error, error} ->
+                throw({:watch_read_error, error})
+            end
+          end
+        end)
+
+      result =
+        bytes
+        |> Stream.concat([{:end, response.completion_reason}])
+        |> Stream.transform(0, &bounded_frame/2)
+        |> K8s.Client.HTTPStream.transform_to_lines()
+        |> Enum.reduce_while(initial, fn
+          {:parse_error, reason}, state ->
+            {:halt, state |> failure(%{"reason" => reason}) |> Map.put("partial_event", true)}
+
+          next, state ->
+            {:cont, event(next, state, response.status)}
+        end)
+
+      strategy =
+        cond do
+          get_in(result, ["error", "code"]) == 410 -> "list"
+          result["resource_version"] -> "cursor"
+          true -> "unavailable"
+        end
+
+      {:ok, Map.put(result, "resume_strategy", strategy)}
+    catch
+      {:watch_read_error, %{category: :cancelled}} ->
+        {:error, :cancelled, "Kubernetes watch file reading was cancelled"}
+
+      {:watch_read_error, _} ->
+        {:error, :failed, "Kubernetes watch file is unavailable"}
+    end
+
+    defp bounded_frame({:data, bytes}, previous) do
+      [first | rest] = :binary.split(bytes, "\n", [:global])
+      lengths = [previous + byte_size(first) | Enum.map(rest, &byte_size/1)]
+
+      if Enum.max(lengths) > @max_frame_bytes,
+        do: {[{:parse_error, "frame_too_large"}], 0},
+        else: {[{:data, bytes}], List.last(lengths)}
+    end
+
+    defp bounded_frame({:end, reason}, remaining) do
+      events = [{:partial, reason != "eof" and remaining > 0}]
+      {if(reason == "eof", do: events ++ [:done], else: events), remaining}
+    end
+
+    defp event({:partial, value}, state, _status), do: Map.put(state, "partial_event", value)
+    defp event(:done, state, _status), do: state
+
+    defp event({:line, line}, state, status) do
+      case Jason.decode(line) do
+        {:ok, %{"type" => "ERROR", "object" => object}} when is_map(object) ->
+          state |> Map.update!("event_count", &(&1 + 1)) |> failure(object)
+
+        {:ok, %{"type" => type, "object" => %{"metadata" => %{"resourceVersion" => cursor}}}}
+        when is_binary(type) and is_binary(cursor) and byte_size(cursor) in 1..2_048 ->
+          state = Map.update!(state, "event_count", &(&1 + 1))
+          if state["error"], do: state, else: Map.put(state, "resource_version", cursor)
+
+        {:ok, %{"kind" => "Status"} = object} when status == 410 ->
+          failure(state, object)
+
+        _ ->
+          failure(state, %{"reason" => "invalid_event"})
+      end
+    end
+
+    defp failure(%{"error" => error} = state, _object) when not is_nil(error), do: state
+
+    defp failure(state, object) do
+      error =
+        Map.take(object, ["code", "reason", "message"])
+        |> Enum.flat_map(fn
+          {"code", value} when is_integer(value) ->
+            [{"code", value}]
+
+          {key, value} when key in ["reason", "message"] and is_binary(value) ->
+            [{key, String.slice(value, 0, 2_048)}]
+
+          _ ->
+            []
+        end)
+        |> Map.new()
+
+      error = if map_size(error) == 0, do: %{"reason" => "invalid_error_event"}, else: error
+
+      state |> Map.put("error", error) |> Map.put("resource_version", nil)
+    end
+  end
+
   def build(configuration, credentials)
       when is_map(configuration) and is_map(credentials) do
     with :ok <- exact_keys(configuration, @configuration_keys),
@@ -94,6 +259,11 @@ defmodule Opsonde.Transports.Kubernetes do
         retry: false,
         redirect: false,
         raw: true,
+        capture: Map.get(operation, :capture),
+        data_limiter:
+          if(get_in(operation, [:capture, "max_events"]),
+            do: &Watch.limit(&1, &2, operation.capture["max_events"])
+          ),
         into: &collect/2
       ]
 
@@ -118,7 +288,19 @@ defmodule Opsonde.Transports.Kubernetes do
     if cancelled?(invocation).() do
       {:error, :cancelled, "Kubernetes operation was cancelled"}
     else
-      normalize(request(state, operation, invocation), phase)
+      result = request(state, operation, invocation)
+
+      with {:ok, response} <- normalize(result, phase) do
+        if get_in(operation, [:capture, "max_events"]) do
+          {:ok, raw} = result
+
+          with {:ok, watch} <-
+                 Watch.read(response, raw.private[:opsonde_file_reader], Map.new(operation.query)),
+               do: {:ok, Map.put(response, :watch, watch)}
+        else
+          {:ok, response}
+        end
+      end
     end
   rescue
     _error -> operation_failure(phase)
@@ -141,7 +323,8 @@ defmodule Opsonde.Transports.Kubernetes do
        content_type: List.first(Req.Response.get_header(response, "content-type")) || "",
        body: "",
        file: file,
-       content_encoding: Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
+       content_encoding: Enum.join(Req.Response.get_header(response, "content-encoding"), ","),
+       completion_reason: Atom.to_string(response.private[:opsonde_completion_reason])
      }}
   end
 
