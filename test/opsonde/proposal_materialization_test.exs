@@ -109,37 +109,7 @@ defmodule Opsonde.ProposalMaterializationTest do
 
   test "every registered Method preserves an exact investigation through Resolver and Reviewer",
        context do
-    ai =
-      Providers.create_provider!(
-        "matrix-ai",
-        :ai,
-        "fixture-ai",
-        %{"model" => "matrix"},
-        %{
-          "api_key" => "matrix-secret"
-        },
-        actor: context.admin
-      )
-      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
-      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
-
-    Opsonde.TestAIUsage.configure!(ai.id, :all, 10, context.admin)
-    current = Cases.current_authority_setting!(actor: context.admin)
-
-    Cases.configure_authority_setting!(
-      current.setting_revision,
-      :auto,
-      current.signal_automation_enabled,
-      current.max_elapsed_seconds,
-      current.max_resolver_turns,
-      current.max_target_requests,
-      current.max_effects,
-      current.max_related_targets,
-      current.max_ai_usage_units,
-      current.max_no_progress_turns,
-      "Review exact Method investigations",
-      actor: context.admin
-    )
+    configure_matrix_ai!(context)
 
     catalog = Opsonde.Targets.TypeCatalog.snapshot()
 
@@ -147,115 +117,7 @@ defmodule Opsonde.ProposalMaterializationTest do
       type = Enum.find(catalog.types, &(descriptor.adapter_type in &1.access_method_types))
       {provider, target, method} = checked_method_fixture!(descriptor, type, context.admin)
       local = %{context | provider: provider, target: target, method: method}
-      {incident, run} = open_case!(descriptor.adapter_type, local)
-
-      begun =
-        Cases.start_turn!(
-          incident.id,
-          run.id,
-          "matrix-#{descriptor.adapter_type}",
-          %{"objective" => "Collect current device evidence"},
-          %{"action" => "continue"},
-          "Review the Resolver decision",
-          authorize?: false
-        ).value
-
-      selection = Providers.select_resolver_ai!(authorize?: false)
-      assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(begun.id, selection)
-      {capability, operation, parameters} = exact_investigation(descriptor.protocol)
-
-      tool =
-        Enum.find(
-          request.proposal_tools,
-          &(&1.capability == capability and &1.operation == operation)
-        )
-
-      assert tool, "#{descriptor.adapter_type} did not offer its exact Method request"
-
-      identity =
-        Map.from_struct(tool)
-        |> Map.take([
-          :id,
-          :target_id,
-          :target_revision,
-          :access_method_id,
-          :access_method_revision,
-          :provider_id,
-          :provider_revision,
-          :capability,
-          :operation,
-          :request_kind
-        ])
-        |> Map.new(fn {key, value} ->
-          {Atom.to_string(key), if(is_atom(value), do: Atom.to_string(value), else: value)}
-        end)
-
-      intent =
-        Map.drop(identity, ["id", "provider_id", "provider_revision"])
-        |> Map.merge(%{
-          "type" => "proposal",
-          "purpose" => "investigation",
-          "request_kind" => "effect",
-          "tool_id" => tool.id,
-          "tool" => identity,
-          "selectors" => %{},
-          "parameters" => parameters,
-          "reason" => "Collect current evidence through the selected Method",
-          "evidence_ids" => [],
-          "affected_conditions" => [],
-          "expected_result" => %{},
-          "verification_intent" => nil,
-          "verification_tool" => %{}
-        })
-
-      completed = complete_turn!(begun, intent)
-      proposal = Cases.materialize_proposal!(completed.id, authorize?: false)
-
-      assert proposal.preflight_status == :cleared,
-             "#{descriptor.adapter_type}: #{inspect(proposal.preflight_context)} #{proposal.preflight_reason}"
-
-      assert proposal.purpose == :investigation
-      assert proposal.request_kind == :effect
-      assert proposal.parameters == parameters
-      assert proposal.provider_id == provider.id
-      assert proposal.access_method_revision == method.revision
-
-      reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-      assert reviewing.status == :reviewing
-      reviewer = Providers.select_reviewer_ai!([], authorize?: false)
-      assert {:ok, review} = Opsonde.Cases.Proposal.ReviewProjection.build(proposal.id, reviewer)
-      assert review.proposal.purpose == :investigation
-      assert review.proposal.parameters == parameters
-      assert review.proposal.verification_intent == nil
-
-      assert :ok =
-               Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
-                 ai_invocation: %{
-                   test_pid: self(),
-                   respond: fn delivered ->
-                     assert delivered.proposal.parameters == parameters
-                     assert delivered.proposal.purpose == :investigation
-
-                     {:ok,
-                      %Opsonde.Providers.AI.ReviewDecision{
-                        verdict: :approved,
-                        purpose_assessment: :investigation,
-                        reason: "Fixture approves the exact investigation",
-                        usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
-                      }}
-                   end
-                 }
-               )
-
-      assert_receive {:review, %{model: "matrix"}, _}
-      authorized = Cases.get_proposal!(proposal.id, actor: context.operator)
-      assert authorized.status == :authorized
-
-      approval =
-        Cases.list_approvals!(actor: context.operator)
-        |> Enum.find(&(&1.proposal_id == proposal.id))
-
-      assert approval.proposal_digest == proposal.proposal_digest
+      {incident, _run, proposal} = reviewed_method_investigation!(descriptor, local)
 
       Targets.update_access_method!(method, method.revision, %{capabilities: []},
         actor: context.admin
@@ -263,6 +125,54 @@ defmodule Opsonde.ProposalMaterializationTest do
 
       assert {:error, _} = Cases.accept_operation(proposal.id, authorize?: false)
       assert Cases.operations_for_case!(incident.id, actor: context.operator) == []
+    end
+  end
+
+  test "every registered Method returns actual connection failure to its Case without replay",
+       context do
+    configure_matrix_ai!(context)
+    catalog = Opsonde.Targets.TypeCatalog.snapshot()
+
+    for descriptor <- catalog.methods do
+      type = Enum.find(catalog.types, &(descriptor.adapter_type in &1.access_method_types))
+      {provider, target, method} = checked_method_fixture!(descriptor, type, context.admin)
+      local = %{context | provider: provider, target: target, method: method}
+      {incident, run, proposal} = reviewed_method_investigation!(descriptor, local)
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      # The actual configured adapter/transport connects to the refused loopback
+      # endpoint. This proves Case integration, not successful native wire I/O.
+      assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+      stored = Cases.get_operation!(operation.id, actor: context.operator)
+      assert stored.status in [:failed, :unknown]
+      refute stored.outcome_category == "authorization_invalidated"
+      assert stored.parameters == proposal.parameters
+      assert stored.purpose == :investigation
+
+      current = Cases.get_case!(incident.id, actor: context.operator)
+      assert current.status == :running
+      assert current.pending_intent["action"] == "resolve_turn"
+
+      evidence =
+        Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+
+      assert evidence.source_ref == stored.id
+      assert evidence.content["parameters"] == proposal.parameters
+      assert evidence.content["purpose"] == "investigation"
+      assert evidence.content["status"] == Atom.to_string(stored.status)
+      assert Cases.verification_attempts_for_case!(incident.id, actor: context.operator) == []
+
+      assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+      assert Cases.get_operation!(operation.id, actor: context.operator) == stored
+
+      assert Cases.get_case!(incident.id, actor: context.operator).pending_intent ==
+               current.pending_intent
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
+      assert [only_operation] = Cases.operations_for_case!(incident.id, actor: context.operator)
+      assert only_operation.id == stored.id
+      assert only_operation.status == stored.status
+      assert only_operation.parameters == proposal.parameters
     end
   end
 
@@ -403,6 +313,154 @@ defmodule Opsonde.ProposalMaterializationTest do
       )
 
     {incident, Cases.active_resolution_run!(incident.id, authorize?: false)}
+  end
+
+  defp configure_matrix_ai!(context) do
+    ai =
+      Providers.create_provider!(
+        "matrix-ai",
+        :ai,
+        "fixture-ai",
+        %{"model" => "matrix"},
+        %{
+          "api_key" => "matrix-secret"
+        },
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    Opsonde.TestAIUsage.configure!(ai.id, :all, 10, context.admin)
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      :auto,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Review exact Method investigations",
+      actor: context.admin
+    )
+  end
+
+  defp reviewed_method_investigation!(descriptor, context) do
+    {incident, run} = open_case!(descriptor.adapter_type, context)
+
+    begun =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "matrix-#{descriptor.adapter_type}",
+        %{"objective" => "Collect current device evidence"},
+        %{"action" => "continue"},
+        "Review the Resolver decision",
+        authorize?: false
+      ).value
+
+    selection = Providers.select_resolver_ai!(authorize?: false)
+    assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(begun.id, selection)
+    {capability, operation, parameters} = exact_investigation(descriptor.protocol)
+
+    tool =
+      Enum.find(
+        request.proposal_tools,
+        &(&1.capability == capability and &1.operation == operation)
+      )
+
+    assert tool, "#{descriptor.adapter_type} did not offer its exact Method request"
+
+    identity =
+      Map.from_struct(tool)
+      |> Map.take([
+        :id,
+        :target_id,
+        :target_revision,
+        :access_method_id,
+        :access_method_revision,
+        :provider_id,
+        :provider_revision,
+        :capability,
+        :operation,
+        :request_kind
+      ])
+      |> Map.new(fn {key, value} ->
+        {Atom.to_string(key), if(is_atom(value), do: Atom.to_string(value), else: value)}
+      end)
+
+    intent =
+      Map.drop(identity, ["id", "provider_id", "provider_revision"])
+      |> Map.merge(%{
+        "type" => "proposal",
+        "purpose" => "investigation",
+        "request_kind" => "effect",
+        "tool_id" => tool.id,
+        "tool" => identity,
+        "selectors" => %{},
+        "parameters" => parameters,
+        "reason" => "Collect current evidence through the selected Method",
+        "evidence_ids" => [],
+        "affected_conditions" => [],
+        "expected_result" => %{},
+        "verification_intent" => nil,
+        "verification_tool" => %{}
+      })
+
+    completed = complete_turn!(begun, intent)
+    proposal = Cases.materialize_proposal!(completed.id, authorize?: false)
+
+    assert proposal.preflight_status == :cleared,
+           "#{descriptor.adapter_type}: #{inspect(proposal.preflight_context)} #{proposal.preflight_reason}"
+
+    assert proposal.purpose == :investigation
+    assert proposal.request_kind == :effect
+    assert proposal.parameters == parameters
+    assert proposal.provider_id == context.provider.id
+    assert proposal.access_method_revision == context.method.revision
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    assert reviewing.status == :reviewing
+    reviewer = Providers.select_reviewer_ai!([], authorize?: false)
+    assert {:ok, review} = Opsonde.Cases.Proposal.ReviewProjection.build(proposal.id, reviewer)
+    assert review.proposal.purpose == :investigation
+    assert review.proposal.parameters == parameters
+    assert review.proposal.verification_intent == nil
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn delivered ->
+                   assert delivered.proposal.parameters == parameters
+                   assert delivered.proposal.purpose == :investigation
+
+                   {:ok,
+                    %Opsonde.Providers.AI.ReviewDecision{
+                      verdict: :approved,
+                      purpose_assessment: :investigation,
+                      reason: "Fixture approves the exact investigation",
+                      usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "matrix"}, _}
+    authorized = Cases.get_proposal!(proposal.id, actor: context.operator)
+    assert authorized.status == :authorized
+
+    approval =
+      Cases.list_approvals!(actor: context.operator)
+      |> Enum.find(&(&1.proposal_id == proposal.id))
+
+    assert approval.proposal_digest == proposal.proposal_digest
+
+    {incident, run, authorized}
   end
 
   # A remote check snapshot is substituted at its action lifecycle here. Actual
