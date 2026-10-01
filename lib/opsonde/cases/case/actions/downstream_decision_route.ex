@@ -612,7 +612,6 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            observed_at: observed_at,
            content: %{
              "status" => "applied",
-             "category" => "target_observed",
              "target_id" => target_id,
              "facts" => facts
            }

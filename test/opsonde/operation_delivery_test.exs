@@ -170,6 +170,41 @@ defmodule Opsonde.OperationDeliveryTest do
              OperationDelivery.run(operation.id,
                target_invocation: invocation(fn -> flunk("diagnostic effect replayed") end)
              )
+
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert evidence.id in request.recovery_evidence_ids
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason:
+                          "The reviewed investigation returned the requested service status",
+                        evidence_ids: [evidence.id],
+                        desired_outcome_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => evidence.id,
+                            "fact_keys" => ["stdout"],
+                            "reason" => "The actual output says nginx is running"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
+             "review_recovery"
   end
 
   test "opaque investigation preserves readonly refusal and ask operator approval", context do
