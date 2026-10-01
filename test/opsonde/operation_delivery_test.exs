@@ -2943,6 +2943,15 @@ defmodule Opsonde.OperationDeliveryTest do
     assert stopped.status == :needs_attention
     assert stopped.stop_reason == "Recovery Reviewer response is unknown"
 
+    snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
+    assert snapshot.ai_usage.unknown_invocations == 1
+    assert snapshot.ai_usage.unknown_reserved_units == 65_536
+    refute snapshot.ai_usage.complete
+    page = Cases.page_case_ai_invocations!(incident.id, actor: context.operator)
+    [missing] = Enum.filter(page.results, &(&1.role == :reviewer))
+    assert missing.usage_status == :unknown
+    assert missing.dispatch_confirmed == nil
+
     [reviewer] =
       Enum.filter(Cases.list_ai_invocations!(authorize?: false), fn invocation ->
         invocation.case_id == incident.id and invocation.role == :reviewer

@@ -2466,9 +2466,74 @@
         ],
         "type": "object"
       },
+      "CaseAIUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_charged_units": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "not_dispatched_invocations": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_invocations": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_reserved_units": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reported_input_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reported_invocations": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reported_output_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reported_total_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknown_invocations": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknown_reserved_units": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reported_input_tokens",
+          "reported_output_tokens",
+          "reported_total_tokens",
+          "reported_invocations",
+          "unknown_invocations",
+          "pending_invocations",
+          "not_dispatched_invocations",
+          "budget_charged_units",
+          "unknown_reserved_units",
+          "pending_reserved_units",
+          "complete"
+        ],
+        "type": "object"
+      },
       "CaseSnapshot": {
         "additionalProperties": false,
         "properties": {
+          "ai_usage": {
+            "$ref": "#/components/schemas/CaseAIUsage"
+          },
           "case": {
             "$ref": "#/components/schemas/Case"
           },
@@ -2517,6 +2582,7 @@
         },
         "required": [
           "case",
+          "ai_usage",
           "conditions",
           "condition_history",
           "resolution_runs",
@@ -3702,6 +3768,25 @@
         },
         "required": [
           "management_boundary"
+        ],
+        "type": "object"
+      },
+      "AIInvocationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AIInvocation"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
         ],
         "type": "object"
       },
@@ -5591,6 +5676,125 @@
         },
         "required": [
           "data"
+        ],
+        "type": "object"
+      },
+      "AIInvocation": {
+        "additionalProperties": false,
+        "properties": {
+          "cached_tokens": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "dispatch_confirmed": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finish_reason": {
+            "maxLength": 40,
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "input_tokens": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "output_tokens": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reasoning_tokens": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "reserved_units": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "resolver",
+              "reviewer"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "dispatching",
+              "completed",
+              "failed",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "usage_status": {
+            "enum": [
+              "reported",
+              "unknown",
+              "pending",
+              "not_dispatched"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "role",
+          "case_id",
+          "provider_id",
+          "cached_tokens",
+          "completed_at",
+          "dispatch_confirmed",
+          "dispatch_started_at",
+          "finish_reason",
+          "input_tokens",
+          "output_tokens",
+          "proposal_id",
+          "reasoning_tokens",
+          "reserved_units",
+          "resolution_run_id",
+          "turn_id",
+          "usage_status"
         ],
         "type": "object"
       },
@@ -12288,6 +12492,112 @@
         "summary": "Get server file transfer limits",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/ai-invocations": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseAIInvocations",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIInvocationPage"
+                }
+              }
+            },
+            "description": "AI invocation page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case AI invocation accounting",
+        "tags": [
+          "Cases"
         ]
       }
     },

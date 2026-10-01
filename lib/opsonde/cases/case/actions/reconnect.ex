@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
 
   alias Opsonde.{Cases, Signals}
   alias Opsonde.Cases.Case.ReconnectSnapshot
+  alias Opsonde.Cases.AIInvocation
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Reports
 
@@ -11,7 +12,8 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
     case_id = input.arguments.id
     opts = [actor: context.actor]
 
-    with {:ok, incident} <- Cases.get_case(case_id, opts),
+    with {:ok, incident} <-
+           Cases.get_case(case_id, Keyword.put(opts, :load, AIInvocation.usage_aggregates())),
          {:ok, history} <- Cases.condition_membership_history_for_case(case_id, authorize?: false),
          {:ok, conditions} <- current_conditions(incident, history),
          {:ok, runs} <- Cases.resolution_runs_for_case(case_id, opts),
@@ -22,6 +24,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
       {:ok,
        %ReconnectSnapshot{
          case: incident,
+         ai_usage: AIInvocation.usage_summary(incident),
          conditions: conditions,
          condition_history: history,
          resolution_runs: runs,

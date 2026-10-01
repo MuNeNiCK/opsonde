@@ -221,11 +221,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
                  invocation.revision,
                  %{
                    status: :completed,
-                   input_tokens: usage.input_tokens,
-                   output_tokens: usage.output_tokens,
-                   cached_tokens: usage.cached_tokens,
-                   reasoning_tokens: usage.reasoning_tokens,
-                   finish_reason: usage.finish_reason,
+                   usage: usage,
                    result_digest: AIInvocation.request_digest(data),
                    completed_at: DateTime.utc_now()
                  },
@@ -285,11 +281,8 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
                       invocation.revision,
                       %{
                         status: :failed,
-                        input_tokens: if(usage, do: usage.input_tokens, else: 0),
-                        output_tokens: if(usage, do: usage.output_tokens, else: 0),
-                        cached_tokens: if(usage, do: usage.cached_tokens),
-                        reasoning_tokens: if(usage, do: usage.reasoning_tokens),
-                        finish_reason: if(usage, do: usage.finish_reason),
+                        usage: usage,
+                        dispatched?: accounting.dispatched?,
                         category: category,
                         failure_code: code,
                         rejection_path: AIInvocation.rejection_path(ai_error),

@@ -121,6 +121,195 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     refute log =~ "Missed"
   end
 
+  test "public Case accounting exposes missing post-dispatch usage instead of zero tokens",
+       context do
+    proposal_setup!(context)
+    incident = open_case!(context.operator_token, "unknown-ai-usage")
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident["id"]}})
+    [turn] = Cases.list_turns!(actor: context.operator)
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _ -> {:error, :cancelled, "native response was lost"} end
+               }
+             )
+
+    assert_receive {:resolve, _state, _request}
+    snapshot = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)
+    usage = snapshot["ai_usage"]
+    assert [%{"counters" => %{"ai_usage_units" => 65_536}}] = snapshot["resolution_runs"]
+    assert usage["reported_total_tokens"] == 0
+    assert usage["unknown_invocations"] == 1
+    assert usage["budget_charged_units"] == 65_536
+    assert usage["unknown_reserved_units"] == 65_536
+    assert usage["complete"] == false
+
+    assert [
+             %{
+               "usage_status" => "unknown",
+               "input_tokens" => nil,
+               "output_tokens" => nil,
+               "reserved_units" => 65_536
+             }
+           ] = get_data!("/api/v1/cases/#{incident["id"]}/ai-invocations", context.viewer_token)
+
+    assert get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"] == usage
+    refute Jason.encode!(usage) =~ "resolver-secret"
+    refute Jason.encode!(usage) =~ "request_digest"
+  end
+
+  for {name, input, output} <- [{"reported-zero", 0, 0}, {"metered-failure", 17, 9}] do
+    test "public Case accounting preserves #{name} separately from a reservation", context do
+      proposal_setup!(context)
+      incident = open_case!(context.operator_token, unquote(name))
+      assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident["id"]}})
+      [turn] = Cases.list_turns!(actor: context.operator)
+
+      assert :ok =
+               Opsonde.Cases.Turn.ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _ ->
+                     {:error, :cancelled, "native response ended",
+                      %AI.Usage{
+                        input_tokens: unquote(input),
+                        output_tokens: unquote(output)
+                      }}
+                   end
+                 }
+               )
+
+      assert_receive {:resolve, _state, _request}
+      usage = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"]
+      assert usage["reported_input_tokens"] == unquote(input)
+      assert usage["reported_output_tokens"] == unquote(output)
+      assert usage["reported_invocations"] == 1
+      assert usage["unknown_invocations"] == 0
+      assert usage["budget_charged_units"] == unquote(input + output)
+      assert usage["unknown_reserved_units"] == 0
+      assert usage["complete"] == true
+      response = get_json("/api/v1/cases/#{incident["id"]}/ai-invocations", context.viewer_token)
+      assert_operation_response(response)
+
+      assert [
+               %{
+                 "usage_status" => "reported",
+                 "status" => "failed",
+                 "input_tokens" => unquote(input),
+                 "output_tokens" => unquote(output),
+                 "reasoning_tokens" => nil,
+                 "cached_tokens" => nil,
+                 "dispatch_confirmed" => true,
+                 "reserved_units" => 65_536
+               }
+             ] = json_response(response, 200)["data"]
+    end
+  end
+
+  test "public Case accounting distinguishes cancellation before the AI adapter is called",
+       context do
+    proposal_setup!(context)
+    incident = open_case!(context.operator_token, "predispatch-cancellation")
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident["id"]}})
+    [turn] = Cases.list_turns!(actor: context.operator)
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 cancelled?: fn -> true end,
+                 test_pid: self(),
+                 respond: fn _ ->
+                   flunk("cancelled invocation reached the AI adapter")
+                 end
+               }
+             )
+
+    refute_receive {:resolve, _state, _request}
+    usage = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"]
+    assert usage["not_dispatched_invocations"] == 1
+    assert usage["unknown_invocations"] == 0
+    assert usage["reported_invocations"] == 0
+    assert usage["budget_charged_units"] == 0
+    assert usage["complete"] == true
+
+    assert [
+             %{
+               "usage_status" => "not_dispatched",
+               "dispatch_confirmed" => false,
+               "input_tokens" => nil,
+               "output_tokens" => nil
+             }
+           ] =
+             get_data!("/api/v1/cases/#{incident["id"]}/ai-invocations", context.viewer_token)
+  end
+
+  test "Case accounting covers every invocation while public details remain paginated", context do
+    proposal_setup!(context)
+    incident = open_case!(context.operator_token, "accounting-pages")
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident["id"]}})
+    [first] = Cases.list_turns!(actor: context.operator)
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverDelivery.run(first.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _ ->
+                   {:error, :timeout, "metered timeout",
+                    %AI.Usage{input_tokens: 17, output_tokens: 9}}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _state, _request}
+    successor = Enum.find(Cases.list_turns!(actor: context.operator), &(&1.status == :started))
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverDelivery.run(successor.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _ ->
+                   {:error, :cancelled, "metered cancellation",
+                    %AI.Usage{input_tokens: 4, output_tokens: 2}}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _state, _request}
+    path = "/api/v1/cases/#{incident["id"]}/ai-invocations"
+    first_page = get_json(path <> "?limit=1", context.viewer_token) |> json_response(200)
+    assert [%{"input_tokens" => 17, "output_tokens" => 9}] = first_page["data"]
+    cursor = first_page["page"]["next"]
+    assert is_binary(cursor)
+
+    last_page =
+      get_json(path <> "?limit=1&after=" <> URI.encode_www_form(cursor), context.viewer_token)
+      |> json_response(200)
+
+    assert [%{"input_tokens" => 4, "output_tokens" => 2}] = last_page["data"]
+    assert last_page["page"]["next"] == nil
+
+    assert %{
+             "reported_total_tokens" => 32,
+             "reported_invocations" => 2,
+             "budget_charged_units" => 32,
+             "complete" => true
+           } =
+             get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"]
+
+    unauthenticated = build_conn() |> put_req_header("accept", "application/json") |> get(path)
+    assert json_response(unauthenticated, 401)["error"]["code"] == "unauthenticated"
+
+    for page <- [first_page, last_page] do
+      encoded = Jason.encode!(page)
+      refute encoded =~ "request_digest"
+      refute encoded =~ "idempotency_key"
+      refute encoded =~ "session_id"
+      refute encoded =~ "resolver-secret"
+    end
+  end
+
   test "public manual Case creation requires an explicit desired outcome", context do
     body = %{
       "case" => %{
@@ -918,6 +1107,27 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert proposal_id == reviewing.id
     assert reviewer_id == setup.reviewer.id
+
+    usage = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)["ai_usage"]
+
+    assert %{
+             "reported_total_tokens" => 5,
+             "reported_invocations" => 1,
+             "unknown_invocations" => 0,
+             "budget_charged_units" => 5,
+             "complete" => true
+           } = usage
+
+    assert [
+             %{
+               "role" => "reviewer",
+               "proposal_id" => ^proposal_id,
+               "usage_status" => "reported",
+               "input_tokens" => 3,
+               "output_tokens" => 2
+             }
+           ] =
+             get_data!("/api/v1/cases/#{incident.id}/ai-invocations", context.viewer_token)
 
     assert %{"data" => [%{"proposal_id" => ^proposal_id, "source" => "reviewer"}]} =
              get_json("/api/v1/cases/#{incident.id}/approvals", context.viewer_token)

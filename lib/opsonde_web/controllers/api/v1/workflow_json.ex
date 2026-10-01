@@ -74,6 +74,7 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   def snapshot(snapshot) do
     %{
       case: case_record(snapshot.case),
+      ai_usage: snapshot.ai_usage,
       conditions: Enum.map(snapshot.conditions, &condition/1),
       condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
@@ -176,6 +177,31 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
     do: data["evidence_ids"] || []
 
   defp review_evidence_ids(_event), do: []
+
+  def ai_invocation(invocation) do
+    reported? = invocation.usage_status == :reported
+
+    %{
+      id: invocation.id,
+      case_id: invocation.case_id,
+      resolution_run_id: invocation.resolution_run_id,
+      provider_id: invocation.provider_id,
+      turn_id: invocation.turn_id,
+      proposal_id: invocation.proposal_id,
+      role: invocation.role,
+      status: invocation.status,
+      usage_status: invocation.usage_status,
+      dispatch_confirmed: invocation.dispatch_confirmed,
+      reserved_units: invocation.reserved_units,
+      input_tokens: if(reported?, do: invocation.input_tokens),
+      output_tokens: if(reported?, do: invocation.output_tokens),
+      cached_tokens: if(reported?, do: invocation.cached_tokens),
+      reasoning_tokens: if(reported?, do: invocation.reasoning_tokens),
+      finish_reason: if(reported?, do: invocation.finish_reason),
+      dispatch_started_at: invocation.dispatch_started_at,
+      completed_at: invocation.completed_at
+    }
+  end
 
   def turn(turn) do
     %{

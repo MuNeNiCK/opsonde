@@ -19,6 +19,9 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "HandoffCaseRequest" => handoff_request(),
       "ResumeCaseRequest" => resume_request(),
       "CaseSnapshot" => snapshot(),
+      "CaseAIUsage" => ai_usage(),
+      "AIInvocation" => ai_invocation(),
+      "AIInvocationPage" => Schemas.page(ref("AIInvocation")),
       "CaseSnapshotResponse" => Schemas.data(ref("CaseSnapshot")),
       "CaseCondition" => case_condition(),
       "CaseConditionMembership" => case_condition_membership(),
@@ -208,6 +211,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     object(
       %{
         case: ref("Case"),
+        ai_usage: ref("CaseAIUsage"),
         conditions: array(ref("CaseCondition")),
         condition_history: array(ref("CaseConditionMembership")),
         resolution_runs: array(ref("ResolutionRun")),
@@ -218,6 +222,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       },
       [
         :case,
+        :ai_usage,
         :conditions,
         :condition_history,
         :resolution_runs,
@@ -228,6 +233,42 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       ],
       false
     )
+  end
+
+  defp ai_usage do
+    counts =
+      ~w(reported_input_tokens reported_output_tokens reported_total_tokens reported_invocations unknown_invocations pending_invocations not_dispatched_invocations budget_charged_units unknown_reserved_units pending_reserved_units)a
+
+    properties =
+      Map.new(counts, &{&1, non_negative_integer()})
+      |> Map.put(:complete, %Schema{type: :boolean})
+
+    object(properties, counts ++ [:complete], false)
+  end
+
+  defp ai_invocation do
+    properties = %{
+      id: Schemas.uuid(),
+      case_id: Schemas.uuid(),
+      resolution_run_id: Schemas.uuid(),
+      provider_id: Schemas.uuid(),
+      turn_id: nullable_uuid(),
+      proposal_id: nullable_uuid(),
+      role: enum(~w(resolver reviewer)),
+      status: enum(~w(dispatching completed failed unknown)),
+      usage_status: enum(~w(reported unknown pending not_dispatched)),
+      dispatch_confirmed: %Schema{type: :boolean, nullable: true},
+      reserved_units: positive_integer(),
+      input_tokens: nullable_non_negative_integer(),
+      output_tokens: nullable_non_negative_integer(),
+      cached_tokens: nullable_non_negative_integer(),
+      reasoning_tokens: nullable_non_negative_integer(),
+      finish_reason: nullable_string(40),
+      dispatch_started_at: Schemas.timestamp(),
+      completed_at: nullable_timestamp()
+    }
+
+    object(properties, Map.keys(properties), false)
   end
 
   defp case_condition do

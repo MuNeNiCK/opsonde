@@ -500,6 +500,7 @@ defmodule Opsonde.Cases do
 
     resource Opsonde.Cases.AIInvocation do
       define :list_ai_invocations, action: :read
+      define :page_case_ai_invocations, action: :page_for_case, args: [:case_id]
 
       define :ai_invocation_by_idempotency,
         action: :by_idempotency,

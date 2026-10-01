@@ -910,6 +910,7 @@ defmodule Opsonde.Cases.Case do
     end
 
     has_many :resolution_runs, Opsonde.Cases.ResolutionRun
+    has_many :ai_invocations, Opsonde.Cases.AIInvocation
     has_many :condition_memberships, Opsonde.Cases.CaseConditionMembership
     has_many :events, Opsonde.Cases.CaseEvent
     has_many :reports, Opsonde.Reports.Report
@@ -929,6 +930,33 @@ defmodule Opsonde.Cases.Case do
   end
 
   aggregates do
+    sum :ai_budget_charged_units, :resolution_runs, :ai_usage_units do
+      default 0
+    end
+
+    for field <- [:input_tokens, :output_tokens] do
+      sum :"ai_reported_#{field}", :ai_invocations, field do
+        authorize? false
+        default 0
+        filter expr(usage_status == :reported)
+      end
+    end
+
+    for status <- [:reported, :unknown, :pending, :not_dispatched] do
+      count :"ai_#{status}_invocations", :ai_invocations do
+        authorize? false
+        filter expr(usage_status == ^status)
+      end
+    end
+
+    for status <- [:unknown, :pending] do
+      sum :"ai_#{status}_reserved_units", :ai_invocations, :reserved_units do
+        authorize? false
+        default 0
+        filter expr(usage_status == ^status)
+      end
+    end
+
     count :condition_count, :condition_memberships do
       filter expr(is_nil(detached_at))
     end

@@ -746,6 +746,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{id}/ai-invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case AI invocation accounting */
+        get: operations["listCaseAIInvocations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/verification-attempts/{id}": {
         parameters: {
             query?: never;
@@ -2151,7 +2168,21 @@ export interface components {
                 id: string;
             };
         };
+        CaseAIUsage: {
+            budget_charged_units: number;
+            complete: boolean;
+            not_dispatched_invocations: number;
+            pending_invocations: number;
+            pending_reserved_units: number;
+            reported_input_tokens: number;
+            reported_invocations: number;
+            reported_output_tokens: number;
+            reported_total_tokens: number;
+            unknown_invocations: number;
+            unknown_reserved_units: number;
+        };
         CaseSnapshot: {
+            ai_usage: components["schemas"]["CaseAIUsage"];
             case: components["schemas"]["Case"];
             condition_history: components["schemas"]["CaseConditionMembership"][];
             conditions: components["schemas"]["CaseCondition"][];
@@ -2478,6 +2509,10 @@ export interface components {
             management_boundary: {
                 expected_revision: number;
             };
+        };
+        AIInvocationPage: {
+            data: components["schemas"]["AIInvocation"][];
+            page: components["schemas"]["Page"];
         };
         VerificationAttemptResponse: {
             data: components["schemas"]["VerificationAttempt"];
@@ -2954,6 +2989,37 @@ export interface components {
         };
         DeliveryResponse: {
             data: components["schemas"]["Delivery"];
+        };
+        AIInvocation: {
+            cached_tokens: number | null;
+            /** Format: uuid */
+            case_id: string;
+            /** Format: date-time */
+            completed_at: string | null;
+            dispatch_confirmed: boolean | null;
+            /** Format: date-time */
+            dispatch_started_at: string;
+            finish_reason: string | null;
+            /** Format: uuid */
+            id: string;
+            input_tokens: number | null;
+            output_tokens: number | null;
+            /** Format: uuid */
+            proposal_id: string | null;
+            /** Format: uuid */
+            provider_id: string;
+            reasoning_tokens: number | null;
+            reserved_units: number;
+            /** Format: uuid */
+            resolution_run_id: string;
+            /** @enum {string} */
+            role: "resolver" | "reviewer";
+            /** @enum {string} */
+            status: "dispatching" | "completed" | "failed" | "unknown";
+            /** Format: uuid */
+            turn_id: string | null;
+            /** @enum {string} */
+            usage_status: "reported" | "unknown" | "pending" | "not_dispatched";
         };
         SignalWebhookValidationError: components["schemas"]["SignalWebhookError"] | components["schemas"]["ErrorResponse"];
         DeliveryPage: {
@@ -7287,6 +7353,76 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCaseAIInvocations: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI invocation page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIInvocationPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

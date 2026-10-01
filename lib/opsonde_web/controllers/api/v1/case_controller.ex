@@ -106,6 +106,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Evidence page", "application/json", WorkflowSchemas.ref("EvidencePage")}] ++
         @show_errors
 
+  operation :ai_invocations,
+    operation_id: "listCaseAIInvocations",
+    summary: "List Case AI invocation accounting",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"AI invocation page", "application/json", WorkflowSchemas.ref("AIInvocationPage")}] ++
+        @show_errors
+
   operation :approvals,
     operation_id: "listCaseApprovals",
     summary: "List Case approvals",
@@ -237,6 +245,15 @@ defmodule OpsondeWeb.API.V1.CaseController do
 
   def evidence(conn, %{"id" => id} = params) do
     page_case_records(conn, params, &Cases.page_case_evidence(id, &1), &WorkflowJSON.evidence/1)
+  end
+
+  def ai_invocations(conn, %{"id" => id} = params) do
+    page_case_records(
+      conn,
+      params,
+      &Cases.page_case_ai_invocations(id, &1),
+      &WorkflowJSON.ai_invocation/1
+    )
   end
 
   def approvals(conn, %{"id" => id} = params) do

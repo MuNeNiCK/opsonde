@@ -1484,8 +1484,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       status: :failed,
       category: "invalid_output",
       failure_code: "schema_validation",
-      input_tokens: 7,
-      output_tokens: 5,
+      usage: %AI.Usage{input_tokens: 7, output_tokens: 5},
       completed_at: DateTime.utc_now()
     }
 

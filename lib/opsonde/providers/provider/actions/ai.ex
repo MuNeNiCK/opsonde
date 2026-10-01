@@ -53,14 +53,14 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
   defp fetch_ai_adapter(adapter_type) do
     case Registry.fetch(adapter_type, AI) do
       {:ok, adapter} -> {:ok, adapter}
-      {:error, _reason} -> {:error, ai_error(:failed, "AI adapter is unavailable")}
+      {:error, _reason} -> {:error, ai_error(:failed, "AI adapter is unavailable", false)}
     end
   end
 
   defp build_state(adapter, provider) do
     case Registry.build(adapter, provider.configuration, provider.credentials) do
       {:ok, state} -> {:ok, state}
-      {:error, _reason} -> {:error, ai_error(:failed, "AI configuration is invalid")}
+      {:error, _reason} -> {:error, ai_error(:failed, "AI configuration is invalid", false)}
     end
   end
 
@@ -166,11 +166,12 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
 
   defp ensure_not_cancelled(%{cancelled?: cancelled?}) when is_function(cancelled?, 0) do
     if cancelled?.(),
-      do: {:error, ai_error(:cancelled, "AI decision was cancelled")},
+      do: {:error, ai_error(:cancelled, "AI decision was cancelled", false)},
       else: :ok
   end
 
   defp ensure_not_cancelled(_invocation), do: :ok
 
-  defp ai_error(category, message), do: AI.Error.exception(category: category, message: message)
+  defp ai_error(category, message, dispatched? \\ nil),
+    do: AI.Error.exception(category: category, message: message, dispatched?: dispatched?)
 end

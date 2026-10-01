@@ -22,6 +22,13 @@ defmodule Opsonde.Cases.AIInvocation do
   actions do
     defaults [:read]
 
+    read :page_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(sort: [dispatch_started_at: :asc, id: :asc], load: [:usage_status])
+    end
+
     read :by_idempotency do
       get? true
       argument :idempotency_key, :string, allow_nil?: false
@@ -53,11 +60,6 @@ defmodule Opsonde.Cases.AIInvocation do
     update :record_outcome do
       accept [
         :status,
-        :input_tokens,
-        :output_tokens,
-        :cached_tokens,
-        :reasoning_tokens,
-        :finish_reason,
         :category,
         :failure_code,
         :rejection_path,
@@ -66,11 +68,14 @@ defmodule Opsonde.Cases.AIInvocation do
       ]
 
       require_atomic? false
+      argument :usage, :struct, constraints: [instance_of: AI.Usage]
+      argument :dispatched?, :boolean
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
       validate changing(:status, from: :dispatching)
       validate attribute_in(:status, [:completed, :failed, :unknown])
       validate present(:completed_at)
+      change Opsonde.Cases.AIInvocation.Changes.RecordUsage
       change optimistic_lock(:revision)
     end
 
@@ -105,6 +110,12 @@ defmodule Opsonde.Cases.AIInvocation do
   end
 
   policies do
+    policy action(:page_for_case) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
+      authorize_if actor_attribute_equals(:role, :viewer)
+    end
+
     policy action([:read, :by_idempotency, :create_record, :record_outcome, :claim]) do
       forbid_if always()
     end
@@ -139,6 +150,8 @@ defmodule Opsonde.Cases.AIInvocation do
       constraints: [one_of: [:assignment]]
 
     attribute :reserved_units, :integer, allow_nil?: false, constraints: [min: 1]
+    attribute :usage_reported, :boolean, allow_nil?: false, default: false
+    attribute :dispatch_confirmed, :boolean
     attribute :input_tokens, :integer, allow_nil?: false, default: 0, constraints: [min: 0]
     attribute :output_tokens, :integer, allow_nil?: false, default: 0, constraints: [min: 0]
     attribute :cached_tokens, :integer, constraints: [min: 0]
@@ -166,8 +179,54 @@ defmodule Opsonde.Cases.AIInvocation do
     belongs_to :assignment, Opsonde.Providers.AIUsageRoleAssignment, allow_nil?: false
   end
 
+  calculations do
+    calculate :usage_status,
+              :atom,
+              expr(
+                cond do
+                  status == :dispatching -> :pending
+                  usage_reported or input_tokens > 0 or output_tokens > 0 -> :reported
+                  dispatch_confirmed == false -> :not_dispatched
+                  true -> :unknown
+                end
+              )
+  end
+
   identities do
     identity :unique_idempotency, [:idempotency_key]
+  end
+
+  def usage_aggregates do
+    [
+      :ai_budget_charged_units,
+      :ai_reported_input_tokens,
+      :ai_reported_output_tokens,
+      :ai_reported_invocations,
+      :ai_unknown_invocations,
+      :ai_pending_invocations,
+      :ai_not_dispatched_invocations,
+      :ai_unknown_reserved_units,
+      :ai_pending_reserved_units
+    ]
+  end
+
+  # A pure projection of already loaded resource aggregates; I/O and actor
+  # admission remain in the Case reconnect action.
+  def usage_summary(incident) do
+    %{
+      reported_input_tokens: incident.ai_reported_input_tokens,
+      reported_output_tokens: incident.ai_reported_output_tokens,
+      reported_total_tokens:
+        incident.ai_reported_input_tokens + incident.ai_reported_output_tokens,
+      reported_invocations: incident.ai_reported_invocations,
+      unknown_invocations: incident.ai_unknown_invocations,
+      pending_invocations: incident.ai_pending_invocations,
+      not_dispatched_invocations: incident.ai_not_dispatched_invocations,
+      budget_charged_units: incident.ai_budget_charged_units,
+      unknown_reserved_units: incident.ai_unknown_reserved_units,
+      pending_reserved_units: incident.ai_pending_reserved_units,
+      complete: incident.ai_unknown_invocations == 0 and incident.ai_pending_invocations == 0
+    }
   end
 
   def request_digest(request) do
@@ -208,21 +267,21 @@ defmodule Opsonde.Cases.AIInvocation do
         _other -> nil
       end
 
-    dispatched? = match?(%AI.Error{dispatched?: true}, ai_error)
+    dispatched? = if match?(%AI.Error{}, ai_error), do: ai_error.dispatched?, else: nil
 
     failure_accounting(usage, dispatched?, reserved_units)
     |> Map.put(:ai_error, ai_error)
   end
 
   def failure_accounting(%AI.Usage{} = usage, _dispatched?, _reserved_units) do
-    %{amount: usage.input_tokens + usage.output_tokens, usage: usage}
+    %{amount: usage.input_tokens + usage.output_tokens, usage: usage, dispatched?: true}
   end
 
   def failure_accounting(nil, true, reserved_units),
-    do: %{amount: reserved_units, usage: nil}
+    do: %{amount: reserved_units, usage: nil, dispatched?: true}
 
-  def failure_accounting(nil, _dispatched?, _reserved_units),
-    do: %{amount: 0, usage: nil}
+  def failure_accounting(nil, dispatched?, _reserved_units),
+    do: %{amount: 0, usage: nil, dispatched?: dispatched?}
 
   defp find_ai_error(%AI.Error{} = error), do: error
 

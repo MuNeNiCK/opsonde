@@ -372,8 +372,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
              ),
            {:ok, _invocation} <-
              record_invocation(invocation, :completed,
-               input_tokens: decision.usage.input_tokens,
-               output_tokens: decision.usage.output_tokens,
                usage: decision.usage,
                result_digest: digest(result)
              ),
@@ -866,8 +864,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
                {:error, "AI usage limit exhausted"},
            {:ok, invocation} <-
              record_invocation(invocation, :completed,
-               input_tokens: decision.usage.input_tokens,
-               output_tokens: decision.usage.output_tokens,
                usage: decision.usage,
                category: category,
                result_digest: digest(decision)
@@ -892,9 +888,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     with {:ok, _charged} <- charge_usage(turn, accounting.amount, key),
          {:ok, recorded} <-
            record_invocation(invocation, :failed,
-             input_tokens: if(usage, do: usage.input_tokens, else: 0),
-             output_tokens: if(usage, do: usage.output_tokens, else: 0),
              usage: usage,
+             dispatched?: accounting.dispatched?,
              category: category,
              failure_code: rejection_code(error),
              rejection_path: rejection_path(error)
@@ -911,11 +906,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
       invocation.revision,
       %{
         status: status,
-        input_tokens: Keyword.get(attrs, :input_tokens, 0),
-        output_tokens: Keyword.get(attrs, :output_tokens, 0),
-        cached_tokens: if(usage, do: usage.cached_tokens),
-        reasoning_tokens: if(usage, do: usage.reasoning_tokens),
-        finish_reason: if(usage, do: usage.finish_reason),
+        usage: usage,
+        dispatched?: Keyword.get(attrs, :dispatched?),
         category: Keyword.get(attrs, :category),
         failure_code: Keyword.get(attrs, :failure_code),
         rejection_path: Keyword.get(attrs, :rejection_path),
