@@ -88,6 +88,14 @@ defmodule Opsonde.Transports.SSH do
     run(config, endpoint, cancelled?, fn _connection, _deadline, _parent, _reference -> :ok end)
   end
 
+  def sftp(%Config{} = config, endpoint, operation, invocation) do
+    cancel = Map.get(invocation, :cancelled?, fn -> false end)
+
+    Opsonde.Transports.SSH.SFTP.request(operation, invocation, fn callback ->
+      run(config, endpoint, cancel, callback)
+    end)
+  end
+
   def exec(%Config{} = config, endpoint, command, cancelled? \\ fn -> false end) do
     with :ok <- command(command) do
       run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->

@@ -131,6 +131,7 @@ defmodule Opsonde.Targets.LinuxSSHTest do
              )
 
     assert Enum.map(observations, & &1.operation) == [
+             "sftp.read_file",
              "linux.identity.inspect",
              "linux.process.list",
              "linux.service.list",
@@ -167,7 +168,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     assert Enum.map(effects, & &1.operation) == [
              "linux.service.restart",
              "command.execute",
-             "shell.execute"
+             "shell.execute",
+             "sftp.write_file"
            ]
 
     assert effect.evidence_requirements == [

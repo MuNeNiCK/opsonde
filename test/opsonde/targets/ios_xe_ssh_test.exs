@@ -447,7 +447,12 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              )
 
     assert Enum.map(observations, & &1.operation) ==
-             ["ios_xe.system.inspect", "ios_xe.interface.inspect", "cli.observe"]
+             [
+               "ios_xe.system.inspect",
+               "ios_xe.interface.inspect",
+               "cli.observe",
+               "sftp.read_file"
+             ]
 
     assert Enum.map(effects, & &1.operation) ==
              [
@@ -455,7 +460,8 @@ defmodule Opsonde.Targets.IOSXESSHTest do
                "ios_xe.interface.admin_state.set",
                "cli.execute",
                "command.execute",
-               "shell.execute"
+               "shell.execute",
+               "sftp.write_file"
              ]
 
     assert {:error, _denied} =

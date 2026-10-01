@@ -195,7 +195,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
-    assert %Target.Capabilities{observations: [], effects: [tool, shell]} =
+    assert %Target.Capabilities{observations: [file_reader], effects: [tool, shell, file_writer]} =
              Providers.target_capabilities!(
                provider.id,
                %Target.CapabilitiesRequest{
@@ -210,6 +210,10 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert tool.operation == "command.execute"
     assert shell.capability == "request.ssh.effect"
     assert shell.operation == "shell.execute"
+    assert file_reader.capability == "request.ssh.observe"
+    assert file_reader.operation == "sftp.read_file"
+    assert file_writer.capability == "request.ssh.effect"
+    assert file_writer.operation == "sftp.write_file"
 
     target =
       Targets.create_target!("future-router", "network_device", "custom-network-device", %{}, nil,
