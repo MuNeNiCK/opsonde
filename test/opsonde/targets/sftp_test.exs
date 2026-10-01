@@ -15,7 +15,6 @@ defmodule Opsonde.Targets.SFTPTest do
           is_dir: 2,
           list_dir: 2,
           make_dir: 2,
-          make_symlink: 3,
           position: 3,
           read_file_info: 2,
           read_link: 2,
@@ -26,6 +25,13 @@ defmodule Opsonde.Targets.SFTPTest do
       @impl true
       def unquote(name)(unquote_splicing(args)),
         do: apply(:ssh_sftpd_file, unquote(name), [unquote_splicing(args)])
+    end
+
+    @impl true
+    def make_symlink(target, link, state) do
+      if Agent.get(state, &Map.get(&1, :openssh_symlink, false)),
+        do: :ssh_sftpd_file.make_symlink(link, target, state),
+        else: :ssh_sftpd_file.make_symlink(target, link, state)
     end
 
     @impl true
@@ -136,6 +142,31 @@ defmodule Opsonde.Targets.SFTPTest do
         write_drop: false
       }
     end)
+
+    context =
+      if context[:openssh_symlink] do
+        Agent.update(context.agent, &Map.put(&1, :openssh_symlink, true))
+
+        {:ok, daemon} =
+          :ssh.daemon(0,
+            system_dir: String.to_charlist(context.directory),
+            id_string: ~c"OpenSSH_9.9",
+            user_passwords: [{~c"tester", ~c"secret"}],
+            auth_methods: ~c"password",
+            subsystems: [
+              :ssh_sftpd.subsystem_spec(
+                root: String.to_charlist(context.directory),
+                file_handler: {Backend, context.agent}
+              )
+            ]
+          )
+
+        on_exit(fn -> :ssh.stop_daemon(daemon) end)
+        {:ok, info} = :ssh.daemon_info(daemon)
+        %{context | endpoint: "ssh://127.0.0.1:#{Keyword.fetch!(info, :port)}"}
+      else
+        context
+      end
 
     admin = Accounts.bootstrap!("sftp-admin@example.com", @password, @password)
 
@@ -267,6 +298,24 @@ defmodule Opsonde.Targets.SFTPTest do
 
     assert removed.status == :applied
     refute File.dir?(Path.join(context.directory, String.trim_leading(path, "/")))
+  end
+
+  @tag openssh_symlink: true
+  test "OpenSSH link creation preserves the requested path and target", context do
+    target = "/download.bin"
+    link = "/openssh-link-" <> Ecto.UUID.generate()
+
+    assert request(context, :effect, "sftp.make_symlink", %{"path" => link, "target" => target})
+           |> Targets.clear_target_request!(actor: context.operator)
+           |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+           |> Map.fetch!(:status) == :applied
+
+    observed =
+      request(context, :observation, "sftp.read_link", %{"path" => link})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert observed.facts["target"] == target
   end
 
   test "native rename link and permission operations preserve exact paths", context do

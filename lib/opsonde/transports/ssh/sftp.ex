@@ -50,6 +50,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
          do:
            runner.(fn connection, deadline, parent, reference ->
              channel(connection, deadline, fn pid ->
+               args = native_args(operation, connection)
                send(parent, {:opsonde_ssh_dispatched, reference, connection})
 
                with :ok <-
@@ -57,7 +58,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
                         apply(
                           :ssh_sftp,
                           operation.method,
-                          [pid] ++ native_args(operation) ++ [remaining(deadline)]
+                          [pid] ++ args ++ [remaining(deadline)]
                         ),
                         if(operation.method == :write_file_info, do: :write, else: :mutation)
                       ),
@@ -198,7 +199,21 @@ defmodule Opsonde.Transports.SSH.SFTP do
       "completion_reason" => reason
     }
 
-  defp native_args(%{method: :write_file_info, args: [path, values]}) do
+  defp native_args(%{method: :make_symlink, args: [path, target]}, connection) do
+    # OpenSSH v3 consumes target,link, unlike OTP's link,target codec. Select
+    # the dialect on this pinned connection before dispatch; never retry a write.
+    case :ssh.connection_info(connection, :server_version) do
+      {:server_version, {_version, banner}} ->
+        if String.starts_with?(to_string(banner), ["SSH-2.0-OpenSSH_", "OpenSSH_"]),
+          do: [target, path],
+          else: [path, target]
+
+      _ ->
+        [path, target]
+    end
+  end
+
+  defp native_args(%{method: :write_file_info, args: [path, values]}, _connection) do
     fields =
       Enum.map(@file_info, fn {field, default} ->
         case Map.fetch(values, Atom.to_string(field)) do
@@ -210,7 +225,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
     [path, List.to_tuple([:file_info | fields])]
   end
 
-  defp native_args(operation), do: operation.args
+  defp native_args(operation, _connection), do: operation.args
 
   defp native_value([[year, month, day], [hour, minute, second]]),
     do: {{year, month, day}, {hour, minute, second}}
