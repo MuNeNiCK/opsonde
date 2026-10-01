@@ -32,11 +32,7 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidence do
     evidence
     |> Enum.uniq_by(& &1.id)
     |> Enum.reject(&MapSet.member?(excluded, &1.id))
-    |> Enum.uniq_by(fn item ->
-      {item.content["target_id"], item.content["operation"], item.kind, item.content["status"],
-       item.content["selectors"], item.content["parameters"], item.content["facts"],
-       item.content["reference"]}
-    end)
+    |> Enum.uniq_by(&context_identity/1)
     |> Enum.take(32)
     |> Enum.sort_by(& &1.observed_at, {:desc, DateTime})
     |> Enum.map(fn item ->
@@ -48,6 +44,32 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidence do
         content: project_content(item.content)
       }
     end)
+  end
+
+  def file_contents(incident, evidence) do
+    evidence
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, loaded} ->
+      if item.kind == "file_read" and item.target_id == incident.selected_target_id do
+        case Cases.read_file_content(item.id, incident.id, authorize?: false) do
+          {:ok, content} -> {:cont, {:ok, [%{item | content: content} | loaded]}}
+          {:error, _error} = error -> {:halt, error}
+        end
+      else
+        {:cont, {:ok, [item | loaded]}}
+      end
+    end)
+    |> case do
+      {:ok, loaded} -> {:ok, Enum.reverse(loaded)}
+      error -> error
+    end
+  end
+
+  defp context_identity(%{kind: "file_read", id: id}), do: {"file_read", id}
+
+  defp context_identity(item) do
+    {item.content["target_id"], item.content["operation"], item.kind, item.content["status"],
+     item.content["selectors"], item.content["parameters"], item.content["facts"],
+     item.content["reference"]}
   end
 
   defp chronology_anchors(target_evidence) do

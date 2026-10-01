@@ -75,7 +75,7 @@ defmodule Opsonde.Cases.Evidence do
 
       filter expr(
                case_id == ^arg(:case_id) and
-                 kind in ["observation", "operation_outcome", "target_verification"]
+                 kind in ["observation", "operation_outcome", "target_verification", "file_read"]
              )
 
       prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 100)
@@ -87,7 +87,7 @@ defmodule Opsonde.Cases.Evidence do
 
       filter expr(
                case_id == ^arg(:case_id) and
-                 kind in ["observation", "operation_outcome", "target_verification"] and
+                 kind in ["observation", "operation_outcome", "target_verification", "file_read"] and
                  get_path(content, ["target_id"]) == ^arg(:target_id)
              )
 

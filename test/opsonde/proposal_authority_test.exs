@@ -77,6 +77,173 @@ defmodule Opsonde.ProposalAuthorityTest do
     }
   end
 
+  test "Reviewer receives distinct citable ranges of a captured file", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("file-review", context, :effect)
+
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        "response.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "review-file",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: context.operator)
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
+
+    source =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-file-source",
+        "observation",
+        "fixture",
+        "native-file",
+        %{"target_id" => context.target.id, "facts" => %{"file" => reference}},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    receipts =
+      for {offset, length} <- [{1, 3}, {4, 1}] do
+        turn =
+          Cases.start_turn!(
+            incident.id,
+            run.id,
+            "review-file-range-#{offset}",
+            %{},
+            %{},
+            "Review limits",
+            authorize?: false
+          ).value
+
+        Cases.complete_turn!(
+          turn.id,
+          turn.revision,
+          %{
+            "outcome" => "decision",
+            "intent" => %{
+              "type" => "file_read",
+              "source_evidence_id" => source.id,
+              "reference" => reference,
+              "offset" => offset,
+              "length" => length,
+              "reason" => "Inspect response"
+            }
+          },
+          :observation_pending,
+          %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+          "Continue",
+          authorize?: false
+        )
+
+        Cases.capture_file_read!(turn.id, authorize?: false)
+      end
+
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+
+    selection = %AI.Selection{
+      role: :reviewer,
+      provider_id: context.reviewer_provider.id,
+      provider_revision: context.reviewer_provider.revision,
+      source: :assignment,
+      assignment_id: context.reviewer_assignment.id,
+      assignment_revision: context.reviewer_assignment.revision
+    }
+
+    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+
+    slices =
+      Enum.filter(request.context_evidence, &(&1.kind == "file_read"))
+      |> Enum.sort_by(& &1.content["offset"])
+
+    assert Enum.map(slices, & &1.id) == Enum.map(receipts, & &1.id)
+    assert Enum.map(slices, & &1.content["value"]) == [<<0, 1, 2>>, "/w=="]
+    assert Enum.map(slices, & &1.content["encoding"]) == ["utf8", "base64"]
+
+    for slice <- slices do
+      assert slice.content["source_evidence_id"] == source.id
+      assert slice.content["source_observed_at"] == DateTime.to_iso8601(source.observed_at)
+      assert slice.content["reference"] == reference
+      refute Map.has_key?(Cases.get_evidence!(slice.id, actor: context.operator).content, "value")
+    end
+
+    [first, second] = receipts
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :rejected,
+                      reason: "Gather more direct evidence",
+                      usage: %AI.Usage{input_tokens: 1, output_tokens: 1}
+                    }}
+                 end
+               }
+             )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    started = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    {_incident, _run, cited_proposal} =
+      proposal_for_case!(current, "file-cited-review", context, :effect, nil,
+        evidence: first,
+        started: started
+      )
+
+    Cases.route_downstream_decision!(cited_proposal.source_turn_id, authorize?: false)
+    cited_reviewing = Cases.get_proposal!(cited_proposal.id, authorize?: false)
+    assert {:ok, cited_request} = ReviewProjection.build(cited_reviewing.id, selection)
+    assert [cited] = cited_request.cited_evidence
+    assert cited.id == first.id
+    assert cited.content["value"] == <<0, 1, 2>>
+
+    assert Enum.any?(
+             cited_request.context_evidence,
+             &(&1.id == second.id and &1.content["value"] == "/w==")
+           )
+
+    viewer = Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+    assert {:error, _} = ReviewProjection.build(cited_reviewing.id, selection)
+    owner = Accounts.change_role!(viewer, :operator, actor: context.admin)
+    Targets.revoke_artifact!(reference["id"], actor: owner)
+    assert {:ok, unavailable} = ReviewProjection.build(cited_reviewing.id, selection)
+    assert [cited] = unavailable.cited_evidence
+    assert cited.content["status"] == "unavailable"
+    refute Map.has_key?(cited.content, "value")
+    assert Cases.get_evidence!(first.id, actor: owner).content == first.content
+
+    for index <- 1..2 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-context-limit-#{index}",
+        "observation",
+        "fixture",
+        "context",
+        %{
+          "target_id" => context.target.id,
+          "facts" => %{"entry" => index, "padding" => String.duplicate("x", 34000)}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+    end
+
+    assert {:error, %AI.Error{category: :disclosure_limit}} =
+             ReviewProjection.build(cited_reviewing.id, selection)
+  end
+
   test "Readonly records a recommendation and pauses without Approval or effect", context do
     {incident, run, proposal} = proposal!("readonly", context)
 
