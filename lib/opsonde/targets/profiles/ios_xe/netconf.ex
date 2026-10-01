@@ -4,7 +4,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   @behaviour Opsonde.Providers.Adapter
   @behaviour Opsonde.Providers.Target
 
-  alias Opsonde.Targets.Adapters.NETCONF, as: GenericNETCONF
+  alias Opsonde.Targets.Adapters.NETCONF, as: NETCONFMethod
   alias Opsonde.Targets.Profiles.IOSXE
   alias Opsonde.Transports.{NETCONF, SSH}
 
@@ -25,30 +25,30 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     do: IOSXE.access_method_profile("netconf", @method_observation, @method_effect)
 
   @impl Opsonde.Providers.Adapter
-  def build(configuration, credentials), do: GenericNETCONF.build(configuration, credentials)
+  def build(configuration, credentials), do: NETCONFMethod.build(configuration, credentials)
 
   @impl Opsonde.Providers.Adapter
-  def check(state, input), do: GenericNETCONF.check(state, input)
+  def check(state, input), do: NETCONFMethod.check(state, input)
 
   @impl Opsonde.Providers.Target
-  defdelegate bind_connection(state, connection), to: GenericNETCONF
+  defdelegate bind_connection(state, connection), to: NETCONFMethod
 
   @impl Opsonde.Providers.Target
   def capabilities(_state, _invocation) do
     capabilities = IOSXE.capabilities()
-    {:ok, generic} = GenericNETCONF.capabilities(nil, %{})
+    {:ok, method} = NETCONFMethod.capabilities(nil, %{})
 
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ generic.observations,
-         effects: capabilities.effects ++ generic.effects
+       | observations: capabilities.observations ++ method.observations,
+         effects: capabilities.effects ++ method.effects
      }}
   end
 
   @impl Opsonde.Providers.Target
   def observe(%SSH.Config{} = state, %{capability: @method_observation} = request, invocation),
-    do: GenericNETCONF.observe(state, request, invocation)
+    do: NETCONFMethod.observe(state, request, invocation)
 
   def observe(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.observation_request(request),
@@ -69,10 +69,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   def classify_request(state, request) do
     case request.capability do
       @method_observation ->
-        GenericNETCONF.classify_request(state, request)
+        NETCONFMethod.classify_request(state, request)
 
       @method_effect ->
-        GenericNETCONF.classify_request(state, request)
+        NETCONFMethod.classify_request(state, request)
 
       "effect.interface" ->
         classify_netconf(IOSXE.effect_request(request), :effect)
@@ -87,7 +87,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
 
   @impl Opsonde.Providers.Target
   def effect(%SSH.Config{} = state, %{capability: @method_effect} = request, invocation),
-    do: GenericNETCONF.effect(state, request, invocation)
+    do: NETCONFMethod.effect(state, request, invocation)
 
   def effect(%SSH.Config{} = state, request, invocation) do
     with {:ok, operation} <- IOSXE.effect_request(request) do
@@ -104,7 +104,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
 
   @impl Opsonde.Providers.Target
   def verify(%SSH.Config{} = state, %{capability: @method_observation} = request, invocation),
-    do: GenericNETCONF.verify(state, request, invocation)
+    do: NETCONFMethod.verify(state, request, invocation)
 
   def verify(%SSH.Config{} = state, request, invocation) do
     with {:ok, name, expected} <- IOSXE.verification_request(request),
