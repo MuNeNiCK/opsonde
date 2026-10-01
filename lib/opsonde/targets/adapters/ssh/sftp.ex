@@ -68,7 +68,7 @@ defmodule Opsonde.Targets.Adapters.SSH.SFTP do
         capability: @read,
         operation: name,
         description:
-          "Native SFTP #{method} at the exact remote path; unavailable attributes remain null",
+          "SFTP #{method} at the exact remote path; unavailable attributes remain null",
         input_schema: request_schema(metadata_parameters(method)),
         output_schema: %{"type" => "object"},
         verification_schema: %{

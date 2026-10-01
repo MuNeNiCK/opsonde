@@ -7,11 +7,6 @@ defmodule Opsonde.Targets.IPMIRequestTest do
   @endpoint "ipmi://127.0.0.1:623"
 
   test "classify exact IPMI requests without assuming an arbitrary command is read-only" do
-    {:ok, state} =
-      IPMI.build(%{}, %{"username" => "fixture", "password" => "fixture"})
-
-    {:ok, state} = IPMI.bind_connection(state, %Target.Connection{endpoint: @endpoint})
-
     raw = %Target.MethodRequest{
       provider_revision: 1,
       connection: %Target.Connection{endpoint: @endpoint},
@@ -21,21 +16,30 @@ defmodule Opsonde.Targets.IPMIRequestTest do
       parameters: %{"netfn" => 6, "command" => 1}
     }
 
-    assert {:ok, %Target.RequestClassification{kind: :effect}} =
-             Target.classify_request(IPMI, state, raw)
-
     power = %{raw | capability: "observe.power", operation: "bmc.power.inspect", parameters: %{}}
 
-    assert {:ok, %Target.RequestClassification{kind: :observation}} =
-             Target.classify_request(IPMI, state, power)
-
-    for invalid <- [
-          %{raw | connection: %Target.Connection{endpoint: "ipmi://other.example:623"}},
-          %{raw | parameters: %{"netfn" => 7, "command" => 1}},
-          %{raw | parameters: %{"netfn" => 6, "command" => 1, "data_hex" => "F"}},
-          %{raw | capability: "request.ipmi.observe"}
+    for adapter <- [
+          IPMI,
+          Opsonde.Targets.Profiles.HPEILO.IPMI,
+          Opsonde.Targets.Profiles.DellIDRAC.IPMI
         ] do
-      assert {:error, :failed, _} = Target.classify_request(IPMI, state, invalid)
+      {:ok, state} = adapter.build(%{}, %{"username" => "fixture", "password" => "fixture"})
+      {:ok, state} = adapter.bind_connection(state, %Target.Connection{endpoint: @endpoint})
+
+      assert {:ok, %Target.RequestClassification{kind: :effect}} =
+               Target.classify_request(adapter, state, raw)
+
+      assert {:ok, %Target.RequestClassification{kind: :observation}} =
+               Target.classify_request(adapter, state, power)
+
+      for invalid <- [
+            %{raw | connection: %Target.Connection{endpoint: "ipmi://other.example:623"}},
+            %{raw | parameters: %{"netfn" => 7, "command" => 1}},
+            %{raw | parameters: %{"netfn" => 6, "command" => 1, "data_hex" => "F"}},
+            %{raw | capability: "request.ipmi.observe"}
+          ] do
+        assert {:error, :failed, _} = Target.classify_request(adapter, state, invalid)
+      end
     end
   end
 
