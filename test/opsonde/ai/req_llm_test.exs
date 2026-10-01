@@ -210,23 +210,13 @@ defmodule Opsonde.AI.ReqLLMTest do
         "intent" => %{
           "type" => "proposal",
           "purpose" => decision["purpose"],
-          "action" => Map.take(decision, ~w(tool_id selectors parameters)),
+          "action" => action(decision),
           "evidence_ids" => decision["evidence_ids"],
           "affected_conditions" => decision["affected_conditions"],
           "verification" =>
             verification
-            |> Map.take(~w(tool_id selectors parameters))
+            |> action()
             |> Map.put("expected_result_json", Jason.encode!(verification["expected_result"]))
-        }
-      }
-    end
-
-    defp wire_decision(%{"type" => "observation", "reason" => reason} = decision) do
-      %{
-        "reason" => reason,
-        "intent" => %{
-          "type" => "observation",
-          "tool_input" => Map.take(decision, ~w(tool_id selectors parameters))
         }
       }
     end
@@ -240,6 +230,14 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     defp wire_decision(decision), do: decision
 
+    def action(value) do
+      %{
+        "tool_id" => value["tool_id"],
+        "selectors_json" => Jason.encode!(value["selectors"]),
+        "parameters_json" => Jason.encode!(value["parameters"])
+      }
+    end
+
     defp handoff, do: %{"type" => "handoff", "reason" => "probe", "required_input" => "human"}
   end
 
@@ -252,6 +250,181 @@ defmodule Opsonde.AI.ReqLLMTest do
     {:ok, {_address, port}} = ThousandIsland.listener_info(server)
 
     %{agent: agent, endpoint: "http://127.0.0.1:#{port}"}
+  end
+
+  test "generate_object preserves the exact file binding offered by each file-bearing Method",
+       context do
+    reference = %{
+      "id" => "05a8c403-9e38-4f1b-a037-c464e0385b66",
+      "target_id" => "16e3f9a0-66b1-48e1-ae07-d5552f4e90f8",
+      "name" => "input.bin",
+      "media_type" => "application/octet-stream",
+      "size_bytes" => 5,
+      "sha256" => "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
+    }
+
+    for {type, operation, input} <- [
+          {"ssh", "sftp.write_file", %{"path" => "/validation/input.bin"}},
+          {"restconf", "request.execute",
+           %{
+             "method" => "PUT",
+             "path" => "/data/example:input",
+             "headers" => %{"X-Proof" => "arbitrary-value"}
+           }},
+          {"http-api", "request.execute", %{"method" => "PUT", "path" => "/binary"}},
+          {"redfish", "request.execute", %{"method" => "POST", "uri" => "/redfish/v1/Oem/Input"}},
+          {"kubernetes-api", "request.execute",
+           %{"method" => "POST", "path" => "/apis/example.test/v1/widgets"}}
+        ],
+        provider <- ["openai", "anthropic"] do
+      {:ok, adapter} = Providers.Registry.fetch(type)
+      endpoint = if type == "ssh", do: "ssh://127.0.0.1:9", else: "https://127.0.0.1:9"
+      {configuration, credentials} = Opsonde.TargetConnectionFixture.input(type, endpoint)
+      {:ok, transport} = adapter.build(configuration, credentials)
+
+      {:ok, transport} =
+        adapter.bind_connection(transport, %Opsonde.Providers.Target.Connection{
+          endpoint: endpoint
+        })
+
+      {:ok, catalog} = adapter.capabilities(transport, %{})
+      upload = Enum.find(catalog.effects, &(&1.operation == operation))
+
+      tool = %{
+        proposal_tool()
+        | target_id: reference["target_id"],
+          operation: upload.operation,
+          capability: upload.capability,
+          input_schema: upload.input_schema
+      }
+
+      request = %{
+        resolver_request()
+        | selected_target_id: tool.target_id,
+          selected_target_revision: tool.target_revision,
+          proposal_tools: [tool],
+          evidence: [
+            %AI.Evidence{
+              id: "attachment-source",
+              kind: "manual_context",
+              target_id: tool.target_id,
+              content: %{"files" => %{"payload" => reference}}
+            }
+          ]
+      }
+
+      parameters =
+        Map.merge(input, %{"body_file" => "payload", "files" => %{"payload" => reference}})
+
+      wire = %{
+        "reason" => "Send the exact supplied file through the selected Method",
+        "intent" => %{
+          "type" => "proposal",
+          "purpose" => "investigation",
+          "action" => %{
+            "tool_id" => tool.id,
+            "selectors_json" => "{}",
+            "parameters_json" => Jason.encode!(parameters)
+          },
+          "evidence_ids" => [],
+          "affected_conditions" => []
+        }
+      }
+
+      set_mode(context.agent, {:decision, wire})
+      ai_endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
+      state = state!(provider, ai_endpoint, %{"api_key" => "file-secret"})
+      assert {:ok, decision} = Adapter.resolve(state, request, %{})
+      assert decision.intent.parameters == parameters
+      assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
+
+      if type == "restconf" do
+        invalid = %{
+          decision
+          | intent: %{
+              decision.intent
+              | parameters: Map.put(parameters, "uri", "https://127.0.0.1:9/data/example:input")
+            }
+        }
+
+        assert {:error, %AI.Error{category: :invalid_output}} =
+                 AI.Validator.validate_decision(:resolve, invalid, request)
+      end
+
+      [sent] = requests(context.agent)
+      assert {:ok, _} = JSV.validate(wire, JSV.build!(output_schema(sent)))
+      assert sent.body =~ "parameters.files"
+      assert sent.body =~ "body_file"
+
+      {:ok, protocol_parameters, files} =
+        Opsonde.Providers.Target.FileReference.split(decision.intent.parameters)
+
+      method_request = %Opsonde.Providers.Target.MethodRequest{
+        provider_revision: 1,
+        connection: %Opsonde.Providers.Target.Connection{endpoint: endpoint},
+        capability: upload.capability,
+        operation: upload.operation,
+        selectors: %{},
+        parameters: protocol_parameters,
+        files: files
+      }
+
+      assert {:ok, %{kind: :effect}} =
+               Opsonde.Providers.Target.classify_request(adapter, transport, method_request)
+
+      assert {:error, _, _} =
+               Opsonde.Providers.Target.classify_request(adapter, transport, %{
+                 method_request
+                 | files: %{}
+               })
+    end
+  end
+
+  test "invalid encoded Method objects retain usage and never become Target inputs", context do
+    tool = proposal_tool()
+    request = %{resolver_request() | proposal_tools: [tool]}
+
+    wire = %{
+      "reason" => "Investigate with the selected Method",
+      "intent" => %{
+        "type" => "proposal",
+        "purpose" => "investigation",
+        "action" => %{
+          "tool_id" => tool.id,
+          "selectors_json" => Jason.encode!(%{"service" => "api"}),
+          "parameters_json" => Jason.encode!(%{"grace_seconds" => 5})
+        },
+        "evidence_ids" => [],
+        "affected_conditions" => []
+      }
+    }
+
+    for provider <- ["openai", "anthropic"],
+        field <- ["selectors_json", "parameters_json"],
+        invalid <- ["{broken}", "[]", "null", ~s("not an object")] do
+      endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
+      state = state!(provider, endpoint, %{"api_key" => "decode-secret"})
+      set_mode(context.agent, {:decision, put_in(wire, ["intent", "action", field], invalid)})
+
+      assert {:error, :invalid_output, _, %AI.Usage{input_tokens: 7, output_tokens: 5},
+              "decision_validation"} = Adapter.resolve(state, request, %{})
+    end
+
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "decode-secret"})
+
+    wrong_type =
+      put_in(
+        wire,
+        ["intent", "action", "parameters_json"],
+        Jason.encode!(%{"grace_seconds" => "5"})
+      )
+
+    set_mode(context.agent, {:decision, wrong_type})
+    assert {:ok, decoded} = Adapter.resolve(state, request, %{})
+    assert decoded.intent.parameters == %{"grace_seconds" => "5"}
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(:resolve, decoded, request)
   end
 
   test "generate_object binds an offered file range to its exact source", context do
@@ -1049,7 +1222,7 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute "target_traversal" in unavailable_payload["allowed_intents"]
   end
 
-  test "effect schema exposes the observed precondition rather than the desired result",
+  test "effect preconditions remain bound to cited observation after private wire decoding",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
     observation = %{observation_tool() | operation: "bmc.power.inspect"}
@@ -1090,6 +1263,7 @@ defmodule Opsonde.AI.ReqLLMTest do
             id: "observed-off",
             kind: "observation",
             target_id: "target-1",
+            observed_at_us: 11,
             content: %{
               "tool_id" => observation_request.id,
               "facts" => %{"power_state" => "off"}
@@ -1097,7 +1271,20 @@ defmodule Opsonde.AI.ReqLLMTest do
           }
         ],
         observation_tools: [observation],
-        proposal_tools: [observation_request, effect]
+        proposal_tools: [observation_request, effect],
+        conditions: [
+          %AI.Condition{
+            id: "power-condition",
+            revision: 2,
+            occurrence: 1,
+            predicate: "Power is off",
+            subject_key: "host-1",
+            subject_ref: %{},
+            state: :firing,
+            target_id: "target-1",
+            current_occurred_at_us: 10
+          }
+        ]
     }
 
     assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
@@ -1105,23 +1292,48 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     [provider_request] = requests(context.agent)
 
-    effect_schema =
-      provider_request
-      |> output_schema()
-      |> get_in(["properties", "intent", "anyOf"])
-      |> Enum.find(&Map.has_key?(Map.get(&1, "properties", %{}), "verification"))
+    payload = user_payload(provider_request)
+    disclosed = Enum.find(payload["proposal_tools"], &(&1["operation"] == effect.operation))
+    assert disclosed["input_schema"] == effect.input_schema
 
-    effect_action =
-      effect_schema["properties"]["action"]["anyOf"]
-      |> Enum.find(&(get_in(&1, ["properties", "tool_id", "enum"]) == [effect.id]))
+    assert disclosed["evidence_requirements"] == [
+             %{
+               "parameter" => "observed_power_state",
+               "fact" => "power_state",
+               "observation" => "bmc.power.inspect"
+             }
+           ]
 
-    assert get_in(effect_action, [
-             "properties",
-             "parameters",
-             "properties",
-             "observed_power_state",
-             "enum"
-           ]) == ["off"]
+    for {observed, valid?} <- [{"off", true}, {"on", false}] do
+      set_mode(
+        context.agent,
+        {:decision,
+         %{
+           "reason" => "Restore the currently observed power state",
+           "intent" => %{
+             "type" => "proposal",
+             "purpose" => "remediation",
+             "action" => %{
+               "tool_id" => effect.id,
+               "selectors_json" => Jason.encode!(%{"service" => "api"}),
+               "parameters_json" => Jason.encode!(%{"observed_power_state" => observed})
+             },
+             "evidence_ids" => ["observed-off"],
+             "affected_conditions" => [%{"condition_id" => "power-condition", "revision" => 2}],
+             "verification" => %{
+               "expected_result_json" => Jason.encode!(%{"power_state" => "on"})
+             }
+           }
+         }}
+      )
+
+      assert {:ok, decision} = Adapter.resolve(state, request, %{})
+
+      if valid?,
+        do: assert(:ok == AI.Validator.validate_decision(:resolve, decision, request)),
+        else:
+          assert(match?({:error, _}, AI.Validator.validate_decision(:resolve, decision, request)))
+    end
 
     recovered = %AI.Condition{
       id: "power-condition",
@@ -1143,6 +1355,8 @@ defmodule Opsonde.AI.ReqLLMTest do
         conditions: [recovered],
         recovery_evidence_ids: ["observed-off"]
     }
+
+    set_mode(context.agent, {:decision, handoff()})
 
     assert {:ok, %AI.ResolverDecision{intent: %AI.Handoff{}}} =
              Adapter.resolve(state, request, %{})
@@ -2255,8 +2469,8 @@ defmodule Opsonde.AI.ReqLLMTest do
         "purpose" => "remediation",
         "action" => %{
           "tool_id" => tool.id,
-          "selectors" => %{},
-          "parameters" => %{"command" => "systemctl start api.service"}
+          "selectors_json" => "{}",
+          "parameters_json" => Jason.encode!(%{"command" => "systemctl start api.service"})
         },
         "evidence_ids" => ["evidence-1"],
         "affected_conditions" => [],
@@ -2326,8 +2540,8 @@ defmodule Opsonde.AI.ReqLLMTest do
         "purpose" => "investigation",
         "action" => %{
           "tool_id" => tool.id,
-          "selectors" => %{},
-          "parameters" => %{"command" => "service nginx status"}
+          "selectors_json" => "{}",
+          "parameters_json" => Jason.encode!(%{"command" => "service nginx status"})
         },
         "evidence_ids" => ["evidence-1"],
         "affected_conditions" => []
@@ -2454,20 +2668,14 @@ defmodule Opsonde.AI.ReqLLMTest do
     [action_schema] = get_in(proposal_variant, ["properties", "action", "anyOf"])
     assert get_in(action_schema, ["properties", "tool_id", "enum"]) == ["proposal-tool"]
 
-    assert action_schema["properties"]["selectors"] ==
-             tool_input_schema()["properties"]["selectors"]
+    assert Enum.sort(Map.keys(action_schema["properties"])) ==
+             ~w(parameters_json selectors_json tool_id)
 
-    assert action_schema["properties"]["parameters"] ==
-             tool_input_schema(
-               %{
-                 "grace_seconds" => %{
-                   "type" => "integer",
-                   "minimum" => 0,
-                   "maximum" => 30
-                 }
-               },
-               ["grace_seconds"]
-             )["properties"]["parameters"]
+    assert action_schema["properties"]["selectors_json"]["type"] == "string"
+    assert action_schema["properties"]["parameters_json"]["maxLength"] == AI.max_output_bytes()
+
+    assert hd(user_payload(provider_request)["proposal_tools"])["input_schema"] ==
+             proposal_tool().input_schema
 
     verification_schemas =
       get_in(proposal_variant, ["properties", "verification", "anyOf"])
@@ -2486,12 +2694,12 @@ defmodule Opsonde.AI.ReqLLMTest do
       "intent" => %{
         "type" => "proposal",
         "purpose" => "remediation",
-        "action" => Map.take(decision, ~w(tool_id selectors parameters)),
+        "action" => ProviderStub.action(decision),
         "evidence_ids" => ["source-evidence-1"],
         "affected_conditions" => [],
         "verification" =>
           decision["verification"]
-          |> Map.take(~w(tool_id selectors parameters))
+          |> ProviderStub.action()
           |> Map.put(
             "expected_result_json",
             Jason.encode!(decision["verification"]["expected_result"])
@@ -2566,8 +2774,8 @@ defmodule Opsonde.AI.ReqLLMTest do
           "purpose" => "investigation",
           "action" => %{
             "tool_id" => tool.id,
-            "selectors" => %{"service" => "api"},
-            "parameters" => %{"grace_seconds" => 5}
+            "selectors_json" => Jason.encode!(%{"service" => "api"}),
+            "parameters_json" => Jason.encode!(%{"grace_seconds" => 5})
           },
           "evidence_ids" => [],
           "affected_conditions" => [claim]
@@ -2685,15 +2893,15 @@ defmodule Opsonde.AI.ReqLLMTest do
         "purpose" => "remediation",
         "action" => %{
           "tool_id" => "proposal-tool",
-          "selectors" => %{"service" => "api"},
-          "parameters" => %{"grace_seconds" => 5}
+          "selectors_json" => Jason.encode!(%{"service" => "api"}),
+          "parameters_json" => Jason.encode!(%{"grace_seconds" => 5})
         },
         "evidence_ids" => ["effect-observation", "symptom-observation"],
         "affected_conditions" => [claim],
         "verification" => %{
           "tool_id" => "observe-tool",
-          "selectors" => %{"service" => "api"},
-          "parameters" => %{},
+          "selectors_json" => Jason.encode!(%{"service" => "api"}),
+          "parameters_json" => "{}",
           "expected_result_json" => Jason.encode!(%{"status" => "running"})
         }
       }

@@ -395,6 +395,9 @@ defmodule Opsonde.AI.ReqLLM do
         "For file_read, choose exactly one supplied file_read_options.file_ref and an offset " <>
         "and length within that file and the schema's limit. The next turn receives the " <>
         "exact authorized range as citable file_read Evidence. " <>
+        "For a Target request using body_file, it is a label in parameters.files. " <>
+        "Include parameters.files with that label mapped to an exact supplied file reference; " <>
+        "body_file alone is neither a file UUID nor a filesystem path. " <>
         file_evidence_instructions() <>
         "If status is unavailable, no contents were obtained; choose another useful " <>
         "observation rather than handoff solely because this file cannot be read. " <>
@@ -447,7 +450,9 @@ defmodule Opsonde.AI.ReqLLM do
         "contradictory observations taken before that effect; do not repeat the verified " <>
         "observation solely because an older fact differs. A proposal may be an observation or an effect; " <>
         "every Target request is reviewed after you return it. In a proposal, intent.action " <>
-        "contains only tool_id, selectors, and parameters. Put reason at the response root, " <>
+        "contains only tool_id, selectors_json, and parameters_json. Encode selectors and parameters " <>
+        "as JSON object strings matching the selected tool's input_schema in the user payload. " <>
+        "Put reason at the response root, " <>
         "and put evidence_ids and affected_conditions in intent, never inside action. " <>
         "Every proposal declares intent.purpose as investigation or remediation. Protocol effect " <>
         "means a request may change state; it does not establish its purpose. Investigation " <>
@@ -456,7 +461,7 @@ defmodule Opsonde.AI.ReqLLM do
         "evidence_ids may be empty: use the supplied Case objective and current Target to select " <>
         "the investigation; never invent prior observations. Never call a modification investigation. " <>
         "For remediation, intent.verification contains either only expected_result_json for " <>
-        "later investigation, or tool_id, selectors, parameters, and expected_result_json for " <>
+        "later investigation, or tool_id, selectors_json, parameters_json, and expected_result_json for " <>
         "a supplied observation request. Do not add explanatory keys inside action or verification. " <>
         "Propose remediation only for an unresolved Condition or a manual/audit desired_outcome " <>
         "shown unmet by current Target Evidence. Do not propose remediation when the desired " <>
@@ -758,8 +763,8 @@ defmodule Opsonde.AI.ReqLLM do
        when is_map(action) do
     with {:ok, tool_id} <- string(action, "tool_id"),
          %AI.ProposalTool{} = tool <- Enum.find(request.proposal_tools, &(&1.id == tool_id)),
-         {:ok, selectors} <- map(action, "selectors"),
-         {:ok, parameters} <- map(action, "parameters"),
+         {:ok, selectors} <- decoded_map(action, "selectors_json"),
+         {:ok, parameters} <- decoded_map(action, "parameters_json"),
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
          claims when is_list(claims) <- Map.get(value, "affected_conditions", []),
@@ -836,8 +841,8 @@ defmodule Opsonde.AI.ReqLLM do
   defp verification_intent(value, request) when is_map(value) do
     with {:ok, tool_id} <- string(value, "tool_id"),
          %_{id: ^tool_id} <- verification_tool(request, tool_id),
-         {:ok, selectors} <- map(value, "selectors"),
-         {:ok, parameters} <- map(value, "parameters"),
+         {:ok, selectors} <- decoded_map(value, "selectors_json"),
+         {:ok, parameters} <- decoded_map(value, "parameters_json"),
          {:ok, expected_result} <- decoded_map(value, "expected_result_json") do
       {:ok,
        %AI.VerificationIntent{
@@ -1107,14 +1112,14 @@ defmodule Opsonde.AI.ReqLLM do
       nested_tool_shape(
         intent["action"],
         get_in(variant || %{}, ["properties", "action"]),
-        "parameters"
+        "parameters_json"
       )
 
     action_selectors_shape =
       nested_tool_shape(
         intent["action"],
         get_in(variant || %{}, ["properties", "action"]),
-        "selectors"
+        "selectors_json"
       )
 
     Logger.warning(
@@ -1144,7 +1149,7 @@ defmodule Opsonde.AI.ReqLLM do
     required = Map.get(selected || %{}, "required", [])
 
     known =
-      ~w(tool_id selectors parameters expected_result_json operation capability target_id access_method_id provider_id)
+      ~w(tool_id selectors_json parameters_json expected_result_json operation capability target_id access_method_id provider_id)
 
     keys =
       value
@@ -1174,37 +1179,20 @@ defmodule Opsonde.AI.ReqLLM do
   defp tool_shape(nil, _schema), do: "absent"
   defp tool_shape(_value, _schema), do: "non_map"
 
-  defp nested_tool_shape(%{"tool_id" => tool_id} = value, schema, field)
-       when is_binary(tool_id) do
-    selected =
-      schema
-      |> intent_variants()
-      |> Enum.find(&(tool_id in (get_in(&1, ["properties", "tool_id", "enum"]) || [])))
-
-    nested_schema = get_in(selected || %{}, ["properties", field]) || %{}
-
+  defp nested_tool_shape(value, _schema, field) when is_map(value) do
     case Map.get(value, field) do
-      %{} = nested ->
-        properties = Map.get(nested_schema, "properties", %{})
-        required = Map.get(nested_schema, "required", [])
-        recognized = Enum.filter(Map.keys(nested), &Map.has_key?(properties, &1))
-        invalid = Enum.count(recognized, &(not schema_field_valid?(nested[&1], properties[&1])))
-
-        enum_mismatch =
-          Enum.count(recognized, fn key ->
-            choices = Map.get(properties[key], "enum")
-            is_list(choices) and nested[key] not in choices
-          end)
-
-        "map:known#{length(recognized)}:extra#{map_size(nested) - length(recognized)}:" <>
-          "missing#{Enum.count(required, &(!Map.has_key?(nested, &1)))}:" <>
-          "invalid#{invalid}:enum_mismatch#{enum_mismatch}"
+      encoded when is_binary(encoded) and byte_size(encoded) <= @max_output_bytes ->
+        case Jason.decode(encoded) do
+          {:ok, %{} = decoded} -> "object:fields#{map_size(decoded)}"
+          {:ok, _other} -> "non_object_json"
+          {:error, _error} -> "invalid_json"
+        end
 
       nil ->
         "absent"
 
       _other ->
-        "non_map"
+        "invalid_encoding"
     end
   end
 
@@ -1243,7 +1231,7 @@ defmodule Opsonde.AI.ReqLLM do
     |> Map.keys()
     |> Enum.filter(fn key ->
       Map.has_key?(properties, key) and
-        key in ~w(type purpose action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors parameters) and
+        key in ~w(type purpose action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors_json parameters_json) and
         not schema_field_valid?(value[key], properties[key])
     end)
     |> Enum.sort()
@@ -1295,7 +1283,8 @@ defmodule Opsonde.AI.ReqLLM do
                 nested_schema = get_in(variant, ["properties", field])
 
                 case String.split(invalid_tool_fields(nested, nested_schema), ",", trim: true) do
-                  [subfield] when subfield in ~w(selectors parameters expected_result_json) ->
+                  [subfield]
+                  when subfield in ~w(selectors_json parameters_json expected_result_json) ->
                     "/intent/" <> field <> "/" <> subfield
 
                   _other ->
@@ -1355,7 +1344,7 @@ defmodule Opsonde.AI.ReqLLM do
 
         case Regex.run(~r/property '([A-Za-z_]+)' is required/, message) do
           [_, field]
-          when field in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors parameters) ->
+          when field in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors_json parameters_json) ->
             "/intent/" <> field
 
           _other ->
@@ -1416,7 +1405,7 @@ defmodule Opsonde.AI.ReqLLM do
         []
     end)
     |> Enum.filter(
-      &(&1 in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors parameters required_input))
+      &(&1 in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors_json parameters_json required_input))
     )
     |> Enum.uniq()
     |> Enum.sort()
@@ -1751,7 +1740,7 @@ defmodule Opsonde.AI.ReqLLM do
       |> Enum.filter(&(&1.request_kind == :effect))
       |> then(fn tools ->
         if request.budget.remaining_effects > 0,
-          do: tool_input_variants(Enum.map(tools, &constrain_effect_input(&1, request))),
+          do: tool_input_variants(tools),
           else: []
       end)
 
@@ -1967,64 +1956,18 @@ defmodule Opsonde.AI.ReqLLM do
       )
 
   defp tool_input_variants(tools, extra_properties \\ %{}) do
-    Enum.flat_map(tools, fn tool ->
-      case tool.input_schema do
-        %{
-          "type" => "object",
-          "properties" => properties,
-          "required" => required
-        } = schema
-        when is_map(properties) and is_list(required) ->
-          properties =
-            properties
-            |> Map.merge(extra_properties)
-            |> Map.put("tool_id", enum_schema([tool.id]))
+    Enum.map(tools, fn tool ->
+      properties =
+        Map.merge(extra_properties, %{
+          "tool_id" => enum_schema([tool.id]),
+          "selectors_json" => json_object_string_schema(),
+          "parameters_json" => json_object_string_schema()
+        })
 
-          required = ["tool_id" | required ++ Map.keys(extra_properties)] |> Enum.uniq()
-
-          [
-            schema
-            |> Map.put("properties", properties)
-            |> Map.put("required", required)
-            |> Map.put("additionalProperties", false)
-            |> Map.put("description", tool.description)
-          ]
-
-        _schema ->
-          []
-      end
+      properties
+      |> object_schema(Map.keys(properties))
+      |> Map.put("description", tool.description)
     end)
-  end
-
-  defp constrain_effect_input(tool, request) do
-    schema =
-      Enum.reduce(tool.evidence_requirements, tool.input_schema, fn requirement, schema ->
-        values = AI.proposal_requirement_values(tool, request, requirement)
-        path = ["properties", "parameters", "properties", requirement.parameter]
-
-        case {values, get_in(schema, path)} do
-          {[], _field} ->
-            schema
-
-          {values, %{} = field} ->
-            allowed =
-              case Map.get(field, "enum") do
-                choices when is_list(choices) -> choices
-                _other -> values
-              end
-
-            observed = Enum.filter(values, &(&1 in allowed))
-
-            if observed == [],
-              do: schema,
-              else: put_in(schema, path, Map.put(field, "enum", observed))
-
-          _other ->
-            schema
-        end
-      end)
-
-    %{tool | input_schema: schema}
   end
 
   defp available_evidence_ids(request),
@@ -2047,6 +1990,7 @@ defmodule Opsonde.AI.ReqLLM do
     do: %{
       "type" => "string",
       "minLength" => 2,
+      "maxLength" => @max_output_bytes,
       "description" => "A JSON-encoded object"
     }
 
@@ -2322,13 +2266,6 @@ defmodule Opsonde.AI.ReqLLM do
     end
   end
 
-  defp map(value, key) do
-    case Map.get(value, key) do
-      item when is_map(item) -> {:ok, item}
-      _item -> invalid_output()
-    end
-  end
-
   defp decoded_map(value, key) do
     with {:ok, encoded} <- string(value, key),
          {:ok, decoded} <- Jason.decode(encoded),
@@ -2443,6 +2380,7 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp plain(value) when is_list(value), do: Enum.map(value, &plain/1)
+  defp plain(value) when is_boolean(value) or is_nil(value), do: value
   defp plain(value) when is_atom(value), do: Atom.to_string(value)
   defp plain(value), do: value
 

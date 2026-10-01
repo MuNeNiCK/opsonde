@@ -196,14 +196,6 @@ defmodule Opsonde.Providers.AI do
 
   def proposal_requirements_match?(_tool, _request, _evidence_ids, _parameters), do: false
 
-  def proposal_requirement_values(tool, request, requirement) do
-    requirement
-    |> matching_evidence(tool, request, nil)
-    |> Enum.map(& &1.content["facts"][requirement.fact])
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-  end
-
   defp proposal_requirements_available?(tool, request) do
     tool.request_kind == :observation or
       Enum.all?(tool.evidence_requirements, fn requirement ->

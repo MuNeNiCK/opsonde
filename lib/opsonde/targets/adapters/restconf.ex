@@ -398,6 +398,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF do
             "uri" => %{"type" => "string", "minLength" => 1, "maxLength" => 2048},
             "body" => %{"type" => ["string", "null"], "maxLength" => 60_000},
             "body_file" => %{"type" => "string", "minLength" => 1, "maxLength" => 120},
+            "files" => Target.FileReference.set_schema(),
             "query" => %{"type" => "object", "additionalProperties" => %{"type" => "string"}},
             "accept" => %{"type" => "string", "maxLength" => 256},
             "content_type" => %{"type" => "string", "maxLength" => 256},

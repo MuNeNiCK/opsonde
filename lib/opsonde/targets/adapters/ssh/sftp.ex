@@ -181,10 +181,13 @@ defmodule Opsonde.Targets.Adapters.SSH.SFTP do
       if kind == :read,
         do: Map.put(properties, "response_file", Target.FileWriter.options_schema()),
         else:
-          Map.put(properties, "body_file", %{
-            "type" => "string",
-            "minLength" => 1,
-            "maxLength" => 120
+          Map.merge(properties, %{
+            "body_file" => %{
+              "type" => "string",
+              "minLength" => 1,
+              "maxLength" => 120
+            },
+            "files" => Target.FileReference.set_schema()
           })
 
     request_schema(properties)
