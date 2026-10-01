@@ -258,6 +258,87 @@ defmodule OpsondeCLI.CLITest do
     assert output =~ ~s("outcome": "succeeded")
   end
 
+  test "Case invocation history preserves unavailable tokens through authenticated public paging",
+       context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/api/v1/cases/case-1/ai-invocations"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+      assert URI.decode_query(conn.query_string) == %{"after" => "cursor-value", "limit" => "7"}
+
+      Req.Test.json(conn, %{
+        data: [
+          %{
+            usage_status: "unknown",
+            input_tokens: nil,
+            output_tokens: nil,
+            reserved_units: 65_536
+          }
+        ],
+        page: %{next: nil}
+      })
+    end)
+
+    output =
+      capture_io(fn ->
+        assert CLI.run(
+                 ["case", "ai-invocations", "case-1", "--limit", "7", "--after", "cursor-value"],
+                 runtime(context)
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [
+             %{
+               "usage_status" => "unknown",
+               "input_tokens" => nil,
+               "output_tokens" => nil,
+               "reserved_units" => 65_536
+             }
+           ] = output["data"]
+  end
+
+  test "Case show preserves reported usage and unknown budget bounds without client accounting",
+       context do
+    save_session(context)
+
+    Req.Test.stub(context.stub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/api/v1/cases/case-1"
+      assert get_req_header(conn, "authorization") == ["Bearer saved-token"]
+
+      Req.Test.json(conn, %{
+        data: %{
+          case: %{status: "resolved"},
+          ai_usage: %{
+            reported_total_tokens: 26,
+            budget_charged_units: 65_562,
+            unknown_invocations: 1,
+            unknown_reserved_units: 65_536,
+            complete: false
+          }
+        }
+      })
+    end)
+
+    output =
+      capture_io(fn ->
+        assert CLI.run(["case", "show", "case-1"], runtime(context)) == 0
+      end)
+      |> Jason.decode!()
+
+    assert %{
+             "reported_total_tokens" => 26,
+             "budget_charged_units" => 65_562,
+             "unknown_invocations" => 1,
+             "unknown_reserved_units" => 65_536,
+             "complete" => false
+           } =
+             output["data"]["ai_usage"]
+  end
+
   test "Case cancel and resume commands send transition requests to the public API", context do
     save_session(context)
 

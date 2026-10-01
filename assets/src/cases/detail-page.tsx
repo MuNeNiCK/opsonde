@@ -16,6 +16,7 @@ import type { components } from "@/api/schema";
 import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
 import { ProposalCard, ResumeCard } from "@/cases/detail-components";
+import { CaseAIUsage } from "@/cases/ai-usage";
 import { subscribeToCase } from "@/cases/realtime";
 import { formatDate, formValue, parseAuthorityMode, translatedToken } from "@/cases/detail-utils";
 import { CaseWorkflowView } from "@/cases/workflow-view";
@@ -46,6 +47,7 @@ type Detail = {
   evidence: Evidence[];
   approvals: Approval[];
   reviews: ReviewDecision[];
+  aiInvocations: components["schemas"]["AIInvocation"][];
   targets: Target[];
   methods: AccessMethod[];
   providers: Provider[];
@@ -54,50 +56,66 @@ type Detail = {
 
 type CaseState = Pick<
   Detail,
-  "snapshot" | "timeline" | "turns" | "evidence" | "approvals" | "reviews"
+  "snapshot" | "timeline" | "turns" | "evidence" | "approvals" | "reviews" | "aiInvocations"
 >;
 type References = Pick<Detail, "targets" | "methods" | "providers" | "accounts">;
 
 async function loadCaseState(caseId: string): Promise<CaseState> {
-  const [snapshotResponse, timeline, turns, evidence, approvals, reviews] = await Promise.all([
-    apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/cases/{id}/timeline", {
-          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/cases/{id}/turns", {
-          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/cases/{id}/evidence", {
-          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/cases/{id}/approvals", {
-          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/cases/{id}/review-decisions", {
-          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-  ]);
-  return { snapshot: snapshotResponse.data, timeline, turns, evidence, approvals, reviews };
+  const [snapshotResponse, timeline, turns, evidence, approvals, reviews, aiInvocations] =
+    await Promise.all([
+      apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/timeline", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/turns", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/evidence", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/approvals", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/review-decisions", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+      collectPages((after) =>
+        apiClient
+          .GET("/api/v1/cases/{id}/ai-invocations", {
+            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      ),
+    ]);
+  return {
+    snapshot: snapshotResponse.data,
+    timeline,
+    turns,
+    evidence,
+    approvals,
+    reviews,
+    aiInvocations,
+  };
 }
 
 async function loadReferences(includeAccounts: boolean): Promise<References> {
@@ -696,6 +714,8 @@ export function CaseDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      <CaseAIUsage usage={detail.snapshot.ai_usage} invocations={detail.aiInvocations} />
 
       {complete ? (
         <>

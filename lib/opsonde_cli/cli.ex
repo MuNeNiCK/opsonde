@@ -463,6 +463,7 @@ defmodule OpsondeCLI.CLI do
       opsonde provider services
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
+      opsonde case ai-invocations ID [--limit N] [--after CURSOR]
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report read ID
       opsonde file list TARGET_ID
