@@ -205,6 +205,19 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
              "review_recovery"
+
+    approve_recovery!(Cases.get_turn!(turn.id, authorize?: false), context)
+    resolved = Cases.get_case!(incident.id, actor: context.operator)
+    report = Reports.generate_report!(resolved.id, resolved.revision, actor: context.operator)
+    assert get_in(report.content, ["operations", Access.at(0), "purpose"]) == "investigation"
+    assert get_in(report.content, ["proposals", Access.at(0), "purpose"]) == "investigation"
+
+    assert get_in(report.content, ["reviews", Access.at(0), "purpose_assessment"]) ==
+             "investigation"
+
+    document = Opsonde.Reports.Report.Document.build(report)
+    assert document["actions"] == []
+    assert Enum.any?(document["cited_evidence"], &(&1["id"] == evidence.id))
   end
 
   test "proposal Reviewer retains prior-run facts without treating them as current manual recovery proof",

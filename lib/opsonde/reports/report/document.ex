@@ -39,7 +39,7 @@ defmodule Opsonde.Reports.Report.Document do
       "conditions" => monitored_conditions(list(content["conditions"]), evidence, claims),
       "case_symptom" => case_symptom,
       "actions" =>
-        Enum.filter(operations, &(&1["request_kind"] == "effect")) |> Enum.map(&action/1),
+        Enum.filter(operations, &(&1["purpose"] == "remediation")) |> Enum.map(&action/1),
       "verifications" => Enum.map(verifications, &verification/1),
       "cited_evidence" => presented_cited_evidence(cited, evidence, case_symptom),
       "conclusion" => conclusion && nonblank(conclusion["reason"]),

@@ -303,9 +303,17 @@ defmodule Opsonde.CaseReportTest do
       reviews: [],
       approvals: [],
       operations: [
-        %Operation{id: Ash.UUID.generate(), status: :applied, operation: "service.restart"},
         %Operation{
           id: Ash.UUID.generate(),
+          purpose: :remediation,
+          request_kind: :effect,
+          status: :applied,
+          operation: "service.restart"
+        },
+        %Operation{
+          id: Ash.UUID.generate(),
+          purpose: :remediation,
+          request_kind: :effect,
           status: :unknown,
           operation: "interface.reset",
           outcome_category: "connection_lost",
@@ -325,6 +333,13 @@ defmodule Opsonde.CaseReportTest do
 
     content = Content.build(incident, records)
     assert Enum.map(content["operations"], & &1["status"]) == ["applied", "unknown"]
+    assert Enum.map(content["operations"], & &1["purpose"]) == ["remediation", "remediation"]
+    document = Document.build(%Report{content: content, language: :ja})
+
+    assert Enum.map(document["actions"], & &1["name"]) == [
+             "service.restart",
+             "interface.reset"
+           ]
 
     assert get_in(content, ["operations", Access.at(1), "result_details", "uncertainty"]) ==
              "remote acceptance cannot be confirmed"
