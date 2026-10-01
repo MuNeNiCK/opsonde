@@ -160,6 +160,20 @@ defmodule Opsonde.Cases.Evidence do
       argument :observed_at, :utc_datetime_usec, allow_nil?: false
       run Opsonde.Cases.Evidence.Actions.Append
     end
+
+    action :capture_file_read, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :turn_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Evidence.Actions.FileRead, operation: :capture}
+    end
+
+    action :read_file_content, :map do
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :case_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Evidence.Actions.FileRead, operation: :read}
+    end
   end
 
   policies do
@@ -171,7 +185,9 @@ defmodule Opsonde.Cases.Evidence do
              :condition_assessment_candidates,
              :by_idempotency,
              :create_record,
-             :append
+             :append,
+             :capture_file_read,
+             :read_file_content
            ]) do
       forbid_if always()
     end

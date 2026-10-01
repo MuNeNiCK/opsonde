@@ -109,6 +109,19 @@ defmodule Opsonde.Providers.Target do
 
     def valid?(_reference), do: false
 
+    def present_in?(value, reference),
+      do: valid?(reference) and contains_reference?(value, reference)
+
+    defp contains_reference?(value, reference) when value == reference, do: true
+
+    defp contains_reference?(value, reference) when is_map(value),
+      do: Enum.any?(value, fn {_key, nested} -> contains_reference?(nested, reference) end)
+
+    defp contains_reference?(value, reference) when is_list(value),
+      do: Enum.any?(value, &contains_reference?(&1, reference))
+
+    defp contains_reference?(_value, _reference), do: false
+
     def valid_metadata?(name, media_type),
       do:
         bounded_text?(name, 255) and bounded_text?(media_type, 256) and

@@ -6,12 +6,14 @@ defmodule Opsonde.Providers.AI do
   @max_output_bytes 65_536
   @reviewer_reason_codepoints 1_000
   @handoff_input_codepoints 250
+  @file_read_bytes 8_192
 
   def resolver_disclosure_limits, do: @resolver_disclosure_limits
   def resolver_reason_codepoints, do: @resolver_reason_codepoints
   def max_output_bytes, do: @max_output_bytes
   def reviewer_reason_codepoints, do: @reviewer_reason_codepoints
   def handoff_input_codepoints, do: @handoff_input_codepoints
+  def file_read_bytes, do: @file_read_bytes
 
   def valid_resolver_reason?(reason) when is_binary(reason) and byte_size(reason) > 0 do
     case :unicode.characters_to_list(reason) do

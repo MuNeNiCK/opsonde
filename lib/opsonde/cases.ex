@@ -386,6 +386,9 @@ defmodule Opsonde.Cases do
 
       define :create_evidence_record, action: :create_record
 
+      define :capture_file_read, action: :capture_file_read, args: [:turn_id]
+      define :read_file_content, action: :read_file_content, args: [:id, :case_id]
+
       define :append_evidence,
         action: :append,
         args: [
