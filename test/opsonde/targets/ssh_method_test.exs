@@ -38,6 +38,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
         user_dir: String.to_charlist(directory),
         user_passwords: [{~c"tester", ~c"secret"}],
         auth_methods: ~c"publickey,password",
+        subsystems: [:ssh_sftpd.subsystem_spec(root: String.to_charlist(directory))],
         exec: {:direct, command_executor(commands)}
       )
 
@@ -156,6 +157,20 @@ defmodule Opsonde.Targets.SSHMethodTest do
                configuration(context, %{"legacy_algorithms" => ["diffie-hellman-group1-sha1"]}),
                password_credentials()
              )
+  end
+
+  test "unexpected subsystem worker failure before dispatch remains a failure", context do
+    assert {:error, :failed, "SSH transport failed"} =
+             Transport.subsystem(
+               password_config(context),
+               context.endpoint,
+               "sftp",
+               fn _channel ->
+                 raise "channel consumer failed before dispatch"
+               end
+             )
+
+    assert commands(context) == []
   end
 
   test "an SSH effect with a lost response has an unknown outcome", context do

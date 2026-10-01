@@ -633,6 +633,47 @@ defmodule Opsonde.Targets.SFTPTest do
     assert Agent.get(context.agent, & &1.reads) == 1
   end
 
+  test "an unexpected input port failure after native truncate leaves the effect unknown",
+       context do
+    file = stage_file(context)
+
+    {:ok, state} =
+      Opsonde.Transports.SSH.build(
+        %{
+          "host_key_fingerprints" => %{context.endpoint => context.fingerprint},
+          "connect_timeout_ms" => 2_000,
+          "operation_timeout_ms" => 1_000
+        },
+        %{"username" => "tester", "auth_method" => "password", "password" => "secret"}
+      )
+
+    remote = "/worker-failure-" <> Ecto.UUID.generate()
+    File.write!(Path.join(context.directory, String.trim_leading(remote, "/")), @bytes)
+
+    request = %{
+      capability: "request.ssh.effect",
+      operation: "sftp.write_file",
+      selectors: %{},
+      parameters: %{"path" => remote, "body_file" => "payload"},
+      files: %{"payload" => file},
+      connection: %Opsonde.Providers.Target.Connection{endpoint: context.endpoint}
+    }
+
+    invocation = %{
+      file_reader: fn "payload", 0 ->
+        if Agent.get(context.agent, & &1.opens) == 0,
+          do: {:ok, @bytes},
+          else: raise("native input port stopped unexpectedly")
+      end
+    }
+
+    assert {:ok, %Opsonde.Providers.Target.EffectResult{status: :unknown}} =
+             Opsonde.Targets.Adapters.SSH.effect(state, request, invocation)
+
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == <<>>
+    assert Agent.get(context.agent, & &1.opens) == 1
+  end
+
   test "empty and multi-chunk native files retain exact bytes in both directions", context do
     for bytes <- [<<>>, :binary.copy(@bytes, 60_001)] do
       suffix = Integer.to_string(byte_size(bytes))

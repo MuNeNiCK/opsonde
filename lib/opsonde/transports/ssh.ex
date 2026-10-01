@@ -196,9 +196,9 @@ defmodule Opsonde.Transports.SSH do
             end
           end
         rescue
-          _error -> {:error, :failed, "SSH transport failed"}
+          _error -> {:unexpected_failure, "SSH transport failed"}
         catch
-          _kind, _reason -> {:error, :failed, "SSH transport failed"}
+          _kind, _reason -> {:unexpected_failure, "SSH transport failed"}
         end
       end)
 
@@ -423,15 +423,15 @@ defmodule Opsonde.Transports.SSH do
   defp await(task, reference, connection, phase, cancelled?, deadline) do
     cond do
       cancelled?(cancelled?) ->
-        phase = latest_phase(reference, connection, phase)
-        close(connection)
         Task.shutdown(task, :brutal_kill)
+        {connection, phase} = latest_state(reference, connection, phase)
+        close(connection)
         {:error, cancellation_category(phase), "SSH operation was cancelled"}
 
       System.monotonic_time(:millisecond) >= deadline ->
-        phase = latest_phase(reference, connection, phase)
-        close(connection)
         Task.shutdown(task, :brutal_kill)
+        {connection, phase} = latest_state(reference, connection, phase)
+        close(connection)
         {:error, timeout_category(phase), "SSH operation timed out"}
 
       true ->
@@ -444,9 +444,17 @@ defmodule Opsonde.Transports.SSH do
         after
           @poll_interval ->
             case Task.yield(task, 0) do
-              {:ok, result} -> result
-              {:exit, _reason} -> {:error, :failed, "SSH transport failed"}
-              nil -> await(task, reference, connection, phase, cancelled?, deadline)
+              {:ok, {:unexpected_failure, message}} ->
+                unexpected_failure(reference, connection, phase, message)
+
+              {:ok, result} ->
+                result
+
+              {:exit, _reason} ->
+                unexpected_failure(reference, connection, phase, "SSH transport failed")
+
+              nil ->
+                await(task, reference, connection, phase, cancelled?, deadline)
             end
         end
     end
@@ -645,12 +653,23 @@ defmodule Opsonde.Transports.SSH do
   defp transport_error_after_dispatch(_reason),
     do: {:error, :disconnected_after_dispatch, "SSH connection closed after dispatch"}
 
-  defp latest_phase(reference, connection, phase) do
+  defp latest_state(reference, connection, phase) do
     receive do
-      {:opsonde_ssh_dispatched, ^reference, ^connection} -> :dispatched
+      {:opsonde_ssh_connection, ^reference, connected} ->
+        latest_state(reference, connected, phase)
+
+      {:opsonde_ssh_dispatched, ^reference, dispatched} ->
+        latest_state(reference, dispatched, :dispatched)
     after
-      0 -> phase
+      0 -> {connection, phase}
     end
+  end
+
+  defp unexpected_failure(reference, connection, phase, message) do
+    {connection, phase} = latest_state(reference, connection, phase)
+    close(connection)
+    category = if phase == :dispatched, do: :disconnected_after_dispatch, else: :failed
+    {:error, category, message}
   end
 
   defp host_key_rejected?(reference) do
