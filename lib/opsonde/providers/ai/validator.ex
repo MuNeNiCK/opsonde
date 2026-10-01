@@ -150,6 +150,7 @@ defmodule Opsonde.Providers.AI.Validator do
       AI.valid_resolver_reason?(conclusion.reason) and
       is_list(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
       Enum.all?(conclusion.evidence_ids, &(&1 in cited_ids)) and
+      visible_file_citations?(conclusion.evidence_ids, cited_evidence) and
       CaseSymptom.valid_claims?(
         conclusion.desired_outcome_claims,
         request.case_symptom,
@@ -694,6 +695,7 @@ defmodule Opsonde.Providers.AI.Validator do
          AI.valid_resolver_reason?(conclusion.reason) and
          nonempty_list?(conclusion.evidence_ids) and unique?(conclusion.evidence_ids) and
          Enum.all?(conclusion.evidence_ids, &(&1 in recovery_evidence_ids)) and
+         visible_file_citations?(conclusion.evidence_ids, request.evidence) and
          valid_condition_claims?(conclusion.condition_claims, request, conclusion.evidence_ids) and
          CaseSymptom.valid_claims?(
            conclusion.desired_outcome_claims,
@@ -763,6 +765,14 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp validate_resolver_intent(_intent, _request),
     do: {:error, ai_error(:invalid_output, "AI Resolver intent is invalid", "resolver_intent")}
+
+  defp visible_file_citations?(ids, evidence) do
+    Enum.all?(evidence, fn item ->
+      item.id not in ids or item.kind != "file_read" or
+        (item.content["status"] == "available" and
+           is_binary(item.content["value"]) and item.content["encoding"] in ["utf8", "base64"])
+    end)
+  end
 
   defp valid_condition_claims?([], %{conditions: []}, _evidence_ids), do: true
 

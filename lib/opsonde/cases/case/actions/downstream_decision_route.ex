@@ -25,24 +25,58 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
           replayed
 
         :continue ->
-          Ash.transact([Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent], fn ->
-            with :ok <- CaseAdmissionLock.acquire(),
-                 {:ok, incident} <- lock_case(source_turn.case_id),
-                 {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
-                 {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
-                 {:ok, current?} <- ConditionContext.current?(incident, turn.id),
-                 true <- current? || {:error, "Resolver Condition snapshot changed"},
-                 {:ok, intent} <- downstream_intent(turn),
-                 :ok <- validate_intent(intent, turn, incident, run) do
-              route(turn, intent, incident, run)
-            end
-          end)
+          with :ok <- file_recovery_inputs(source_turn) do
+            Ash.transact(
+              [Case, ResolutionRun, Turn, Evidence, Proposal, Approval, CaseEvent],
+              fn ->
+                with :ok <- CaseAdmissionLock.acquire(),
+                     {:ok, incident} <- lock_case(source_turn.case_id),
+                     {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
+                     {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
+                     {:ok, current?} <- ConditionContext.current?(incident, turn.id),
+                     true <- current? || {:error, "Resolver Condition snapshot changed"},
+                     {:ok, intent} <- downstream_intent(turn),
+                     :ok <- validate_intent(intent, turn, incident, run) do
+                  route(turn, intent, incident, run)
+                end
+              end
+            )
+          end
 
         {:error, _error} = error ->
           error
       end
     end
   end
+
+  defp file_recovery_inputs(%{
+         case_id: case_id,
+         result: %{"intent" => %{"type" => "recovery_conclusion", "evidence_ids" => ids}}
+       })
+       when is_list(ids) do
+    Enum.reduce_while(ids, :ok, fn id, :ok ->
+      with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false) do
+        if evidence.kind == "file_read" do
+          case Cases.read_file_content(id, case_id, authorize?: false) do
+            {:ok, %{"status" => "available", "value" => value}} when is_binary(value) ->
+              {:cont, :ok}
+
+            {:ok, _unavailable} ->
+              {:halt, {:error, "Recovery file contents are no longer available"}}
+
+            {:error, _error} = error ->
+              {:halt, error}
+          end
+        else
+          {:cont, :ok}
+        end
+      else
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp file_recovery_inputs(_turn), do: :ok
 
   defp route(turn, %{"type" => "recovery_conclusion"} = intent, incident, run) do
     with :ok <- ensure_running(incident, run),
@@ -418,6 +452,10 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               :ok
             end
 
+          "file_read" ->
+            with {:ok, source} <- Cases.file_read_source(item.id, incident.id, authorize?: false),
+                 do: verify_claim_evidence([source], incident, run)
+
           _other ->
             {:error, "Recovery conclusion cites unsupported Case Evidence"}
         end
@@ -557,6 +595,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
           end
       end
     )
+  end
+
+  defp valid_fresh_observation(%{kind: "file_read"} = evidence, incident, run) do
+    with {:ok, source} <- Cases.file_read_source(evidence.id, incident.id, authorize?: false),
+         do: valid_fresh_observation(source, incident, run)
   end
 
   defp valid_fresh_observation(

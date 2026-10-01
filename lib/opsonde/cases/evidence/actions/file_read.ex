@@ -15,6 +15,7 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
     case opts[:operation] do
       :capture -> capture(input.arguments.turn_id)
       :read -> read(input.arguments)
+      :source -> file_source(input.arguments)
     end
   end
 
@@ -126,6 +127,69 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
       end
     end
   end
+
+  # Recovery callers use the original observation's freshness and native operation
+  # admission. This action checks current file authority without rereading bytes
+  # inside their transaction; both AI projections obtain bytes through :read.
+  defp file_source(arguments) do
+    Ash.transact([Case, ResolutionRun, Evidence], fn -> file_source_snapshot(arguments) end)
+  end
+
+  defp file_source_snapshot(%{id: id, case_id: case_id}) do
+    with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false),
+         true <- evidence.case_id == case_id || {:error, "File source belongs to another Case"},
+         {:ok, {incident, _run, actor}} <-
+           current_context(case_id, evidence.resolution_run_id),
+         content <- evidence.content,
+         true <-
+           (evidence.kind == "file_read" and content["status"] == "available") ||
+             {:error, "File contents were not obtained"},
+         :ok <-
+           valid_range(
+             content["reference"],
+             content["offset"],
+             content["requested_length"],
+             incident
+           ),
+         reference <- content["reference"],
+         {:ok, current_reference} <-
+           Targets.artifact_reference(reference["id"], reference["target_id"], actor: actor),
+         true <- current_reference == reference || {:error, "File reference changed"},
+         {:ok, source} <- original_source(evidence, reference, MapSet.new(), 0),
+         true <-
+           content["source_observed_at"] == DateTime.to_iso8601(source.observed_at) ||
+             {:error, "File observation time does not match its source"},
+         do: source
+  end
+
+  defp original_source(_evidence, _reference, _seen, depth) when depth >= 32,
+    do: {:error, "File source lineage exceeds the evidence bound"}
+
+  defp original_source(%{kind: "file_read"} = evidence, reference, seen, depth) do
+    content = evidence.content
+
+    with true <-
+           (not MapSet.member?(seen, evidence.id) and content["status"] == "available" and
+              content["reference"] == reference) || {:error, "File source lineage is invalid"},
+         {:ok, source} <- Cases.get_evidence(content["source_evidence_id"], authorize?: false),
+         true <-
+           (source.case_id == evidence.case_id and
+              source.content["target_id"] == reference["target_id"] and
+              FileReference.present_in?(source.content, reference)) ||
+             {:error, "File reference is absent from its original source"},
+         {:ok, original} <-
+           original_source(source, reference, MapSet.put(seen, evidence.id), depth + 1),
+         true <-
+           content["source_observed_at"] == DateTime.to_iso8601(original.observed_at) ||
+             {:error, "File observation time changed in its lineage"},
+         do: {:ok, original}
+  end
+
+  defp original_source(%{kind: kind} = evidence, _reference, _seen, _depth)
+       when kind in ["observation", "target_verification"], do: {:ok, evidence}
+
+  defp original_source(_evidence, _reference, _seen, _depth),
+    do: {:error, "File has no native Target observation source"}
 
   defp read_snapshot(id, case_id) do
     Ash.transact([Case, ResolutionRun, Evidence], fn ->

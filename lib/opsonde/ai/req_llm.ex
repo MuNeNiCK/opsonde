@@ -611,7 +611,10 @@ defmodule Opsonde.AI.ReqLLM do
       "source_observed_at is the original observation time; reading stored bytes does not " <>
       "refresh that observation. eof describes the stored file, not whether its original " <>
       "capture was complete: inspect source_completion_reason. Local read success alone " <>
-      "does not establish a Target's health or satisfy a recovery claim. "
+      "does not establish a Target's health or satisfy a recovery claim. " <>
+      "When the delivered contents themselves establish the outcome, cite the file_read " <>
+      "Evidence id and fact_keys [\"value\"]; explain what those bytes establish, rather " <>
+      "than citing HTTP status, a file reference or local read success. "
   end
 
   defp context(system, user) do
@@ -1823,12 +1826,11 @@ defmodule Opsonde.AI.ReqLLM do
     variants =
       request.evidence
       |> Enum.filter(fn evidence ->
-        evidence.id in evidence_ids and is_map(evidence.content) and
-          is_map(evidence.content["facts"]) and
-          map_size(evidence.content["facts"]) > 0
+        evidence.id in evidence_ids and AI.claim_fact_keys(evidence) != [] and
+          (evidence.kind != "file_read" or is_binary(evidence.content["value"]))
       end)
       |> Enum.map(fn evidence ->
-        keys = Map.keys(evidence.content["facts"])
+        keys = AI.claim_fact_keys(evidence)
 
         object_schema(
           %{

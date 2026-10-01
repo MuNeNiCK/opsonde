@@ -73,13 +73,12 @@ defmodule Opsonde.Cases.Case.Symptom do
              Enum.sort(Map.keys(claim)) == ~w(evidence_id fact_keys reason symptom_id) do
           item = Map.get(by_id, claim["evidence_id"])
           keys = claim["fact_keys"]
-          facts = if item && is_map(item.content), do: item.content["facts"], else: nil
+          available_keys = AI.claim_fact_keys(item)
 
           claim["symptom_id"] == symptom_id and claim["evidence_id"] in cited_ids and
-            not is_nil(item) and item.kind in ["observation", "target_verification"] and
-            is_map(facts) and is_list(keys) and length(keys) in 1..5 and
+            not is_nil(item) and is_list(keys) and length(keys) in 1..5 and
             length(Enum.uniq(keys)) == length(keys) and
-            Enum.all?(keys, &(is_binary(&1) and Map.has_key?(facts, &1))) and
+            Enum.all?(keys, &(is_binary(&1) and &1 in available_keys)) and
             AI.valid_resolver_reason?(claim["reason"])
         else
           false

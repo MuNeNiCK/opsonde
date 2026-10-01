@@ -78,11 +78,46 @@ defmodule Opsonde.FileEvidenceTest do
     assert tail.content["source_observed_at"] == DateTime.to_iso8601(source.observed_at)
     assert tail.content["source_evidence_id"] == evidence.id
 
+    assert Cases.file_read_source!(tail.id, context.incident.id, authorize?: false).id ==
+             source.id
+
     assert Cases.read_file_content!(tail.id, context.incident.id, authorize?: false)["value"] ==
              "/w=="
 
     assert Cases.get_resolution_run!(context.run.id, authorize?: false).target_request_count == 0
     assert Cases.get_resolution_run!(context.run.id, authorize?: false).effect_count == 0
+  end
+
+  test "file citation provenance rechecks current owner, Target and file availability", context do
+    {source, reference} = source!(context)
+    turn = turn!(context, source, reference)
+    receipt = Cases.capture_file_read!(turn.id, authorize?: false)
+
+    assert Cases.file_read_source!(receipt.id, context.incident.id, authorize?: false).id ==
+             source.id
+
+    assert {:error, _} =
+             Cases.file_read_source(receipt.id, Ecto.UUID.generate(), authorize?: false)
+
+    assert {:error, _} =
+             Cases.file_read_source(receipt.id, context.incident.id, actor: context.admin)
+
+    viewer = Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+
+    assert {:error, _} =
+             Cases.file_read_source(receipt.id, context.incident.id, authorize?: false)
+
+    Accounts.change_role!(viewer, :operator, actor: context.admin)
+
+    assert Cases.file_read_source!(receipt.id, context.incident.id, authorize?: false).id ==
+             source.id
+
+    Targets.revoke_artifact!(reference["id"], actor: context.operator)
+
+    assert {:error, _} =
+             Cases.file_read_source(receipt.id, context.incident.id, authorize?: false)
+
+    assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
   end
 
   test "non-UTF8 bytes and empty files retain exact encoding and EOF", context do

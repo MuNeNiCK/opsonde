@@ -76,6 +76,17 @@ defmodule Opsonde.Providers.AI do
 
   def recovery_evidence_ids(request), do: request.recovery_evidence_ids
 
+  def claim_fact_keys(%{kind: kind, content: %{"facts" => facts}})
+      when kind in ["observation", "target_verification"] and is_map(facts),
+      do: Map.keys(facts)
+
+  # A durable claim names the delivered field; it does not contain file bytes.
+  # Current source admission and actual AI disclosure remain the owners' checks.
+  def claim_fact_keys(%{kind: "file_read", content: %{"status" => "available"}}),
+    do: ["value"]
+
+  def claim_fact_keys(_evidence), do: []
+
   def target_candidate_evidence_ids(request, target_id) do
     request.evidence
     |> Enum.filter(fn evidence ->

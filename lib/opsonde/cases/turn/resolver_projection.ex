@@ -99,7 +99,8 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, loaded} ->
       case Cases.get_evidence(id, authorize?: false) do
         {:ok, %{case_id: case_id, kind: kind} = item}
-        when case_id == incident.id and kind in ["observation", "target_verification"] ->
+        when case_id == incident.id and
+               kind in ["observation", "target_verification", "file_read"] ->
           {:cont, {:ok, [item | loaded]}}
 
         _unavailable ->
@@ -566,7 +567,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     manual_recovery_ids =
       if (incident.trigger_kind in [:manual, :audit] and target) &&
            is_struct(recovery_baseline, DateTime) do
-        other_evidence
+        (file_reads ++ other_evidence)
         |> Enum.filter(&manual_recovery_candidate?(&1, incident, run, target, recovery_baseline))
         |> Enum.map(& &1.id)
       else
@@ -846,6 +847,20 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         content: projected_evidence_content(item)
       }
     end)
+  end
+
+  defp manual_recovery_candidate?(
+         %{kind: "file_read"} = evidence,
+         incident,
+         run,
+         target,
+         baseline
+       ) do
+    is_binary(evidence.content["value"]) and
+      case Cases.file_read_source(evidence.id, incident.id, authorize?: false) do
+        {:ok, source} -> manual_recovery_candidate?(source, incident, run, target, baseline)
+        {:error, _unavailable} -> false
+      end
   end
 
   defp manual_recovery_candidate?(evidence, incident, run, target, baseline) do

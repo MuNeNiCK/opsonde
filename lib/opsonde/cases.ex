@@ -388,6 +388,7 @@ defmodule Opsonde.Cases do
 
       define :capture_file_read, action: :capture_file_read, args: [:turn_id]
       define :read_file_content, action: :read_file_content, args: [:id, :case_id]
+      define :file_read_source, action: :file_read_source, args: [:id, :case_id]
 
       define :append_evidence,
         action: :append,

@@ -100,7 +100,7 @@ defmodule Opsonde.Cases.Evidence do
 
       filter expr(
                case_id == ^arg(:case_id) and observed_at >= ^arg(:after) and
-                 kind in ["observation", "target_verification"]
+                 kind in ["observation", "target_verification", "file_read"]
              )
 
       prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 257)
@@ -174,6 +174,14 @@ defmodule Opsonde.Cases.Evidence do
       argument :case_id, :uuid, allow_nil?: false
       run {Opsonde.Cases.Evidence.Actions.FileRead, operation: :read}
     end
+
+    action :file_read_source, :struct do
+      constraints instance_of: __MODULE__
+      transaction? false
+      argument :id, :uuid, allow_nil?: false
+      argument :case_id, :uuid, allow_nil?: false
+      run {Opsonde.Cases.Evidence.Actions.FileRead, operation: :source}
+    end
   end
 
   policies do
@@ -187,7 +195,8 @@ defmodule Opsonde.Cases.Evidence do
              :create_record,
              :append,
              :capture_file_read,
-             :read_file_content
+             :read_file_content,
+             :file_read_source
            ]) do
       forbid_if always()
     end

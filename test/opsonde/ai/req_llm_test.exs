@@ -1820,6 +1820,80 @@ defmodule Opsonde.AI.ReqLLMTest do
            ]
   end
 
+  test "manual recovery can cite delivered file values but cannot cite a bare receipt", context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    symptom_id = String.duplicate("b", 64)
+
+    file = %AI.Evidence{
+      id: "file-current",
+      kind: "file_read",
+      target_id: "target-1",
+      content: %{"status" => "available", "encoding" => "utf8", "value" => "active"}
+    }
+
+    request = %{
+      resolver_request()
+      | alert_state: :not_applicable,
+        case_symptom: %{
+          id: symptom_id,
+          text: "Unknown service status",
+          desired_outcome: "The service is active"
+        },
+        evidence: [file],
+        recovery_evidence_ids: [file.id],
+        disclosure: %{resolver_request().disclosure | allowed_evidence_kinds: ["file_read"]}
+    }
+
+    set_mode(
+      context.agent,
+      {:decision,
+       %{
+         "type" => "recovery",
+         "reason" => "The file contents report active",
+         "evidence_ids" => [file.id],
+         "condition_claims" => [],
+         "desired_outcome_claims" => [
+           %{
+             "symptom_id" => symptom_id,
+             "evidence_id" => file.id,
+             "fact_keys" => ["value"],
+             "reason" => "The body says active"
+           }
+         ]
+       }}
+    )
+
+    assert {:ok, %AI.ResolverDecision{} = decision} = Adapter.resolve(state, request, %{})
+    assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
+    [wire] = requests(context.agent)
+
+    recovery =
+      wire
+      |> output_schema()
+      |> get_in(["properties", "intent", "anyOf"])
+      |> Enum.find(&(get_in(&1, ["properties", "type", "enum"]) == ["recovery"]))
+
+    assert get_in(recovery, [
+             "properties",
+             "desired_outcome_claims",
+             "items",
+             "properties",
+             "fact_keys",
+             "items",
+             "enum"
+           ]) == ["value"]
+
+    assert Enum.find(user_payload(wire)["evidence"], &(&1["id"] == file.id))["content"]["value"] ==
+             "active"
+
+    for content <- [Map.delete(file.content, "value"), %{"status" => "unavailable"}] do
+      absent = %{request | evidence: [%{file | content: content}]}
+
+      assert {:error, %AI.Error{category: :invalid_output}} =
+               AI.Validator.validate_decision(:resolve, decision, absent)
+    end
+  end
+
   test "streamed and buffered responses produce the same decision", context do
     buffered = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 

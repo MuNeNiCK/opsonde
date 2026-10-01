@@ -83,6 +83,13 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   def ready_for_review?(_assessments), do: false
 
+  def current_evidence?(%{kind: "file_read"} = evidence, condition, baseline, target_revision) do
+    case Cases.file_read_source(evidence.id, evidence.case_id, authorize?: false) do
+      {:ok, source} -> current_evidence?(source, condition, baseline, target_revision)
+      {:error, _unavailable} -> false
+    end
+  end
+
   def current_evidence?(evidence, condition, baseline, target_revision)
       when is_struct(baseline, DateTime) do
     DateTime.compare(evidence.observed_at, baseline) != :lt and
@@ -210,6 +217,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       end
     end)
   end
+
+  defp citation_scope(%{kind: "file_read", id: id}), do: {"file_read", id}
 
   defp citation_scope(evidence) do
     content = evidence.content

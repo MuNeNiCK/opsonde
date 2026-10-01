@@ -1637,13 +1637,32 @@ defmodule Opsonde.OperationDeliveryTest do
 
     observation = Cases.accept_operation!(observation_proposal.id, authorize?: false)
 
+    file =
+      Targets.begin_artifact!(
+        context.target.id,
+        "before-effect.bin",
+        "application/octet-stream",
+        6,
+        "96879611650f80a81392a52e0db9b0237669087c4518e1c130e541a505e0eeef",
+        "before-second-effect",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(file.id, 0, "active", actor: context.operator)
+    Targets.complete_artifact!(file.id, actor: context.operator)
+    reference = Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
+
     assert :ok =
              OperationDelivery.run(observation.id,
                target_invocation:
                  invocation({
                    :ok,
                    %Target.Observation{
-                     facts: %{"unit" => "api.service", "active_state" => "inactive"},
+                     facts: %{
+                       "unit" => "api.service",
+                       "active_state" => "inactive",
+                       "file" => reference
+                     },
                      observed_at: DateTime.utc_now()
                    }
                  })
@@ -1693,6 +1712,43 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
                  )
              )
+
+    [file_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(file_turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.FileRead{
+                        source_evidence_id: observation_evidence.id,
+                        reference: reference,
+                        offset: 0,
+                        length: 6,
+                        reason: "Inspect the earlier captured response"
+                      },
+                      usage: %AI.Usage{input_tokens: 1, output_tokens: 1}
+                    }}
+                 end
+               }
+             )
+
+    Cases.route_resolver_decision!(file_turn.id, authorize?: false)
+
+    [receipt] =
+      Cases.list_evidence!(actor: context.operator) |> Enum.filter(&(&1.kind == "file_read"))
+
+    assert receipt.content["source_observed_at"] ==
+             DateTime.to_iso8601(observation_evidence.observed_at)
+
+    assert DateTime.compare(receipt.observed_at, second.accepted_at) == :gt
+
+    assert Cases.read_file_content!(receipt.id, incident.id, authorize?: false)["value"] ==
+             "active"
 
     assert {:ok, [%{status: :ready_for_review, evidence_ids: [evidence_id]}]} =
              ConditionRecovery.assess_current(incident)
@@ -2589,151 +2645,217 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
   end
 
-  test "a manual Case can conclude from a real current-run Target observation", context do
-    {incident, run, proposal} =
-      authorized_proposal!("manual-observation-recovery", context, request_kind: :observation)
+  for {trigger_kind, revoke} <- [
+        {:manual, false},
+        {:signal, false},
+        {:manual, true},
+        {:manual, :corrupt}
+      ] do
+    @tag file_recovery_trigger: trigger_kind, file_recovery_revoke: revoke
+    test "#{trigger_kind} file-only recovery rechecks authority before completion (revoked=#{revoke})",
+         context do
+      kind = context.file_recovery_trigger
+      if kind == :signal, do: enable_signal_automation!(context.admin)
 
-    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+      prepared =
+        authorized_proposal!("file-observation-recovery", context,
+          request_kind: :observation,
+          trigger_kind: kind,
+          recover_before_proposal: true
+        )
 
-    upload =
-      Targets.begin_artifact!(
-        context.target.id,
-        "native-response.bin",
-        "application/octet-stream",
-        5,
-        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
-        "manual-recovery-file",
-        actor: context.operator
-      )
+      {incident, run, proposal} = {elem(prepared, 0), elem(prepared, 1), elem(prepared, 2)}
 
-    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: context.operator)
-    Targets.complete_artifact!(upload.id, actor: context.operator)
-    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
-    assert :ok =
-             OperationDelivery.run(operation.id,
-               target_invocation:
-                 invocation(
-                   {:ok,
-                    %Target.Observation{
-                      observed_at: DateTime.utc_now(),
-                      facts: %{
-                        "unit" => "api.service",
-                        "active_state" => "active",
-                        "file" => reference
-                      },
-                      evidence: [%{"check" => "current"}]
-                    }}
-                 )
-             )
+      upload =
+        Targets.begin_artifact!(
+          context.target.id,
+          "native-response.bin",
+          "application/octet-stream",
+          6,
+          "96879611650f80a81392a52e0db9b0237669087c4518e1c130e541a505e0eeef",
+          "manual-recovery-file",
+          actor: context.operator
+        )
 
-    evidence = operation_evidence_record(operation.id)
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+      Targets.append_artifact_chunk!(upload.id, 0, "active", actor: context.operator)
+      Targets.complete_artifact!(upload.id, actor: context.operator)
 
-    assert :ok =
-             ResolverDelivery.run(turn.id,
-               target_invocation:
-                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn _request ->
-                   {:ok,
-                    %AI.ResolverDecision{
-                      intent: %AI.FileRead{
-                        source_evidence_id: evidence.id,
-                        reference: reference,
-                        offset: 0,
-                        length: 5,
-                        reason: "Inspect the current response"
-                      },
-                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
-                    }}
-                 end
-               }
-             )
+      reference =
+        Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
 
-    Cases.route_resolver_decision!(turn.id, authorize?: false)
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(
+                     {:ok,
+                      %Target.Observation{
+                        observed_at: DateTime.utc_now(),
+                        facts: %{"file" => reference},
+                        evidence: [%{"check" => "current"}]
+                      }}
+                   )
+               )
 
-    [receipt] =
-      Cases.list_evidence!(actor: context.operator) |> Enum.filter(&(&1.kind == "file_read"))
+      evidence = operation_evidence_record(operation.id)
+      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+      turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+      assert :ok =
+               ResolverDelivery.run(turn.id,
+                 target_invocation:
+                   invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request ->
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.FileRead{
+                          source_evidence_id: evidence.id,
+                          reference: reference,
+                          offset: 0,
+                          length: 6,
+                          reason: "Inspect the current response"
+                        },
+                        usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                      }}
+                   end
+                 }
+               )
 
-    assert :ok =
-             ResolverDelivery.run(turn.id,
-               target_invocation:
-                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn request ->
-                   assert request.alert_state == :not_applicable
-                   assert AI.recovery_evidence_ids(request) == [evidence.id]
-                   slice = Enum.find(request.evidence, &(&1.id == receipt.id))
-                   assert slice.content["value"] == "/wABAv8="
-                   assert slice.content["encoding"] == "base64"
+      Cases.route_resolver_decision!(turn.id, authorize?: false)
 
-                   {:ok,
-                    %AI.ResolverDecision{
-                      intent: %AI.RecoveryConclusion{
-                        reason: "The requested service is active after direct inspection",
-                        evidence_ids: [evidence.id],
-                        desired_outcome_claims: [
-                          %{
-                            "symptom_id" => request.case_symptom.id,
-                            "evidence_id" => evidence.id,
-                            "fact_keys" => ["active_state"],
-                            "reason" => "The inspected service is active"
-                          }
-                        ]
-                      },
-                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
-                    }}
-                 end
-               }
-             )
+      [receipt] =
+        Cases.list_evidence!(actor: context.operator) |> Enum.filter(&(&1.kind == "file_read"))
 
-    requested = Cases.route_downstream_decision!(turn.id, authorize?: false)
-    assert requested.status == :running
+      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+      turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
-    assert :ok =
-             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn request ->
-                   slice = Enum.find(request.context_evidence, &(&1.id == receipt.id))
-                   assert slice.content["value"] == "/wABAv8="
-                   assert slice.content["encoding"] == "base64"
-                   assert slice.content["source_evidence_id"] == evidence.id
-                   assert slice.content["reference"] == reference
+      selection = Providers.select_resolver_ai!([], authorize?: false)
+      assert {:ok, projected} = ResolverProjection.build(turn.id, selection)
+      assert receipt.id in AI.recovery_evidence_ids(projected)
 
-                   assert slice.content["source_observed_at"] ==
-                            DateTime.to_iso8601(evidence.observed_at)
+      assert :ok =
+               ResolverDelivery.run(turn.id,
+                 target_invocation:
+                   invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     assert request.alert_state ==
+                              if(kind == :signal, do: :recovered, else: :not_applicable)
 
-                   {:ok,
-                    %AI.ReviewDecision{
-                      verdict: :approved,
-                      reason: "The cited service state is active",
-                      desired_outcome_assessment: %{
-                        "symptom_id" => request.case_symptom.id,
-                        "desired_outcome" => request.case_symptom.desired_outcome,
-                        "evidence_ids" => [evidence.id],
-                        "status" => "supported",
-                        "reason" => "The current service observation supports the outcome"
-                      },
-                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
-                    }}
-                 end
-               }
-             )
+                     assert receipt.id in AI.recovery_evidence_ids(request)
+                     slice = Enum.find(request.evidence, &(&1.id == receipt.id))
+                     assert slice.content["value"] == "active"
+                     assert slice.content["encoding"] == "utf8"
 
-    resolved = Cases.get_case!(incident.id, authorize?: false)
-    assert resolved.status == :resolved
-    assert %DateTime{} = resolved.resolved_at
-    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 23
-    assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.RecoveryConclusion{
+                          reason: "The requested service is active after direct inspection",
+                          evidence_ids: [receipt.id],
+                          condition_claims:
+                            Enum.map(request.conditions, fn condition ->
+                              assert receipt.id in condition.recovery_evidence_ids
+
+                              %{
+                                "condition_id" => condition.id,
+                                "revision" => condition.revision,
+                                "evidence_id" => receipt.id,
+                                "reason" => "The body says active"
+                              }
+                            end),
+                          desired_outcome_claims:
+                            if(kind == :manual,
+                              do: [
+                                %{
+                                  "symptom_id" => request.case_symptom.id,
+                                  "evidence_id" => receipt.id,
+                                  "fact_keys" => ["value"],
+                                  "reason" => "The exact response body says active"
+                                }
+                              ],
+                              else: []
+                            )
+                        },
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert %{"outcome" => "decision"} = Cases.get_turn!(turn.id, authorize?: false).result
+      requested = Cases.route_downstream_decision!(turn.id, authorize?: false)
+      assert requested.status == :running
+
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     slice = Enum.find(request.cited_evidence, &(&1.id == receipt.id))
+                     assert slice.content["value"] == "active"
+                     assert slice.content["encoding"] == "utf8"
+                     assert slice.content["source_evidence_id"] == evidence.id
+                     assert slice.content["reference"] == reference
+
+                     assert slice.content["source_observed_at"] ==
+                              DateTime.to_iso8601(evidence.observed_at)
+
+                     case context.file_recovery_revoke do
+                       true ->
+                         Targets.revoke_artifact!(reference["id"], actor: context.operator)
+
+                       :corrupt ->
+                         Opsonde.Repo.query!(
+                           "UPDATE evidences SET content = jsonb_set(content, '{sha256}', to_jsonb($1::text)) WHERE id = $2",
+                           [String.duplicate("0", 64), Ecto.UUID.dump!(receipt.id)]
+                         )
+
+                       false ->
+                         :ok
+                     end
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        verdict: :approved,
+                        reason: "The cited service state is active",
+                        desired_outcome_assessment:
+                          if(kind == :manual,
+                            do: %{
+                              "symptom_id" => request.case_symptom.id,
+                              "desired_outcome" => request.case_symptom.desired_outcome,
+                              "evidence_ids" => [receipt.id],
+                              "status" => "supported",
+                              "reason" => "The current service observation supports the outcome"
+                            },
+                            else: nil
+                          ),
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      resolved = Cases.get_case!(incident.id, authorize?: false)
+
+      if context.file_recovery_revoke do
+        assert resolved.status == :needs_attention
+        assert is_nil(resolved.resolved_at)
+      else
+        assert resolved.status == :resolved
+        assert %DateTime{} = resolved.resolved_at
+        assert Cases.get_resolution_run!(run.id, authorize?: false).status == :completed
+      end
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 23
+
+      if context.file_recovery_revoke != :corrupt do
+        assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
+      end
+    end
   end
 
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
