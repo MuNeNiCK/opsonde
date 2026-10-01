@@ -879,6 +879,37 @@ defmodule Opsonde.AI.ReqLLMTest do
              request.retry_context
   end
 
+  test "Reviewer truncated retry requests a compact decision without relaxing its judgment",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    request = %{
+      review_request()
+      | retry_context: %{"category" => "invalid_output", "rejection_code" => "truncated"}
+    }
+
+    set_mode(
+      context.agent,
+      {:decision,
+       %{
+         "verdict" => "rejected",
+         "purpose_assessment" => "unknown",
+         "reason" => "Insufficient evidence"
+       }}
+    )
+
+    assert {:ok, %AI.ReviewDecision{verdict: :rejected}} = Adapter.review(state, request, %{})
+    [wire] = requests(context.agent)
+    assert reviewer_payload(wire)["retry_context"] == request.retry_context
+
+    assert Enum.any?(Jason.decode!(wire.body)["messages"], fn message ->
+             message["role"] == "system" and
+               String.contains?(message["content"], "rejection_code is truncated") and
+               String.contains?(message["content"], "compact complete JSON object") and
+               String.contains?(message["content"], "same evidence and safety requirements")
+           end)
+  end
+
   test "eligible Target traversal also permits handoff when operator input is needed",
        context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
