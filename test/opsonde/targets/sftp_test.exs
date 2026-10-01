@@ -73,7 +73,10 @@ defmodule Opsonde.Targets.SFTPTest do
         Agent.get_and_update(state, fn value -> {value, %{value | writes: value.writes + 1}} end)
 
       Process.sleep(control.write_delay)
-      if control.write_drop, do: exit(:kill)
+
+      if control.write_drop or Map.get(control, :drop_after_write) == control.writes + 1,
+        do: exit(:kill)
+
       result
     end
   end
@@ -184,7 +187,7 @@ defmodule Opsonde.Targets.SFTPTest do
         %{
           "host_key_fingerprints" => %{context.endpoint => context.fingerprint},
           "connect_timeout_ms" => 2000,
-          "operation_timeout_ms" => 1000
+          "operation_timeout_ms" => Map.get(context, :operation_timeout_ms, 1000)
         },
         %{"username" => "tester", "auth_method" => "password", "password" => "secret"},
         actor: admin
@@ -633,6 +636,412 @@ defmodule Opsonde.Targets.SFTPTest do
     assert Agent.get(context.agent, & &1.reads) == 1
   end
 
+  test "one native SFTP session reads an exact range into the current public file port",
+       context do
+    result =
+      request(context, :observation, "sftp.session", %{
+        "steps" => [
+          %{"op" => "open", "handle" => "data", "path" => "/download.bin", "flags" => ["read"]},
+          %{
+            "op" => "pread",
+            "handle" => "data",
+            "offset" => 2,
+            "length" => 3,
+            "response_file" => %{
+              "name" => "range.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "close", "handle" => "data"}
+        ]
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert result.facts["completion_reason"] == "sequence_complete"
+    assert result.facts["protocol"]["version"] == 3
+    assert result.facts["protocol"]["extensions"]["encoding"] == "base64"
+    assert {:ok, _bytes} = Base.decode64(result.facts["protocol"]["extensions"]["data"])
+    assert length(result.facts["steps"]) == 3
+    range = Enum.at(result.facts["steps"], 1)
+    assert range["completion_reason"] == "byte_limit"
+    assert range["bytes_read"] == 3
+    file = range["file"]
+    assert file["size_bytes"] == 3
+
+    assert {:ok, <<1, 128, 10>>} =
+             Targets.read_bound_artifact_chunk(file, 0, actor: context.operator)
+
+    assert {:error, _} = Targets.read_bound_artifact_chunk(file, 0, actor: context.viewer)
+  end
+
+  test "native handle positions preserve explicit range offsets and report native attributes",
+       context do
+    output = fn name -> %{"name" => name, "media_type" => "application/octet-stream"} end
+
+    result =
+      request(context, :observation, "sftp.session", %{
+        "steps" => [
+          %{"op" => "open", "handle" => "data", "path" => "/download.bin", "flags" => ["read"]},
+          %{"op" => "position", "handle" => "data", "origin" => "bof", "offset" => 2},
+          %{
+            "op" => "read",
+            "handle" => "data",
+            "length" => 1,
+            "response_file" => output.("first.bin")
+          },
+          %{
+            "op" => "pread",
+            "handle" => "data",
+            "offset" => 0,
+            "length" => 2,
+            "response_file" => output.("explicit.bin")
+          },
+          %{
+            "op" => "read",
+            "handle" => "data",
+            "length" => 2,
+            "response_file" => output.("remaining.bin")
+          },
+          %{"op" => "fstat", "handle" => "data"},
+          %{"op" => "close", "handle" => "data"}
+        ]
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    steps = result.facts["steps"]
+    assert Enum.at(steps, 1)["position"] == 2
+    assert Enum.at(steps, 5)["attributes"]["size"] == 5
+    refute Map.has_key?(Enum.at(steps, 5)["attributes"], "inode")
+
+    for {index, bytes} <- [{2, <<1>>}, {3, <<0, 255>>}, {4, <<128, 10>>}] do
+      assert {:ok, ^bytes} =
+               Targets.read_bound_artifact_chunk(Enum.at(steps, index)["file"], 0,
+                 actor: context.operator
+               )
+    end
+  end
+
+  test "native sessions preserve exclusive creation and append on admitted files", context do
+    file = stage_file(context)
+    remote = "/session-created-" <> Ecto.UUID.generate()
+
+    parameters = %{
+      "steps" => [
+        %{
+          "op" => "open",
+          "handle" => "data",
+          "path" => remote,
+          "flags" => ["write", "creat", "excl"]
+        },
+        %{"op" => "pwrite", "handle" => "data", "offset" => 0, "body_file" => "payload"},
+        %{"op" => "close", "handle" => "data"}
+      ],
+      "files" => %{"payload" => file}
+    }
+
+    assert {:error, _} =
+             request(context, :observation, "sftp.session", parameters)
+             |> Targets.clear_target_request(actor: context.operator)
+
+    created =
+      request(context, :effect, "sftp.session", parameters)
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert created.status == :applied
+    assert Enum.at(created.details["steps"], 1)["bytes_written"] == 5
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == @bytes
+
+    appended =
+      put_in(parameters["steps"], [
+        %{"op" => "open", "handle" => "data", "path" => remote, "flags" => ["write", "append"]},
+        %{"op" => "pwrite", "handle" => "data", "offset" => 0, "body_file" => "payload"},
+        %{"op" => "close", "handle" => "data"}
+      ])
+
+    result =
+      request(context, :effect, "sftp.session", appended)
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) ==
+             @bytes <> @bytes
+  end
+
+  test "a confirmed native session rejection retains the step and acknowledged earlier mutation",
+       context do
+    missing = "/missing-" <> Ecto.UUID.generate() <> "/file.bin"
+
+    rejected =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{"op" => "open", "handle" => "data", "path" => missing, "flags" => ["write", "creat"]},
+          %{"op" => "close", "handle" => "data"}
+        ]
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert rejected.status == :failed
+    assert rejected.details["completed_steps"] == []
+    assert rejected.details["failed_step"]["index"] == 0
+    assert rejected.details["failed_step"]["server_status"] == "no_such_file"
+
+    remote = "/partial-session-" <> Ecto.UUID.generate()
+
+    result =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{"op" => "open", "handle" => "data", "path" => remote, "flags" => ["write", "creat"]},
+          %{"op" => "close", "handle" => "data"},
+          %{"op" => "open", "handle" => "missing", "path" => missing, "flags" => ["read"]},
+          %{"op" => "close", "handle" => "missing"}
+        ]
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :partial
+    assert length(result.details["completed_steps"]) == 2
+    assert result.details["failed_step"]["index"] == 2
+    assert result.details["failed_step"]["server_status"] == "no_such_file"
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == <<>>
+  end
+
+  test "native session interruption keeps acknowledged steps and never repeats a partial write",
+       context do
+    file = stage_file(context)
+    Agent.update(context.agent, &%{&1 | write_drop: true})
+    remote = "/lost-session-" <> Ecto.UUID.generate()
+
+    result =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{
+            "op" => "open",
+            "handle" => "data",
+            "path" => remote,
+            "flags" => ["write", "creat", "trunc"]
+          },
+          %{"op" => "pwrite", "handle" => "data", "offset" => 0, "body_file" => "payload"},
+          %{"op" => "close", "handle" => "data"}
+        ],
+        "files" => %{"payload" => file}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert length(result.details["completed_steps"]) == 1
+    assert result.details["failed_step"]["index"] == 1
+    assert result.details["failed_step"]["bytes_written"] == 0
+    assert Agent.get(context.agent, & &1.writes) == 1
+    assert Agent.get(context.agent, & &1.opens) == 1
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == @bytes
+  end
+
+  test "native session uncertainty distinguishes acknowledged chunks from a lost reply",
+       context do
+    bytes = :binary.copy(@bytes, 10_000)
+    file = stage_file(context, bytes)
+    Agent.update(context.agent, &Map.put(&1, :drop_after_write, 2))
+    remote = "/partial-chunks-" <> Ecto.UUID.generate()
+
+    result =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{"op" => "open", "handle" => "data", "path" => remote, "flags" => ["write", "creat"]},
+          %{"op" => "pwrite", "handle" => "data", "offset" => 0, "body_file" => "payload"},
+          %{"op" => "close", "handle" => "data"}
+        ],
+        "files" => %{"payload" => file}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert result.details["failed_step"]["bytes_written"] == 24_000
+    assert Agent.get(context.agent, & &1.writes) == 2
+
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) ==
+             binary_part(bytes, 0, 48_000)
+  end
+
+  test "native session cancellation and deadline retain confirmed progress without replay",
+       context do
+    file = stage_file(context)
+
+    for {suffix, delay, invocation} <- [
+          {"cancel", 300, %{cancelled?: fn -> Agent.get(context.agent, &(&1.writes > 0)) end}},
+          {"deadline", 1_500, %{}}
+        ] do
+      Agent.update(context.agent, &%{&1 | writes: 0, opens: 0, write_delay: delay})
+      remote = "/session-" <> suffix <> "-" <> Ecto.UUID.generate()
+
+      intent =
+        request(context, :effect, "sftp.session", %{
+          "steps" => [
+            %{
+              "op" => "open",
+              "handle" => "data",
+              "path" => remote,
+              "flags" => ["write", "creat"]
+            },
+            %{"op" => "write", "handle" => "data", "body_file" => "payload"},
+            %{"op" => "close", "handle" => "data"}
+          ],
+          "files" => %{"payload" => file}
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      assert {:error, _} =
+               Targets.dispatch_target_effect(intent, %{cancelled?: fn -> true end},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Agent.get(context.agent, & &1.opens) == 0
+
+      result =
+        Targets.dispatch_target_effect!(intent, invocation,
+          actor: context.operator,
+          authorize?: false
+        )
+
+      assert result.status == :unknown
+      assert length(result.details["completed_steps"]) == 1
+      assert result.details["failed_step"]["index"] == 1
+      assert result.details["failed_step"]["bytes_written"] == 0
+      assert Agent.get(context.agent, & &1.writes) == 1
+      assert Agent.get(context.agent, & &1.opens) == 1
+      assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == @bytes
+    end
+  end
+
+  test "invalid handle sequences and invalidated session clearance never open a remote file",
+       context do
+    open = %{"op" => "open", "handle" => "data", "path" => "/download.bin", "flags" => ["read"]}
+    close = %{"op" => "close", "handle" => "data"}
+
+    for steps <- [
+          [open],
+          [close],
+          [open, open, close],
+          [open, close, close],
+          [Map.put(open, "flags", ["read", "read"]), close]
+        ] do
+      assert {:error, _} =
+               request(context, :observation, "sftp.session", %{"steps" => steps})
+               |> Targets.clear_target_request(actor: context.operator)
+    end
+
+    file = stage_file(context)
+
+    intent =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{
+            "op" => "open",
+            "handle" => "data",
+            "path" => "/session-never-opened.bin",
+            "flags" => ["write", "creat"]
+          },
+          %{"op" => "write", "handle" => "data", "body_file" => "payload"},
+          close
+        ],
+        "files" => %{"payload" => file}
+      })
+
+    clearance = Targets.clear_target_request!(intent, actor: context.operator)
+    assert {:error, _} = Targets.dispatch_target_effect(clearance, %{}, actor: context.viewer)
+
+    readonly =
+      %{intent | authority_mode: :readonly}
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(readonly, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    Targets.revoke_artifact!(file["id"], actor: context.operator)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    fresh = stage_file(context)
+
+    stale =
+      put_in(intent.parameters["files"]["payload"], fresh)
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    Targets.update_access_method!(context.method, context.method.revision, %{priority: 90},
+      actor: context.admin
+    )
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(stale, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Agent.get(context.agent, & &1.opens) == 0
+    refute File.exists?(Path.join(context.directory, "session-never-opened.bin"))
+  end
+
+  @tag operation_timeout_ms: 10_000
+  test "native session reads replenish the SSH window beyond one window of bytes", context do
+    bytes = :binary.copy(@bytes, 300_001)
+    File.write!(Path.join(context.directory, "large-range.bin"), bytes)
+
+    result =
+      request(context, :observation, "sftp.session", %{
+        "steps" => [
+          %{
+            "op" => "open",
+            "handle" => "data",
+            "path" => "/large-range.bin",
+            "flags" => ["read"]
+          },
+          %{
+            "op" => "pread",
+            "handle" => "data",
+            "offset" => 0,
+            "length" => byte_size(bytes) + 1,
+            "response_file" => %{
+              "name" => "large-range.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "close", "handle" => "data"}
+        ]
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    range = Enum.at(result.facts["steps"], 1)
+    assert range["completion_reason"] == "eof"
+    file = range["file"]
+
+    actual =
+      Opsonde.Providers.Target.FileWriter.stream(file, fn offset ->
+        Targets.read_bound_artifact_chunk(file, offset, actor: context.operator)
+      end)
+      |> Enum.to_list()
+      |> IO.iodata_to_binary()
+
+    assert actual == bytes
+    assert file["size_bytes"] == 1_500_005
+  end
+
   test "an unexpected input port failure after native truncate leaves the effect unknown",
        context do
     file = stage_file(context)
@@ -789,6 +1198,74 @@ defmodule Opsonde.Targets.SFTPTest do
     Opsonde.Repo.query!("DROP TRIGGER reject_sftp_completion ON artifacts")
   end
 
+  test "session publication failure retains native mutation acknowledgements without replay",
+       context do
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_session_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'ready' AND NEW.request_id = 'session-save-failure' THEN
+        RAISE EXCEPTION 'test session receipt publication unavailable';
+      END IF;
+      RETURN NEW;
+    END
+    $$
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_session_completion BEFORE UPDATE ON artifacts
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_session_completion()
+    """)
+
+    file = stage_file(context)
+    remote = "/session-save-" <> Ecto.UUID.generate()
+
+    intent =
+      request(context, :effect, "sftp.session", %{
+        "steps" => [
+          %{
+            "op" => "open",
+            "handle" => "data",
+            "path" => remote,
+            "flags" => ["read", "write", "creat"]
+          },
+          %{"op" => "write", "handle" => "data", "body_file" => "payload"},
+          %{
+            "op" => "pread",
+            "handle" => "data",
+            "offset" => 0,
+            "length" => 6,
+            "response_file" => %{
+              "name" => "session-unsaved.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "close", "handle" => "data"}
+        ],
+        "files" => %{"payload" => file}
+      })
+
+    result =
+      %{intent | operation_id: "session-save-failure"}
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert result.details["completion_reason"] == "publication_failed"
+    assert length(result.details["completed_steps"]) == 4
+    assert Enum.at(result.details["completed_steps"], 3)["acknowledged"] == true
+    assert Agent.get(context.agent, & &1.writes) == 1
+    assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) == @bytes
+    receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+    receipt = Enum.find(receipts, &(&1.name == "session-unsaved.bin"))
+    assert receipt.status == :receiving
+    assert receipt.received_bytes == 5
+
+    assert {:error, _} =
+             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+    Opsonde.Repo.query!("DROP TRIGGER reject_session_completion ON artifacts")
+  end
+
   for {adapter, kind, type, protocol} <- [
         {"ssh", "network_device", "custom-network-device", "ssh"},
         {"linux-ssh", "host", "linux", "ssh"},
@@ -806,6 +1283,40 @@ defmodule Opsonde.Targets.SFTPTest do
                context.method.operation_catalog.effects,
                &(&1.operation == "sftp.write_file")
              )
+
+      assert Enum.any?(
+               context.method.operation_catalog.observations,
+               &(&1.operation == "sftp.session")
+             )
+
+      assert Enum.any?(
+               context.method.operation_catalog.effects,
+               &(&1.operation == "sftp.session")
+             )
+
+      session =
+        request(context, :observation, "sftp.session", %{
+          "steps" => [
+            %{"op" => "open", "handle" => "data", "path" => "/download.bin", "flags" => ["read"]},
+            %{
+              "op" => "pread",
+              "handle" => "data",
+              "offset" => 2,
+              "length" => 3,
+              "response_file" => %{
+                "name" => "profile-range.bin",
+                "media_type" => "application/octet-stream"
+              }
+            },
+            %{"op" => "close", "handle" => "data"}
+          ]
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+        |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+      assert Targets.read_bound_artifact_chunk!(Enum.at(session.facts["steps"], 1)["file"], 0,
+               actor: context.operator
+             ) == <<1, 128, 10>>
 
       read =
         request(context, :observation, "sftp.read_file", %{

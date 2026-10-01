@@ -65,7 +65,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
     with {:ok, operation} <- SFTP.operation(request),
          do:
            {:ok,
-            if(operation.kind in [:read, :metadata_read, :directory],
+            if(operation.kind in [:read, :metadata_read, :directory, :session_read],
               do: :observation,
               else: :effect
             )}
@@ -87,14 +87,15 @@ defmodule Opsonde.Targets.Adapters.SSH do
 
   @impl Opsonde.Providers.Target
   def observe(state, %{operation: "sftp." <> _name} = request, invocation) do
-    with {:ok, %{kind: kind} = operation} when kind in [:read, :metadata_read, :directory] <-
+    with {:ok, %{kind: kind} = operation}
+         when kind in [:read, :metadata_read, :directory, :session_read] <-
            SFTP.operation(request),
          {:ok, facts} <- Transport.sftp(state, request.connection.endpoint, operation, invocation) do
       {:ok,
        %Target.Observation{
          facts: facts,
          observed_at: DateTime.utc_now(),
-         evidence: [%{"source" => "sftp", "path" => operation.path}]
+         evidence: [sftp_evidence(operation)]
        }}
     else
       {:error, category, _message} = error when category in [:cancelled, :failed] -> error
@@ -106,13 +107,24 @@ defmodule Opsonde.Targets.Adapters.SSH do
   def observe(_state, _request, _invocation),
     do: {:error, :failed, "Raw SSH commands require effect authority"}
 
+  defp sftp_evidence(%{path: path}), do: %{"source" => "sftp", "path" => path}
+
+  defp sftp_evidence(%{kind: :session_read}),
+    do: %{"source" => "sftp", "operation" => "sftp.session"}
+
   @impl Opsonde.Providers.Target
   def effect(state, %{operation: "sftp." <> _name} = request, invocation) do
-    with {:ok, %{kind: kind} = operation} when kind in [:write, :metadata_write] <-
+    with {:ok, %{kind: kind} = operation} when kind in [:write, :metadata_write, :session_write] <-
            SFTP.operation(request) do
       case Transport.sftp(state, request.connection.endpoint, operation, invocation) do
-        {:ok, details} -> {:ok, %Target.EffectResult{status: :applied, details: details}}
-        error -> effect_result(error)
+        {:ok, details} ->
+          {:ok, %Target.EffectResult{status: :applied, details: details}}
+
+        {:session_result, status, details} ->
+          {:ok, %Target.EffectResult{status: status, details: details}}
+
+        error ->
+          effect_result(error)
       end
     else
       _invalid -> {:error, :failed, "SFTP effect request is invalid"}

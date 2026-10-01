@@ -88,6 +88,19 @@ defmodule Opsonde.Transports.SSH do
     run(config, endpoint, cancelled?, fn _connection, _deadline, _parent, _reference -> :ok end)
   end
 
+  def sftp(%Config{} = config, endpoint, %{kind: kind} = operation, invocation)
+      when kind in [:session_read, :session_write] do
+    Opsonde.Transports.SSH.SFTP.Session.request(operation, invocation, fn callback ->
+      subsystem(
+        config,
+        endpoint,
+        "sftp",
+        callback,
+        Map.get(invocation, :cancelled?, fn -> false end)
+      )
+    end)
+  end
+
   def sftp(%Config{} = config, endpoint, operation, invocation) do
     cancel = Map.get(invocation, :cancelled?, fn -> false end)
 
@@ -154,6 +167,11 @@ defmodule Opsonde.Transports.SSH do
   def channel_send(_channel, _data, _dispatched?),
     do: {:error, :failed, "SSH channel payload is invalid"}
 
+  def channel_progress(%Channel{reporter: {parent, reference}}, progress) do
+    send(parent, {:opsonde_ssh_progress, reference, progress})
+    :ok
+  end
+
   def channel_receive(%Channel{} = channel, buffer, complete?)
       when is_binary(buffer) and is_function(complete?, 1),
       do: receive_channel(channel, buffer, complete?, false)
@@ -202,7 +220,7 @@ defmodule Opsonde.Transports.SSH do
         end
       end)
 
-    await(task, reference, nil, :connecting, cancelled?, deadline)
+    await(task, reference, nil, :connecting, nil, cancelled?, deadline)
   end
 
   defp connect(config, host, port, fingerprint) do
@@ -345,6 +363,7 @@ defmodule Opsonde.Transports.SSH do
               :ssh_connection.close(channel.connection, channel.id)
               {:error, :output_limit_after_dispatch, "SSH subsystem output exceeded its limit"}
             else
+              :ssh_connection.adjust_window(channel.connection, channel.id, byte_size(data))
               receive_channel(channel, buffer <> data, complete?, reject_partial_timeout?)
             end
 
@@ -420,41 +439,50 @@ defmodule Opsonde.Transports.SSH do
     end
   end
 
-  defp await(task, reference, connection, phase, cancelled?, deadline) do
+  defp await(task, reference, connection, phase, progress, cancelled?, deadline) do
     cond do
       cancelled?(cancelled?) ->
         Task.shutdown(task, :brutal_kill)
-        {connection, phase} = latest_state(reference, connection, phase)
+        {connection, phase, progress} = latest_state(reference, connection, phase, progress)
         close(connection)
-        {:error, cancellation_category(phase), "SSH operation was cancelled"}
+        interrupted(cancellation_category(phase), "SSH operation was cancelled", progress)
 
       System.monotonic_time(:millisecond) >= deadline ->
         Task.shutdown(task, :brutal_kill)
-        {connection, phase} = latest_state(reference, connection, phase)
+        {connection, phase, progress} = latest_state(reference, connection, phase, progress)
         close(connection)
-        {:error, timeout_category(phase), "SSH operation timed out"}
+        interrupted(timeout_category(phase), "SSH operation timed out", progress)
 
       true ->
         receive do
           {:opsonde_ssh_connection, ^reference, connected} ->
-            await(task, reference, connected, :connected, cancelled?, deadline)
+            await(task, reference, connected, :connected, progress, cancelled?, deadline)
 
           {:opsonde_ssh_dispatched, ^reference, ^connection} ->
-            await(task, reference, connection, :dispatched, cancelled?, deadline)
+            await(task, reference, connection, :dispatched, progress, cancelled?, deadline)
+
+          {:opsonde_ssh_progress, ^reference, latest} ->
+            await(task, reference, connection, phase, latest, cancelled?, deadline)
         after
           @poll_interval ->
             case Task.yield(task, 0) do
               {:ok, {:unexpected_failure, message}} ->
-                unexpected_failure(reference, connection, phase, message)
+                unexpected_failure(reference, connection, phase, progress, message)
 
               {:ok, result} ->
-                result
+                {_connection, _phase, latest} =
+                  latest_state(reference, connection, phase, progress)
+
+                case result do
+                  {:error, category, message} -> interrupted(category, message, latest)
+                  _ -> result
+                end
 
               {:exit, _reason} ->
-                unexpected_failure(reference, connection, phase, "SSH transport failed")
+                unexpected_failure(reference, connection, phase, progress, "SSH transport failed")
 
               nil ->
-                await(task, reference, connection, phase, cancelled?, deadline)
+                await(task, reference, connection, phase, progress, cancelled?, deadline)
             end
         end
     end
@@ -653,24 +681,30 @@ defmodule Opsonde.Transports.SSH do
   defp transport_error_after_dispatch(_reason),
     do: {:error, :disconnected_after_dispatch, "SSH connection closed after dispatch"}
 
-  defp latest_state(reference, connection, phase) do
+  defp latest_state(reference, connection, phase, progress) do
     receive do
       {:opsonde_ssh_connection, ^reference, connected} ->
-        latest_state(reference, connected, phase)
+        latest_state(reference, connected, phase, progress)
 
       {:opsonde_ssh_dispatched, ^reference, dispatched} ->
-        latest_state(reference, dispatched, :dispatched)
+        latest_state(reference, dispatched, :dispatched, progress)
+
+      {:opsonde_ssh_progress, ^reference, latest} ->
+        latest_state(reference, connection, phase, latest)
     after
-      0 -> {connection, phase}
+      0 -> {connection, phase, progress}
     end
   end
 
-  defp unexpected_failure(reference, connection, phase, message) do
-    {connection, phase} = latest_state(reference, connection, phase)
+  defp unexpected_failure(reference, connection, phase, progress, message) do
+    {connection, phase, progress} = latest_state(reference, connection, phase, progress)
     close(connection)
     category = if phase == :dispatched, do: :disconnected_after_dispatch, else: :failed
-    {:error, category, message}
+    interrupted(category, message, progress)
   end
+
+  defp interrupted(category, message, nil), do: {:error, category, message}
+  defp interrupted(category, message, progress), do: {:error, category, message, progress}
 
   defp host_key_rejected?(reference) do
     receive do

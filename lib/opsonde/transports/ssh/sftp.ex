@@ -11,7 +11,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
   # Supplied file ports own authorization and storage; publication is caller-side.
   def request(%{kind: :directory} = operation, invocation, runner) do
     with :ok <- active(invocation),
-         {:ok, writer} <- writer(operation.output, invocation),
+         {:ok, writer} <- capture(operation.output, invocation),
          {:ok, result} <-
            runner.(fn connection, deadline, _parent, _reference ->
              channel(connection, deadline, fn pid -> metadata_read(pid, operation, deadline) end)
@@ -69,7 +69,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   def request(%{kind: :read} = operation, invocation, runner) do
     with :ok <- active(invocation),
-         {:ok, writer} <- writer(operation.output, invocation),
+         {:ok, writer} <- capture(operation.output, invocation),
          {:ok, size} <-
            runner.(fn connection, deadline, _parent, _reference ->
              channel(connection, deadline, fn pid ->
@@ -96,8 +96,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   def request(%{kind: :write} = operation, invocation, runner) do
     with :ok <- active(invocation),
-         {:ok, reader} <- reader(operation, invocation),
-         :ok <- preflight(operation.file, reader),
+         {:ok, reader} <- admit_input(operation, invocation),
          do:
            runner.(fn connection, deadline, parent, reference ->
              channel(connection, deadline, fn pid ->
@@ -259,7 +258,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   # These are the attributes carried by OTP's native SFTP codec. Do not present
   # its synthetic inode/device/link defaults as observations from the server.
-  defp attributes(file_info() = info) do
+  def attributes(file_info() = info) do
     @file_info
     |> Keyword.keys()
     |> Enum.zip(Tuple.to_list(info) |> tl())
@@ -329,6 +328,12 @@ defmodule Opsonde.Transports.SSH.SFTP do
          do: write_chunks(pid, handle, tail, limit, deadline)
   end
 
+  def admit_input(operation, invocation) do
+    with {:ok, reader} <- reader(operation, invocation),
+         :ok <- preflight(operation.file, reader),
+         do: {:ok, reader}
+  end
+
   defp preflight(%{"size_bytes" => size}, reader) do
     case reader.(0) do
       {:ok, bytes}
@@ -345,20 +350,20 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   defp reader(_operation, _invocation), do: file_error()
 
-  defp writer(%{"name" => name, "media_type" => media}, %{file_writer: callback})
-       when is_function(callback, 3) do
+  def capture(%{"name" => name, "media_type" => media}, %{file_writer: callback})
+      when is_function(callback, 3) do
     case callback.(Ecto.UUID.generate(), name, media) do
       {:ok, %Target.FileWriter{status: :receiving, offset: 0} = writer} -> {:ok, writer}
       _ -> file_error()
     end
   end
 
-  defp writer(_output, _invocation), do: file_error()
+  def capture(_output, _invocation), do: file_error()
   defp file_error, do: {:error, :failed, "SFTP file transfer could not be saved or read"}
 
-  defp append_receipt(_writer, <<>>, _offset), do: :ok
+  def append_receipt(_writer, <<>>, _offset), do: :ok
 
-  defp append_receipt(writer, bytes, offset) do
+  def append_receipt(writer, bytes, offset) do
     count = min(writer.chunk_bytes, byte_size(bytes))
     <<chunk::binary-size(^count), tail::binary>> = bytes
 
@@ -368,7 +373,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
          else: (_ -> file_error())
   end
 
-  defp publish(writer, size, reason) do
+  def publish(writer, size, reason) do
     case writer.complete.(size, nil, reason) do
       {:ok, file} -> {:ok, file}
       {:error, %{category: :cancelled}} -> {:error, :cancelled, "SFTP transfer was cancelled"}
@@ -396,8 +401,8 @@ defmodule Opsonde.Transports.SSH.SFTP do
   defp native(result, _phase), do: result
   defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
-  defp active(%{cancelled?: callback}) when is_function(callback, 0),
+  def active(%{cancelled?: callback}) when is_function(callback, 0),
     do: if(callback.(), do: {:error, :cancelled, "SFTP transfer was cancelled"}, else: :ok)
 
-  defp active(_invocation), do: :ok
+  def active(_invocation), do: :ok
 end
