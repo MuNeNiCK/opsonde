@@ -163,7 +163,9 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp valid_verification?(:remediation, intent, verification_intent, verification_tool),
     do:
       is_map(intent["expected_result"]) and
-        exact_verification?(verification_intent, verification_tool)
+        ((verification_intent == %{} and verification_tool == %{} and
+            map_size(intent["expected_result"]) > 0) or
+           exact_verification?(verification_intent, verification_tool))
 
   defp exact_verification?(intent, tool) do
     intent["tool_id"] == tool["id"] and

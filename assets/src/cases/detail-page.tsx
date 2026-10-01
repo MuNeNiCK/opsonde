@@ -872,9 +872,9 @@ function CompletedCaseSummary({
 }) {
   const { t, i18n } = useTranslation();
   const document = report.document;
-  const appliedActions = document.actions.filter((action) => action.status === "applied");
-  const visibleOperations = appliedActions.slice(0, 3);
-  const additionalOperations = appliedActions.slice(3);
+  const remediationActions = document.actions;
+  const visibleOperations = remediationActions.slice(0, 3);
+  const additionalOperations = remediationActions.slice(3);
 
   return (
     <Card>
@@ -933,7 +933,7 @@ function CompletedCaseSummary({
               <Wrench className="size-4 text-muted-foreground" aria-hidden="true" />
               <h3>{t("cases.completionSummary.actions")}</h3>
             </div>
-            {appliedActions.length > 0 ? (
+            {remediationActions.length > 0 ? (
               <div className="space-y-3">
                 <ul className="space-y-3">
                   {visibleOperations.map((operation) => (

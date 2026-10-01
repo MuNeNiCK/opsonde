@@ -472,7 +472,10 @@ defmodule Opsonde.AI.ReqLLM do
         "these are current Target observations. A signal_event identifies a Condition but " <>
         "cannot be cited as remediation evidence; it may justify investigation. " <>
         "Investigation proposals may name current Conditions being investigated or leave that " <>
-        "list empty; naming them does not authorize an effect. A remediation proposal's verification must use an observation " <>
+        "list empty; naming them does not authorize an effect. For remediation, provide verification " <>
+        "with either a supplied observation request or expected_result_json alone for later " <>
+        "investigation. The latter must state a nonempty expected outcome to investigate " <>
+        "after the effect; no success is inferred from its execution result. A supplied verification uses an observation " <>
         "whose returned facts can directly establish the expected effect outcome, and its " <>
         "expected result must use only fields and value types allowed by that observation " <>
         "tool's verification_schema in the user payload. Base every intent only on supplied " <>
@@ -852,6 +855,21 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp request_verification(_value, :investigation, _tool, _request),
     do: {:ok, %{}, nil}
+
+  defp request_verification(
+         %{"verification" => %{"expected_result_json" => _encoded} = verification},
+         :remediation,
+         %{request_kind: :effect},
+         _request
+       )
+       when map_size(verification) == 1 do
+    with {:ok, expected} <- decoded_map(verification, "expected_result_json"),
+         true <- map_size(expected) > 0 do
+      {:ok, expected, nil}
+    else
+      _invalid -> invalid_output()
+    end
+  end
 
   defp request_verification(value, :remediation, %{request_kind: :effect}, request) do
     with {:ok, verification} <- verification_intent(value["verification"], request) do
@@ -1763,7 +1781,7 @@ defmodule Opsonde.AI.ReqLLM do
       end
 
     effect_schema =
-      if effect_variants != [] and verification_variants != [] and
+      if effect_variants != [] and
            AI.effect_target_evidence_ids(request) != [] and
            (request.conditions == [] or actionable_conditions != []) do
         intent_schema("proposal", %{
@@ -1772,7 +1790,16 @@ defmodule Opsonde.AI.ReqLLM do
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
           "affected_conditions" =>
             condition_claims_schema(actionable_conditions, 1, request.target_relations),
-          "verification" => %{"anyOf" => verification_variants}
+          "verification" => %{
+            "anyOf" =>
+              verification_variants ++
+                [
+                  object_schema(
+                    %{"expected_result_json" => json_object_string_schema()},
+                    ["expected_result_json"]
+                  )
+                ]
+          }
         })
       end
 

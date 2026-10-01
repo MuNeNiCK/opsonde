@@ -352,7 +352,7 @@ defmodule Opsonde.Cases.Case do
 
       argument :kind, :atom,
         allow_nil?: false,
-        constraints: [one_of: [:verification, :observation, :stale_dispatch]]
+        constraints: [one_of: [:verification, :resolver, :stale_dispatch]]
 
       argument :next_turn_id, :uuid
       argument :source_turn_id, :uuid

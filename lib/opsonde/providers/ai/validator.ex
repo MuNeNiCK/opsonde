@@ -994,6 +994,13 @@ defmodule Opsonde.Providers.AI.Validator do
        ),
        do: proposal.expected_result == %{} and is_nil(proposal.verification_intent)
 
+  defp valid_request_verification?(
+         %AI.Proposal{purpose: :remediation, verification_intent: nil} = proposal,
+         _tool,
+         _tools
+       ),
+       do: is_map(proposal.expected_result) and map_size(proposal.expected_result) > 0
+
   defp valid_request_verification?(%AI.Proposal{request_kind: :effect} = proposal, _tool, tools),
     do:
       is_map(proposal.expected_result) and
@@ -1001,6 +1008,11 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp valid_review_verification?(%AI.Proposal{purpose: :investigation} = proposal),
     do: proposal.expected_result == %{} and is_nil(proposal.verification_intent)
+
+  defp valid_review_verification?(
+         %AI.Proposal{purpose: :remediation, verification_intent: nil} = proposal
+       ),
+       do: is_map(proposal.expected_result) and map_size(proposal.expected_result) > 0
 
   defp valid_review_verification?(%AI.Proposal{request_kind: :effect} = proposal),
     do:

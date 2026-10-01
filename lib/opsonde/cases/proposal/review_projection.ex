@@ -281,6 +281,8 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
 
   defp verification_intent(%{purpose: :investigation}), do: nil
 
+  defp verification_intent(%{verification_intent: intent}) when map_size(intent) == 0, do: nil
+
   defp verification_intent(proposal) do
     %AI.VerificationIntent{
       tool_id: proposal.verification_intent["tool_id"],

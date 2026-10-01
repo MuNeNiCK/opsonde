@@ -27,43 +27,49 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
     end
   end
 
-  defp pending(changeset, %{purpose: :remediation} = operation) do
-    if arg(changeset, :kind) == :verification do
-      {:ok,
-       %{
-         "action" => "verify_operation",
-         "operation_id" => operation.id,
-         "proposal_id" => operation.proposal_id
-       }}
-    else
-      stale_pending(changeset, operation)
+  defp pending(changeset, operation) do
+    cond do
+      arg(changeset, :kind) == :verification and operation.purpose == :remediation ->
+        {:ok,
+         %{
+           "action" => "verify_operation",
+           "operation_id" => operation.id,
+           "proposal_id" => operation.proposal_id
+         }}
+
+      arg(changeset, :kind) == :resolver ->
+        result_pending(changeset, operation)
+
+      true ->
+        stale_pending(changeset, operation)
     end
   end
 
-  defp pending(changeset, %{purpose: :investigation} = operation) do
-    if arg(changeset, :kind) == :observation do
-      with {:ok, source} <- Cases.get_turn(arg(changeset, :source_turn_id), authorize?: false),
-           {:ok, evidence} <- Cases.get_evidence(arg(changeset, :evidence_id), authorize?: false),
-           true <-
-             source.case_id == operation.case_id and
-               source.resolution_run_id == operation.resolution_run_id,
-           true <-
-             evidence.case_id == operation.case_id and evidence.source == "operation" and
-               evidence.source_ref == operation.id,
-           :ok <- next_turn_current?(changeset, operation) do
-        {:ok,
-         %{
-           "action" => "resolve_turn",
-           "turn_id" => arg(changeset, :next_turn_id),
-           "source_turn_id" => source.id,
-           "operation_id" => operation.id,
-           "evidence_id" => evidence.id
-         }}
-      else
-        _invalid -> {:error, :invalid_observation_handoff}
-      end
+  defp result_pending(changeset, operation) do
+    with {:ok, proposal} <- Cases.get_proposal(operation.proposal_id, authorize?: false),
+         true <-
+           operation.purpose == :investigation or
+             (proposal.verification_intent == %{} and proposal.verification_tool == %{}),
+         {:ok, source} <- Cases.get_turn(arg(changeset, :source_turn_id), authorize?: false),
+         true <- source.id == proposal.source_turn_id,
+         {:ok, evidence} <- Cases.get_evidence(arg(changeset, :evidence_id), authorize?: false),
+         true <-
+           source.case_id == operation.case_id and
+             source.resolution_run_id == operation.resolution_run_id,
+         true <-
+           evidence.case_id == operation.case_id and evidence.source == "operation" and
+             evidence.source_ref == operation.id,
+         :ok <- next_turn_current?(changeset, operation) do
+      {:ok,
+       %{
+         "action" => "resolve_turn",
+         "turn_id" => arg(changeset, :next_turn_id),
+         "source_turn_id" => source.id,
+         "operation_id" => operation.id,
+         "evidence_id" => evidence.id
+       }}
     else
-      stale_pending(changeset, operation)
+      _invalid -> {:error, :invalid_result_handoff}
     end
   end
 
@@ -109,7 +115,7 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
   defp available_pending(
          %{"operation_id" => operation_id, "action" => action},
          operation_id,
-         :observation
+         :resolver
        )
        when action in ["dispatch_operation", "resolve_turn"],
        do: :ok

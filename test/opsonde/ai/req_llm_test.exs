@@ -2213,6 +2213,79 @@ defmodule Opsonde.AI.ReqLLMTest do
     refute Map.has_key?(visible, "state")
   end
 
+  test "generate_object offers causal raw remediation followed by separately planned investigation",
+       context do
+    {:ok, methods} = Opsonde.Targets.Adapters.SSH.capabilities(nil, %{})
+    command = Enum.find(methods.effects, &(&1.operation == "command.execute"))
+
+    tool = %{
+      proposal_tool()
+      | operation: command.operation,
+        capability: command.capability,
+        input_schema: command.input_schema
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: "target-1",
+        selected_target_revision: 4,
+        proposal_tools: [tool],
+        observation_tools: [],
+        disclosure: %{
+          disclosure()
+          | allowed_target_ids: ["target-1"],
+            allowed_evidence_kinds: ["observation"]
+        },
+        evidence: [
+          %AI.Evidence{
+            id: "evidence-1",
+            kind: "observation",
+            target_id: "target-1",
+            content: %{"status" => "applied", "facts" => %{"stdout" => "api.service inactive"}}
+          }
+        ]
+    }
+
+    expected = %{"service" => "api.service", "state" => "active"}
+
+    response = %{
+      "reason" => "Start the service shown inactive by current Target output",
+      "intent" => %{
+        "type" => "proposal",
+        "purpose" => "remediation",
+        "action" => %{
+          "tool_id" => tool.id,
+          "selectors" => %{},
+          "parameters" => %{"command" => "systemctl start api.service"}
+        },
+        "evidence_ids" => ["evidence-1"],
+        "affected_conditions" => [],
+        "verification" => %{"expected_result_json" => Jason.encode!(expected)}
+      }
+    }
+
+    for provider <- ["openai", "anthropic"] do
+      endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
+      state = state!(provider, endpoint, %{"api_key" => "remediation-secret"})
+      set_mode(context.agent, {:decision, response})
+
+      assert {:ok,
+              %AI.ResolverDecision{
+                intent: %AI.Proposal{
+                  purpose: :remediation,
+                  request_kind: :effect,
+                  verification_intent: nil,
+                  expected_result: ^expected
+                }
+              } = decision} =
+               Adapter.resolve(state, request, %{})
+
+      assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
+      invalid = %{decision | intent: %{decision.intent | expected_result: %{}}}
+      assert {:error, _error} = AI.Validator.validate_decision(:resolve, invalid, request)
+    end
+  end
+
   test "generate_object offers opaque investigation without a remediation verification tool",
        context do
     {:ok, methods} = Opsonde.Targets.Adapters.SSH.capabilities(nil, %{})

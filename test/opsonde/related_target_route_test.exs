@@ -164,7 +164,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         "cycle-after-observation",
         context,
         context.vm,
-        %{"source" => "observation"}
+        %{"source" => "target_result"}
       )
 
     assert {:ok, observed_request} = projection(observed_turn, context)
@@ -177,7 +177,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         "cycle-after-entered-observation",
         context,
         context.vm,
-        %{"source" => "observation", "prior_relationship_id" => context.runs_on.id}
+        %{"source" => "target_result", "prior_relationship_id" => context.runs_on.id}
       )
 
     assert {:ok, observed_after_traversal_request} =

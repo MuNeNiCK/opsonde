@@ -287,6 +287,16 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
+  defp continue_handoff(
+         %{purpose: :remediation} = operation,
+         %{verification_intent: intent, verification_tool: tool} = proposal,
+         evidence,
+         incident
+       )
+       when map_size(intent) == 0 and map_size(tool) == 0 do
+    continue_with_result(operation, proposal, evidence, incident)
+  end
+
   defp continue_handoff(%{purpose: :remediation} = operation, _proposal, _evidence, incident) do
     pending = %{
       "action" => "verify_operation",
@@ -331,19 +341,23 @@ defmodule Opsonde.Cases.Operation.Delivery do
          evidence,
          incident
        ) do
+    continue_with_result(operation, proposal, evidence, incident)
+  end
+
+  defp continue_with_result(operation, proposal, evidence, incident) do
     Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
       with {:ok, source_turn} <- Cases.get_turn(proposal.source_turn_id, authorize?: false),
            {:ok, result} <-
              Cases.start_turn(
                operation.case_id,
                operation.resolution_run_id,
-               "operation:observation:next-turn:#{operation.id}",
-               observation_turn_intent(source_turn, evidence),
+               "operation:result:next-turn:#{operation.id}",
+               result_turn_intent(source_turn, evidence),
                %{"action" => "continue_resolution", "operation_id" => operation.id},
                "Review Resolver limits or continue the Case manually",
                authorize?: false
              ) do
-        set_observation_pending(operation, proposal, evidence, incident, result)
+        set_result_pending(operation, proposal, evidence, incident, result)
       end
     end)
     |> case do
@@ -367,10 +381,10 @@ defmodule Opsonde.Cases.Operation.Delivery do
     )
   end
 
-  defp observation_turn_intent(source_turn, evidence) do
+  defp result_turn_intent(source_turn, evidence) do
     intent = %{
-      "objective" => "Continue resolution with the reviewed Target observation",
-      "source" => "observation",
+      "objective" => "Assess the actual Target result and obtain further evidence if needed",
+      "source" => "target_result",
       "source_turn_id" => source_turn.id,
       "evidence_id" => evidence.id
     }
@@ -384,10 +398,10 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
-  defp set_observation_pending(_operation, _proposal, _evidence, _incident, %{status: :exhausted}),
-       do: :ok
+  defp set_result_pending(_operation, _proposal, _evidence, _incident, %{status: :exhausted}),
+    do: :ok
 
-  defp set_observation_pending(operation, proposal, evidence, incident, %{
+  defp set_result_pending(operation, proposal, evidence, incident, %{
          status: status,
          value: turn
        })
@@ -409,7 +423,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
           current,
           current.revision,
           operation.id,
-          :observation,
+          :resolver,
           turn.id,
           proposal.source_turn_id,
           evidence.id,

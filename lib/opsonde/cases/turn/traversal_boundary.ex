@@ -8,7 +8,7 @@ defmodule Opsonde.Cases.Turn.TraversalBoundary do
       do: true
 
   def immediate_reverse?(relationship_id, %{
-        "source" => "observation",
+        "source" => "target_result",
         "prior_relationship_id" => relationship_id
       }),
       do: true

@@ -349,6 +349,233 @@ defmodule Opsonde.OperationDeliveryTest do
     assert length(Cases.operations_for_case!(incident.id, authorize?: false)) == 1
   end
 
+  test "reviewed raw remediation returns its actual outcome for separately reviewed investigation",
+       context do
+    configure_mode!(context.admin, :auto)
+
+    for outcome <- [:applied, :unknown] do
+      {:ok, capabilities} = Opsonde.Targets.Adapters.SSH.capabilities(nil, %{})
+      raw = Enum.find(capabilities.effects, &(&1.operation == "command.execute"))
+      raw = %{raw | capability: "effect.command"}
+
+      target =
+        Targets.create_target!("raw-remediation-#{outcome}", "host", "linux", %{}, nil,
+          actor: context.admin
+        )
+
+      method =
+        Targets.create_access_method!(
+          target.id,
+          context.provider.id,
+          "raw-ssh",
+          "ssh",
+          "ssh://raw-remediation-#{outcome}",
+          context.provider.revision,
+          10,
+          ["effect.command"],
+          actor: context.admin
+        )
+        |> then(
+          &Targets.check_access_method!(
+            &1.id,
+            &1.revision,
+            invocation({:ok, %Target.Capabilities{observations: [], effects: [raw]}}),
+            actor: context.admin
+          )
+        )
+
+      context = %{context | target: target, method: method}
+
+      {incident, run, proposal} =
+        authorized_proposal!("raw-remediation-#{outcome}", context, defer_verification: true)
+
+      assert proposal.verification_intent == %{}
+
+      assert :ok =
+               Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     assert request.proposal.purpose == :remediation
+                     assert request.proposal.verification_intent == nil
+                     assert request.proposal.expected_result == %{"service" => "running"}
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        verdict: :approved,
+                        purpose_assessment: :remediation,
+                        reason: "Current evidence justifies the exact service change",
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      response =
+        if outcome == :applied,
+          do:
+            {:ok,
+             %Target.EffectResult{
+               status: :applied,
+               details: %{"stdout" => "start request completed"}
+             }},
+          else: {:error, :failed, "Remote response was lost"}
+
+      assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation(response))
+
+      current = Cases.get_case!(incident.id, actor: context.operator)
+      assert current.status == :running
+      assert current.pending_intent["action"] == "resolve_turn"
+
+      evidence =
+        Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+
+      assert evidence.kind == "operation_outcome"
+      assert evidence.content["purpose"] == "remediation"
+      assert evidence.content["status"] == to_string(outcome)
+
+      if outcome == :applied,
+        do: assert(evidence.content["details"]["stdout"] == "start request completed"),
+        else:
+          assert(evidence.content["details"]["message"] == "Target dispatch result is unknown")
+
+      refute Cases.verification_attempt_by_operation!(operation.id,
+               authorize?: false,
+               not_found_error?: false
+             )
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(fn -> flunk("raw remediation was replayed") end)
+               )
+
+      next = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+      assert :ok =
+               ResolverDelivery.run(next.id,
+                 target_invocation:
+                   invocation({:ok, %Target.Capabilities{observations: [], effects: [raw]}}),
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     assert request.recovery_evidence_ids == []
+                     assert request.observation_tools == []
+                     [tool] = request.proposal_tools
+
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.Proposal{
+                          tool_id: tool.id,
+                          target_id: tool.target_id,
+                          target_revision: tool.target_revision,
+                          access_method_id: tool.access_method_id,
+                          access_method_revision: tool.access_method_revision,
+                          request_kind: :effect,
+                          purpose: :investigation,
+                          capability: tool.capability,
+                          operation: tool.operation,
+                          selectors: %{},
+                          parameters: %{"command" => "systemctl is-active api.service"},
+                          reason: "Inspect actual service state after the change",
+                          evidence_ids: [evidence.id],
+                          expected_result: %{},
+                          verification_intent: nil
+                        },
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      completed = Cases.get_turn!(next.id, authorize?: false)
+      assert completed.result["outcome"] == "decision", inspect(completed.result)
+      Cases.route_downstream_decision!(next.id, authorize?: false)
+      diagnostic = Cases.proposal_by_source_turn!(next.id, authorize?: false)
+      assert diagnostic.purpose == :investigation
+
+      assert :ok =
+               Opsonde.Cases.Proposal.ReviewDelivery.run(diagnostic.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     assert request.proposal.parameters == %{
+                              "command" => "systemctl is-active api.service"
+                            }
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        verdict: :approved,
+                        purpose_assessment: :investigation,
+                        reason: "This exact request only inspects the changed service",
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      diagnostic_operation = Cases.accept_operation!(diagnostic.id, authorize?: false)
+
+      assert :ok =
+               OperationDelivery.run(diagnostic_operation.id,
+                 target_invocation:
+                   invocation(
+                     {:ok,
+                      %Target.EffectResult{status: :applied, details: %{"stdout" => "active"}}}
+                   )
+               )
+
+      current = Cases.get_case!(incident.id, actor: context.operator)
+      fresh = Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+      assert fresh.kind == "observation"
+      assert fresh.content["facts"]["stdout"] == "active"
+      conclusion = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+      assert :ok =
+               ResolverDelivery.run(conclusion.id,
+                 target_invocation:
+                   invocation({:ok, %Target.Capabilities{observations: [], effects: [raw]}}),
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     assert request.recovery_evidence_ids == [fresh.id]
+
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.RecoveryConclusion{
+                          reason: "The actual post-change service response confirms availability",
+                          evidence_ids: [fresh.id],
+                          desired_outcome_claims: [
+                            %{
+                              "symptom_id" => request.case_symptom.id,
+                              "evidence_id" => fresh.id,
+                              "fact_keys" => ["stdout"],
+                              "reason" => "The service reports active after the change"
+                            }
+                          ]
+                        },
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      Cases.route_downstream_decision!(conclusion.id, authorize?: false)
+      approve_recovery!(Cases.get_turn!(conclusion.id, authorize?: false), context)
+      assert Cases.get_operation!(operation.id, actor: context.operator).status == outcome
+      assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 2
+      resolved = Cases.get_case!(incident.id, actor: context.operator)
+      report = Reports.generate_report!(resolved.id, resolved.revision, actor: context.operator)
+
+      assert Enum.map(Opsonde.Reports.Report.Document.build(report)["actions"], & &1["id"]) == [
+               operation.id
+             ]
+    end
+  end
+
   test "opaque investigation preserves readonly refusal and ask operator approval", context do
     for {mode, status} <- [{:readonly, :recommended}, {:ask, :awaiting_human}] do
       configure_mode!(context.admin, mode)
@@ -845,7 +1072,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     continued = Cases.get_turn!(pending["turn_id"], authorize?: false)
-    assert continued.intent["source"] == "observation"
+    assert continued.intent["source"] == "target_result"
     assert continued.intent["prior_relationship_id"] == relationship_id
   end
 
@@ -4354,6 +4581,30 @@ defmodule Opsonde.OperationDeliveryTest do
           |> Map.put("tool", tool)
           |> Map.put("parameters", %{"command" => "service nginx status"})
           |> Map.put("expected_result", %{})
+          |> Map.put("verification_intent", %{})
+          |> Map.put("verification_tool", %{})
+
+        Map.put(result, "intent", intent)
+      else
+        result
+      end
+
+    result =
+      if Keyword.get(opts, :defer_verification, false) do
+        intent = result["intent"]
+
+        tool =
+          intent["tool"]
+          |> Map.put("capability", "effect.command")
+          |> Map.put("operation", "command.execute")
+
+        intent =
+          intent
+          |> Map.put("tool", tool)
+          |> Map.put("capability", "effect.command")
+          |> Map.put("operation", "command.execute")
+          |> Map.put("selectors", %{})
+          |> Map.put("parameters", %{"command" => "systemctl start api.service"})
           |> Map.put("verification_intent", %{})
           |> Map.put("verification_tool", %{})
 

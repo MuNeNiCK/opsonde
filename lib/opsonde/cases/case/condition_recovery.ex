@@ -62,17 +62,18 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
          true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"} do
       operations
-      |> Enum.filter(&(&1.purpose == :remediation))
+      |> Enum.filter(&affects_recovery?/1)
       |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
       |> case do
         [] ->
           {:ok, inherited}
 
-        [%{status: :applied, accepted_at: %DateTime{} = at} | _] ->
+        [%{status: status, completed_at: %DateTime{} = at} | _]
+        when status in [:applied, :failed, :partial, :unknown] ->
           {:ok, if(DateTime.compare(at, inherited) == :gt, do: at, else: inherited)}
 
         _other ->
-          {:error, "Latest Target effect is not applied"}
+          {:error, "Latest Target effect is not complete"}
       end
     end
   end
@@ -274,8 +275,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   defp scoped_effects(operations, exclude_operation_id) do
     operations
     |> Enum.filter(fn operation ->
-      operation.id != exclude_operation_id and operation.purpose == :remediation and
-        not (operation.status == :failed and is_nil(operation.dispatch_started_at))
+      operation.id != exclude_operation_id and affects_recovery?(operation)
     end)
     |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
       case Cases.get_proposal(operation.proposal_id, authorize?: false) do
@@ -291,6 +291,11 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       end
     end)
   end
+
+  defp affects_recovery?(operation),
+    do:
+      operation.purpose == :remediation and
+        not (operation.status == :failed and is_nil(operation.dispatch_started_at))
 
   defp citation_scope(%{kind: "file_read", id: id}), do: {"file_read", id}
 
