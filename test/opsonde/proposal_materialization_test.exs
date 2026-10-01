@@ -107,6 +107,165 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert Cases.operations_for_case!(incident.id, actor: context.operator) == []
   end
 
+  test "every registered Method preserves an exact investigation through Resolver and Reviewer",
+       context do
+    ai =
+      Providers.create_provider!(
+        "matrix-ai",
+        :ai,
+        "fixture-ai",
+        %{"model" => "matrix"},
+        %{
+          "api_key" => "matrix-secret"
+        },
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    Opsonde.TestAIUsage.configure!(ai.id, :all, 10, context.admin)
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      :auto,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Review exact Method investigations",
+      actor: context.admin
+    )
+
+    catalog = Opsonde.Targets.TypeCatalog.snapshot()
+
+    for descriptor <- catalog.methods do
+      type = Enum.find(catalog.types, &(descriptor.adapter_type in &1.access_method_types))
+      {provider, target, method} = checked_method_fixture!(descriptor, type, context.admin)
+      local = %{context | provider: provider, target: target, method: method}
+      {incident, run} = open_case!(descriptor.adapter_type, local)
+
+      begun =
+        Cases.start_turn!(
+          incident.id,
+          run.id,
+          "matrix-#{descriptor.adapter_type}",
+          %{"objective" => "Collect current device evidence"},
+          %{"action" => "continue"},
+          "Review the Resolver decision",
+          authorize?: false
+        ).value
+
+      selection = Providers.select_resolver_ai!(authorize?: false)
+      assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(begun.id, selection)
+      {capability, operation, parameters} = exact_investigation(descriptor.protocol)
+
+      tool =
+        Enum.find(
+          request.proposal_tools,
+          &(&1.capability == capability and &1.operation == operation)
+        )
+
+      assert tool, "#{descriptor.adapter_type} did not offer its exact Method request"
+
+      identity =
+        Map.from_struct(tool)
+        |> Map.take([
+          :id,
+          :target_id,
+          :target_revision,
+          :access_method_id,
+          :access_method_revision,
+          :provider_id,
+          :provider_revision,
+          :capability,
+          :operation,
+          :request_kind
+        ])
+        |> Map.new(fn {key, value} ->
+          {Atom.to_string(key), if(is_atom(value), do: Atom.to_string(value), else: value)}
+        end)
+
+      intent =
+        Map.drop(identity, ["id", "provider_id", "provider_revision"])
+        |> Map.merge(%{
+          "type" => "proposal",
+          "purpose" => "investigation",
+          "request_kind" => "effect",
+          "tool_id" => tool.id,
+          "tool" => identity,
+          "selectors" => %{},
+          "parameters" => parameters,
+          "reason" => "Collect current evidence through the selected Method",
+          "evidence_ids" => [],
+          "affected_conditions" => [],
+          "expected_result" => %{},
+          "verification_intent" => nil,
+          "verification_tool" => %{}
+        })
+
+      completed = complete_turn!(begun, intent)
+      proposal = Cases.materialize_proposal!(completed.id, authorize?: false)
+
+      assert proposal.preflight_status == :cleared,
+             "#{descriptor.adapter_type}: #{inspect(proposal.preflight_context)} #{proposal.preflight_reason}"
+
+      assert proposal.purpose == :investigation
+      assert proposal.request_kind == :effect
+      assert proposal.parameters == parameters
+      assert proposal.provider_id == provider.id
+      assert proposal.access_method_revision == method.revision
+
+      reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+      assert reviewing.status == :reviewing
+      reviewer = Providers.select_reviewer_ai!([], authorize?: false)
+      assert {:ok, review} = Opsonde.Cases.Proposal.ReviewProjection.build(proposal.id, reviewer)
+      assert review.proposal.purpose == :investigation
+      assert review.proposal.parameters == parameters
+      assert review.proposal.verification_intent == nil
+
+      assert :ok =
+               Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn delivered ->
+                     assert delivered.proposal.parameters == parameters
+                     assert delivered.proposal.purpose == :investigation
+
+                     {:ok,
+                      %Opsonde.Providers.AI.ReviewDecision{
+                        verdict: :approved,
+                        purpose_assessment: :investigation,
+                        reason: "Fixture approves the exact investigation",
+                        usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert_receive {:review, %{model: "matrix"}, _}
+      authorized = Cases.get_proposal!(proposal.id, actor: context.operator)
+      assert authorized.status == :authorized
+
+      approval =
+        Cases.list_approvals!(actor: context.operator)
+        |> Enum.find(&(&1.proposal_id == proposal.id))
+
+      assert approval.proposal_digest == proposal.proposal_digest
+
+      Targets.update_access_method!(method, method.revision, %{capabilities: []},
+        actor: context.admin
+      )
+
+      assert {:error, _} = Cases.accept_operation(proposal.id, authorize?: false)
+      assert Cases.operations_for_case!(incident.id, actor: context.operator) == []
+    end
+  end
+
   test "foreign Evidence and revoked owner authority fail without a Proposal", context do
     {incident, run} = open_case!("foreign-source", context)
     {other_case, other_run} = open_case!("foreign-evidence", context)
@@ -245,6 +404,115 @@ defmodule Opsonde.ProposalMaterializationTest do
 
     {incident, Cases.active_resolution_run!(incident.id, authorize?: false)}
   end
+
+  # A remote check snapshot is substituted at its action lifecycle here. Actual
+  # registration, catalogs, binding, classification and Case consumers run normally;
+  # native connection/check/dispatch behavior belongs to the protocol peer tests.
+  defp checked_method_fixture!(descriptor, type, admin) do
+    endpoint =
+      case descriptor.protocol do
+        protocol when protocol in ["ssh", "netconf"] -> "ssh://127.0.0.1:9"
+        "ipmi" -> "ipmi://127.0.0.1:9"
+        _ -> "https://127.0.0.1:9"
+      end
+
+    {configuration, credentials} =
+      Opsonde.TargetConnectionFixture.input(descriptor.adapter_type, endpoint)
+
+    configuration =
+      if descriptor.protocol in ["ipmi", "redfish"],
+        do: Map.put(configuration, "timeout_ms", 100),
+        else: configuration
+
+    provider =
+      Providers.create_provider!(
+        descriptor.adapter_type,
+        :target,
+        descriptor.adapter_type,
+        configuration,
+        credentials,
+        actor: admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
+
+    target =
+      Targets.create_target!(descriptor.adapter_type, type.kind, type.id, %{}, nil, actor: admin)
+
+    {:ok, adapter} = Providers.Registry.fetch(descriptor.adapter_type, Opsonde.Providers.Target)
+    profile = adapter.access_method_profile()
+    {:ok, state} = adapter.build(configuration, credentials)
+
+    {:ok, state} =
+      adapter.bind_connection(state, %Opsonde.Providers.Target.Connection{endpoint: endpoint})
+
+    {:ok, capabilities} = adapter.capabilities(state, %{})
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        descriptor.adapter_type,
+        profile.method,
+        endpoint,
+        provider.revision,
+        100,
+        profile.capabilities,
+        actor: admin
+      )
+
+    checking =
+      Targets.begin_access_method_check!(method, method.revision, Ecto.UUID.generate(),
+        authorize?: false
+      )
+
+    checked =
+      Targets.record_access_method_check!(
+        checking,
+        checking.revision,
+        checking.check_attempt_id,
+        checking.connection_revision,
+        target.revision,
+        :passed,
+        "Fixture remote check result",
+        capabilities,
+        authorize?: false
+      )
+
+    {provider, target, Targets.get_access_method!(checked.id, actor: admin)}
+  end
+
+  defp exact_investigation("ssh"),
+    do: {"request.ssh.effect", "command.execute", %{"command" => "printf '%s' 'device-evidence'"}}
+
+  defp exact_investigation("ipmi"),
+    do:
+      {"request.ipmi.effect", "command.execute",
+       %{"netfn" => 6, "command" => 1, "include_response" => true}}
+
+  defp exact_investigation("netconf"),
+    do:
+      {"request.netconf.effect", "rpc.execute",
+       %{"body" => "<custom-action xmlns=\"urn:example:device\"/>"}}
+
+  defp exact_investigation("restconf"),
+    do:
+      {"request.restconf.effect", "request.execute",
+       %{"method" => "POST", "path" => "/operations/example:inspect", "body" => "{}"}}
+
+  defp exact_investigation("redfish"),
+    do:
+      {"request.redfish.effect", "request.execute",
+       %{"method" => "POST", "uri" => "/redfish/v1/Oem/Inspect", "body" => %{}}}
+
+  defp exact_investigation("http"),
+    do:
+      {"request.http.effect", "request.execute",
+       %{"method" => "POST", "path" => "/api/inspect", "body" => "{}"}}
+
+  defp exact_investigation("kubernetes"),
+    do:
+      {"request.kubernetes.effect", "request.execute",
+       %{"method" => "POST", "path" => "/apis/example.test/v1/widgets", "body" => "{}"}}
 
   defp evidence!(incident, run, suffix) do
     Cases.append_evidence!(
