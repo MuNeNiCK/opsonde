@@ -40,7 +40,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
          {:ok, actor} <- current_actor(incident),
          :ok <-
            valid_evidence(
-             request_kind(proposal.intent),
+             purpose(proposal.intent),
              proposal.intent["evidence_ids"],
              incident,
              run
@@ -197,8 +197,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp current_actor(_incident), do: {:error, "Case has no Proposal owner"}
 
-  defp valid_evidence(kind, ids, incident, run)
-       when is_list(ids) and (kind == :observation or ids != []) do
+  defp valid_evidence(purpose, ids, incident, run)
+       when is_list(ids) and (purpose == :investigation or ids != []) do
     if length(ids) == MapSet.size(MapSet.new(ids)) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
@@ -216,7 +216,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     end
   end
 
-  defp valid_evidence(_kind, _ids, _incident, _run),
+  defp valid_evidence(_purpose, _ids, _incident, _run),
     do: {:error, "Proposal must cite Evidence"}
 
   defp target_request(intent, incident, operation_id, operation_key) do

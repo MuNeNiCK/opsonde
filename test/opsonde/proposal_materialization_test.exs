@@ -35,7 +35,7 @@ defmodule Opsonde.ProposalMaterializationTest do
         "ssh://proposal-linux",
         provider.revision,
         10,
-        ["effect.service", "observe.service"],
+        ["effect.service", "observe.service", "effect.command"],
         actor: admin
       )
       |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
@@ -75,6 +75,36 @@ defmodule Opsonde.ProposalMaterializationTest do
     assert is_binary(proposal.preflight_context["clearance_digest"])
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
     refute_receive {:effect, _, _}
+  end
+
+  test "a first opaque investigation persists without inventing prior Evidence", context do
+    {incident, run} = open_case!("first-investigation", context)
+
+    intent =
+      proposal_intent(nil, context)
+      |> Map.merge(%{
+        "purpose" => "investigation",
+        "capability" => "effect.command",
+        "operation" => "command.execute",
+        "selectors" => %{},
+        "parameters" => %{"command" => "service nginx status"},
+        "reason" => "Collect the first service status evidence",
+        "evidence_ids" => [],
+        "expected_result" => %{},
+        "verification_intent" => nil,
+        "verification_tool" => %{}
+      })
+      |> put_in(["tool", "capability"], "effect.command")
+      |> put_in(["tool", "operation"], "command.execute")
+
+    turn = completed_turn!(incident, run, "first-investigation", intent)
+    assert {:ok, proposal} = Cases.materialize_proposal(turn.id, authorize?: false)
+    assert proposal.purpose == :investigation
+    assert proposal.request_kind == :effect
+    assert proposal.evidence_ids == []
+    assert proposal.verification_intent == %{}
+    assert proposal.preflight_status == :cleared
+    assert Cases.operations_for_case!(incident.id, actor: context.operator) == []
   end
 
   test "foreign Evidence and revoked owner authority fail without a Proposal", context do
