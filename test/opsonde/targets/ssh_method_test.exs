@@ -195,7 +195,10 @@ defmodule Opsonde.Targets.SSHMethodTest do
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
 
-    assert %Target.Capabilities{observations: [file_reader], effects: [tool, shell, file_writer]} =
+    assert %Target.Capabilities{
+             observations: [file_reader | _metadata],
+             effects: [tool, shell, file_writer | _filesystem]
+           } =
              Providers.target_capabilities!(
                provider.id,
                %Target.CapabilitiesRequest{

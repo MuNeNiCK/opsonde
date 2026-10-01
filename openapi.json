@@ -5058,7 +5058,8 @@
               "eof",
               "byte_limit",
               "duration_limit",
-              "event_limit"
+              "event_limit",
+              "entry_limit"
             ],
             "nullable": true,
             "type": "string"

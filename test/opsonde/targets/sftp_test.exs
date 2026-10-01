@@ -20,7 +20,6 @@ defmodule Opsonde.Targets.SFTPTest do
           read_file_info: 2,
           read_link: 2,
           read_link_info: 2,
-          rename: 3,
           write_file_info: 3
         ] do
       args = Macro.generate_arguments(arity, __MODULE__)
@@ -54,7 +53,16 @@ defmodule Opsonde.Targets.SFTPTest do
     @impl true
     def write(handle, data, state) do
       result = :ssh_sftpd_file.write(handle, data, state)
+      after_write(result, state)
+    end
 
+    @impl true
+    def rename(source, destination, state) do
+      result = :ssh_sftpd_file.rename(source, destination, state)
+      after_write(result, state)
+    end
+
+    defp after_write(result, state) do
       control =
         Agent.get_and_update(state, fn value -> {value, %{value | writes: value.writes + 1}} end)
 
@@ -186,6 +194,220 @@ defmodule Opsonde.Targets.SFTPTest do
       target: target,
       method: method
     })
+  end
+
+  test "native metadata preserves the server attributes without an exec command", context do
+    result =
+      request(context, :observation, "sftp.read_file_info", %{"path" => "/download.bin"})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert result.facts["attributes"]["size"] == 5
+    assert result.facts["attributes"]["type"] == "regular"
+    assert is_integer(result.facts["attributes"]["mode"])
+    assert is_list(result.facts["attributes"]["mtime"])
+    assert result.evidence == [%{"source" => "sftp", "path" => "/download.bin"}]
+    assert Agent.get(context.agent, & &1.opens) == 0
+
+    resolved =
+      request(context, :observation, "sftp.real_path", %{"path" => "/download.bin"})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert resolved.facts["paths"] == ["/download.bin"]
+  end
+
+  test "fresh native metadata is verification evidence without a recovery verdict", context do
+    name = "fresh-" <> Ecto.UUID.generate()
+    local = Path.join(context.directory, name)
+    File.write!(local, @bytes)
+
+    verify = fn ->
+      request(context, :verification, "sftp.read_file_info", %{"path" => "/" <> name})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_verification!(%{}, actor: context.operator)
+    end
+
+    first = verify.()
+    assert first.status == :unknown
+    assert first.facts["attributes"]["size"] == 5
+    File.write!(local, "different")
+    second = verify.()
+    assert second.status == :unknown
+    assert second.facts["attributes"]["size"] == 9
+  end
+
+  test "native directory creation and removal use effect authority", context do
+    path = "/directory-" <> Ecto.UUID.generate()
+
+    for operation <- ["sftp.make_dir", "sftp.del_dir"] do
+      assert {:error, _} =
+               request(context, :observation, operation, %{"path" => path})
+               |> Targets.clear_target_request(actor: context.operator)
+    end
+
+    result =
+      request(context, :effect, "sftp.make_dir", %{"path" => path})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :applied
+
+    observed =
+      request(context, :observation, "sftp.read_file_info", %{"path" => path})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+
+    assert observed.facts["attributes"]["type"] == "directory"
+
+    removed =
+      request(context, :effect, "sftp.del_dir", %{"path" => path})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+
+    assert removed.status == :applied
+    refute File.dir?(Path.join(context.directory, String.trim_leading(path, "/")))
+  end
+
+  test "native rename link and permission operations preserve exact paths", context do
+    suffix = Ecto.UUID.generate()
+    source = "/source-" <> suffix <> ".bin"
+    moved = "/moved-" <> suffix <> ".bin"
+    link = "/link-" <> suffix
+    File.write!(Path.join(context.directory, String.trim_leading(source, "/")), @bytes)
+
+    apply_native = fn operation, parameters ->
+      request(context, :effect, operation, parameters)
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+    end
+
+    observe_native = fn operation, path ->
+      request(context, :observation, operation, %{"path" => path})
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+    end
+
+    assert apply_native.("sftp.rename", %{"path" => source, "destination" => moved}).status ==
+             :applied
+
+    assert apply_native.("sftp.make_symlink", %{
+             "path" => link,
+             "target" => moved
+           }).status == :applied
+
+    assert observe_native.("sftp.read_link", link).facts["target"] == moved
+
+    assert observe_native.("sftp.read_link_info", link).facts["attributes"]["type"] == "symlink"
+    assert observe_native.("sftp.read_file_info", link).facts["attributes"]["size"] == 5
+
+    assert apply_native.("sftp.write_file_info", %{
+             "path" => moved,
+             "attributes" => %{"mode" => 0o600}
+           }).status == :applied
+
+    mode = observe_native.("sftp.read_file_info", moved).facts["attributes"]["mode"]
+    assert Bitwise.band(mode, 0o777) == 0o600
+
+    for path <- [link, moved],
+        do: assert(apply_native.("sftp.delete", %{"path" => path}).status == :applied)
+
+    refute File.exists?(Path.join(context.directory, String.trim_leading(moved, "/")))
+  end
+
+  test "native directory observations stop at explicit entry and byte limits", context do
+    suffix = Ecto.UUID.generate()
+    relative = "listing-" <> suffix
+    folder = Path.join(context.directory, relative)
+    File.mkdir_p!(folder)
+    File.write!(Path.join(folder, "one.bin"), @bytes)
+    File.write!(Path.join(folder, "two.bin"), @bytes)
+
+    list = fn entries, bytes ->
+      request(context, :observation, "sftp.list_dir", %{
+        "path" => "/" <> relative,
+        "max_entries" => entries,
+        "max_bytes" => bytes,
+        "response_file" => %{"name" => "directory.json", "media_type" => "application/json"}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator)
+    end
+
+    complete = list.(10, 4_096).facts
+    assert complete["completion_reason"] == "eof"
+    entries = directory_entries(context, complete["file"])
+    assert Enum.sort(Enum.map(entries, & &1["name"])) == ["one.bin", "two.bin"]
+    assert Enum.all?(entries, &(&1["attributes"]["size"] == 5))
+    assert complete["entry_count"] == 2
+    refute Map.has_key?(complete, "entries")
+
+    limited = list.(1, 4_096).facts
+    assert limited["completion_reason"] == "entry_limit"
+    assert length(directory_entries(context, limited["file"])) == 1
+
+    assert Targets.get_artifact!(limited["file"]["id"], actor: context.operator).completion_reason ==
+             :entry_limit
+
+    byte_limited = list.(10, 2).facts
+    assert byte_limited["completion_reason"] == "byte_limit"
+    assert directory_entries(context, byte_limited["file"]) == []
+    refute Map.has_key?(byte_limited, "cursor")
+
+    for index <- 1..500,
+        do:
+          File.write!(
+            Path.join(folder, String.pad_leading(Integer.to_string(index), 100, "a")),
+            @bytes
+          )
+
+    large = list.(1_000, 1_048_576).facts
+    assert large["entry_count"] == 502
+    assert large["file"]["size_bytes"] > 65_536
+    assert length(directory_entries(context, large["file"])) == 502
+  end
+
+  defp directory_entries(context, file) do
+    Opsonde.Providers.Target.FileWriter.stream(file, fn offset ->
+      Targets.read_bound_artifact_chunk(file, offset, actor: context.operator)
+    end)
+    |> Enum.to_list()
+    |> IO.iodata_to_binary()
+    |> Jason.decode!()
+  end
+
+  test "native mutation loss leaves an unknown result and known denial stays failed", context do
+    suffix = Ecto.UUID.generate()
+    source = "/mutation-" <> suffix
+    destination = source <> "-moved"
+    File.write!(Path.join(context.directory, String.trim_leading(source, "/")), @bytes)
+    Agent.update(context.agent, &%{&1 | write_drop: true})
+
+    clearance =
+      request(context, :effect, "sftp.rename", %{"path" => source, "destination" => destination})
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    result =
+      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+
+    assert result.status == :unknown
+    assert Agent.get(context.agent, & &1.writes) == 1
+    refute File.exists?(Path.join(context.directory, String.trim_leading(source, "/")))
+
+    assert File.read!(Path.join(context.directory, String.trim_leading(destination, "/"))) ==
+             @bytes
+
+    Agent.update(context.agent, &%{&1 | write_drop: false})
+
+    assert {:error, denied} =
+             request(context, :effect, "sftp.delete", %{"path" => "/absent-" <> suffix})
+             |> Targets.clear_target_request!(actor: context.operator)
+             |> Targets.dispatch_target_effect(%{}, actor: context.operator, authorize?: false)
+
+    assert Enum.any?(
+             denied.errors,
+             &match?(%Opsonde.Providers.Target.Error{category: :failed}, &1)
+           )
   end
 
   test "native SFTP cancellation and lost replies preserve uncertainty without replay", context do

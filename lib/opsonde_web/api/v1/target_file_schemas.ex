@@ -44,7 +44,7 @@ defmodule OpsondeWeb.API.V1.TargetFileSchemas do
       completion_reason: %Schema{
         type: :string,
         nullable: true,
-        enum: ~w(upload eof byte_limit duration_limit event_limit)
+        enum: ~w(upload eof byte_limit duration_limit event_limit entry_limit)
       },
       name: %Schema{type: :string},
       media_type: %Schema{type: :string},

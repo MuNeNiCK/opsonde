@@ -446,22 +446,24 @@ defmodule Opsonde.Targets.IOSXESSHTest do
                actor: context.admin
              )
 
-    assert Enum.map(observations, & &1.operation) ==
+    assert observations
+           |> Enum.reject(&(&1.capability == "request.ssh.observe"))
+           |> Enum.map(& &1.operation) ==
              [
                "ios_xe.system.inspect",
                "ios_xe.interface.inspect",
-               "cli.observe",
-               "sftp.read_file"
+               "cli.observe"
              ]
 
-    assert Enum.map(effects, & &1.operation) ==
+    assert effects
+           |> Enum.reject(&String.starts_with?(&1.operation, "sftp."))
+           |> Enum.map(& &1.operation) ==
              [
                "ios_xe.interface.description.set",
                "ios_xe.interface.admin_state.set",
                "cli.execute",
                "command.execute",
-               "shell.execute",
-               "sftp.write_file"
+               "shell.execute"
              ]
 
     assert {:error, _denied} =

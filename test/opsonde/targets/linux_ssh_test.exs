@@ -130,8 +130,9 @@ defmodule Opsonde.Targets.LinuxSSHTest do
                actor: context.admin
              )
 
-    assert Enum.map(observations, & &1.operation) == [
-             "sftp.read_file",
+    assert observations
+           |> Enum.reject(&(&1.capability == "request.ssh.observe"))
+           |> Enum.map(& &1.operation) == [
              "linux.identity.inspect",
              "linux.process.list",
              "linux.service.list",
@@ -165,11 +166,12 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     [effect | _method_effects] = effects
 
-    assert Enum.map(effects, & &1.operation) == [
+    assert effects
+           |> Enum.reject(&String.starts_with?(&1.operation, "sftp."))
+           |> Enum.map(& &1.operation) == [
              "linux.service.restart",
              "command.execute",
-             "shell.execute",
-             "sftp.write_file"
+             "shell.execute"
            ]
 
     assert effect.evidence_requirements == [

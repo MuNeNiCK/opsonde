@@ -252,61 +252,7 @@ defmodule Opsonde.FileOperationTest do
 
   test "Reviewer approved SFTP upload uses the exact file and never replays a completed operation",
        context do
-    directory = Path.join(System.tmp_dir!(), "opsonde-case-sftp-#{Ecto.UUID.generate()}")
-    File.mkdir_p!(directory)
-    key = :public_key.generate_key({:rsa, 2048, 65537})
-    private = :public_key.pem_entry_encode(:RSAPrivateKey, key)
-    File.write!(Path.join(directory, "ssh_host_rsa_key"), :public_key.pem_encode([private]))
-    File.chmod!(Path.join(directory, "ssh_host_rsa_key"), 0o600)
-
-    {:ok, daemon} =
-      :ssh.daemon(0,
-        system_dir: String.to_charlist(directory),
-        user_passwords: [{~c"tester", ~c"secret"}],
-        auth_methods: ~c"password",
-        subsystems: [:ssh_sftpd.subsystem_spec(root: String.to_charlist(directory))]
-      )
-
-    on_exit(fn ->
-      :ssh.stop_daemon(daemon)
-      File.rm_rf!(directory)
-    end)
-
-    {:ok, info} = :ssh.daemon_info(daemon)
-    endpoint = "ssh://127.0.0.1:#{Keyword.fetch!(info, :port)}"
-
-    fingerprint =
-      key
-      |> :ssh_file.extract_public_key()
-      |> then(&:ssh.hostkey_fingerprint(:sha256, &1))
-      |> to_string()
-
-    provider =
-      Providers.create_provider!(
-        "Case SFTP",
-        :target,
-        "ssh",
-        %{"host_key_fingerprints" => %{endpoint => fingerprint}},
-        %{"username" => "tester", "auth_method" => "password", "password" => "secret"},
-        actor: context.admin
-      )
-      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
-
-    method =
-      Targets.create_access_method!(
-        context.target.id,
-        provider.id,
-        "Case SFTP",
-        "ssh",
-        endpoint,
-        provider.revision,
-        100,
-        ["request.ssh.observe", "request.ssh.effect"],
-        actor: context.admin
-      )
-      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
-
-    context = %{context | provider: provider, method: method}
+    {context, directory} = sftp_context(context)
     file = stage_file(context)
 
     parameters = %{
@@ -346,6 +292,39 @@ defmodule Opsonde.FileOperationTest do
     File.write!(Path.join(directory, "case-upload.bin"), "later independent change")
     assert :ok = Delivery.run(operation.id)
     assert File.read!(Path.join(directory, "case-upload.bin")) == "later independent change"
+  end
+
+  test "Reviewer approved SFTP metadata retains fresh evidence without declaring recovery",
+       context do
+    {context, directory} = sftp_context(context)
+    directory_parameters = %{"path" => "/case-directory"}
+
+    mkdir =
+      proposal!(context, directory_parameters,
+        capability: "request.ssh.effect",
+        operation: "sftp.make_dir",
+        verification_operation: "sftp.read_file_info",
+        verification_parameters: directory_parameters,
+        verification_expected: %{}
+      )
+
+    assert mkdir.status == :reviewing
+    refute File.dir?(Path.join(directory, "case-directory"))
+    approve!(mkdir)
+    directory_operation = Cases.accept_operation!(mkdir.id, authorize?: false)
+    assert :ok = Delivery.run(directory_operation.id)
+
+    assert Cases.get_operation!(directory_operation.id, actor: context.operator).status ==
+             :applied
+
+    verification = Cases.accept_verification!(directory_operation.id, authorize?: false)
+    assert :ok = Opsonde.Cases.VerificationAttempt.Delivery.run(verification.id)
+
+    observed =
+      Cases.get_verification_attempt!(verification.id, actor: context.operator)
+
+    assert observed.status == :unknown
+    assert observed.facts["attributes"]["type"] == "directory"
   end
 
   test "Reviewer approved RESTCONF file capture preserves uncertainty without replay", context do
@@ -780,6 +759,65 @@ defmodule Opsonde.FileOperationTest do
         "media_type" => "application/octet-stream"
       }
     }
+  end
+
+  defp sftp_context(context) do
+    directory = Path.join(System.tmp_dir!(), "opsonde-case-sftp-#{Ecto.UUID.generate()}")
+    File.mkdir_p!(directory)
+    key = :public_key.generate_key({:rsa, 2048, 65537})
+    private = :public_key.pem_entry_encode(:RSAPrivateKey, key)
+    File.write!(Path.join(directory, "ssh_host_rsa_key"), :public_key.pem_encode([private]))
+    File.chmod!(Path.join(directory, "ssh_host_rsa_key"), 0o600)
+
+    {:ok, daemon} =
+      :ssh.daemon(0,
+        system_dir: String.to_charlist(directory),
+        user_passwords: [{~c"tester", ~c"secret"}],
+        auth_methods: ~c"password",
+        subsystems: [:ssh_sftpd.subsystem_spec(root: String.to_charlist(directory))]
+      )
+
+    on_exit(fn ->
+      :ssh.stop_daemon(daemon)
+      File.rm_rf!(directory)
+    end)
+
+    {:ok, info} = :ssh.daemon_info(daemon)
+    endpoint = "ssh://127.0.0.1:#{Keyword.fetch!(info, :port)}"
+
+    fingerprint =
+      key
+      |> :ssh_file.extract_public_key()
+      |> then(&:ssh.hostkey_fingerprint(:sha256, &1))
+      |> to_string()
+
+    provider =
+      Providers.create_provider!(
+        "Case SFTP",
+        :target,
+        "ssh",
+        %{"host_key_fingerprints" => %{endpoint => fingerprint}},
+        %{"username" => "tester", "auth_method" => "password", "password" => "secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        provider.id,
+        "Case SFTP",
+        "ssh",
+        endpoint,
+        provider.revision,
+        100,
+        ["request.ssh.observe", "request.ssh.effect"],
+        actor: context.admin
+      )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+    context = %{context | provider: provider, method: method}
+    {context, directory}
   end
 
   defp approve!(proposal) do

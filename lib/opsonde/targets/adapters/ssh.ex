@@ -61,10 +61,14 @@ defmodule Opsonde.Targets.Adapters.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def classify_request(_state, %{operation: operation} = request)
-      when operation in ["sftp.read_file", "sftp.write_file"] do
+  def classify_request(_state, %{operation: "sftp." <> _name} = request) do
     with {:ok, operation} <- SFTP.operation(request),
-         do: {:ok, if(operation.kind == :read, do: :observation, else: :effect)}
+         do:
+           {:ok,
+            if(operation.kind in [:read, :metadata_read, :directory],
+              do: :observation,
+              else: :effect
+            )}
   end
 
   def classify_request(_state, request) do
@@ -82,8 +86,9 @@ defmodule Opsonde.Targets.Adapters.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def observe(state, %{operation: "sftp.read_file"} = request, invocation) do
-    with {:ok, operation} <- SFTP.operation(request),
+  def observe(state, %{operation: "sftp." <> _name} = request, invocation) do
+    with {:ok, %{kind: kind} = operation} when kind in [:read, :metadata_read, :directory] <-
+           SFTP.operation(request),
          {:ok, facts} <- Transport.sftp(state, request.connection.endpoint, operation, invocation) do
       {:ok,
        %Target.Observation{
@@ -102,12 +107,15 @@ defmodule Opsonde.Targets.Adapters.SSH do
     do: {:error, :failed, "Raw SSH commands require effect authority"}
 
   @impl Opsonde.Providers.Target
-  def effect(state, %{operation: "sftp.write_file"} = request, invocation) do
-    with {:ok, operation} <- SFTP.operation(request) do
+  def effect(state, %{operation: "sftp." <> _name} = request, invocation) do
+    with {:ok, %{kind: kind} = operation} when kind in [:write, :metadata_write] <-
+           SFTP.operation(request) do
       case Transport.sftp(state, request.connection.endpoint, operation, invocation) do
         {:ok, details} -> {:ok, %Target.EffectResult{status: :applied, details: details}}
         error -> effect_result(error)
       end
+    else
+      _invalid -> {:error, :failed, "SFTP effect request is invalid"}
     end
   end
 
@@ -128,12 +136,16 @@ defmodule Opsonde.Targets.Adapters.SSH do
   end
 
   @impl Opsonde.Providers.Target
-  def verify(state, %{operation: "sftp.read_file"} = request, invocation) do
+  def verify(state, %{operation: "sftp." <> _name} = request, invocation) do
     with {:ok, observation} <- observe(state, request, invocation),
          do:
            {:ok,
             %Target.Verification{
-              status: SFTP.expected_status(observation.facts["file"], request.expected),
+              status:
+                if(request.operation == "sftp.read_file",
+                  do: SFTP.expected_status(observation.facts["file"], request.expected),
+                  else: :unknown
+                ),
               observed_at: observation.observed_at,
               facts: observation.facts,
               evidence: observation.evidence
