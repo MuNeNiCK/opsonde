@@ -9,136 +9,189 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
   alias Opsonde.Cases.Evidence.Citation
   alias Opsonde.Providers.AI
   alias Opsonde.Providers.Target.FileReference
-  alias Opsonde.Targets.{Artifact, ArtifactChunk}
 
   @impl true
   def run(input, opts, _context) do
-    Ash.transact([Case, ResolutionRun, Turn, Evidence, CaseEvent, Artifact, ArtifactChunk], fn ->
-      case opts[:operation] do
-        :capture ->
-          with :ok <- AdmissionLock.acquire(), do: capture(input.arguments.turn_id)
+    case opts[:operation] do
+      :capture -> capture(input.arguments.turn_id)
+      :read -> read(input.arguments)
+    end
+  end
 
-        :read ->
-          read(input.arguments)
+  defp capture(turn_id) do
+    with {:ok, snapshot} <- capture_snapshot(turn_id) do
+      if snapshot.existing do
+        {:ok, snapshot.existing}
+      else
+        with {:ok, result} <- read_bytes(snapshot.intent, snapshot.actor) do
+          Ash.transact([Case, ResolutionRun, Evidence, CaseEvent], fn ->
+            with :ok <- AdmissionLock.acquire(),
+                 :ok <- current_snapshot(snapshot),
+                 {:ok, true} <- ConditionContext.current?(snapshot.incident, snapshot.turn.id) do
+              append(snapshot, result)
+            end
+          end)
+        end
+      end
+    end
+  end
+
+  defp capture_snapshot(turn_id) do
+    Ash.transact([Case, ResolutionRun, Turn, Evidence], fn ->
+      with :ok <- AdmissionLock.acquire(),
+           {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
+           true <-
+             (turn.status == :completed and turn.result["outcome"] == "decision" and
+                get_in(turn.result, ["intent", "type"]) == "file_read") ||
+               {:error, "Turn has no file-read decision"},
+           {:ok, {incident, run, actor}} <- current_context(turn.case_id, turn.resolution_run_id),
+           {:ok, true} <- ConditionContext.current?(incident, turn.id),
+           intent <- turn.result["intent"],
+           :ok <- valid_range(intent["reference"], intent["offset"], intent["length"], incident),
+           true <-
+             AI.valid_resolver_reason?(intent["reason"]) ||
+               {:error, "File-read reason is invalid"},
+           {:ok, source} <- source(intent, incident, run),
+           {:ok, existing} <-
+             Cases.evidence_by_idempotency(incident.id, "file-read:#{turn.id}",
+               authorize?: false,
+               not_found_error?: false
+             ),
+           :ok <- matching_receipt(existing, intent) do
+        %{
+          turn: turn,
+          incident: incident,
+          run: run,
+          actor: actor,
+          intent: intent,
+          source: source,
+          existing: existing
+        }
+      else
+        {:ok, false} -> {:error, "File-read Condition context changed"}
+        error -> error
       end
     end)
   end
 
-  defp capture(turn_id) do
-    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
-         true <-
-           (turn.status == :completed and turn.result["outcome"] == "decision" and
-              get_in(turn.result, ["intent", "type"]) == "file_read") ||
-             {:error, "Turn has no file-read decision"},
-         {:ok, {incident, run, actor}} <- current_context(turn.case_id, turn.resolution_run_id),
-         {:ok, true} <- ConditionContext.current?(incident, turn.id),
-         intent <- turn.result["intent"],
-         :ok <- valid_range(intent["reference"], intent["offset"], intent["length"], incident),
-         true <-
-           AI.valid_resolver_reason?(intent["reason"]) || {:error, "File-read reason is invalid"},
-         {:ok, source} <- Cases.get_evidence(intent["source_evidence_id"], authorize?: false),
-         true <-
-           (Citation.valid?(source, incident, run) and
-              FileReference.present_in?(source.content, intent["reference"])) ||
-             {:error, "File reference is not present in the cited Case Evidence"},
-         {:ok, bytes} <-
-           Targets.read_bound_artifact_range(
-             intent["reference"],
-             intent["offset"],
-             intent["length"],
-             actor: actor
-           ) do
-      append(turn, intent, source, actor, bytes)
-    else
-      {:ok, false} -> {:error, "File-read Condition context changed"}
-      error -> error
-    end
-  end
-
-  defp append(turn, intent, source, actor, bytes) do
-    key = "file-read:#{turn.id}"
+  defp append(snapshot, result) do
+    %{turn: turn, intent: intent, source: source, actor: actor} = snapshot
 
     with {:ok, existing} <-
-           Cases.evidence_by_idempotency(turn.case_id, key,
+           Cases.evidence_by_idempotency(turn.case_id, "file-read:#{turn.id}",
              authorize?: false,
              not_found_error?: false
            ),
-         content <- receipt(intent, source, bytes),
-         provenance <-
-           if(existing,
-             do: Map.take(existing.content, ["actor_id", "actor_role_version"]),
-             else: %{"actor_id" => actor.id, "actor_role_version" => actor.role_version}
-           ),
-         {:ok, evidence} <-
-           Cases.append_evidence(
-             turn.case_id,
-             turn.resolution_run_id,
-             turn.id,
-             key,
-             "file_read",
-             "file_store",
-             turn.id,
-             Map.merge(content, provenance),
-             if(existing, do: existing.observed_at, else: DateTime.utc_now()),
-             actor: actor,
-             authorize?: false
-           ) do
-      evidence
+         :ok <- matching_receipt(existing, intent) do
+      if existing do
+        existing
+      else
+        content =
+          receipt(intent, source, result)
+          |> Map.merge(%{"actor_id" => actor.id, "actor_role_version" => actor.role_version})
+
+        with {:ok, evidence} <-
+               Cases.append_evidence(
+                 turn.case_id,
+                 turn.resolution_run_id,
+                 turn.id,
+                 "file-read:#{turn.id}",
+                 "file_read",
+                 "file_store",
+                 turn.id,
+                 content,
+                 DateTime.utc_now(),
+                 actor: actor,
+                 authorize?: false
+               ),
+             do: evidence
+      end
     end
   end
 
   defp read(%{id: id, case_id: case_id}) do
-    with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false),
-         true <-
-           (evidence.kind == "file_read" and evidence.case_id == case_id) ||
-             {:error, "File-read Evidence does not belong to this Case"},
-         {:ok, {incident, run, actor}} <-
-           current_context(case_id, evidence.resolution_run_id),
-         content <- evidence.content,
-         :ok <-
-           valid_range(
-             content["reference"],
-             content["offset"],
-             content["requested_length"],
-             incident
-           ),
-         {:ok, source} <- Cases.get_evidence(content["source_evidence_id"], authorize?: false),
-         true <-
-           (Citation.valid?(source, incident, run) and
-              FileReference.present_in?(source.content, content["reference"])) ||
-             {:error, "File-read source Evidence is unavailable"},
-         {:ok, bytes} <-
-           Targets.read_bound_artifact_range(
-             content["reference"],
-             content["offset"],
-             content["requested_length"],
-             actor: actor
-           ),
-         expected <-
-           receipt(
-             %{
-               "reference" => content["reference"],
-               "offset" => content["offset"],
-               "length" => content["requested_length"],
-               "source_evidence_id" => content["source_evidence_id"],
-               "reason" => content["reason"]
-             },
-             source,
-             bytes
-           ),
-         true <-
-           Map.take(content, Map.keys(expected)) == expected ||
-             {:error, "File-read Evidence integrity check failed"} do
-      if String.valid?(bytes),
-        do: Map.merge(content, %{"encoding" => "utf8", "value" => bytes}),
-        else: Map.merge(content, %{"encoding" => "base64", "value" => Base.encode64(bytes)})
+    with {:ok, snapshot} <- read_snapshot(id, case_id) do
+      content = snapshot.evidence.content
+
+      if content["status"] == "unavailable" do
+        {:ok, content}
+      else
+        with {:ok, result} <- read_bytes(snapshot.intent, snapshot.actor) do
+          Ash.transact([Case, ResolutionRun], fn ->
+            with :ok <- current_snapshot(snapshot) do
+              project(content, snapshot.intent, snapshot.source, result)
+            end
+          end)
+        end
+      end
     end
   end
 
-  defp receipt(intent, source, bytes) do
-    next = intent["offset"] + byte_size(bytes)
+  defp read_snapshot(id, case_id) do
+    Ash.transact([Case, ResolutionRun, Evidence], fn ->
+      with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false),
+           true <-
+             (evidence.kind == "file_read" and evidence.case_id == case_id) ||
+               {:error, "File-read Evidence does not belong to this Case"},
+           {:ok, {incident, run, actor}} <- current_context(case_id, evidence.resolution_run_id),
+           true <-
+             evidence.content["status"] in ["available", "unavailable"] ||
+               {:error, "File-read Evidence status is invalid"},
+           intent <- receipt_intent(evidence.content),
+           :ok <- valid_range(intent["reference"], intent["offset"], intent["length"], incident),
+           {:ok, source} <- source(intent, incident, run) do
+        %{
+          evidence: evidence,
+          incident: incident,
+          run: run,
+          actor: actor,
+          intent: intent,
+          source: source
+        }
+      end
+    end)
+  end
 
-    %{
+  defp read_bytes(intent, actor) do
+    result =
+      with {:ok, metadata} <- Targets.get_artifact(intent["reference"]["id"], actor: actor),
+           {:ok, bytes} <-
+             Targets.read_bound_artifact_range(
+               intent["reference"],
+               intent["offset"],
+               intent["length"],
+               actor: actor
+             ) do
+        {:ok, %{bytes: bytes, completion_reason: metadata.completion_reason}}
+      end
+
+    case result do
+      {:ok, result} -> {:ok, result}
+      {:error, %Ash.Error.Invalid{}} -> {:ok, :unavailable}
+      {:error, %Ash.Error.Forbidden{}} -> {:ok, :unavailable}
+      error -> error
+    end
+  end
+
+  defp project(content, intent, source, :unavailable),
+    do:
+      receipt(intent, source, :unavailable)
+      |> Map.merge(Map.take(content, ["actor_id", "actor_role_version"]))
+
+  defp project(content, intent, source, %{bytes: bytes} = result) do
+    expected = receipt(intent, source, result)
+
+    if Map.take(content, Map.keys(expected)) == expected do
+      if String.valid?(bytes),
+        do: Map.merge(content, %{"encoding" => "utf8", "value" => bytes}),
+        else: Map.merge(content, %{"encoding" => "base64", "value" => Base.encode64(bytes)})
+    else
+      {:error, "File-read Evidence integrity check failed"}
+    end
+  end
+
+  defp receipt(intent, source, result) do
+    content = %{
       "target_id" => intent["reference"]["target_id"],
       "source_evidence_id" => intent["source_evidence_id"],
       "source_observed_at" =>
@@ -149,12 +202,64 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
       "reference" => intent["reference"],
       "offset" => intent["offset"],
       "requested_length" => intent["length"],
-      "byte_count" => byte_size(bytes),
-      "sha256" => :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower),
-      "next_offset" => next,
-      "eof" => next == intent["reference"]["size_bytes"],
       "reason" => intent["reason"]
     }
+
+    if result == :unavailable do
+      Map.merge(content, %{"status" => "unavailable", "failure_code" => "file_unavailable"})
+    else
+      bytes = result.bytes
+      next = intent["offset"] + byte_size(bytes)
+
+      Map.merge(content, %{
+        "status" => "available",
+        "source_completion_reason" =>
+          result.completion_reason && to_string(result.completion_reason),
+        "byte_count" => byte_size(bytes),
+        "sha256" => :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower),
+        "next_offset" => next,
+        "eof" => next == intent["reference"]["size_bytes"]
+      })
+    end
+  end
+
+  defp receipt_intent(content),
+    do: %{
+      "reference" => content["reference"],
+      "offset" => content["offset"],
+      "length" => content["requested_length"],
+      "source_evidence_id" => content["source_evidence_id"],
+      "reason" => content["reason"]
+    }
+
+  defp matching_receipt(nil, _intent), do: :ok
+
+  defp matching_receipt(existing, intent) do
+    if existing.kind == "file_read" and existing.content["status"] in ["available", "unavailable"] and
+         receipt_intent(existing.content) ==
+           Map.take(intent, ~w(reference offset length source_evidence_id reason)),
+       do: :ok,
+       else: {:error, "File-read receipt does not match the source decision"}
+  end
+
+  defp source(intent, incident, run) do
+    with {:ok, source} <- Cases.get_evidence(intent["source_evidence_id"], authorize?: false),
+         true <-
+           (Citation.valid?(source, incident, run) and
+              FileReference.present_in?(source.content, intent["reference"])) ||
+             {:error, "File reference is not present in the cited Case Evidence"},
+         do: {:ok, source}
+  end
+
+  defp current_snapshot(snapshot) do
+    with {:ok, {incident, _run, actor}} <- current_context(snapshot.incident.id, snapshot.run.id),
+         true <-
+           (incident.current_owner_id == snapshot.incident.current_owner_id and
+              incident.selected_target_id == snapshot.incident.selected_target_id and
+              incident.selected_target_revision == snapshot.incident.selected_target_revision and
+              actor.role_version == snapshot.actor.role_version) ||
+             {:error, "File-read authority or Target changed"},
+         do: :ok
   end
 
   defp current_context(case_id, run_id) do
@@ -178,9 +283,8 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
          {:ok, target} <- Targets.get_target(incident.selected_target_id, authorize?: false),
          true <-
            (target.active and target.revision == incident.selected_target_revision) ||
-             {:error, "File-read Target changed"} do
-      {:ok, {incident, run, actor}}
-    end
+             {:error, "File-read Target changed"},
+         do: {:ok, {incident, run, actor}}
   end
 
   defp valid_range(reference, offset, length, incident) do

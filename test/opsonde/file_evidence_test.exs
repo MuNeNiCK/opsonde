@@ -49,10 +49,12 @@ defmodule Opsonde.FileEvidenceTest do
 
     evidence = Cases.capture_file_read!(turn.id, authorize?: false)
     assert evidence.kind == "file_read"
+    assert evidence.content["status"] == "available"
     assert evidence.case_id == context.incident.id
     assert evidence.turn_id == turn.id
     assert evidence.content["source_evidence_id"] == source.id
     assert evidence.content["source_observed_at"] == DateTime.to_iso8601(source.observed_at)
+    assert evidence.content["source_completion_reason"] == "upload"
     assert evidence.content["reference"] == reference
     assert evidence.content["offset"] == 1
     assert evidence.content["byte_count"] == 3
@@ -105,6 +107,102 @@ defmodule Opsonde.FileEvidenceTest do
     assert content["eof"]
   end
 
+  test "an unavailable file produces citable failure metadata without stopping the Case",
+       context do
+    {source, reference} = source!(context)
+    Targets.revoke_artifact!(reference["id"], actor: context.operator)
+    turn = turn!(context, source, reference)
+    receipt = Cases.capture_file_read!(turn.id, authorize?: false)
+    assert receipt.content["status"] == "unavailable"
+    assert receipt.content["failure_code"] == "file_unavailable"
+    assert receipt.content["reference"] == reference
+    assert receipt.content["source_evidence_id"] == source.id
+
+    for key <- ~w(value encoding byte_count sha256 eof next_offset) do
+      refute Map.has_key?(receipt.content, key)
+    end
+
+    assert Cases.read_file_content!(receipt.id, context.incident.id, authorize?: false) ==
+             receipt.content
+
+    assert Cases.get_case!(context.incident.id, actor: context.operator).status == :running
+    assert Cases.capture_file_read!(turn.id, authorize?: false).id == receipt.id
+    assert Cases.get_resolution_run!(context.run.id, authorize?: false).target_request_count == 0
+    assert Cases.get_resolution_run!(context.run.id, authorize?: false).effect_count == 0
+  end
+
+  test "concurrent duplicate captures publish one immutable file receipt", context do
+    {source, reference} = source!(context)
+    turn = turn!(context, source, reference)
+
+    tasks =
+      for _ <- 1..2 do
+        Task.async(fn ->
+          receive do
+            :capture -> Cases.capture_file_read!(turn.id, authorize?: false)
+          end
+        end)
+      end
+
+    for task <- tasks do
+      Ecto.Adapters.SQL.Sandbox.allow(Opsonde.Repo, self(), task.pid)
+      send(task.pid, :capture)
+    end
+
+    [first, second] = Task.await_many(tasks)
+    assert first.id == second.id
+    assert first.content == second.content
+
+    assert Enum.count(Cases.list_evidence!(actor: context.operator), &(&1.kind == "file_read")) ==
+             1
+
+    assert Enum.count(Cases.list_case_events!(actor: context.operator), fn event ->
+             event.event_type == "evidence_added" and event.data["kind"] == "file_read"
+           end) == 1
+  end
+
+  test "stored-file EOF preserves a byte-limited native capture", context do
+    key = Ecto.UUID.generate()
+
+    file =
+      Targets.begin_artifact_receipt!(
+        context.target.id,
+        "bounded.bin",
+        "application/octet-stream",
+        key,
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(file.id, 0, <<255, 0, 1, 2, 255>>, actor: context.operator)
+
+    Targets.complete_artifact_receipt!(file.id, %{completion_reason: :byte_limit},
+      actor: context.operator
+    )
+
+    reference = Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
+
+    source =
+      Cases.append_evidence!(
+        context.incident.id,
+        context.run.id,
+        nil,
+        key,
+        "observation",
+        "fixture",
+        key,
+        %{"target_id" => context.target.id, "facts" => %{"file" => reference}},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    turn = turn!(context, source, reference, %{"offset" => 0, "length" => 8})
+    evidence = Cases.capture_file_read!(turn.id, authorize?: false)
+    content = Cases.read_file_content!(evidence.id, context.incident.id, authorize?: false)
+    assert content["eof"]
+    assert content["source_completion_reason"] == "byte_limit"
+    assert content["value"] == "/wABAv8="
+  end
+
   test "capture requires an exact cited reference and finite selected-Target range", context do
     {source, reference} = source!(context)
 
@@ -147,10 +245,11 @@ defmodule Opsonde.FileEvidenceTest do
     assert Cases.capture_file_read!(turn.id, authorize?: false).id == evidence.id
     Targets.revoke_artifact!(reference["id"], actor: owner)
 
-    assert {:error, _} =
-             Cases.read_file_content(evidence.id, context.incident.id, authorize?: false)
-
-    assert {:error, _} = Cases.capture_file_read(turn.id, authorize?: false)
+    unavailable = Cases.read_file_content!(evidence.id, context.incident.id, authorize?: false)
+    assert unavailable["status"] == "unavailable"
+    refute Map.has_key?(unavailable, "value")
+    assert Cases.get_evidence!(evidence.id, actor: owner).content == evidence.content
+    assert Cases.capture_file_read!(turn.id, authorize?: false).id == evidence.id
   end
 
   test "a file visible in another Case cannot be cited as this Case's source", context do
@@ -187,7 +286,9 @@ defmodule Opsonde.FileEvidenceTest do
 
     {source, reference} = source!(context, actor: other)
     turn = turn!(context, source, reference)
-    assert {:error, _} = Cases.capture_file_read(turn.id, authorize?: false)
+    private_file = Cases.capture_file_read!(turn.id, authorize?: false)
+    assert private_file.content["status"] == "unavailable"
+    refute Map.has_key?(private_file.content, "byte_count")
     {source, reference} = source!(context)
     turn = turn!(context, source, reference)
     evidence = Cases.capture_file_read!(turn.id, authorize?: false)
@@ -219,10 +320,10 @@ defmodule Opsonde.FileEvidenceTest do
     evidence = Cases.capture_file_read!(turn.id, authorize?: false)
     Process.sleep(1_050)
 
-    assert {:error, _} =
-             Cases.read_file_content(evidence.id, context.incident.id, authorize?: false)
-
-    assert {:error, _} = Cases.capture_file_read(turn.id, authorize?: false)
+    unavailable = Cases.read_file_content!(evidence.id, context.incident.id, authorize?: false)
+    assert unavailable["status"] == "unavailable"
+    refute Map.has_key?(unavailable, "value")
+    assert Cases.capture_file_read!(turn.id, authorize?: false).id == evidence.id
   end
 
   test "a failed receipt event saves nothing and retry publishes one citable receipt", context do
