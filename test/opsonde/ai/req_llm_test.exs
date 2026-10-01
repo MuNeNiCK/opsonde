@@ -2199,7 +2199,12 @@ defmodule Opsonde.AI.ReqLLMTest do
       }
     }
 
-    for provider <- ["openai", "anthropic"] do
+    for provider <- ["openai", "anthropic"], initial_evidence <- [[], request.evidence] do
+      request = %{request | evidence: initial_evidence}
+
+      response =
+        put_in(response, ["intent", "evidence_ids"], Enum.map(initial_evidence, & &1.id))
+
       endpoint = if provider == "openai", do: context.endpoint <> "/v1", else: context.endpoint
       state = state!(provider, endpoint, %{"api_key" => "diagnostic-secret"})
       set_mode(context.agent, {:decision, response})

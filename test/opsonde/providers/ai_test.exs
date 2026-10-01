@@ -687,7 +687,7 @@ defmodule Opsonde.Providers.AITest do
     request = resolver_request(context.provider.revision)
     tool = Enum.find(request.proposal_tools, &(&1.request_kind == :effect))
     tool = %{tool | capability: "request.ssh.effect", operation: "command.execute"}
-    request = %{request | proposal_tools: [tool], observation_tools: []}
+    request = %{request | proposal_tools: [tool], observation_tools: [], evidence: []}
 
     investigation =
       proposal()
@@ -698,6 +698,7 @@ defmodule Opsonde.Providers.AITest do
       |> Map.put(:parameters, %{"command" => "service nginx status"})
       |> Map.put(:expected_result, %{})
       |> Map.put(:verification_intent, nil)
+      |> Map.put(:evidence_ids, [])
 
     assert %AI.ResolverDecision{intent: ^investigation} =
              resolve!(context, request, fn _request ->

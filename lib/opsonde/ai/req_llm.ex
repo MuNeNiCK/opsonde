@@ -453,7 +453,9 @@ defmodule Opsonde.AI.ReqLLM do
         "Every proposal declares intent.purpose as investigation or remediation. Protocol effect " <>
         "means a request may change state; it does not establish its purpose. Investigation " <>
         "collects evidence, may use an effect-capable tool after authority review, cites current " <>
-        "context, and has no verification or expected result. Never call a modification investigation. " <>
+        "context, and has no verification or expected result. Before the first observation, " <>
+        "evidence_ids may be empty: use the supplied Case objective and current Target to select " <>
+        "the investigation; never invent prior observations. Never call a modification investigation. " <>
         "For remediation, intent.verification contains only tool_id, selectors, parameters, and " <>
         "expected_result_json. Do not add explanatory keys inside action or verification. " <>
         "Propose remediation only for an unresolved Condition or a manual/audit desired_outcome " <>
@@ -1775,11 +1777,11 @@ defmodule Opsonde.AI.ReqLLM do
         else: []
 
     investigation_schema =
-      if investigation_variants != [] and observation_evidence_ids != [] do
+      if investigation_variants != [] do
         intent_schema("proposal", %{
           "purpose" => enum_schema(["investigation"]),
           "action" => %{"anyOf" => investigation_variants},
-          "evidence_ids" => identifier_array_schema(observation_evidence_ids),
+          "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),
           "affected_conditions" => condition_claims_schema(request.conditions, 0)
         })
       end

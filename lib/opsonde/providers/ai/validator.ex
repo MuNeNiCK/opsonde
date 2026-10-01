@@ -976,7 +976,7 @@ defmodule Opsonde.Providers.AI.Validator do
   defp request_evidence_ids(%{request_kind: :effect}, request),
     do: AI.proposal_evidence_ids(request)
 
-  defp valid_request_evidence_ids?(%{request_kind: :observation, evidence_ids: ids}, available),
+  defp valid_request_evidence_ids?(%{purpose: :investigation, evidence_ids: ids}, available),
     do: is_list(ids) and unique?(ids) and Enum.all?(ids, &(&1 in available))
 
   defp valid_request_evidence_ids?(%{request_kind: :effect, evidence_ids: ids}, available),
