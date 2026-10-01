@@ -127,7 +127,7 @@ defmodule Opsonde.Transports.SSH do
 
   def subsystem(%Config{} = config, endpoint, name, exchange, cancelled? \\ fn -> false end)
       when is_function(exchange, 1) do
-    with :ok <- subsystem_name(name) do
+    with :ok <- validate_subsystem_name(name) do
       run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
         execute_subsystem(
           connection,
@@ -143,6 +143,25 @@ defmodule Opsonde.Transports.SSH do
   end
 
   def channel_send(channel, data), do: channel_send(channel, data, true)
+
+  def subsystem_session(%Config{} = config, endpoint, operation, invocation) do
+    cancelled? = Map.get(invocation, :cancelled?, fn -> false end)
+
+    Opsonde.Transports.SSH.Subsystem.request(operation, invocation, fn exchange ->
+      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
+        execute_subsystem(
+          connection,
+          operation.name,
+          config.max_output_bytes,
+          deadline,
+          parent,
+          reference,
+          exchange,
+          true
+        )
+      end)
+    end)
+  end
 
   def channel_send(%Channel{} = channel, data, dispatched?)
       when is_binary(data) and is_boolean(dispatched?) do
@@ -297,25 +316,46 @@ defmodule Opsonde.Transports.SSH do
          deadline,
          parent,
          reference,
-         exchange
+         exchange,
+         raw? \\ false
        ) do
     timeout = remaining(deadline)
 
-    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
-         :success <-
-           :ssh_connection.subsystem(connection, channel, String.to_charlist(name), timeout) do
-      exchange.(%Channel{
-        connection: connection,
-        id: channel,
-        deadline: deadline,
-        max_output_bytes: max_output_bytes,
-        reporter: {parent, reference}
-      })
+    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout) do
+      :ok = report_subsystem_dispatch(raw?, parent, reference, connection)
+
+      case :ssh_connection.subsystem(connection, channel, String.to_charlist(name), timeout) do
+        :success ->
+          exchange.(%Channel{
+            connection: connection,
+            id: channel,
+            deadline: deadline,
+            max_output_bytes: max_output_bytes,
+            reporter: {parent, reference}
+          })
+
+        {:error, reason} ->
+          if(raw?, do: transport_error_after_dispatch(reason), else: transport_error(reason))
+
+        :failure ->
+          {:error, :failed, "SSH subsystem is unavailable"}
+
+        _ ->
+          if(raw?,
+            do: {:error, :disconnected_after_dispatch, "SSH subsystem response was lost"},
+            else: {:error, :failed, "SSH subsystem failed"}
+          )
+      end
     else
       {:error, reason} -> transport_error(reason)
-      :failure -> {:error, :failed, "SSH subsystem is unavailable"}
-      _other -> {:error, :failed, "SSH subsystem failed"}
     end
+  end
+
+  defp report_subsystem_dispatch(false, _, _, _), do: :ok
+
+  defp report_subsystem_dispatch(true, parent, reference, connection) do
+    send(parent, {:opsonde_ssh_dispatched, reference, connection})
+    :ok
   end
 
   defp collect_shell(connection, channel, limit, deadline, output) do
@@ -600,13 +640,13 @@ defmodule Opsonde.Transports.SSH do
 
   defp command(_value), do: {:error, :failed, "SSH command is invalid"}
 
-  defp subsystem_name(value) when is_binary(value) and byte_size(value) in 1..64 do
-    if String.match?(value, ~r/^[A-Za-z0-9._-]+$/),
+  def validate_subsystem_name(value) when is_binary(value) and byte_size(value) in 1..255 do
+    if String.valid?(value) and not String.contains?(value, <<0>>),
       do: :ok,
       else: {:error, :failed, "SSH subsystem name is invalid"}
   end
 
-  defp subsystem_name(_value), do: {:error, :failed, "SSH subsystem name is invalid"}
+  def validate_subsystem_name(_value), do: {:error, :failed, "SSH subsystem name is invalid"}
 
   defp legacy_algorithms(configuration) do
     algorithms = Map.get(configuration, "legacy_algorithms", [])

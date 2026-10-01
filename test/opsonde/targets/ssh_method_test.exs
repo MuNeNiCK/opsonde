@@ -9,6 +9,67 @@ defmodule Opsonde.Targets.SSHMethodTest do
 
   @password "correct horse battery staple"
 
+  defmodule SubsystemPeer do
+    @behaviour :ssh_server_channel
+    @impl true
+    def init([agent]), do: {:ok, %{agent: agent, session: make_ref()}}
+    @impl true
+    def handle_msg({:ssh_channel_up, channel, connection}, state),
+      do: {:ok, Map.merge(state, %{channel: channel, connection: connection})}
+
+    def handle_msg(_, state), do: {:ok, state}
+    @impl true
+    def handle_ssh_msg({:ssh_cm, connection, {:data, channel, _, bytes}}, state) do
+      Agent.update(state.agent, &[{state.session, bytes} | &1])
+      :ssh_connection.adjust_window(connection, channel, byte_size(bytes))
+
+      case bytes do
+        <<0, 255>> ->
+          :ssh_connection.send(connection, channel, "first|leftover")
+
+        "second" ->
+          :ssh_connection.send(connection, channel, <<255, 0>>)
+
+        "streams" ->
+          :ssh_connection.send(connection, channel, 1, "warning")
+          :ssh_connection.send(connection, channel, 0, "reply")
+
+        "silent" ->
+          :ok
+
+        "disconnect" ->
+          :ssh_connection.close(connection, channel)
+
+        "oversize" ->
+          :ssh_connection.send(connection, channel, String.duplicate("x", 100))
+
+        "split-delimiter" ->
+          :ssh_connection.send(connection, channel, "prefix|")
+          Process.sleep(20)
+          :ssh_connection.send(connection, channel, "~tail")
+
+        "native-failure" ->
+          :ssh_connection.exit_status(connection, channel, 7)
+          :ssh_connection.send(connection, channel, "failed")
+
+        _ ->
+          :ssh_connection.send(connection, channel, bytes)
+      end
+
+      {:ok, state}
+    end
+
+    def handle_ssh_msg({:ssh_cm, connection, {:eof, channel}}, state) do
+      :ssh_connection.send(connection, channel, "done")
+      :ssh_connection.send_eof(connection, channel)
+      {:ok, state}
+    end
+
+    def handle_ssh_msg(_, state), do: {:ok, state}
+    @impl true
+    def terminate(_, _), do: :ok
+  end
+
   setup_all do
     directory =
       Path.join(
@@ -31,6 +92,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
     )
 
     {:ok, commands} = Agent.start_link(fn -> [] end)
+    {:ok, subsystem_calls} = Agent.start_link(fn -> [] end)
 
     {:ok, daemon} =
       :ssh.daemon(0,
@@ -38,7 +100,10 @@ defmodule Opsonde.Targets.SSHMethodTest do
         user_dir: String.to_charlist(directory),
         user_passwords: [{~c"tester", ~c"secret"}],
         auth_methods: ~c"publickey,password",
-        subsystems: [:ssh_sftpd.subsystem_spec(root: String.to_charlist(directory))],
+        subsystems: [
+          {~c"test-subsystem", {SubsystemPeer, [subsystem_calls]}},
+          :ssh_sftpd.subsystem_spec(root: String.to_charlist(directory))
+        ],
         exec: {:direct, command_executor(commands)}
       )
 
@@ -60,12 +125,14 @@ defmodule Opsonde.Targets.SSHMethodTest do
       endpoint: endpoint,
       fingerprint: fingerprint,
       client_pem: client_pem,
-      commands: commands
+      commands: commands,
+      subsystem_calls: subsystem_calls
     }
   end
 
   setup context do
     Agent.update(context.commands, fn _commands -> [] end)
+    Agent.update(context.subsystem_calls, fn _calls -> [] end)
     :ok
   end
 
@@ -192,6 +259,418 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert commands(context) == ["slow"]
   end
 
+  test "public custom target exchanges exact binary subsystem steps on one connection", context do
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "data" => "AP8="},
+        %{"op" => "receive", "until" => %{"delimiter" => "fA=="}},
+        %{"op" => "receive", "until" => %{"bytes" => 8}},
+        %{"op" => "send", "data" => "c2Vjb25k"},
+        %{"op" => "receive", "until" => %{"bytes" => 2}},
+        %{"op" => "send_eof"},
+        %{"op" => "receive", "until" => %{"eof" => true}},
+        %{"op" => "close"}
+      ])
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :applied, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert details["completion_reason"] == "sequence_complete"
+
+    assert Enum.map(Enum.filter(details["steps"], &(&1["op"] == "receive")), & &1["data"]) ==
+             ["Zmlyc3R8", "bGVmdG92ZXI=", "/wA=", "ZG9uZQ=="]
+
+    assert details["bytes_sent"] == 8
+    assert details["bytes_received"] == 20
+    calls = Agent.get(context.subsystem_calls, &Enum.reverse/1)
+    assert [{session, <<0, 255>>}, {session, "second"}] = calls
+  end
+
+  test "subsystem keeps stderr and ordinary data as separate selected byte streams", context do
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "data" => "c3RyZWFtcw=="},
+        %{"op" => "receive", "until" => %{"bytes" => 5}, "stream" => 0},
+        %{"op" => "receive", "until" => %{"bytes" => 7}, "stream" => 1},
+        %{"op" => "close"}
+      ])
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :applied, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert Enum.map(
+             Enum.filter(details["steps"], &(&1["op"] == "receive")),
+             &{&1["stream"], &1["data"]}
+           ) ==
+             [{0, "cmVwbHk="}, {1, "d2FybmluZw=="}]
+  end
+
+  for {name, payload} <- [
+        {"timeout", "silent"},
+        {"disconnect", "disconnect"},
+        {"output limit", "oversize"},
+        {"cancellation", "silent"}
+      ] do
+    test "subsystem #{name} after dispatch preserves completed steps and unknown outcome",
+         context do
+      payload = unquote(payload)
+
+      {admin, exact} =
+        subsystem_request(
+          context,
+          [
+            %{"op" => "send", "data" => "cGluZw=="},
+            %{"op" => "receive", "until" => %{"bytes" => 4}},
+            %{"op" => "send", "data" => Base.encode64(payload)},
+            %{"op" => "receive", "until" => %{"bytes" => 1}},
+            %{"op" => "close"}
+          ],
+          %{"operation_timeout_ms" => 500, "max_output_bytes" => 8}
+        )
+
+      invocation =
+        if unquote(name) == "cancellation",
+          do: %{
+            cancelled?: fn ->
+              Agent.get(
+                context.subsystem_calls,
+                &Enum.any?(&1, fn {_, bytes} -> bytes == payload end)
+              )
+            end
+          },
+          else: %{}
+
+      clearance = Targets.clear_target_request!(exact, actor: admin)
+
+      assert %Target.EffectResult{status: :unknown, details: details} =
+               Targets.dispatch_target_effect!(clearance, invocation,
+                 actor: admin,
+                 authorize?: false
+               )
+
+      assert details["completion_reason"] == "sequence_interrupted"
+      assert Enum.map(details["steps"], & &1["op"]) == ["send", "receive", "send"]
+      assert details["steps"] |> Enum.at(1) |> Map.fetch!("data") == "cGluZw=="
+      assert details["current_step"] == %{"index" => 3, "op" => "receive"}
+
+      assert Agent.get(
+               context.subsystem_calls,
+               &Enum.count(&1, fn {_, bytes} -> bytes == payload end)
+             ) == 1
+    end
+  end
+
+  test "subsystem cumulative output bound applies across separate successful receives", context do
+    {admin, exact} =
+      subsystem_request(
+        context,
+        [
+          %{"op" => "send", "data" => "cGluZw=="},
+          %{"op" => "receive", "until" => %{"bytes" => 4}},
+          %{"op" => "send", "data" => "cG9uZw=="},
+          %{"op" => "receive", "until" => %{"bytes" => 4}},
+          %{"op" => "send", "data" => "IQ=="},
+          %{"op" => "receive", "until" => %{"bytes" => 1}},
+          %{"op" => "close"}
+        ],
+        %{"max_output_bytes" => 8}
+      )
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :unknown, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert details["bytes_received"] == 8
+    assert details["current_step"]["index"] == 5
+  end
+
+  test "public subsystem streams larger binary payloads through existing authorized file ports",
+       context do
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "body_file" => "payload"},
+        %{
+          "op" => "receive",
+          "until" => %{"bytes" => 100_000},
+          "response_file" => %{"name" => "reply.bin", "media_type" => "application/octet-stream"}
+        },
+        %{"op" => "send_eof"},
+        %{"op" => "receive", "until" => %{"eof" => true}},
+        %{"op" => "close"}
+      ])
+
+    bytes = :binary.copy(<<0, 255, 1, 128, 10>>, 20_000)
+
+    file =
+      Targets.begin_artifact!(
+        exact.target_id,
+        "input.bin",
+        "application/octet-stream",
+        100_000,
+        Base.encode16(:crypto.hash(:sha256, bytes), case: :lower),
+        Ecto.UUID.generate(),
+        actor: admin
+      )
+
+    Targets.append_artifact_chunk!(file.id, 0, bytes, actor: admin)
+    Targets.complete_artifact!(file.id, actor: admin)
+    reference = Targets.artifact_reference!(file.id, exact.target_id, actor: admin)
+
+    exact = %{
+      exact
+      | parameters:
+          Map.merge(exact.parameters, %{
+            "files" => %{"payload" => reference},
+            "max_bytes" => 120_000
+          })
+    }
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :applied, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    received = Enum.at(details["steps"], 1)["file"]
+    assert received["size_bytes"] == 100_000
+    assert received["sha256"] == reference["sha256"]
+
+    assert read_file(received, admin) == bytes
+    assert details["bytes_sent"] == 100_000
+    assert details["bytes_received"] == 100_004
+    assert Enum.at(details["steps"], 3)["data"] == "ZG9uZQ=="
+    assert byte_size(Jason.encode!(details)) < 4_096
+    calls = Agent.get(context.subsystem_calls, &length/1)
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+    Targets.revoke_artifact!(file.id, actor: admin)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert Agent.get(context.subsystem_calls, &length/1) == calls
+  end
+
+  test "subsystem file receives retain a delimiter split across native packets", context do
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "data" => "c3BsaXQtZGVsaW1pdGVy"},
+        %{
+          "op" => "receive",
+          "until" => %{"delimiter" => "fH4="},
+          "response_file" => %{"name" => "framed.bin", "media_type" => "application/octet-stream"}
+        },
+        %{"op" => "receive", "until" => %{"bytes" => 4}},
+        %{"op" => "close"}
+      ])
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :applied, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    file = Enum.at(details["steps"], 1)["file"]
+    assert read_file(file, admin) == "prefix|~"
+    assert Targets.get_artifact!(file["id"], actor: admin).completion_reason == :byte_limit
+    assert Enum.at(details["steps"], 2)["data"] == "dGFpbA=="
+  end
+
+  test "subsystem receipt publication failure retains progress without success or replay",
+       context do
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_subsystem_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'ready' AND NEW.request_id = 'subsystem-save-failure' THEN
+        RAISE EXCEPTION 'test subsystem receipt publication unavailable';
+      END IF;
+      RETURN NEW;
+    END
+    $$
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_subsystem_completion BEFORE UPDATE ON artifacts
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_subsystem_completion()
+    """)
+
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "data" => "cGluZw=="},
+        %{
+          "op" => "receive",
+          "until" => %{"bytes" => 4},
+          "response_file" => %{
+            "name" => "unpublished.bin",
+            "media_type" => "application/octet-stream"
+          }
+        },
+        %{"op" => "close"}
+      ])
+
+    exact = %{exact | operation_id: "subsystem-save-failure"}
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :unknown, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert details["current_step"]["size_bytes"] == 4
+    [receipt] = Targets.page_artifacts!(exact.target_id, actor: admin).results
+    assert receipt.status == :receiving
+    assert receipt.received_bytes == 4
+    assert {:error, _} = Targets.artifact_reference(receipt.id, exact.target_id, actor: admin)
+    assert Agent.get(context.subsystem_calls, &length/1) == 1
+    Opsonde.Repo.query!("DROP TRIGGER reject_subsystem_completion ON artifacts")
+  end
+
+  test "subsystem invalid sequences and current authority checks dispatch no payload", context do
+    {admin, exact} =
+      subsystem_request(context, [%{"op" => "send", "data" => "cGluZw=="}, %{"op" => "close"}])
+
+    for steps <- [
+          [%{"op" => "send", "data" => "invalid*"}, %{"op" => "close"}],
+          [%{"op" => "send_eof"}, %{"op" => "send", "data" => "cGluZw=="}, %{"op" => "close"}],
+          [%{"op" => "close"}, %{"op" => "receive", "until" => %{"bytes" => 1}}],
+          [%{"op" => "send", "data" => "cGluZw=="}],
+          [%{"op" => "receive", "until" => %{"delimiter" => ""}}, %{"op" => "close"}]
+        ] do
+      assert {:error, _} =
+               Targets.clear_target_request(
+                 %{exact | parameters: Map.put(exact.parameters, "steps", steps)},
+                 actor: admin
+               )
+    end
+
+    clearance = Targets.clear_target_request!(%{exact | authority_mode: :readonly}, actor: admin)
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert request_error(error).category == :forbidden
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+    method = Targets.get_access_method!(exact.access_method_id, actor: admin)
+    Targets.update_access_method!(method, method.revision, %{priority: 90}, actor: admin)
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert request_error(error).category == :stale_context
+    assert Agent.get(context.subsystem_calls, & &1) == []
+  end
+
+  test "interrupted subsystem file receive remains unpublished with its exact partial count",
+       context do
+    {admin, exact} =
+      subsystem_request(
+        context,
+        [
+          %{"op" => "send", "data" => "cGFydGlhbA=="},
+          %{
+            "op" => "receive",
+            "until" => %{"bytes" => 20},
+            "response_file" => %{
+              "name" => "partial.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "close"}
+        ],
+        %{"operation_timeout_ms" => 500}
+      )
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :unknown, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert details["current_step"]["size_bytes"] == 7
+    [receipt] = Targets.page_artifacts!(exact.target_id, actor: admin).results
+    assert receipt.received_bytes == 7
+    assert receipt.status == :receiving
+    assert {:error, _} = Targets.artifact_reference(receipt.id, exact.target_id, actor: admin)
+    assert Agent.get(context.subsystem_calls, &length/1) == 1
+  end
+
+  test "unavailable subsystem is rejected without transmitting requested payload", context do
+    {admin, exact} =
+      subsystem_request(context, [%{"op" => "send", "data" => "cGluZw=="}, %{"op" => "close"}])
+
+    exact = %{exact | parameters: Map.put(exact.parameters, "subsystem", "not-supported-by-peer")}
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert Agent.get(context.subsystem_calls, & &1) == []
+  end
+
+  test "subsystem preserves a native nonzero exit status instead of reporting success", context do
+    {admin, exact} =
+      subsystem_request(context, [
+        %{"op" => "send", "data" => "bmF0aXZlLWZhaWx1cmU="},
+        %{"op" => "receive", "until" => %{"bytes" => 6}},
+        %{"op" => "close"}
+      ])
+
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+
+    assert %Target.EffectResult{status: :failed, details: details} =
+             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+    assert details["exit_status"] == 7
+    assert Enum.at(details["steps"], 1)["data"] == "ZmFpbGVk"
+  end
+
+  for {type, provider, kind} <- [
+        {"linux", "linux-ssh", "host"},
+        {"cisco_ios_xe", "ios-xe-ssh", "network_device"}
+      ] do
+    @tag target_type: type,
+         provider_type: provider,
+         target_kind: kind,
+         target_method: if(provider == "ios-xe-ssh", do: "ssh_cli", else: "ssh")
+    test "#{type} profile retains the same generic subsystem exchange", context do
+      {admin, exact} =
+        subsystem_request(context, [
+          %{"op" => "send", "data" => "AP8="},
+          %{"op" => "receive", "until" => %{"bytes" => 14}},
+          %{"op" => "close"}
+        ])
+
+      clearance = Targets.clear_target_request!(exact, actor: admin)
+
+      assert %Target.EffectResult{status: :applied, details: details} =
+               Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+
+      assert Enum.at(details["steps"], 1)["data"] == "Zmlyc3R8bGVmdG92ZXI="
+      assert [{_, <<0, 255>>}] = Agent.get(context.subsystem_calls, & &1)
+    end
+  end
+
+  test "subsystem rejects a changed Target and a viewer before payload dispatch", context do
+    {admin, exact} =
+      subsystem_request(context, [%{"op" => "send", "data" => "cGluZw=="}, %{"op" => "close"}])
+
+    viewer =
+      Accounts.create_user!("subsystem-viewer@example.com", @password, :viewer, actor: admin)
+
+    assert {:error, _} = Targets.clear_target_request(exact, actor: viewer)
+    clearance = Targets.clear_target_request!(exact, actor: admin)
+    target = Targets.get_target!(exact.target_id, actor: admin)
+
+    Targets.update_target!(target, target.revision, %{name: "changed-subsystem-device"},
+      actor: admin
+    )
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert request_error(error).category == :stale_context
+    assert Agent.get(context.subsystem_calls, & &1) == []
+  end
+
   test "SSH adapter exposes arbitrary commands only as reviewed effects",
        context do
     admin = Accounts.bootstrap!("ssh-admin@example.com", @password, @password)
@@ -212,7 +691,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
 
     assert %Target.Capabilities{
              observations: [file_reader | _metadata],
-             effects: [tool, shell, file_writer | _filesystem]
+             effects: [tool, shell, subsystem, file_writer | _filesystem]
            } =
              Providers.target_capabilities!(
                provider.id,
@@ -228,6 +707,7 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert tool.operation == "command.execute"
     assert shell.capability == "request.ssh.effect"
     assert shell.operation == "shell.execute"
+    assert subsystem.operation == "subsystem.session"
     assert file_reader.capability == "request.ssh.observe"
     assert file_reader.operation == "sftp.read_file"
     assert file_writer.capability == "request.ssh.effect"
@@ -347,6 +827,65 @@ defmodule Opsonde.Targets.SSHMethodTest do
       },
       overrides
     )
+  end
+
+  defp read_file(file, actor) do
+    Stream.unfold(0, fn offset ->
+      if offset == file["size_bytes"] do
+        nil
+      else
+        chunk = Targets.read_bound_artifact_chunk!(file, offset, actor: actor)
+        {chunk, offset + byte_size(chunk)}
+      end
+    end)
+    |> Enum.to_list()
+    |> IO.iodata_to_binary()
+  end
+
+  defp subsystem_request(context, steps, config \\ %{}) do
+    admin = Accounts.bootstrap!("subsystem-admin@example.com", @password, @password)
+
+    provider =
+      Providers.create_provider!(
+        "ssh",
+        :target,
+        Map.get(context, :provider_type, "ssh"),
+        configuration(context, config),
+        password_credentials(),
+        actor: admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
+
+    target =
+      Targets.create_target!(
+        "subsystem-device",
+        Map.get(context, :target_kind, "network_device"),
+        Map.get(context, :target_type, "custom-network-device"),
+        %{},
+        nil,
+        actor: admin
+      )
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "ssh",
+        Map.get(context, :target_method, "ssh"),
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.ssh.effect"],
+        actor: admin
+      )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
+
+    exact =
+      request(target, method, :effect, :full_access, "unused")
+      |> Map.put(:operation, "subsystem.session")
+      |> Map.put(:parameters, %{"subsystem" => "test-subsystem", "steps" => steps})
+
+    {admin, exact}
   end
 
   defp password_config(context) do

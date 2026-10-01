@@ -7,6 +7,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
   alias Opsonde.Providers.Target
   alias Opsonde.Transports.SSH, as: Transport
   alias Opsonde.Targets.Adapters.SSH.SFTP
+  alias Opsonde.Targets.Adapters.SSH.Subsystem
 
   @effect_capability "request.ssh.effect"
 
@@ -55,7 +56,8 @@ defmodule Opsonde.Targets.Adapters.SSH do
        effects:
          [
            effect_operation(@effect_capability, "SSH"),
-           shell_operation(@effect_capability)
+           shell_operation(@effect_capability),
+           Subsystem.effect()
          ] ++ files.effects
      }}
   end
@@ -75,6 +77,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
     validation =
       case request.operation do
         "shell.execute" -> shell_script(request, @effect_capability)
+        "subsystem.session" -> Subsystem.compile(request)
         _other -> effect_command(request, @effect_capability)
       end
 
@@ -136,6 +139,33 @@ defmodule Opsonde.Targets.Adapters.SSH do
          result <-
            Transport.shell(state, request.connection.endpoint, script, cancelled?(invocation)) do
       effect_result(result)
+    end
+  end
+
+  def effect(state, %{operation: "subsystem.session"} = request, invocation) do
+    with {:ok, operation} <- Subsystem.compile(request) do
+      case Transport.subsystem_session(state, request.connection.endpoint, operation, invocation) do
+        {:ok, details} ->
+          {:ok,
+           %Target.EffectResult{
+             status: if(details["exit_status"] in [nil, 0], do: :applied, else: :failed),
+             details: details
+           }}
+
+        {:error, _category, message, progress} ->
+          {:ok,
+           %Target.EffectResult{
+             status: :unknown,
+             details:
+               Map.merge(progress, %{
+                 "error" => message,
+                 "completion_reason" => "sequence_interrupted"
+               })
+           }}
+
+        error ->
+          effect_result(error)
+      end
     end
   end
 

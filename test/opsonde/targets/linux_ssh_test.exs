@@ -171,7 +171,8 @@ defmodule Opsonde.Targets.LinuxSSHTest do
            |> Enum.map(& &1.operation) == [
              "linux.service.restart",
              "command.execute",
-             "shell.execute"
+             "shell.execute",
+             "subsystem.session"
            ]
 
     assert effect.evidence_requirements == [

@@ -463,7 +463,8 @@ defmodule Opsonde.Targets.IOSXESSHTest do
                "ios_xe.interface.admin_state.set",
                "cli.execute",
                "command.execute",
-               "shell.execute"
+               "shell.execute",
+               "subsystem.session"
              ]
 
     assert {:error, _denied} =
