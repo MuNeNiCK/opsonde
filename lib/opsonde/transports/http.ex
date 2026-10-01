@@ -5,6 +5,23 @@ defmodule Opsonde.Transports.HTTP do
   @poll_interval 20
   @pool_idle_timeout 60_000
 
+  def request_headers(headers, reserved) when is_map(headers) and map_size(headers) <= 8 do
+    normalized =
+      Enum.map(headers, fn {name, value} -> {String.downcase(to_string(name)), value} end)
+
+    if length(Enum.uniq_by(normalized, &elem(&1, 0))) == map_size(headers) and
+         Enum.all?(normalized, fn {name, value} ->
+           byte_size(name) in 1..256 and Regex.match?(~r/\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/, name) and
+             name not in reserved and
+             is_binary(value) and byte_size(value) <= 1_024 and
+             not String.match?(value, ~r/[\x00-\x08\x0a-\x1f\x7f]/)
+         end), do: {:ok, Map.new(normalized)}, else: {:error, :invalid_headers}
+  rescue
+    _ -> {:error, :invalid_headers}
+  end
+
+  def request_headers(_headers, _reserved), do: {:error, :invalid_headers}
+
   # Wire I/O only. Storage and authorization remain in the supplied file ports.
   def request(options, body, output, invocation) do
     with :ok <- not_cancelled(invocation),

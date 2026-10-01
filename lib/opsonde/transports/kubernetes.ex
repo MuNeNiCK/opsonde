@@ -75,19 +75,8 @@ defmodule Opsonde.Transports.Kubernetes do
       }
 
       bytes =
-        Stream.unfold(0, fn offset ->
-          if offset == response.file["size_bytes"] do
-            nil
-          else
-            case reader.(offset) do
-              {:ok, chunk} when is_binary(chunk) and byte_size(chunk) > 0 ->
-                {{:data, chunk}, offset + byte_size(chunk)}
-
-              {:error, error} ->
-                throw({:watch_read_error, error})
-            end
-          end
-        end)
+        Opsonde.Providers.Target.FileWriter.stream(response.file, reader)
+        |> Stream.map(&{:data, &1})
 
       result =
         bytes
@@ -111,10 +100,10 @@ defmodule Opsonde.Transports.Kubernetes do
 
       {:ok, Map.put(result, "resume_strategy", strategy)}
     catch
-      {:watch_read_error, %{category: :cancelled}} ->
+      {:file_read_error, %{category: :cancelled}} ->
         {:error, :cancelled, "Kubernetes watch file reading was cancelled"}
 
-      {:watch_read_error, _} ->
+      {:file_read_error, _} ->
         {:error, :failed, "Kubernetes watch file is unavailable"}
     end
 

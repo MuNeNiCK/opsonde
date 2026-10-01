@@ -215,7 +215,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
       content_type: "application/yang-data+json"
     }
 
-    case Transport.request(state, endpoint, operation, cancelled?, phase) do
+    case Transport.request(state, endpoint, operation, %{cancelled?: cancelled?}, phase) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
         if body == "" do
           {:ok, %{}}

@@ -166,6 +166,27 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :read, :abort]
     defstruct @enforce_keys
 
+    def stream(%{"size_bytes" => size}, reader)
+        when is_integer(size) and size >= 0 and is_function(reader, 1) do
+      Stream.unfold(0, fn offset ->
+        if offset == size do
+          nil
+        else
+          case reader.(offset) do
+            {:ok, chunk}
+            when is_binary(chunk) and byte_size(chunk) > 0 and offset + byte_size(chunk) <= size ->
+              {chunk, offset + byte_size(chunk)}
+
+            {:error, error} ->
+              throw({:file_read_error, error})
+
+            _ ->
+              throw({:file_read_error, :invalid_chunk})
+          end
+        end
+      end)
+    end
+
     def valid_options?(nil), do: true
 
     def valid_options?(%{"name" => name, "media_type" => media} = options),

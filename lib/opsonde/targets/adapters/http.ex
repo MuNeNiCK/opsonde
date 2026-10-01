@@ -434,28 +434,8 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp relative_path(_path), do: {:error, :invalid_path}
 
-  defp request_headers(headers) when is_map(headers) and map_size(headers) <= 8 do
-    normalized =
-      Enum.map(headers, fn {name, value} -> {String.downcase(to_string(name)), value} end)
-
-    if length(normalized) == map_size(headers) and
-         length(Enum.uniq_by(normalized, &elem(&1, 0))) == length(normalized) and
-         Enum.all?(normalized, fn {name, value} ->
-           safe_header_name?(name) and is_binary(value) and byte_size(value) <= 1_024 and
-             not String.match?(value, ~r/[\x00-\x08\x0a-\x1f\x7f]/)
-         end) do
-      {:ok, Map.new(normalized)}
-    else
-      {:error, :invalid_headers}
-    end
-  rescue
-    _ -> {:error, :invalid_headers}
-  end
-
-  defp request_headers(_headers), do: {:error, :invalid_headers}
-
-  defp safe_header_name?(name),
-    do: byte_size(name) in 1..256 and Regex.match?(@token, name) and name not in @owned_headers
+  defp request_headers(headers),
+    do: Opsonde.Transports.HTTP.request_headers(headers, @owned_headers)
 
   defp request_body(:write, _method, %{"body_file" => label} = parameters, files) do
     with false <- Map.has_key?(parameters, "body"),

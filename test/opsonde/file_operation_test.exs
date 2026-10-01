@@ -28,7 +28,8 @@ defmodule Opsonde.FileOperationTest do
               ~s({"type":"BOOKMARK","object":{"metadata":{"resourceVersion":"opaque-9"}}}\n)
           )
 
-        {method, "/binary"} when method in ["PUT", "OPS!V2"] ->
+        {method, path}
+        when method in ["PUT", "OPS!V2"] and path in ["/binary", "/api/service/binary"] ->
           {:ok, bytes, conn} = read_body(conn)
           Agent.update(agent, &Map.put(&1, :writes, [bytes | &1.writes]))
 
@@ -247,6 +248,75 @@ defmodule Opsonde.FileOperationTest do
     assert evidence.content["details"]["facts"] == facts
     assert :ok = Delivery.run(operation.id)
     assert Agent.get(context.agent, & &1.watches) == 1
+  end
+
+  test "Reviewer approved RESTCONF file capture preserves uncertainty without replay", context do
+    provider =
+      Providers.create_provider!(
+        "Case RESTCONF",
+        :target,
+        "restconf",
+        %{
+          "api_root" => "/api/service",
+          "ca_certificate" => File.read!("test/support/certs/kubernetes_fixture_ca.pem")
+        },
+        %{"username" => "fixture", "password" => "test-only"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        provider.id,
+        "Case RESTCONF",
+        "restconf",
+        context.endpoint,
+        provider.revision,
+        100,
+        ["request.restconf.observe", "request.restconf.effect"],
+        actor: context.admin
+      )
+      |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+    context = %{context | provider: provider, method: method}
+    reference = stage_file(context)
+
+    parameters = %{
+      "method" => "OPS!V2",
+      "path" => "/binary",
+      "body_file" => "payload",
+      "files" => %{"payload" => reference},
+      "content_type" => "application/octet-stream",
+      "capture" => %{"duration_ms" => 500, "max_bytes" => 3},
+      "response_file" => %{
+        "name" => "restconf-sample.bin",
+        "media_type" => "application/octet-stream"
+      }
+    }
+
+    proposal = proposal!(context, parameters, capability: "request.restconf.effect")
+    assert proposal.status == :reviewing
+    approve!(proposal)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :unknown
+    assert stored.parameters == parameters
+    assert stored.result_details["completion_reason"] == "byte_limit"
+
+    assert Targets.read_bound_artifact_chunk!(stored.result_details["file"], 0,
+             actor: context.operator
+           ) == <<255, 0, 1>>
+
+    evidence =
+      Cases.list_evidence!(actor: context.admin)
+      |> Enum.find(&(&1.source == "operation" and &1.source_ref == operation.id))
+
+    assert evidence.content["parameters"] == parameters
+    assert evidence.content["details"] == stored.result_details
+    assert :ok = Delivery.run(operation.id)
+    assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
   end
 
   test "Reviewer approval binds native HTTP verb and file identity through Case execution",
@@ -707,7 +777,7 @@ defmodule Opsonde.FileOperationTest do
         tool
         | "id" => "file-verification",
           "request_kind" => "observation",
-          "capability" => "request.http.observe",
+          "capability" => String.replace_suffix(capability, ".effect", ".observe"),
           "operation" => "request.observe"
       }
     }

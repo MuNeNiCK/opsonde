@@ -1,6 +1,7 @@
 defmodule Opsonde.Transports.RESTCONF do
   @moduledoc false
   alias Opsonde.Transports.HTTPS
+  alias Opsonde.Providers.Target.FileWriter
 
   @configuration_keys ~w(ca_certificate api_root connect_timeout_ms request_timeout_ms max_body_bytes)
   @xrd_namespace "http://docs.oasis-open.org/ns/xri/xrd-1.0"
@@ -18,6 +19,62 @@ defmodule Opsonde.Transports.RESTCONF do
     ]
     @derive {Inspect, except: [:auth, :client_tls]}
     defstruct @enforce_keys
+  end
+
+  defmodule Notifications do
+    @moduledoc false
+    @max_summary_bytes 1_048_576
+
+    def read(response, reader) do
+      cond do
+        response.content_encoding not in ["", "identity"] ->
+          unavailable("unsupported_encoding")
+
+        response.file["size_bytes"] > @max_summary_bytes ->
+          unavailable("summary_limit")
+
+        true ->
+          bytes =
+            FileWriter.stream(response.file, reader) |> Enum.to_list() |> IO.iodata_to_binary()
+
+          if String.valid?(bytes) do
+            {events, parser} = ServerSentEvents.Parser.parse(bytes)
+
+            id =
+              case List.last(events) do
+                %{id: id} when byte_size(id) <= 2_048 -> id
+                _ -> nil
+              end
+
+            {:ok,
+             %{
+               "event_count" => length(events),
+               "last_notification_id" => id,
+               "partial_event" =>
+                 not is_nil(parser.event) or parser.phase in [:key, :value_start, :value],
+               "error" => nil
+             }}
+          else
+            unavailable("invalid_utf8")
+          end
+      end
+    catch
+      {:file_read_error, %{category: :cancelled}} ->
+        {:error, :cancelled, "RESTCONF notification reading was cancelled"}
+
+      {:file_read_error, _} ->
+        {:error, :failed, "RESTCONF notification file is unavailable"}
+    end
+
+    defp unavailable(reason),
+      do:
+        {:ok,
+         %{
+           "event_count" => 0,
+           "last_notification_id" => nil,
+           "partial_event" => true,
+           "error" => %{"reason" => reason}
+         }}
   end
 
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
@@ -115,6 +172,22 @@ defmodule Opsonde.Transports.RESTCONF do
 
   def endpoint(_value), do: {:error, :failed, "RESTCONF endpoint is invalid"}
 
+  def resource_uri(endpoint, value) when is_binary(value) and byte_size(value) in 1..2_048 do
+    uri = URI.parse(value)
+
+    if origin(uri) == origin(URI.parse(endpoint)) and is_nil(uri.userinfo) and
+         is_nil(uri.fragment) and
+         path?(uri.path || "/") and String.valid?(value) and
+         not Regex.match?(~r/[\x00-\x20\x7f\\]/, value),
+       do: {:ok, value},
+       else:
+         {:error, :failed, "RESTCONF resource URI is outside the registered origin or invalid"}
+  rescue
+    _ -> {:error, :failed, "RESTCONF resource URI is invalid"}
+  end
+
+  def resource_uri(_endpoint, _value), do: {:error, :failed, "RESTCONF resource URI is invalid"}
+
   def path?(value) when is_binary(value) and byte_size(value) in 1..2048 do
     uri = URI.parse(value)
     decoded = URI.decode(value)
@@ -144,7 +217,7 @@ defmodule Opsonde.Transports.RESTCONF do
              accept: "application/yang-data+json",
              content_type: "application/yang-data+json"
            },
-           fn -> false end,
+           %{},
            :read
          ) do
       {:ok, %{status: status}} when status in 200..299 -> :ok
@@ -154,24 +227,35 @@ defmodule Opsonde.Transports.RESTCONF do
     end
   end
 
-  def request(state, value, operation, cancelled?, phase) do
+  def request(state, value, operation, invocation, phase) do
     deadline = System.monotonic_time(:millisecond) + state.request_timeout
 
     with {:ok, endpoint} <- endpoint(value),
-         true <- path?(operation.path),
-         {:ok, root} <- root(state, endpoint, cancelled?, deadline) do
-      path = if operation.path == "/", do: root, else: root <> operation.path
-      run_http(state, endpoint, path, operation, cancelled?, phase, deadline)
+         {:ok, path} <- resource_path(state, endpoint, operation, invocation, deadline) do
+      run_http(state, endpoint, path, operation, invocation, phase, deadline)
     else
-      false -> {:error, :failed, "RESTCONF resource path is invalid"}
       {:error, _category, _message} = error -> error
     end
   end
 
-  defp root(%State{api_root: root}, _endpoint, _cancelled?, _deadline) when is_binary(root),
+  defp resource_path(_state, endpoint, %{uri: uri}, _invocation, _deadline) when is_binary(uri) do
+    with {:ok, _} <- resource_uri(endpoint, uri), do: {:ok, URI.parse(uri).path || "/"}
+  end
+
+  defp resource_path(state, endpoint, operation, invocation, deadline) do
+    with true <- path?(operation.path),
+         {:ok, root} <- root(state, endpoint, invocation, deadline),
+         do: {:ok, if(operation.path == "/", do: root, else: root <> operation.path)},
+         else: (
+           false -> {:error, :failed, "RESTCONF resource path is invalid"}
+           error -> error
+         )
+  end
+
+  defp root(%State{api_root: root}, _endpoint, _invocation, _deadline) when is_binary(root),
     do: {:ok, root}
 
-  defp root(state, endpoint, cancelled?, deadline) do
+  defp root(state, endpoint, invocation, deadline) do
     operation = %{
       method: :get,
       query: %{},
@@ -186,7 +270,7 @@ defmodule Opsonde.Transports.RESTCONF do
              endpoint,
              "/.well-known/host-meta",
              operation,
-             cancelled?,
+             invocation,
              :read,
              deadline
            ),
@@ -226,29 +310,39 @@ defmodule Opsonde.Transports.RESTCONF do
 
   defp origin(uri), do: {uri.scheme, uri.host, uri.port}
 
-  defp run_http(state, endpoint, path, operation, cancelled?, phase, deadline) do
+  defp run_http(state, endpoint, path, operation, invocation, phase, deadline) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     cond do
-      cancelled?.() ->
+      cancelled?(invocation) ->
         {:error, :cancelled, "RESTCONF request was cancelled before dispatch"}
 
       remaining <= 0 ->
         {:error, :timeout, "RESTCONF request timed out before dispatch"}
 
       true ->
-        state
-        |> http(endpoint, path, operation, cancelled?, remaining)
-        |> normalize(phase)
+        result = http(state, endpoint, path, operation, invocation, remaining)
+
+        with {:ok, response} <- normalize(result, phase) do
+          if response[:file] && media(response.headers) == "text/event-stream" do
+            {:ok, raw} = result
+
+            with {:ok, notifications} <-
+                   Notifications.read(response, raw.private[:opsonde_file_reader]),
+                 do: {:ok, Map.put(response, :notifications, notifications)}
+          else
+            {:ok, response}
+          end
+        end
     end
   end
 
-  defp http(state, endpoint, path, operation, cancelled?, remaining) do
+  defp http(state, endpoint, path, operation, invocation, remaining) do
     {:ok, tls} = HTTPS.transport_options(state.ca_certificate, URI.parse(endpoint).host)
 
     options = [
       method: operation.method,
-      url: endpoint <> path,
+      url: Map.get(operation, :uri) || endpoint <> path,
       params: operation.query,
       headers:
         if(state.auth, do: [{"authorization", state.auth}], else: []) ++
@@ -256,7 +350,11 @@ defmodule Opsonde.Transports.RESTCONF do
             {"accept", operation.accept},
             {"content-type", operation.content_type},
             {"accept-encoding", "identity"}
-          ],
+          ] ++
+          if(Map.get(operation, :last_event_id),
+            do: [{"last-event-id", operation.last_event_id}],
+            else: []
+          ) ++ Map.to_list(Map.get(operation, :headers, %{})),
       connect_options: [
         timeout: min(state.connect_timeout, remaining),
         transport_opts: Keyword.merge(tls, state.client_tls)
@@ -265,6 +363,7 @@ defmodule Opsonde.Transports.RESTCONF do
       retry: false,
       redirect: false,
       raw: true,
+      capture: Map.get(operation, :capture),
       into: fn {:data, data}, {request, response} ->
         body = if is_binary(response.body), do: response.body, else: ""
 
@@ -274,7 +373,34 @@ defmodule Opsonde.Transports.RESTCONF do
       end
     ]
 
-    Opsonde.Transports.HTTP.request(options, operation.body, nil, %{cancelled?: cancelled?})
+    Opsonde.Transports.HTTP.request(
+      options,
+      operation.body,
+      Map.get(operation, :response_file),
+      invocation
+    )
+  end
+
+  defp media(headers),
+    do:
+      headers
+      |> Map.get("content-type", [""])
+      |> List.first()
+      |> String.split(";")
+      |> hd()
+      |> String.trim()
+      |> String.downcase()
+
+  defp normalize({:ok, %Req.Response{private: %{opsonde_file: file}} = response}, _phase) do
+    {:ok,
+     %{
+       status: response.status,
+       headers: response.headers,
+       body: "",
+       file: file,
+       completion_reason: Atom.to_string(response.private[:opsonde_completion_reason]),
+       content_encoding: Enum.join(Req.Response.get_header(response, "content-encoding"), ",")
+     }}
   end
 
   defp normalize({:ok, %Req.Response{status: status, headers: headers, body: body}}, phase)
@@ -295,6 +421,9 @@ defmodule Opsonde.Transports.RESTCONF do
 
   defp failure(:effect, _category), do: :unknown_after_dispatch
   defp failure(_phase, category), do: category
+
+  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback.()
+  defp cancelled?(_invocation), do: false
 
   defp timeout(configuration, key, default) do
     case Map.get(configuration, key, default) do
