@@ -207,6 +207,135 @@ defmodule Opsonde.OperationDeliveryTest do
              "review_recovery"
   end
 
+  test "proposal Reviewer retains prior-run facts without treating them as current manual recovery proof",
+       context do
+    configure_mode!(context.admin, :auto)
+
+    {incident, run, proposal} =
+      authorized_proposal!("review-evidence-availability", context, purpose: :investigation)
+
+    source_result = Cases.get_turn!(proposal.source_turn_id, authorize?: false).result
+
+    review = fn id, verdict, check ->
+      assert :ok =
+               Opsonde.Cases.Proposal.ReviewDelivery.run(id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     check.(request)
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        verdict: verdict,
+                        purpose_assessment: :investigation,
+                        reason: "Judge the exact investigation using available evidence",
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+    end
+
+    review.(proposal.id, :approved, fn request ->
+      assert request.recovery_evidence_ids == []
+    end)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :applied,
+                      details: %{"stdout" => "nginx is running"}
+                    }}
+                 )
+             )
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    evidence = Cases.get_evidence!(current.pending_intent["evidence_id"], authorize?: false)
+
+    propose = fn turn ->
+      result = put_in(source_result, ["intent", "evidence_ids"], [])
+
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        result,
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review fresh investigation",
+        authorize?: false
+      )
+
+      fresh = Cases.materialize_proposal!(turn.id, authorize?: false)
+      Cases.route_downstream_decision!(turn.id, authorize?: false)
+      Cases.get_proposal!(fresh.id, authorize?: false)
+    end
+
+    next_turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+    fresh = propose.(next_turn)
+
+    review.(fresh.id, :rejected, fn request ->
+      assert request.resolution_run_id == run.id
+      assert request.recovery_evidence_ids == [evidence.id]
+      assert Enum.any?(request.context_evidence, &(&1.id == evidence.id))
+    end)
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    active = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    waiting =
+      Cases.require_case_attention!(
+        current.id,
+        current.revision,
+        active.id,
+        active.revision,
+        "review-evidence-pause",
+        "Restart the investigation",
+        %{"action" => "retry_resolver"},
+        "Resume",
+        authorize?: false
+      )
+
+    paused = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed =
+      Cases.resume_case!(
+        waiting.id,
+        waiting.revision,
+        paused.id,
+        paused.revision,
+        paused.authority_mode,
+        paused.max_elapsed_seconds,
+        paused.max_resolver_turns,
+        paused.max_target_requests,
+        paused.max_effects,
+        paused.max_related_targets,
+        paused.max_ai_usage_units,
+        paused.max_no_progress_turns,
+        "Obtain fresh facts",
+        actor: context.operator
+      )
+
+    [resumed_turn] = Cases.started_turns_for_run!(resumed.id, authorize?: false)
+    fresh = propose.(resumed_turn)
+
+    review.(fresh.id, :approved, fn request ->
+      assert request.resolution_run_id == resumed.id
+      assert request.recovery_evidence_ids == []
+
+      assert Enum.any?(request.context_evidence, fn item ->
+               item.id == evidence.id and item.content["facts"]["stdout"] == "nginx is running"
+             end)
+    end)
+
+    assert Cases.get_proposal!(fresh.id, authorize?: false).status == :authorized
+    assert length(Cases.operations_for_case!(incident.id, authorize?: false)) == 1
+  end
+
   test "opaque investigation preserves readonly refusal and ask operator approval", context do
     for {mode, status} <- [{:readonly, :recommended}, {:ask, :awaiting_human}] do
       configure_mode!(context.admin, mode)

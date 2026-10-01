@@ -517,14 +517,6 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
        ) do
     limits = AI.resolver_disclosure_limits()
 
-    recovery_baseline =
-      if incident.trigger_kind in [:manual, :audit] do
-        case ConditionRecovery.baseline_for_case(incident) do
-          {:ok, baseline} -> baseline
-          {:error, _reason} -> nil
-        end
-      end
-
     base = %AI.ResolverRequest{
       provider_revision: selection.provider_revision,
       session_id: "resolver:#{run.id}",
@@ -565,14 +557,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     file_reads = Enum.sort_by(file_reads, &(&1.id != turn.intent["file_read_evidence_id"]))
 
     manual_recovery_ids =
-      if (incident.trigger_kind in [:manual, :audit] and target) &&
-           is_struct(recovery_baseline, DateTime) do
-        (file_reads ++ other_evidence)
-        |> Enum.filter(&manual_recovery_candidate?(&1, incident, run, target, recovery_baseline))
-        |> Enum.map(& &1.id)
-      else
-        []
-      end
+      ConditionRecovery.manual_evidence_ids(incident, run, target, file_reads ++ other_evidence)
 
     base
     |> add_items(:evidence, generic_evidence(file_reads, base.disclosure.allowed_target_ids))
@@ -847,64 +832,6 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         content: projected_evidence_content(item)
       }
     end)
-  end
-
-  defp manual_recovery_candidate?(
-         %{kind: "file_read"} = evidence,
-         incident,
-         run,
-         target,
-         baseline
-       ) do
-    is_binary(evidence.content["value"]) and
-      case Cases.file_read_source(evidence.id, incident.id, authorize?: false) do
-        {:ok, source} -> manual_recovery_candidate?(source, incident, run, target, baseline)
-        {:error, _unavailable} -> false
-      end
-  end
-
-  defp manual_recovery_candidate?(evidence, incident, run, target, baseline) do
-    DateTime.compare(evidence.observed_at, baseline) != :lt and
-      evidence.content["target_id"] == target.id and
-      case evidence do
-        %{
-          kind: "observation",
-          source_ref: operation_id,
-          content: %{"status" => "applied", "facts" => facts}
-        }
-        when is_map(facts) and map_size(facts) > 0 ->
-          case Cases.get_operation(operation_id, authorize?: false) do
-            {:ok, operation} ->
-              evidence.resolution_run_id == run.id and operation.case_id == incident.id and
-                operation.resolution_run_id == run.id and
-                operation.target_id == target.id and operation.target_revision == target.revision and
-                operation.purpose == :investigation and operation.status == :applied and
-                is_struct(operation.dispatch_started_at, DateTime) and
-                DateTime.compare(operation.dispatch_started_at, baseline) != :lt
-
-            _other ->
-              false
-          end
-
-        %{
-          kind: "target_verification",
-          content: %{"status" => "verified", "operation_id" => operation_id}
-        } ->
-          with {:ok, operation} <- Cases.get_operation(operation_id, authorize?: false),
-               {:ok, attempt} <-
-                 Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
-            operation.case_id == incident.id and operation.target_id == target.id and
-              operation.target_revision == target.revision and
-              operation.purpose == :remediation and operation.status == :applied and
-              attempt.status == :verified and attempt.case_id == incident.id and
-              attempt.observed_at == evidence.observed_at
-          else
-            _other -> false
-          end
-
-        _other ->
-          false
-      end
   end
 
   defp projected_evidence_content(%{kind: kind, content: content})

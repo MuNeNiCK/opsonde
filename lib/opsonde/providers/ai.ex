@@ -615,6 +615,8 @@ defmodule Opsonde.Providers.AI do
       :session_id,
       :resolver_session_id,
       :case_id,
+      :resolution_run_id,
+      :recovery_evidence_ids,
       :objective,
       :report_language,
       :operating_instructions,

@@ -856,6 +856,37 @@ defmodule Opsonde.AI.ReqLLMTest do
              host.id
   end
 
+  test "Reviewer distinguishes current recovery evidence from historical successful facts",
+       context do
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+
+    request =
+      review_request()
+      |> Map.put(:resolution_run_id, "current-run")
+      |> Map.put(:recovery_evidence_ids, ["evidence-1"])
+
+    set_mode(
+      context.agent,
+      {:decision,
+       %{"verdict" => "approved", "purpose_assessment" => "remediation", "reason" => "bounded"}}
+    )
+
+    assert {:ok, %AI.ReviewDecision{verdict: :approved}} = Adapter.review(state, request, %{})
+    [sent] = requests(context.agent)
+    payload = reviewer_payload(sent)
+    assert payload["resolution_run_id"] == "current-run"
+    assert payload["recovery_evidence_ids"] == ["evidence-1"]
+
+    assert Enum.any?(
+             payload["recent_case_evidence"],
+             &(&1["id"] == "independent-responsive-guest")
+           )
+
+    system = hd(Jason.decode!(sent.body)["messages"])["content"]
+    assert system =~ "Historical success does not establish the current outcome"
+    assert system =~ "availability does not establish recovery"
+  end
+
   test "Reviewer receives a bounded schema correction after a paid invalid response", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
@@ -2984,6 +3015,8 @@ defmodule Opsonde.AI.ReqLLMTest do
       resolver_session_id: "resolver-private-session",
       case_id: "case-1",
       objective: "Restore service health",
+      resolution_run_id: "review-run",
+      recovery_evidence_ids: [],
       report_language: :ja,
       operating_instructions: "Do not perform destructive actions",
       proposal: proposal(),

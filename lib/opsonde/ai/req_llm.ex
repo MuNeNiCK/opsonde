@@ -551,6 +551,8 @@ defmodule Opsonde.AI.ReqLLM do
       "source_evidence" => plain(request.source_evidence),
       "cited_evidence" => plain(request.cited_evidence),
       "recent_case_evidence" => plain(request.context_evidence),
+      "resolution_run_id" => request.resolution_run_id,
+      "recovery_evidence_ids" => request.recovery_evidence_ids,
       "case_initial_target_id" => request.initial_target_id,
       "registered_target_relations" => plain(request.target_relations),
       "retry_context" => request.retry_context,
@@ -568,7 +570,13 @@ defmodule Opsonde.AI.ReqLLM do
         "proposal Target; they establish the link, not the cause of the fault or recovery. You have no " <>
         "executable tools and no Resolver conversation. Check recent Case evidence for facts " <>
         "that contradict the proposal, even when the Resolver did not cite them. Compare " <>
-        "observation timestamps with effect timestamps: an observation failure after an effect " <>
+        "recovery_evidence_ids with the supplied facts: only these IDs are available as " <>
+        "current recovery proof, and availability does not establish recovery. Historical " <>
+        "success does not establish the current outcome; obtaining fresh evidence may be " <>
+        "necessary after a new ResolutionRun or a change. Keep older facts as chronology " <>
+        "and contradiction context, but do not reject a justified investigation solely " <>
+        "because a previous run had a successful result that is not current recovery proof. " <>
+        "Compare observation timestamps with effect timestamps: an observation failure after an effect " <>
         "may be caused by that effect. Monitoring endpoint loss or BMC power-on alone does " <>
         "not prove that a guest or host is unresponsive. A successful direct Target observation " <>
         "contradicts a claim that the same Target was unreachable at that time. " <>

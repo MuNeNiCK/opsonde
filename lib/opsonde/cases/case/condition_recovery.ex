@@ -77,6 +77,80 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     end
   end
 
+  # This marks evidence available for AI review; it never decides recovery.
+  def manual_evidence_ids(incident, run, target, evidence)
+      when incident.trigger_kind in [:manual, :audit] and not is_nil(target) do
+    case baseline_for_case(incident) do
+      {:ok, baseline} ->
+        evidence
+        |> Enum.filter(&manual_candidate?(&1, incident, run, target, baseline))
+        |> Enum.map(& &1.id)
+
+      {:error, _unavailable} ->
+        []
+    end
+  end
+
+  def manual_evidence_ids(_incident, _run, _target, _evidence), do: []
+
+  defp manual_candidate?(
+         %{kind: "file_read"} = evidence,
+         incident,
+         run,
+         target,
+         baseline
+       ) do
+    is_binary(evidence.content["value"]) and
+      case Cases.file_read_source(evidence.id, incident.id, authorize?: false) do
+        {:ok, source} -> manual_candidate?(source, incident, run, target, baseline)
+        {:error, _unavailable} -> false
+      end
+  end
+
+  defp manual_candidate?(evidence, incident, run, target, baseline) do
+    DateTime.compare(evidence.observed_at, baseline) != :lt and
+      evidence.content["target_id"] == target.id and
+      case evidence do
+        %{
+          kind: "observation",
+          source_ref: operation_id,
+          content: %{"status" => "applied", "facts" => facts}
+        }
+        when is_map(facts) and map_size(facts) > 0 ->
+          case Cases.get_operation(operation_id, authorize?: false) do
+            {:ok, operation} ->
+              evidence.resolution_run_id == run.id and operation.case_id == incident.id and
+                operation.resolution_run_id == run.id and
+                operation.target_id == target.id and operation.target_revision == target.revision and
+                operation.purpose == :investigation and operation.status == :applied and
+                is_struct(operation.dispatch_started_at, DateTime) and
+                DateTime.compare(operation.dispatch_started_at, baseline) != :lt
+
+            _other ->
+              false
+          end
+
+        %{
+          kind: "target_verification",
+          content: %{"status" => "verified", "operation_id" => operation_id}
+        } ->
+          with {:ok, operation} <- Cases.get_operation(operation_id, authorize?: false),
+               {:ok, attempt} <-
+                 Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
+            operation.case_id == incident.id and operation.target_id == target.id and
+              operation.target_revision == target.revision and
+              operation.purpose == :remediation and operation.status == :applied and
+              attempt.status == :verified and attempt.case_id == incident.id and
+              attempt.observed_at == evidence.observed_at
+          else
+            _other -> false
+          end
+
+        _other ->
+          false
+      end
+  end
+
   def ready_for_review?(assessments) when is_list(assessments) and assessments != [] do
     Enum.all?(assessments, &(&1.status == :ready_for_review))
   end

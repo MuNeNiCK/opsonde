@@ -97,6 +97,9 @@ defmodule Opsonde.Providers.AI.Validator do
       positive?(request.provider_revision) and nonempty?(request.session_id) and
         nonempty?(request.resolver_session_id) and
         request.session_id != request.resolver_session_id and nonempty?(request.case_id) and
+        nonempty?(request.resolution_run_id) and is_list(request.recovery_evidence_ids) and
+        unique?(request.recovery_evidence_ids) and
+        Enum.all?(request.recovery_evidence_ids, &(&1 in (evidence_ids ++ context_ids))) and
         nonempty?(request.objective) and request.report_language in [:en, :ja] and
         valid_instructions?(request.operating_instructions) and
         valid_retry_context?(request.retry_context) and
@@ -514,6 +517,8 @@ defmodule Opsonde.Providers.AI.Validator do
 
   defp review_size(request) do
     encoded = %{
+      resolution_run_id: request.resolution_run_id,
+      recovery_evidence_ids: request.recovery_evidence_ids,
       objective: request.objective,
       operating_instructions: request.operating_instructions,
       proposal: plain_value(request.proposal),

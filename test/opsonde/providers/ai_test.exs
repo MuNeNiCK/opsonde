@@ -1561,6 +1561,14 @@ defmodule Opsonde.Providers.AITest do
     assert {:error, invalid_source} = review(context, duplicate_source, unreachable_response())
     assert ai_error(invalid_source).category == :invalid_input
     refute_receive {:review, _, ^duplicate_source}
+
+    undisclosed_recovery = %{request | recovery_evidence_ids: ["unavailable-evidence"]}
+
+    assert {:error, invalid_recovery} =
+             review(context, undisclosed_recovery, unreachable_response())
+
+    assert ai_error(invalid_recovery).category == :invalid_input
+    refute_receive {:review, _, ^undisclosed_recovery}
   end
 
   test "budgets, disclosure, cancellation and stale providers stop before model dispatch",
@@ -1883,6 +1891,8 @@ defmodule Opsonde.Providers.AITest do
       resolver_session_id: "resolver-session-1",
       case_id: "case-1",
       objective: "Restore service health",
+      resolution_run_id: "review-run",
+      recovery_evidence_ids: [],
       report_language: :en,
       operating_instructions: "Avoid modifying root",
       proposal: proposal(),

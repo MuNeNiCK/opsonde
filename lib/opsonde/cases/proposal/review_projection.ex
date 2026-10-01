@@ -4,6 +4,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Providers.AI
 
   def build(proposal_id, selection, retry_context \\ nil)
@@ -13,7 +14,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, run} <- Cases.get_resolution_run(proposal.resolution_run_id, authorize?: false),
          :ok <- eligible(proposal, incident, run),
-         {:ok, {conditions, _recovery_ids}} <-
+         {:ok, {conditions, recovery_ids}} <-
            ConditionContext.current_condition_context(incident),
          {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
          {:ok, true} <-
@@ -35,12 +36,22 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
            ),
          {:ok, context_evidence} <- ReviewerEvidence.file_contents(incident, context_evidence),
          {:ok, target_relations} <- target_relations(incident, proposal),
-         {:ok, target} <- current_target(proposal) do
+         {:ok, target} <- current_target(proposal),
+         {:ok, recovery_ids} <-
+           recovery_evidence_ids(
+             incident,
+             run,
+             target,
+             evidence ++ context_evidence,
+             recovery_ids
+           ) do
       request = %AI.ReviewRequest{
         provider_revision: selection.provider_revision,
         session_id: "reviewer:#{proposal.id}",
         resolver_session_id: "resolver:#{run.id}",
         case_id: incident.id,
+        resolution_run_id: run.id,
+        recovery_evidence_ids: recovery_ids,
         objective: objective(incident),
         report_language: incident.report_language,
         operating_instructions: target.operating_instructions,
@@ -81,6 +92,34 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
 
       true ->
         :ok
+    end
+  end
+
+  defp recovery_evidence_ids(incident, run, target, visible, condition_ids) do
+    visible_ids = Enum.map(visible, & &1.id)
+
+    if incident.trigger_kind == :signal do
+      {:ok, Enum.filter(condition_ids, &(&1 in visible_ids))}
+    else
+      Enum.reduce_while(visible, {:ok, []}, fn projected, {:ok, loaded} ->
+        case Cases.get_evidence(projected.id, authorize?: false) do
+          {:ok, %{kind: "file_read"} = item} ->
+            {:cont, {:ok, [%{item | content: projected.content} | loaded]}}
+
+          {:ok, item} ->
+            {:cont, {:ok, [item | loaded]}}
+
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, items} ->
+          {:ok, ConditionRecovery.manual_evidence_ids(incident, run, target, items)}
+
+        error ->
+          error
+      end
     end
   end
 
