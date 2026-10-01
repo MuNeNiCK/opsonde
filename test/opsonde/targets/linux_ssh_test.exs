@@ -162,8 +162,13 @@ defmodule Opsonde.Targets.LinuxSSHTest do
 
     assert_schema_rejects!(service_tool.verification_schema, %{"active_state" => "inactive"})
 
-    [effect, _method_effect] = effects
-    assert Enum.map(effects, & &1.operation) == ["linux.service.restart", "command.execute"]
+    [effect | _method_effects] = effects
+
+    assert Enum.map(effects, & &1.operation) == [
+             "linux.service.restart",
+             "command.execute",
+             "shell.execute"
+           ]
 
     assert effect.evidence_requirements == [
              %Target.EvidenceRequirement{

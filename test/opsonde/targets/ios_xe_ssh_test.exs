@@ -453,7 +453,9 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              [
                "ios_xe.interface.description.set",
                "ios_xe.interface.admin_state.set",
-               "cli.execute"
+               "cli.execute",
+               "command.execute",
+               "shell.execute"
              ]
 
     assert {:error, _denied} =
@@ -522,6 +524,103 @@ defmodule Opsonde.Targets.IOSXESSHTest do
     assert Enum.any?(scripts, &String.contains?(&1, "description changed"))
     assert Enum.any?(scripts, &String.contains?(&1, "\nshutdown\n"))
     assert Enum.all?(scripts, &String.starts_with?(&1, "terminal length 0\nterminal width 511\n"))
+  end
+
+  for {adapter, kind, type, protocol} <- [
+        {"linux-ssh", "host", "linux", "ssh"},
+        {"ios-xe-ssh", "network_device", "cisco_ios_xe", "ssh_cli"}
+      ] do
+    @tag adapter: adapter, kind: kind, type: type, protocol: protocol
+    test "#{adapter} retains generic SSH exec and shell in the same checked Method", context do
+      provider =
+        Providers.create_provider!(
+          "shared-" <> context.adapter,
+          :target,
+          context.adapter,
+          configuration(context),
+          credentials(),
+          actor: context.admin
+        )
+        |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+      target =
+        Targets.create_target!(context.adapter, context.kind, context.type, %{}, nil,
+          actor: context.admin
+        )
+
+      method =
+        Targets.create_access_method!(
+          target.id,
+          provider.id,
+          "shared SSH",
+          context.protocol,
+          context.endpoint,
+          provider.revision,
+          100,
+          ["request.ssh.effect"],
+          actor: context.admin
+        )
+        |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
+
+      assert method.check_status == :passed
+      assert Enum.any?(method.operation_catalog.effects, &(&1.operation == "command.execute"))
+      assert Enum.any?(method.operation_catalog.effects, &(&1.operation == "shell.execute"))
+      context = %{context | provider: provider, target: target, method: method}
+      script = "show version\nexit\n"
+
+      assert {:error, _} =
+               request(context, :observation, "request.ssh.effect", "shell.execute", %{}, %{
+                 "script" => script
+               })
+               |> Targets.clear_target_request(actor: context.operator)
+
+      clearance =
+        request(context, :effect, "request.ssh.effect", "shell.execute", %{}, %{
+          "script" => script
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      result =
+        Targets.dispatch_target_effect!(clearance, %{},
+          actor: context.operator,
+          authorize?: false
+        )
+
+      assert result.status == :applied
+      assert result.details["output"]["value"] =~ "Cisco IOS XE Software"
+      assert scripts(context) == [script]
+
+      exec =
+        request(context, :effect, "request.ssh.effect", "command.execute", %{}, %{
+          "command" => "show version"
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      assert {:error, _} =
+               Targets.dispatch_target_effect(exec, %{cancelled?: fn -> true end},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert scripts(context) == [script]
+
+      Agent.update(context.agent, &%{&1 | delay_ms: 1000})
+
+      uncertain =
+        request(context, :effect, "request.ssh.effect", "shell.execute", %{}, %{
+          "script" => script
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      unknown =
+        Targets.dispatch_target_effect!(uncertain, %{},
+          actor: context.operator,
+          authorize?: false
+        )
+
+      assert unknown.status == :unknown
+      assert scripts(context) == [script, script]
+    end
   end
 
   test "SSH route rejects stale state, IOS errors and invalid replies without applying",

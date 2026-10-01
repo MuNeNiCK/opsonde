@@ -7,9 +7,11 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Profiles.IOSXE
   alias Opsonde.Transports.SSH, as: Transport
+  alias Opsonde.Targets.Adapters.SSH, as: SSHMethod
 
   @method_observation "request.cli.observe"
   @method_effect "request.cli.effect"
+  @ssh_capabilities SSHMethod.access_method_profile().capabilities
 
   @impl Opsonde.Providers.Adapter
   def type, do: "ios-xe-ssh"
@@ -18,8 +20,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   def kind, do: :target
 
   @impl Opsonde.Providers.Target
-  def access_method_profile,
-    do: IOSXE.access_method_profile("ssh_cli", @method_observation, @method_effect)
+  def access_method_profile do
+    profile = IOSXE.access_method_profile("ssh_cli", @method_observation, @method_effect)
+    %{profile | capabilities: Enum.uniq(profile.capabilities ++ @ssh_capabilities)}
+  end
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials), do: Transport.build(configuration, credentials)
@@ -41,18 +45,23 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   defdelegate bind_connection(state, connection), to: Opsonde.Targets.Adapters.SSH
 
   @impl Opsonde.Providers.Target
-  def capabilities(_state, _invocation) do
+  def capabilities(state, invocation) do
     capabilities = IOSXE.capabilities()
+    {:ok, shared} = SSHMethod.capabilities(state, invocation)
 
     {:ok,
      %{
        capabilities
-       | observations: capabilities.observations ++ [method_observation()],
-         effects: capabilities.effects ++ [method_effect()]
+       | observations: capabilities.observations ++ [method_observation()] ++ shared.observations,
+         effects: capabilities.effects ++ [method_effect()] ++ shared.effects
      }}
   end
 
   @impl Opsonde.Providers.Target
+  def observe(state, %{capability: capability} = request, invocation)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.observe(state, request, invocation)
+
   def observe(
         %Transport.Config{} = state,
         %{capability: @method_observation} = request,
@@ -88,6 +97,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(state, %{capability: capability} = request)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.classify_request(state, request)
+
   def classify_request(_state, request) do
     case request.capability do
       @method_observation ->
@@ -116,6 +129,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   defp classify_ios_xe(_invalid, _kind), do: {:error, :failed, "CLI request is invalid"}
 
   @impl Opsonde.Providers.Target
+  def effect(state, %{capability: capability} = request, invocation)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.effect(state, request, invocation)
+
   def effect(%Transport.Config{} = state, %{capability: @method_effect} = request, invocation) do
     with {:ok, commands} <- method_commands(request, "cli.execute"),
          {:ok, output} <-
@@ -141,6 +158,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(state, %{capability: capability} = request, invocation)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.verify(state, request, invocation)
+
   def verify(
         %Transport.Config{} = state,
         %{capability: @method_observation} = request,

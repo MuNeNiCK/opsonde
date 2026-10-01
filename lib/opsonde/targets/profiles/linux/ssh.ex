@@ -7,7 +7,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   alias Opsonde.Targets.Adapters.SSH, as: SSHMethod
   alias Opsonde.Targets.ResourceScope
 
-  @method_effect "request.ssh.effect"
+  @ssh_capabilities SSHMethod.access_method_profile().capabilities
 
   @identity {"observe.identity", "linux.identity.inspect"}
   @processes {"observe.processes", "linux.process.list"}
@@ -54,7 +54,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
             [@identity, @processes, @service, @service_list, @journal, @restart],
             &elem(&1, 0)
           ) ++
-            [@method_effect]
+            @ssh_capabilities
         )
     }
   end
@@ -104,7 +104,15 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
     do: {:error, :invalid_configuration, "Linux SSH check requires an endpoint"}
 
   @impl Opsonde.Providers.Target
-  def capabilities(%State{privilege: privilege}, _invocation), do: capabilities(privilege)
+  def capabilities(%State{} = state, invocation) do
+    with {:ok, shared} <- SSHMethod.capabilities(state.transport, invocation),
+         do: catalog(state.privilege, shared)
+  end
+
+  @impl Opsonde.Providers.Target
+  def observe(%State{} = state, %{capability: capability} = request, invocation)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.observe(state.transport, request, invocation)
 
   @impl Opsonde.Providers.Target
   def observe(%State{} = state, request, invocation) do
@@ -123,11 +131,12 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   end
 
   @impl Opsonde.Providers.Target
+  def classify_request(%State{} = state, %{capability: capability} = request)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.classify_request(state.transport, request)
+
   def classify_request(%State{} = state, request) do
     case request.capability do
-      @method_effect ->
-        classify_effect(SSHMethod.effect_command(request, @method_effect))
-
       "effect.service" ->
         classify_effect(restart_command(state.privilege, request))
 
@@ -146,7 +155,20 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
 
   @impl Opsonde.Providers.Target
   def effect(%State{} = state, %{capability: capability} = request, invocation)
-      when capability != @method_effect do
+      when capability in @ssh_capabilities do
+    with {:ok, :effect} <- SSHMethod.classify_request(state.transport, request) do
+      parameters =
+        if request.operation == "command.execute",
+          do: Map.update!(request.parameters, "command", &privileged(state.privilege, &1)),
+          else: request.parameters
+
+      SSHMethod.effect(state.transport, %{request | parameters: parameters}, invocation)
+    else
+      _invalid -> {:error, :failed, "Linux SSH effect request is invalid"}
+    end
+  end
+
+  def effect(%State{} = state, request, invocation) do
     with {:ok, command} <- restart_command(state.privilege, request),
          result <- execute_raw(state, request, command, invocation) do
       effect_result(result)
@@ -155,17 +177,11 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
     end
   end
 
-  def effect(%State{} = state, %{capability: @method_effect} = request, invocation) do
-    with {:ok, command} <- SSHMethod.effect_command(request, @method_effect) do
-      state
-      |> execute_raw(request, privileged(state.privilege, command), invocation)
-      |> effect_result()
-    else
-      {:error, category, message} -> read_error(category, message)
-    end
-  end
-
   @impl Opsonde.Providers.Target
+  def verify(%State{} = state, %{capability: capability} = request, invocation)
+      when capability in @ssh_capabilities,
+      do: SSHMethod.verify(state.transport, request, invocation)
+
   def verify(%State{} = state, request, invocation) do
     with {:ok, command, :service} <- observation_command(state.privilege, request),
          {:ok, expected} <- verification_expected(request.expected),
@@ -262,64 +278,67 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end
 
-  defp capabilities(privilege) do
-    method_effect =
-      SSHMethod.effect_operation(@method_effect, "Linux shell")
-      |> describe_privilege(privilege)
-
+  defp catalog(privilege, shared) do
     {:ok,
      %Target.Capabilities{
-       observations: [
-         operation(
-           @identity,
-           "Inspect fixed Linux kernel and machine identity",
-           empty_schema(),
-           identity_output_schema()
-         ),
-         operation(
-           @processes,
-           "List a bounded set of Linux processes",
-           process_schema(),
-           processes_output_schema()
-         ),
-         operation(
-           @service_list,
-           "Discover exact installed systemd service unit names by page. Use this before service inspection when a unit is unknown; monitoring job and instance names are not unit names. Then inspect the discovered unit to learn its live state.",
-           service_list_schema(),
-           service_list_output_schema()
-         ),
-         operation(
-           @service,
-           "Inspect a known installed systemd service unit and its definition. Requires an exact unit name; if only monitoring labels are known, discover units with linux.service.list first.",
-           unit_schema(),
-           service_output_schema(),
-           service_verification_schema()
-         ),
-         operation(
-           @journal,
-           "Read bounded recent journal entries for one systemd service",
-           journal_schema(),
-           journal_output_schema()
-         )
-       ],
-       effects: [
-         %{
-           operation(
-             @restart,
-             "Restart one systemd service using the exact definition_sha256 from a supplied " <>
-               "linux.service.inspect observation; inspect the service first when unavailable",
-             restart_schema()
-           )
-           | evidence_requirements: [
-               %Target.EvidenceRequirement{
-                 parameter: "expected_definition_sha256",
-                 fact: "definition_sha256",
-                 observation: "linux.service.inspect"
-               }
-             ]
-         },
-         method_effect
-       ]
+       observations:
+         shared.observations ++
+           [
+             operation(
+               @identity,
+               "Inspect fixed Linux kernel and machine identity",
+               empty_schema(),
+               identity_output_schema()
+             ),
+             operation(
+               @processes,
+               "List a bounded set of Linux processes",
+               process_schema(),
+               processes_output_schema()
+             ),
+             operation(
+               @service_list,
+               "Discover exact installed systemd service unit names by page. Use this before service inspection when a unit is unknown; monitoring job and instance names are not unit names. Then inspect the discovered unit to learn its live state.",
+               service_list_schema(),
+               service_list_output_schema()
+             ),
+             operation(
+               @service,
+               "Inspect a known installed systemd service unit and its definition. Requires an exact unit name; if only monitoring labels are known, discover units with linux.service.list first.",
+               unit_schema(),
+               service_output_schema(),
+               service_verification_schema()
+             ),
+             operation(
+               @journal,
+               "Read bounded recent journal entries for one systemd service",
+               journal_schema(),
+               journal_output_schema()
+             )
+           ],
+       effects:
+         [
+           %{
+             operation(
+               @restart,
+               "Restart one systemd service using the exact definition_sha256 from a supplied " <>
+                 "linux.service.inspect observation; inspect the service first when unavailable",
+               restart_schema()
+             )
+             | evidence_requirements: [
+                 %Target.EvidenceRequirement{
+                   parameter: "expected_definition_sha256",
+                   fact: "definition_sha256",
+                   observation: "linux.service.inspect"
+                 }
+               ]
+           }
+         ] ++
+           Enum.map(shared.effects, fn operation ->
+             if operation.operation == "command.execute",
+               do: describe_privilege(operation, privilege),
+               else: operation
+           end)
      }}
   end
 
