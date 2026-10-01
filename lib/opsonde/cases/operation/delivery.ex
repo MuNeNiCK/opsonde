@@ -450,13 +450,18 @@ defmodule Opsonde.Cases.Operation.Delivery do
       "selectors" => operation.selectors,
       "parameters" => operation.parameters,
       "details" => operation.result_details,
-      "facts" => operation.result_details["facts"] || %{},
+      "facts" => evidence_facts(operation),
       "tool_id" => proposal.tool_id,
       "target_id" => operation.target_id,
       "access_method_id" => operation.access_method_id,
       "access_method_revision" => operation.access_method_revision
     }
   end
+
+  defp evidence_facts(%{purpose: :investigation, request_kind: :effect, result_details: details}),
+    do: details["facts"] || details
+
+  defp evidence_facts(operation), do: operation.result_details["facts"] || %{}
 
   defp evidence_kind(%{purpose: :investigation}), do: "observation"
   defp evidence_kind(%{purpose: :remediation}), do: "operation_outcome"

@@ -146,7 +146,7 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok,
                     %Target.EffectResult{
                       status: :applied,
-                      details: %{"facts" => %{"stdout" => "nginx is running"}}
+                      details: %{"stdout" => "nginx is running"}
                     }}
                  )
              )
