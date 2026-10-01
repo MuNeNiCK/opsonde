@@ -689,7 +689,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     refute Enum.any?(Cases.list_turns!(authorize?: false), &(&1.status == :started))
   end
 
-  test "a truncated reply stops before another call at the same output limit",
+  test "one metered truncated reply receives a corrective turn and stops if still truncated",
        context do
     {incident, run, turn} = turn!("truncated-limit", context.operator)
 
@@ -699,20 +699,41 @@ defmodule Opsonde.ResolverDeliveryTest do
                 %AI.Usage{input_tokens: 9, output_tokens: 8}, "truncated"}
              end)
 
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+
+    [successor] =
+      Cases.list_turns!(authorize?: false)
+      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.status == :started))
+
+    assert successor.intent["rejection_code"] == "truncated"
+
+    assert :ok =
+             invalid_output(successor, fn ->
+               {:error, :invalid_output, "AI provider JSON was truncated",
+                %AI.Usage{input_tokens: 9, output_tokens: 8}, "truncated"}
+             end)
+
     stopped = Cases.get_case!(incident.id, authorize?: false)
     assert stopped.status == :needs_attention
     assert stopped.stop_reason == "Resolver output reached the configured token limit"
     assert stopped.required_human_input =~ "Increase this AI connection's max output tokens"
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 34
     assert Cases.get_turn!(turn.id, authorize?: false).result["rejection_code"] == "truncated"
-    assert Enum.count(Cases.list_ai_invocations!(authorize?: false)) == 1
+    assert Enum.count(Cases.list_ai_invocations!(authorize?: false)) == 2
+
+    refute Enum.any?(
+             Cases.list_turns!(authorize?: false),
+             &(&1.resolution_run_id == run.id and &1.status == :started)
+           )
+
     assert Cases.list_proposals!(authorize?: false) == []
     assert Cases.list_operations!(authorize?: false) == []
 
     assert :ok =
              invalid_output(turn, fn -> flunk("completed Turn called AI again") end)
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 34
 
     refute Enum.any?(Cases.list_turns!(authorize?: false), fn candidate ->
              candidate.resolution_run_id == run.id and candidate.status == :started

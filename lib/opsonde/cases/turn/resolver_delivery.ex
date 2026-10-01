@@ -727,7 +727,12 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp retryable_invalid_decision_failure?(turn, rejection_code, error) do
-    rejection_code in ["schema_validation", "missing_structured_object", "json_decode"] and
+    rejection_code in [
+      "schema_validation",
+      "missing_structured_object",
+      "json_decode",
+      "truncated"
+    ] and
       turn.intent["source"] != "resolver_delivery_failure" and
       match?(%AI.Usage{}, AIInvocation.failure_accounting(error, 0).usage)
   end
