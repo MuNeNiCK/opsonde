@@ -42,6 +42,9 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
 
       :bound_chunk ->
         bound_chunk(input.arguments, context.actor)
+
+      :bound_range ->
+        bound_range(input.arguments, context.actor)
     end
   end
 
@@ -289,18 +292,56 @@ defmodule Opsonde.Targets.Artifact.Actions.Lifecycle do
   end
 
   defp bound_chunk(%{reference: reference, offset: offset}, actor) do
+    bound_reference(reference, actor, fn artifact ->
+      with {:ok, bytes} <- read_verified_chunk(artifact, offset), do: bytes
+    end)
+  end
+
+  defp bound_range(%{reference: reference, offset: offset, length: length}, actor) do
+    with true <-
+           length <= limits().chunk_bytes ||
+             invalid(:length, "File range exceeds the configured read limit") do
+      bound_reference(reference, actor, fn artifact ->
+        with true <-
+               offset <= artifact.size_bytes || invalid(:offset, "File range starts beyond EOF"),
+             {:ok, bytes} <-
+               range(artifact, offset, min(length, artifact.size_bytes - offset), []),
+             do: bytes
+      end)
+    end
+  end
+
+  defp bound_reference(reference, actor, read) do
     if FileReference.valid?(reference) do
       locked(reference["id"], actor, fn artifact ->
         with :ok <- ready_for_target(artifact, reference["target_id"]),
              true <-
                FileReference.from_metadata(artifact) == reference ||
-                 invalid(:reference, "File reference does not match the stored content"),
-             {:ok, bytes} <- read_verified_chunk(artifact, offset) do
-          bytes
+                 invalid(:reference, "File reference does not match the stored content") do
+          read.(artifact)
         end
       end)
     else
       invalid(:reference, "File reference is invalid")
+    end
+  end
+
+  defp range(_artifact, _offset, 0, reversed),
+    do: {:ok, reversed |> Enum.reverse() |> IO.iodata_to_binary()}
+
+  defp range(artifact, offset, length, reversed) do
+    with {:ok, chunk} <-
+           Targets.artifact_chunk_containing_offset(artifact.id, offset,
+             authorize?: false,
+             load: [:bytes]
+           ),
+         :ok <- chunk_integrity(chunk) do
+      start = offset - chunk.offset
+      count = min(length, chunk.size_bytes - start)
+
+      range(artifact, offset + count, length - count, [
+        binary_part(chunk.bytes, start, count) | reversed
+      ])
     end
   end
 

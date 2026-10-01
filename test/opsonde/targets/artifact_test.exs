@@ -178,6 +178,7 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert ready.sha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     reference = Targets.artifact_reference!(receipt.id, context.target.id, actor: context.admin)
     assert Targets.read_bound_artifact_chunk!(reference, 0, actor: context.admin) == <<>>
+    assert Targets.read_bound_artifact_range!(reference, 0, 8, actor: context.admin) == <<>>
 
     assert {:error, _} =
              Targets.begin_artifact(
@@ -368,6 +369,77 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert {:error, _} = Targets.read_bound_artifact_chunk(reference, 0, actor: context.admin)
   end
 
+  test "a canonical file range reads exact offsets across uneven stored chunks", context do
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        "ranged.bin",
+        "application/octet-stream",
+        5,
+        "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+        "ranged-input",
+        actor: context.admin
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0>>, actor: context.admin)
+    Targets.append_artifact_chunk!(upload.id, 2, <<1, 2, 255>>, actor: context.admin)
+    Targets.complete_artifact!(upload.id, actor: context.admin)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.admin)
+
+    assert Targets.read_bound_artifact_range!(reference, 1, 3, actor: context.admin) ==
+             <<0, 1, 2>>
+
+    assert Targets.read_bound_artifact_range!(reference, 4, 9, actor: context.admin) == <<255>>
+    assert Targets.read_bound_artifact_range!(reference, 5, 8, actor: context.admin) == <<>>
+    assert Targets.read_bound_artifact_range!(reference, 0, 0, actor: context.admin) == <<>>
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, 6, 1, actor: context.admin)
+
+    assert {:error, _} =
+             Targets.read_bound_artifact_range(reference, 0, 262_145, actor: context.admin)
+
+    assert Targets.artifact_reference!(upload.id, context.target.id, actor: context.admin) ==
+             reference
+
+    previous = Application.get_env(:opsonde, :artifact_limits)
+    Application.put_env(:opsonde, :artifact_limits, %{chunk_bytes: 2})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:opsonde, :artifact_limits, previous),
+        else: Application.delete_env(:opsonde, :artifact_limits)
+    end)
+
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, 1, 3, actor: context.admin)
+    assert Targets.read_bound_artifact_range!(reference, 1, 2, actor: context.admin) == <<0, 1>>
+  end
+
+  test "file ranges reject missing or corrupt chunks rather than returning partial bytes",
+       context do
+    upload = begin_upload(context, "damaged-range")
+    Targets.append_artifact_chunk!(upload.id, 0, <<255, 0>>, actor: context.admin)
+    Targets.append_artifact_chunk!(upload.id, 2, <<1, 2, 255>>, actor: context.admin)
+    Targets.complete_artifact!(upload.id, actor: context.admin)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.admin)
+    {:ok, id} = Ecto.UUID.dump(upload.id)
+
+    # Storage faults are injected; callers observe rejection through the public file action.
+    Opsonde.Repo.query!(
+      ~s(UPDATE artifact_chunks SET sha256 = $1 WHERE artifact_id = $2 AND "offset" = 2),
+      [String.duplicate("0", 64), id]
+    )
+
+    assert {:error, error} =
+             Targets.read_bound_artifact_range(reference, 1, 3, actor: context.admin)
+
+    assert Exception.message(error) =~ "integrity check failed"
+
+    Opsonde.Repo.query!(~s(DELETE FROM artifact_chunks WHERE artifact_id = $1 AND "offset" = 2), [
+      id
+    ])
+
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, 1, 3, actor: context.admin)
+  end
+
   test "a valid Unicode file name remains usable through its canonical reference", context do
     name = String.duplicate("機", 90)
 
@@ -464,6 +536,7 @@ defmodule Opsonde.Targets.ArtifactTest do
     upload = begin_upload(context, "private-upload", actor: owner)
     Targets.append_artifact_chunk!(upload.id, 0, <<255, 0, 1, 2, 255>>, actor: owner)
     Targets.complete_artifact!(upload.id, actor: owner)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: owner)
 
     for actor <- [other, viewer, nil] do
       assert {:error, _} = Targets.get_artifact(upload.id, actor: actor)
@@ -476,6 +549,7 @@ defmodule Opsonde.Targets.ArtifactTest do
 
       assert {:error, _} = Targets.complete_artifact(upload.id, actor: actor)
       assert {:error, _} = Targets.revoke_artifact(upload.id, actor: actor)
+      assert {:error, _} = Targets.read_bound_artifact_range(reference, 1, 3, actor: actor)
     end
 
     assert Targets.page_artifacts!(context.target.id, actor: other).results == []
@@ -489,8 +563,28 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert Targets.read_artifact_chunk!(upload.id, context.target.id, 0, actor: owner) ==
              <<255, 0, 1, 2, 255>>
 
+    assert Targets.read_bound_artifact_range!(reference, 1, 3, actor: owner) == <<0, 1, 2>>
+
+    for {key, value} <- [
+          {"sha256", String.duplicate("0", 64)},
+          {"size_bytes", 6},
+          {"target_id", other_target.id},
+          {"name", "replacement.bin"}
+        ] do
+      assert {:error, _} =
+               Targets.read_bound_artifact_range(Map.put(reference, key, value), 1, 3,
+                 actor: owner
+               )
+    end
+
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, -1, 3, actor: owner)
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, 1, -1, actor: owner)
+
     assert Targets.read_artifact_chunk!(upload.id, context.target.id, 0, actor: context.admin) ==
              <<255, 0, 1, 2, 255>>
+
+    Targets.revoke_artifact!(upload.id, actor: owner)
+    assert {:error, _} = Targets.read_bound_artifact_range(reference, 1, 3, actor: owner)
   end
 
   test "length and digest failures do not publish or replace staged bytes", context do
@@ -567,6 +661,7 @@ defmodule Opsonde.Targets.ArtifactTest do
     Targets.append_artifact_chunk!(incoming.id, 0, <<255, 0>>, actor: context.admin)
     Targets.append_artifact_chunk!(ready.id, 0, <<255, 0, 1, 2, 255>>, actor: context.admin)
     Targets.complete_artifact!(ready.id, actor: context.admin)
+    reference = Targets.artifact_reference!(ready.id, context.target.id, actor: context.admin)
     Targets.append_artifact_chunk!(interrupted.id, 0, <<255, 0>>, actor: context.admin)
 
     for upload <- [ready, interrupted, incoming] do
@@ -578,6 +673,9 @@ defmodule Opsonde.Targets.ArtifactTest do
 
     assert {:error, _} =
              Targets.read_artifact_chunk(ready.id, context.target.id, 0, actor: context.admin)
+
+    assert {:error, _} =
+             Targets.read_bound_artifact_range(reference, 1, 3, actor: context.admin)
 
     assert {:error, _} =
              Targets.append_artifact_chunk(interrupted.id, 2, <<1, 2, 255>>, actor: context.admin)

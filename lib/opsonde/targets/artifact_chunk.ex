@@ -29,6 +29,17 @@ defmodule Opsonde.Targets.ArtifactChunk do
       argument :offset, :integer, allow_nil?: false, constraints: [min: 0]
       filter expr(artifact_id == ^arg(:artifact_id) and offset == ^arg(:offset))
     end
+
+    read :containing_offset do
+      get? true
+      argument :artifact_id, :uuid, allow_nil?: false
+      argument :offset, :integer, allow_nil?: false, constraints: [min: 0]
+
+      filter expr(
+               artifact_id == ^arg(:artifact_id) and offset <= ^arg(:offset) and
+                 offset + size_bytes > ^arg(:offset)
+             )
+    end
   end
 
   policies do

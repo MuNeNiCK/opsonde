@@ -191,6 +191,11 @@ defmodule Opsonde.Targets do
       define :read_artifact_chunk, action: :chunk, args: [:id, :target_id, :offset]
       define :artifact_reference, action: :reference, args: [:id, :target_id]
       define :read_bound_artifact_chunk, action: :bound_chunk, args: [:reference, :offset]
+
+      define :read_bound_artifact_range,
+        action: :bound_range,
+        args: [:reference, :offset, :length]
+
       define :create_artifact_record, action: :create_record
       define :record_artifact_state, action: :record_state
 
@@ -202,6 +207,10 @@ defmodule Opsonde.Targets do
     resource Opsonde.Targets.ArtifactChunk do
       define :create_artifact_chunk_record, action: :create_record
       define :artifact_chunk_at_offset, action: :at_offset, args: [:artifact_id, :offset]
+
+      define :artifact_chunk_containing_offset,
+        action: :containing_offset,
+        args: [:artifact_id, :offset]
     end
   end
 end
