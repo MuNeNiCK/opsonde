@@ -3403,6 +3403,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.count(Reports.list_reports!(actor: context.admin)) == 1
   end
 
+  @tag related_effect_scope_read_fault: true
   test "related Target effect needs both direct observations and a current relationship at dispatch",
        context do
     enable_signal_automation!(context.admin)
@@ -3481,6 +3482,42 @@ defmodule Opsonde.OperationDeliveryTest do
 
     action = signal_proposal_intent(target_evidence.id, effect_context, :effect)
     evidence_ids = [symptom_evidence.id, target_evidence.id]
+
+    assert {:ok, true} =
+             ConditionContext.affected_current?(
+               incident,
+               :effect,
+               [claim],
+               evidence_ids,
+               action
+             )
+
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    for {table, column} <- [{"relationships", "facts"}, {"access_methods", "name"}] do
+      Repo.query!("ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_scope_input")
+
+      try do
+        assert {:error, error} =
+                 ConditionContext.affected_current?(
+                   incident,
+                   :effect,
+                   [claim],
+                   evidence_ids,
+                   action
+                 )
+
+        assert Exception.message(error) =~ "does not exist"
+      after
+        Repo.query!("ALTER TABLE #{table} RENAME COLUMN unavailable_scope_input TO #{column}")
+      end
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.active_resolution_run!(incident.id, authorize?: false) == before_run
+    assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
 
     assert {:ok, true} =
              ConditionContext.affected_current?(

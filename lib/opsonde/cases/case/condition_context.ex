@@ -131,9 +131,21 @@ defmodule Opsonde.Cases.Case.ConditionContext do
           do: :observation,
           else: request_kind
 
-      {:ok,
-       AI.valid_affected_conditions?(condition_kind, claims, conditions, evidence_ids) and
-         current_effect_scope?(incident, condition_kind, claims, conditions, evidence_ids, action)}
+      if AI.valid_affected_conditions?(condition_kind, claims, conditions, evidence_ids) do
+        case current_effect_scope?(
+               incident,
+               condition_kind,
+               claims,
+               conditions,
+               evidence_ids,
+               action
+             ) do
+          {:error, _error} = error -> error
+          current? -> {:ok, current?}
+        end
+      else
+        {:ok, false}
+      end
     end
   end
 
@@ -141,16 +153,24 @@ defmodule Opsonde.Cases.Case.ConditionContext do
     current = Map.new(conditions, &{&1.id, &1})
     target_id = action_value(action, :target_id)
 
-    Enum.all?(claims, fn claim ->
+    scope_matches?(claims, true, fn claim ->
       condition = Map.fetch!(current, claim["condition_id"])
 
       if condition.target_id == target_id do
-        map_size(claim) == 2 and
-          (condition.state != :recovered or
-             Enum.any?(evidence_ids, fn id ->
-               id in condition.recovery_evidence_ids and
-                 same_resource_scope?(id, action, incident.id)
-             end))
+        cond do
+          map_size(claim) != 2 ->
+            false
+
+          condition.state != :recovered ->
+            true
+
+          true ->
+            scope_matches?(evidence_ids, false, fn id ->
+              if id in condition.recovery_evidence_ids,
+                do: same_resource_scope?(id, action, incident.id),
+                else: false
+            end)
+        end
       else
         related_effect_scope?(incident, condition, claim, evidence_ids, action)
       end
@@ -183,7 +203,7 @@ defmodule Opsonde.Cases.Case.ConditionContext do
          {:ok, %{active: true, revision: condition_revision}} <-
            Targets.get_target(condition.target_id, authorize?: false),
          true <-
-           Enum.any?(evidence_ids, fn id ->
+           scope_matches?(evidence_ids, false, fn id ->
              symptom_observation?(
                id,
                incident,
@@ -192,11 +212,13 @@ defmodule Opsonde.Cases.Case.ConditionContext do
              )
            end),
          true <-
-           Enum.any?(evidence_ids, fn id ->
+           scope_matches?(evidence_ids, false, fn id ->
              effect_target_observation?(id, incident, condition, action)
            end) do
       true
     else
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
       _unavailable -> false
     end
   end
@@ -209,6 +231,8 @@ defmodule Opsonde.Cases.Case.ConditionContext do
         DateTime.compare(evidence.observed_at, ConditionRecovery.inherited_baseline(incident)) !=
           :lt
     else
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
       _unavailable -> false
     end
   end
@@ -241,6 +265,8 @@ defmodule Opsonde.Cases.Case.ConditionContext do
                 evidence_id in condition.failed_observation_ids) do
       true
     else
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
       _unavailable -> false
     end
   end
@@ -276,8 +302,20 @@ defmodule Opsonde.Cases.Case.ConditionContext do
           observation.selectors
         )
     else
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
       _other -> false
     end
+  end
+
+  defp scope_matches?(items, initial, predicate) do
+    Enum.reduce_while(items, initial, fn item, _result ->
+      case predicate.(item) do
+        {:error, _error} = error -> {:halt, error}
+        ^initial -> {:cont, initial}
+        result when is_boolean(result) -> {:halt, result}
+      end
+    end)
   end
 
   defp action_value(action, key), do: Map.get(action, key) || Map.get(action, Atom.to_string(key))
