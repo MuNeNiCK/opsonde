@@ -7,7 +7,7 @@ defmodule Opsonde.Cases.Operation.Actions.ResultReference do
   def run(input, _opts, %{actor: %{id: actor_id, role_version: actor_version}}) do
     %{reference_id: reference_id, case_id: case_id, clearance: clearance} = input.arguments
 
-    with true <- clearance.kind in [:observation, :verification],
+    with true <- clearance.kind in [:observation, :verification, :effect],
          true <- offered?(clearance, reference_id),
          {:ok, actor} <- Accounts.get_user(actor_id, authorize?: false),
          true <- actor.role in [:admin, :operator] and actor.role_version == actor_version,

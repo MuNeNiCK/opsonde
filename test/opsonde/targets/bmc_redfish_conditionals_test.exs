@@ -267,6 +267,29 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> json(status, Agent.get(agent, &Map.get(&1, :monitor_body, %{"TaskState" => "Running"})))
     end
 
+    defp route(%{method: "DELETE", request_path: "/vendor/monitor/session-secret"} = conn, agent) do
+      Agent.update(
+        agent,
+        &Map.merge(&1, %{
+          async_cancels: Map.get(&1, :async_cancels, 0) + 1,
+          cancel_query: conn.query_string
+        })
+      )
+
+      send_resp(conn, 204, "")
+    end
+
+    defp route(%{method: "PATCH", request_path: "/vendor/monitor/session-secret"} = conn, agent) do
+      {:ok, body, conn} = read_body(conn)
+
+      Agent.update(
+        agent,
+        &Map.put(&1, :monitor_patch, {conn.query_string, body, get_req_header(conn, "if-match")})
+      )
+
+      json(conn, 200, %{"Message" => "updated", "Ticket" => "private-value"})
+    end
+
     defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Drop"} = _conn, agent) do
       Agent.update(agent, &Map.update!(&1, :echo_calls, fn count -> count + 1 end))
       Process.exit(self(), :kill)
@@ -884,6 +907,114 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.writes) == 0
   end
 
+  test "saved monitor destinations bind the exact native request and fail before sending unavailable references",
+       context do
+    reference = Ecto.UUID.generate()
+    uri = "/vendor/monitor/session-secret?ticket=private-value"
+
+    invocation = %{
+      result_reference_reader: fn ^reference ->
+        {:ok, %{"kind" => "redfish_task_monitor", "uri" => uri}}
+      end
+    }
+
+    request =
+      file_request(context, :effect, %{
+        "method" => "PATCH",
+        "result_reference" => reference,
+        "body" => %{"TaskState" => "Suspended"},
+        "include_response" => true
+      })
+      |> Map.put(:selectors, %{"if_match" => ~s("task-rev-3")})
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert %Target.EffectResult{status: :applied} =
+             result =
+             Targets.dispatch_target_effect!(clearance, invocation,
+               actor: context.operator,
+               authorize?: false
+             )
+
+    {"ticket=private-value", bytes, [~s("task-rev-3")]} =
+      Agent.get(context.agent, & &1.monitor_patch)
+
+    assert Jason.decode!(bytes) == %{"TaskState" => "Suspended"}
+    refute Jason.encode!(result.details) =~ "private-value"
+    refute inspect(result) =~ "session-secret"
+
+    Agent.update(
+      context.agent,
+      &Map.merge(&1, %{
+        monitor_status: 200,
+        monitor_body: %{
+          "TaskMonitor" => uri,
+          "Ticket" => "private-value",
+          "TaskState" => "Suspended"
+        }
+      })
+    )
+
+    read =
+      file_request(context, :observation, %{"method" => "GET", "result_reference" => reference})
+
+    read_clearance = Targets.clear_target_request!(read, actor: context.operator)
+
+    observed =
+      Targets.dispatch_target_observation!(read_clearance, invocation, actor: context.operator)
+
+    assert observed.facts["response"]["TaskState"] == "Suspended"
+    assert [%{"result_reference" => ^reference}] = observed.evidence
+    refute Jason.encode!(Map.take(observed, [:facts, :evidence])) =~ "private-value"
+    refute inspect(observed) =~ "session-secret"
+    paths = Agent.get(context.agent, & &1.paths)
+
+    for parameters <- [
+          Map.put(request.parameters, "uri", "/redfish/v1/Oem/Property"),
+          Map.delete(request.parameters, "result_reference"),
+          Map.put(request.parameters, "result_reference", "invalid-reference")
+        ] do
+      assert {:error, _} =
+               Targets.clear_target_request(%{request | parameters: parameters},
+                 actor: context.operator
+               )
+
+      assert Agent.get(context.agent, & &1.paths) == paths
+    end
+
+    for reader <- [
+          fn ^reference -> {:error, "Remote result reference is unavailable"} end,
+          fn ^reference -> {:ok, %{"kind" => "another_protocol", "uri" => uri}} end,
+          fn ^reference ->
+            {:ok,
+             %{"kind" => "redfish_task_monitor", "uri" => "https://other.example/vendor/task"}}
+          end
+        ] do
+      assert {:error, _} =
+               Targets.dispatch_target_effect(clearance, %{result_reference_reader: reader},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert {:error, _} =
+               Targets.dispatch_target_observation(
+                 read_clearance,
+                 %{result_reference_reader: reader},
+                 actor: context.operator
+               )
+
+      assert Agent.get(context.agent, & &1.paths) == paths
+    end
+
+    assert {:error, _} =
+             Targets.dispatch_target_effect(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Agent.get(context.agent, & &1.paths) == paths
+  end
+
   test "a reviewed Case write is followed through its saved monitor without resolving the Case",
        context do
     ai =
@@ -989,6 +1120,103 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       assert Agent.get(context.agent, & &1.monitor_query) == "ticket=private-value"
     end
 
+    fresh_observation =
+      Cases.list_evidence!(actor: context.operator)
+      |> Enum.filter(
+        &(&1.case_id == incident.id and &1.source == "operation" and
+            &1.content["status"] == "applied")
+      )
+      |> Enum.max_by(& &1.observed_at, DateTime)
+
+    cancellation =
+      task_case_proposal!(
+        Map.put(context, :evidence, fresh_observation),
+        :effect,
+        "request.execute",
+        %{
+          "method" => "DELETE",
+          "result_reference" => operation.id
+        }
+      )
+
+    assert cancellation.status == :reviewing
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(cancellation.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   send(self(), {:monitor_effect_review, request.proposal.parameters})
+
+                   {:ok,
+                    %Opsonde.Providers.AI.ReviewDecision{
+                      verdict: :approved,
+                      purpose_assessment: :remediation,
+                      reason: "Approve this exact new request on the saved monitor",
+                      usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:monitor_effect_review,
+                    %{"method" => "DELETE", "result_reference" => reference}}
+
+    assert reference == operation.id
+    cancelled = Cases.accept_operation!(cancellation.id, authorize?: false)
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(cancelled.id)
+    cancellation_result = Cases.get_operation!(cancelled.id, actor: context.operator)
+
+    assert cancellation_result.status == :applied,
+           inspect(
+             Map.take(cancellation_result, [
+               :status,
+               :outcome_category,
+               :outcome_message,
+               :result_details
+             ])
+           )
+
+    assert Agent.get(context.agent, & &1.async_cancels) == 1
+    assert Agent.get(context.agent, & &1.cancel_query) == "ticket=private-value"
+    assert Agent.get(context.agent, & &1.async_writes) == 1
+
+    effect_clearance =
+      Targets.clear_target_request!(
+        file_request(context, :effect, %{"method" => "DELETE", "result_reference" => operation.id}),
+        actor: context.operator
+      )
+
+    assert {:ok, %{"kind" => "redfish_task_monitor"}} =
+             Cases.read_operation_result_reference(operation.id, incident.id, effect_clearance,
+               actor: context.operator
+             )
+
+    paths = Agent.get(context.agent, & &1.paths)
+
+    for {case_id, offered, actor} <- [
+          {Ecto.UUID.generate(), effect_clearance, context.operator},
+          {incident.id, effect_clearance, context.admin},
+          {incident.id, %{effect_clearance | target_id: Ecto.UUID.generate()}, context.operator},
+          {incident.id, %{effect_clearance | access_method_id: Ecto.UUID.generate()},
+           context.operator},
+          {incident.id, %{effect_clearance | provider_id: Ecto.UUID.generate()}, context.operator}
+        ] do
+      reader = fn id ->
+        Cases.read_operation_result_reference(id, case_id, offered, actor: actor)
+      end
+
+      assert {:error, _} =
+               Targets.dispatch_target_effect(
+                 effect_clearance,
+                 %{result_reference_reader: reader},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Agent.get(context.agent, & &1.paths) == paths
+    end
+
     current = Cases.get_case!(incident.id, actor: context.operator)
     assert {:error, _} = Opsonde.Cases.Operation.Delivery.run(operation.id)
 
@@ -996,6 +1224,45 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
              current.pending_intent
 
     assert Agent.get(context.agent, & &1.async_writes) == 1
+
+    rejected =
+      task_case_proposal!(
+        Map.put(context, :evidence, fresh_observation),
+        :effect,
+        "request.execute",
+        %{
+          "method" => "DELETE",
+          "result_reference" => operation.id
+        }
+      )
+
+    paths = Agent.get(context.agent, & &1.paths)
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(rejected.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   send(self(), {:monitor_effect_rejected, request.proposal.parameters})
+
+                   {:ok,
+                    %Opsonde.Providers.AI.ReviewDecision{
+                      verdict: :rejected,
+                      purpose_assessment: :remediation,
+                      reason: "Do not cancel this task again",
+                      usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:monitor_effect_rejected,
+                    %{"method" => "DELETE", "result_reference" => ^reference}}
+
+    assert Cases.get_proposal!(rejected.id, actor: context.operator).status == :rejected
+    assert {:error, _} = Cases.accept_operation(rejected.id, authorize?: false)
+    assert Agent.get(context.agent, & &1.paths) == paths
+    assert Agent.get(context.agent, & &1.async_cancels) == 1
 
     proposal =
       task_case_proposal!(context, :observation, "task.observe", %{
@@ -1025,18 +1292,20 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     run = Cases.active_resolution_run!(incident.id, authorize?: false)
 
     evidence =
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        Ecto.UUID.generate(),
-        "observation",
-        "tls-fixture",
-        "task-peer",
-        %{"target_id" => context.target.id},
-        DateTime.utc_now(),
-        authorize?: false
-      )
+      Map.get_lazy(context, :evidence, fn ->
+        Cases.append_evidence!(
+          incident.id,
+          run.id,
+          nil,
+          Ecto.UUID.generate(),
+          "observation",
+          "tls-fixture",
+          "task-peer",
+          %{"target_id" => context.target.id},
+          DateTime.utc_now(),
+          authorize?: false
+        )
+      end)
 
     capability = if kind == :effect, do: "request.redfish.effect", else: "request.redfish.observe"
 

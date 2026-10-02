@@ -268,7 +268,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   defp method_observe(state, request, invocation) do
-    with {:ok, method, path, transfer} <- method_read_request(state, request),
+    with {:ok, method, destination, transfer} <- method_read_request(state, request),
+         {:ok, path, protected} <- resolve_destination(state, destination, invocation),
          :ok <- not_cancelled(invocation),
          {:ok, status, body, pages, headers} <-
            read_api_resource(state, method, path, transfer, invocation) do
@@ -276,15 +277,18 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         %{
           "source" => "redfish",
           "method" => String.upcase(to_string(method)),
-          "uri" => path,
           "http_status" => status,
           "pages" => pages
         }
+        |> destination_evidence(destination)
         |> maybe_etag(if(pages == 1, do: response_etag(headers), else: nil))
 
       {:ok,
        %Target.Observation{
-         facts: method_response_details(status, body, true) |> Map.put_new("response", %{}),
+         facts:
+           method_response_details(status, body, true)
+           |> redact_task_reference(protected)
+           |> Map.put_new("response", %{}),
          observed_at: DateTime.utc_now(),
          evidence: [evidence]
        }}
@@ -310,7 +314,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     %Target.Operation{
       capability: @method_read,
       operation: "request.observe",
-      description: "Read one exact standard or OEM Redfish resource by relative URI",
+      description:
+        "Read one exact standard or OEM Redfish resource by relative URI or saved result_reference UUID",
       input_schema: method_schema(["GET", "HEAD"]),
       output_schema: output,
       verification_schema: output
@@ -322,7 +327,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       capability: @method_effect,
       operation: "request.execute",
       description:
-        "Send one exact standard or OEM Redfish write by relative URI after authority review",
+        "Send one exact standard or OEM Redfish write by relative URI or saved result_reference UUID after authority review",
       input_schema: method_schema(Map.keys(@api_write_methods), true)
     }
   end
@@ -376,6 +381,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     parameter_properties = %{
       "method" => %{"type" => "string", "enum" => methods},
       "uri" => %{"type" => "string", "minLength" => 11, "maxLength" => 2_048},
+      "result_reference" => %{"type" => "string", "format" => "uuid"},
       "accept" => %{"type" => "string", "maxLength" => 256},
       "response_file" => Target.FileWriter.options_schema()
     }
@@ -404,7 +410,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         "parameters" => %{
           "type" => "object",
           "properties" => parameter_properties,
-          "required" => ["method", "uri"],
+          "required" => ["method"],
+          "oneOf" => [%{"required" => ["uri"]}, %{"required" => ["result_reference"]}],
           "additionalProperties" => false
         }
       },
@@ -419,7 +426,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          %{"result_reference" => reference} when map_size(request.parameters) == 1 <-
            request.parameters,
          {:ok, _} <- Ecto.UUID.cast(reference) do
-      {:ok, :get, reference, %{}}
+      {:ok, :get, {:reference, reference}, %{}}
     else
       _ -> {:error, :failed, "Redfish task observation request is invalid"}
     end
@@ -429,22 +436,58 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- request.operation == "request.observe",
          true <- request.connection.endpoint == state.endpoint,
          true <- request.selectors == %{},
-         %{"method" => method, "uri" => uri} = parameters <- request.parameters,
-         true <- Enum.all?(Map.keys(parameters), &(&1 in ~w(method uri accept response_file))),
+         %{"method" => method} = parameters <- request.parameters,
+         true <-
+           Enum.all?(
+             Map.keys(parameters),
+             &(&1 in ~w(method uri result_reference accept response_file))
+           ),
          {:ok, transfer} <- transfer_options(parameters),
          {:ok, verb} <- Map.fetch(@api_read_methods, method),
-         {:ok, path} <- RedfishURI.relative(uri) do
-      {:ok, verb, path, transfer}
+         {:ok, destination} <- method_destination(parameters) do
+      {:ok, verb, destination, transfer}
     else
       _ -> {:error, :failed, "Redfish read request is invalid"}
     end
   end
 
-  defp task_observe(state, request, invocation) do
-    with {:ok, :get, reference_id, _transfer} <- method_read_request(state, request),
-         reader when is_function(reader, 1) <- invocation[:result_reference_reader],
+  defp method_destination(parameters) do
+    case Map.take(parameters, ["uri", "result_reference"]) do
+      %{"uri" => uri} = destination when map_size(destination) == 1 ->
+        RedfishURI.relative(uri)
+
+      %{"result_reference" => reference} = destination when map_size(destination) == 1 ->
+        case Ecto.UUID.cast(reference) do
+          {:ok, _} -> {:ok, {:reference, reference}}
+          _ -> {:error, :failed, "Redfish result reference is invalid"}
+        end
+
+      _ ->
+        {:error, :failed, "Redfish request requires exactly one destination"}
+    end
+  end
+
+  defp resolve_destination(state, {:reference, reference_id}, invocation) do
+    with reader when is_function(reader, 1) <- invocation[:result_reference_reader],
          {:ok, %{"kind" => "redfish_task_monitor", "uri" => uri}} <- reader.(reference_id),
-         {:ok, path} <- RedfishURI.monitor(state.endpoint, uri),
+         {:ok, path} <- RedfishURI.monitor(state.endpoint, uri) do
+      {:ok, path, %{"location" => [uri]}}
+    else
+      _ -> {:error, :failed, "Redfish result reference is unavailable"}
+    end
+  end
+
+  defp resolve_destination(_state, uri, _invocation) when is_binary(uri), do: {:ok, uri, nil}
+
+  defp destination_evidence(evidence, {:reference, id}),
+    do: Map.put(evidence, "result_reference", id)
+
+  defp destination_evidence(evidence, uri), do: Map.put(evidence, "uri", uri)
+
+  defp task_observe(state, request, invocation) do
+    with {:ok, :get, {:reference, reference_id} = destination, _transfer} <-
+           method_read_request(state, request),
+         {:ok, path, _protected} <- resolve_destination(state, destination, invocation),
          :ok <- not_cancelled(invocation),
          {:ok, status, headers, body} <-
            request(state, :get, path, nil, [], %{"task_monitor" => true}, invocation) do
@@ -508,13 +551,15 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     do: if(value in allowed, do: Map.put(facts, key, value), else: facts)
 
   defp method_effect(state, target_request, invocation) do
-    with {:ok, method, path, body, headers, include_response?, transfer} <-
+    with {:ok, method, destination, body, headers, include_response?, transfer} <-
            method_write_request(state, target_request),
+         {:ok, path, protected} <- resolve_destination(state, destination, invocation),
          :ok <- not_cancelled(invocation) do
       result = request(state, method, path, body, headers, transfer, invocation)
 
       effect_response(state, result, target_request.operation, fn status, reply ->
         method_response_details(status, reply, include_response?)
+        |> redact_task_reference(protected)
       end)
     else
       {:error, :cancelled, _message} = error -> error
@@ -527,20 +572,20 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
     with true <- request.operation == "request.execute",
          true <- request.connection.endpoint == state.endpoint,
-         %{"method" => method, "uri" => uri} <- parameters,
+         %{"method" => method} <- parameters,
          true <-
            Enum.all?(
              Map.keys(parameters),
-             &(&1 in ~w(method uri body body_file content_type accept response_file include_response))
+             &(&1 in ~w(method uri result_reference body body_file content_type accept response_file include_response))
            ),
          {:ok, transfer} <- transfer_options(parameters),
          {:ok, verb} <- Map.fetch(@api_write_methods, method),
-         {:ok, path} <- RedfishURI.relative(uri),
+         {:ok, destination} <- method_destination(parameters),
          {:ok, headers} <- if_match_headers(request.selectors),
          include_response? when is_boolean(include_response?) <-
            Map.get(parameters, "include_response", false),
          {:ok, body} <- method_body(verb, parameters, Map.get(request, :files, %{})) do
-      {:ok, verb, path, body, headers, include_response?, transfer}
+      {:ok, verb, destination, body, headers, include_response?, transfer}
     else
       _ -> {:error, :failed, "Redfish write request is invalid"}
     end
