@@ -2278,6 +2278,59 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
+  @tag verification_actor_read_fault: true
+  test "temporary actor read failure retries fresh verification without repeating the effect",
+       context do
+    {incident, run, proposal} = authorized_proposal!("verification-actor-read-failure", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_operation = Cases.get_operation!(operation.id, authorize?: false)
+    Repo.query!("ALTER TABLE users RENAME COLUMN role_version TO unavailable_role_version")
+
+    try do
+      assert {:error, _error} =
+               VerificationWorker.perform(%Oban.Job{
+                 args: %{"verification_attempt_id" => attempt.id}
+               })
+    after
+      Repo.query!("ALTER TABLE users RENAME COLUMN unavailable_role_version TO role_version")
+    end
+
+    unchanged = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert unchanged.status == :queued
+    assert unchanged.dispatch_started_at == nil
+    assert unchanged.outcome_category == nil
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_operation!(operation.id, authorize?: false) == before_operation
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation({:ok, verified_result(%{"active_state" => "active"})})
+             )
+
+    assert_receive {:verify, _, _}
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("fresh verification was repeated") end)
+             )
+
+    refute_receive {:verify, _, _}
+    refute_receive {:effect, _, _}
+    assert Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :verified
+  end
+
   test "Target instructions changed after VerificationAttempt acceptance prevent dispatch",
        context do
     {_incident, _run, proposal} = authorized_proposal!("verification-policy", context)

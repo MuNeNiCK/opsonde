@@ -2,7 +2,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  alias Opsonde.Cases
+  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Targets.TargetRequest.{Request, RequestError}
   alias Opsonde.Cases.{Case, ResolutionRun, VerificationAttempt}
   alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
 
@@ -24,35 +25,11 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   defp claim(%{status: :queued} = attempt, incident, run) do
     if incident.status == :running and not incident.cancel_requested and run.active and
          run.status == :running and run.generation == attempt.case_generation do
-      with {:ok, claimed} <-
-             Cases.mark_verification_dispatching(
-               attempt,
-               attempt.revision,
-               %{dispatch_started_at: DateTime.utc_now()},
-               authorize?: false
-             ) do
-        %VerificationClaim{state: :claimed, attempt: claimed}
-      end
+      claim_authorized(attempt)
     else
-      now = DateTime.utc_now()
-
-      with {:ok, terminal} <-
-             Cases.record_verification_no_send(
-               attempt,
-               attempt.revision,
-               %{
-                 outcome_category: "cancelled_before_verification",
-                 facts: %{},
-                 provider_evidence: %{
-                   "message" => "Case stopped before fresh verification was dispatched"
-                 },
-                 observed_at: now,
-                 completed_at: now
-               },
-               authorize?: false
-             ) do
-        %VerificationClaim{state: :terminal, attempt: terminal}
-      end
+      terminal_no_send(attempt, "cancelled_before_verification", %{
+        "message" => "Case stopped before fresh verification was dispatched"
+      })
     end
   end
 
@@ -81,6 +58,98 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
 
   defp claim(%{status: status} = attempt, _incident, _run) when status in @terminal,
     do: %VerificationClaim{state: :terminal, attempt: attempt}
+
+  defp claim_authorized(attempt) do
+    with {:ok, actor} <- current_actor(attempt),
+         {:ok, clearance} <- Targets.clear_target_request(request(attempt), actor: actor),
+         :ok <- exact_clearance(clearance, attempt) do
+      with {:ok, claimed} <-
+             Cases.mark_verification_dispatching(
+               attempt,
+               attempt.revision,
+               %{dispatch_started_at: DateTime.utc_now()}, authorize?: false) do
+        %VerificationClaim{state: :claimed, attempt: claimed, actor: actor, clearance: clearance}
+      end
+    else
+      {:error, error}
+      when is_struct(error, Ash.Error.Invalid) or
+             is_struct(error, Ash.Error.Forbidden) or is_struct(error, RequestError) ->
+        terminal_no_send(attempt, "authorization_invalidated", %{
+          "items" => [%{"message" => "Verification authorization changed before Target dispatch"}]
+        })
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp terminal_no_send(attempt, category, evidence) do
+    now = DateTime.utc_now()
+
+    with {:ok, terminal} <-
+           Cases.record_verification_no_send(
+             attempt,
+             attempt.revision,
+             %{
+               outcome_category: category,
+               facts: %{},
+               provider_evidence: evidence,
+               observed_at: now,
+               completed_at: now
+             }, authorize?: false) do
+      %VerificationClaim{state: :terminal, attempt: terminal}
+    end
+  end
+
+  defp current_actor(attempt) do
+    case Accounts.get_user(attempt.actor_id, authorize?: false) do
+      {:ok, %{role: role, role_version: version} = actor}
+      when role in [:admin, :operator] and version == attempt.actor_role_version ->
+        {:ok, actor}
+
+      {:ok, _changed} ->
+        {:error,
+         RequestError.exception(
+           category: :forbidden,
+           message: "Verification actor authority changed"
+         )}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp request(attempt) do
+    %Request{
+      kind: :verification,
+      authority_mode: attempt.authority_mode,
+      target_id: attempt.target_id,
+      target_revision: attempt.target_revision,
+      access_method_id: attempt.access_method_id,
+      access_method_revision: attempt.access_method_revision,
+      capability: attempt.capability,
+      operation: attempt.operation,
+      selectors: attempt.selectors,
+      parameters: attempt.parameters,
+      operation_id: attempt.operation_id,
+      reference: attempt.operation_reference,
+      expected: attempt.expected,
+      max_attempts: 1
+    }
+  end
+
+  defp exact_clearance(clearance, attempt) do
+    if clearance.provider_id == attempt.provider_id and
+         clearance.provider_revision == attempt.provider_revision and
+         Base.encode16(clearance.digest, case: :lower) == attempt.authorization_digest,
+       do: :ok,
+       else:
+         {:error,
+          RequestError.exception(
+            category: :clearance_mismatch,
+            message: "Verification clearance changed"
+          )}
+  end
 
   defp lock(resource, id) do
     resource

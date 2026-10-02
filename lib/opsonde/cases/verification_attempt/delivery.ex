@@ -1,18 +1,17 @@
 defmodule Opsonde.Cases.VerificationAttempt.Delivery do
   @moduledoc false
 
-  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.VerificationAttempt
   alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetRequest.{Request, Clearance}
 
   @terminal [:verified, :not_verified, :unknown]
 
   def run(attempt_id, opts \\ []) do
     case Cases.claim_verification_dispatch(attempt_id, authorize?: false) do
-      {:ok, %VerificationClaim{state: :claimed, attempt: attempt}} ->
-        dispatch(attempt, opts)
+      {:ok, %VerificationClaim{state: :claimed} = claim} ->
+        dispatch(claim, opts)
 
       {:ok, %VerificationClaim{state: :terminal, attempt: attempt}} ->
         handoff(attempt)
@@ -22,43 +21,27 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
     end
   end
 
-  defp dispatch(attempt, opts) do
-    with {:ok, actor} <- current_actor(attempt),
-         {:ok, %Clearance{} = clearance} <-
-           Targets.clear_target_request(request(attempt), actor: actor),
-         :ok <- exact_clearance(clearance, attempt) do
-      invocation = invocation(attempt.case_id, Keyword.get(opts, :target_invocation, %{}))
+  defp dispatch(%VerificationClaim{attempt: attempt, actor: actor, clearance: clearance}, opts) do
+    invocation = invocation(attempt.case_id, Keyword.get(opts, :target_invocation, %{}))
 
-      invocation =
-        Map.put(invocation, :result_reference_reader, fn reference ->
-          Cases.read_operation_result_reference(reference, attempt.case_id, clearance,
-            actor: actor
-          )
-        end)
+    invocation =
+      Map.put(invocation, :result_reference_reader, fn reference ->
+        Cases.read_operation_result_reference(reference, attempt.case_id, clearance, actor: actor)
+      end)
 
-      outcome =
-        case Targets.dispatch_target_verification(clearance, invocation,
-               actor: actor,
-               authorize?: false
-             ) do
-          {:ok, %ProviderTarget.Verification{} = result} ->
-            normalize(result)
+    outcome =
+      case Targets.dispatch_target_verification(clearance, invocation,
+             actor: actor,
+             authorize?: false
+           ) do
+        {:ok, %ProviderTarget.Verification{} = result} ->
+          normalize(result)
 
-          {:error, _error} ->
-            unknown("verification_error", "Fresh verification result is unknown")
-        end
+        {:error, _error} ->
+          unknown("verification_error", "Fresh verification result is unknown")
+      end
 
-      persist_and_handoff(attempt, outcome)
-    else
-      {:error, _error} ->
-        persist_and_handoff(
-          attempt,
-          unknown(
-            "authorization_invalidated",
-            "Verification authorization changed before Target dispatch"
-          )
-        )
-    end
+    persist_and_handoff(attempt, outcome)
   end
 
   defp persist_and_handoff(attempt, outcome) do
@@ -189,46 +172,6 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
       "target_id" => attempt.target_id,
       "access_method_id" => attempt.access_method_id
     }
-  end
-
-  defp current_actor(attempt) do
-    case Accounts.get_user(attempt.actor_id, authorize?: false) do
-      {:ok, %{role: role, role_version: version} = actor}
-      when role in [:admin, :operator] and version == attempt.actor_role_version ->
-        {:ok, actor}
-
-      _unavailable ->
-        {:error, "Verification actor authority changed"}
-    end
-  end
-
-  defp request(attempt) do
-    %Request{
-      kind: :verification,
-      authority_mode: attempt.authority_mode,
-      target_id: attempt.target_id,
-      target_revision: attempt.target_revision,
-      access_method_id: attempt.access_method_id,
-      access_method_revision: attempt.access_method_revision,
-      capability: attempt.capability,
-      operation: attempt.operation,
-      selectors: attempt.selectors,
-      parameters: attempt.parameters,
-      operation_id: attempt.operation_id,
-      reference: attempt.operation_reference,
-      expected: attempt.expected,
-      max_attempts: 1
-    }
-  end
-
-  defp exact_clearance(clearance, attempt) do
-    digest = Base.encode16(clearance.digest, case: :lower)
-
-    if clearance.provider_id == attempt.provider_id and
-         clearance.provider_revision == attempt.provider_revision and
-         digest == attempt.authorization_digest,
-       do: :ok,
-       else: {:error, "Verification clearance changed"}
   end
 
   defp invocation(case_id, supplied) do
