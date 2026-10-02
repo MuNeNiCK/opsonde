@@ -212,7 +212,96 @@ defmodule Opsonde.DecisionRouteWorkerTest do
            |> Enum.count(&(&1.event_type == "case_target_selected")) == 0
   end
 
-  test "Resolver retry cannot queue a Turn from another Case", context do
+  @tag queue_read_fault: true
+  test "Resolver retry preserves unreadable valid source and next Turns", context do
+    {incident, run} = open_case!("queue-read", context.operator)
+    source = completed_turn!(incident, run, "queue-read", %{"type" => "handoff"})
+
+    next_turn =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "queue-next",
+        %{"objective" => "Continue investigation"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      ).value
+
+    current = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turns = Cases.list_turns!(authorize?: false)
+
+    columns =
+      Repo.query!(
+        "SELECT attname FROM pg_attribute WHERE attrelid = 'turns'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+      ).rows
+      |> List.flatten()
+
+    Repo.query!(
+      "CREATE FUNCTION pg_temp.queue_read_fault(bigint) RETURNS bigint LANGUAGE plpgsql STABLE AS $$ BEGIN RAISE EXCEPTION 'Queued Turn temporarily unavailable'; END $$"
+    )
+
+    for {name, id} <- [{"source", source.id}, {"next", next_turn.id}] do
+      Repo.query!("ALTER TABLE turns RENAME TO turns_queue_source")
+
+      fields =
+        Enum.map_join(columns, ", ", fn
+          "revision" ->
+            "CASE WHEN id = '#{id}'::uuid THEN pg_temp.queue_read_fault(revision) ELSE revision END AS revision"
+
+          column ->
+            "\"#{column}\""
+        end)
+
+      Repo.query!("CREATE VIEW turns AS SELECT #{fields} FROM turns_queue_source")
+
+      try do
+        assert {:error, %Ash.Error.Unknown{}} = Cases.get_turn(id, authorize?: false)
+
+        result =
+          Cases.queue_case_resolver_turn(current, current.revision, source.id, next_turn.id,
+            authorize?: false
+          )
+
+        assert {:error, %Ash.Error.Unknown{} = error} = result
+        assert Exception.message(error) =~ "Queued Turn temporarily unavailable", name
+      after
+        Repo.query!("DROP VIEW turns")
+        Repo.query!("ALTER TABLE turns_queue_source RENAME TO turns")
+      end
+
+      assert Cases.get_case!(incident.id, authorize?: false) == current
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.list_turns!(authorize?: false) == before_turns
+      assert Cases.list_ai_invocations!(authorize?: false) == []
+    end
+
+    Repo.query!("DROP FUNCTION pg_temp.queue_read_fault(bigint)")
+
+    assert {:ok, updated} =
+             Cases.queue_case_resolver_turn(current, current.revision, source.id, next_turn.id,
+               authorize?: false
+             )
+
+    assert updated.pending_intent == %{
+             "action" => "resolve_turn",
+             "turn_id" => next_turn.id,
+             "source_turn_id" => source.id
+           }
+
+    assert {:error, _stale} =
+             Cases.queue_case_resolver_turn(current, current.revision, source.id, next_turn.id,
+               authorize?: false
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent ==
+             updated.pending_intent
+
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+  end
+
+  test "Resolver retry rejects foreign, missing and identical Turns", context do
     {incident, run} = open_case!("retry-owner", context.operator)
     source = completed_turn!(incident, run, "retry-owner", %{"type" => "handoff"})
     {other, other_run} = open_case!("retry-other", context.operator)
@@ -230,14 +319,23 @@ defmodule Opsonde.DecisionRouteWorkerTest do
 
     current = Cases.get_case!(incident.id, authorize?: false)
 
-    assert {:error, _error} =
-             Cases.queue_case_resolver_turn(
-               current,
-               current.revision,
-               source.id,
-               foreign.id,
-               authorize?: false
-             )
+    for {source_id, next_id} <- [
+          {source.id, foreign.id},
+          {source.id, source.id},
+          {Ash.UUID.generate(), foreign.id},
+          {source.id, Ash.UUID.generate()}
+        ] do
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Cases.queue_case_resolver_turn(
+                 current,
+                 current.revision,
+                 source_id,
+                 next_id,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "Resolver Turn belongs to another Case or ResolutionRun"
+    end
 
     reloaded = Cases.get_case!(incident.id, authorize?: false)
     assert reloaded.revision == current.revision
