@@ -322,6 +322,104 @@ defmodule Opsonde.CaseHistoryTest do
     end
   end
 
+  test "a budget replay cannot use a charge from a previous resolution generation", context do
+    {incident, run} = open!("budget-replay-generation", context.operator)
+    charged = charge!(incident, run, :target_request, 1, "same-request")
+    assert charge!(incident, run, :target_request, 1, "same-request").status == :duplicate
+
+    attention =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        run.id,
+        charged.run.revision,
+        "pause-for-resume",
+        "Operator requested another resolution generation",
+        %{"action" => "continue"},
+        "Resume resolution",
+        authorize?: false
+      )
+
+    paused = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    resumed =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused.id,
+        paused.revision,
+        :auto,
+        paused.max_elapsed_seconds + 60,
+        paused.max_resolver_turns + 1,
+        paused.max_target_requests,
+        paused.max_effects,
+        paused.max_related_targets,
+        paused.max_ai_usage_units,
+        paused.max_no_progress_turns,
+        "Retry resolution in a new generation",
+        actor: context.operator
+      )
+
+    before_run = Cases.get_resolution_run!(resumed.id, actor: context.viewer)
+    before_case = Cases.get_case!(incident.id, actor: context.viewer)
+    before_events = Cases.list_case_events!(actor: context.viewer)
+
+    assert {:error, _error} = charge(incident, resumed, :target_request, 1, "same-request")
+
+    assert Cases.get_resolution_run!(resumed.id, actor: context.viewer) == before_run
+    assert Cases.get_case!(incident.id, actor: context.viewer) == before_case
+    assert Cases.list_case_events!(actor: context.viewer) == before_events
+  end
+
+  for {producer, kind, type, kind_field, amount_field, expected_replay} <- [
+        {:charged, :target_request, "budget_charged", "kind", "amount", :duplicate},
+        {:exhausted, :effect, "limit_exhausted", "attempted_kind", "attempted_amount", :exhausted}
+      ],
+      fault <- [:missing_kind, :missing_amount, :changed_kind, :changed_amount, :changed_type] do
+    test "a #{producer} budget replay rejects #{fault} in its persisted event", context do
+      producer = unquote(producer)
+      fault = unquote(fault)
+      kind = unquote(kind)
+      type = unquote(type)
+      kind_field = unquote(kind_field)
+      amount_field = unquote(amount_field)
+      {incident, run} = open!("budget-replay-#{producer}-#{fault}", context.operator)
+
+      assert charge!(incident, run, kind, 1, "request").status == producer
+      assert charge!(incident, run, kind, 1, "request").status == unquote(expected_replay)
+      assert {:error, _error} = charge(incident, run, kind, 2, "request")
+
+      event =
+        Cases.list_case_events!(actor: context.viewer)
+        |> Enum.find(&(&1.case_id == incident.id and &1.event_type == type))
+
+      damaged =
+        case fault do
+          :missing_kind -> [data: Map.delete(event.data, kind_field)]
+          :missing_amount -> [data: Map.delete(event.data, amount_field)]
+          :changed_kind -> [data: Map.put(event.data, kind_field, "ai_usage")]
+          :changed_amount -> [data: Map.put(event.data, amount_field, 2)]
+          :changed_type -> [event_type: "case_claimed"]
+        end
+
+      # Simulate damage at the database boundary; replay and observation use Ash actions.
+      Repo.update_all(
+        from(item in Opsonde.Cases.CaseEvent, where: item.id == ^event.id),
+        set: damaged
+      )
+
+      before_run = Cases.get_resolution_run!(run.id, actor: context.viewer)
+      before_case = Cases.get_case!(incident.id, actor: context.viewer)
+      before_events = Cases.list_case_events!(actor: context.viewer)
+
+      assert {:error, _error} = charge(incident, run, kind, 1, "request")
+
+      assert Cases.get_resolution_run!(run.id, actor: context.viewer) == before_run
+      assert Cases.get_case!(incident.id, actor: context.viewer) == before_case
+      assert Cases.list_case_events!(actor: context.viewer) == before_events
+    end
+  end
+
   test "history has no authorized public mutation path and cancellation stops new charges",
        context do
     {incident, run} = open!("append-only", context.operator)

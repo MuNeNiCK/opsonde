@@ -43,7 +43,7 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
   end
 
   defp replay_result(incident, run, event, opts) do
-    with :ok <- validate_replay(event, opts) do
+    with :ok <- validate_replay(run, event, opts) do
       if event.event_type == "limit_exhausted" do
         %BudgetResult{
           status: :exhausted,
@@ -57,17 +57,23 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
     end
   end
 
-  defp validate_replay(event, opts) do
-    expected_kind = to_string(opts[:kind])
-
-    if event.data["attempted_kind"] in [nil, expected_kind] and
-         event.data["kind"] in [nil, expected_kind] and
-         event.data["attempted_amount"] in [nil, opts[:amount]] and
-         event.data["amount"] in [nil, opts[:amount]] and replay_data_matches?(event, opts) do
+  defp validate_replay(run, event, opts) do
+    if event.resolution_run_id == run.id and
+         replay_input_matches?(event, opts) and replay_data_matches?(event, opts) do
       :ok
     else
       {:error, "Idempotency key was already used with different budget input"}
     end
+  end
+
+  defp replay_input_matches?(%CaseEvent{event_type: "limit_exhausted", data: data}, opts) do
+    data["attempted_kind"] == to_string(opts[:kind]) and
+      data["attempted_amount"] == opts[:amount]
+  end
+
+  defp replay_input_matches?(%CaseEvent{event_type: type, data: data}, opts) do
+    type == opts[:event_type] and data["kind"] == to_string(opts[:kind]) and
+      data["amount"] == opts[:amount]
   end
 
   defp replay_data_matches?(event, opts) do
