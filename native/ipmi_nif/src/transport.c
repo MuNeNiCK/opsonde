@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <ipmitool/ipmi_intf.h>
 #include <ipmitool/ipmi.h>
+#include <ipmitool/ipmi_sol.h>
 
 int verbose = 0;
 int csv_output = 0;
@@ -15,6 +16,12 @@ static uint64_t deadline;
 static int effect_active;
 static int effect_attempted;
 static int authentication_failed;
+static int (*cancel_check)(const void *);
+static const void *cancel_context;
+
+static int cancelled(void) {
+    return cancel_check && cancel_check(cancel_context);
+}
 
 struct command {
     uint8_t netfn, command, lun, target_address, target_channel;
@@ -75,10 +82,32 @@ int __wrap_select(int nfds, fd_set *read, fd_set *write, fd_set *error,
     struct timeval bound = {remaining / 1000000, remaining % 1000000};
     if (timeout && (uint64_t)timeout->tv_sec * 1000000 + timeout->tv_usec < remaining)
         bound = *timeout;
-    return __real_select(nfds, read, write, error, &bound);
+    if (!cancel_check) return __real_select(nfds, read, write, error, &bound);
+    uint64_t end = now + (uint64_t)bound.tv_sec * 1000000 + bound.tv_usec;
+    for (;;) {
+        if (cancelled()) { errno = ECANCELED; return -1; }
+        now = now_us();
+        if (now >= end) return 0;
+        uint64_t wait = end - now;
+        if (wait > 20000) wait = 20000;
+        struct timeval poll = {wait / 1000000, wait % 1000000};
+        fd_set r, w, e;
+        if (read) r = *read;
+        if (write) w = *write;
+        if (error) e = *error;
+        int result = __real_select(nfds, read ? &r : NULL, write ? &w : NULL,
+                                   error ? &e : NULL, &poll);
+        if (result) {
+            if (read) *read = r;
+            if (write) *write = w;
+            if (error) *error = e;
+            return result;
+        }
+    }
 }
 
 ssize_t __wrap_send(int fd, const void *buffer, size_t length, int flags) {
+    if (cancelled()) { errno = ECANCELED; return -1; }
     if (now_us() >= deadline) { errno = ETIMEDOUT; return -1; }
     if (effect_active) {
         if (effect_attempted) { errno = EALREADY; return -1; }
@@ -88,6 +117,7 @@ ssize_t __wrap_send(int fd, const void *buffer, size_t length, int flags) {
 }
 
 ssize_t __wrap_recv(int fd, void *buffer, size_t length, int flags) {
+    if (cancelled()) { errno = ECANCELED; return -1; }
     if (now_us() >= deadline) { errno = ETIMEDOUT; return -1; }
     /* SDK appends data[received]; reject datagrams that fill its buffer. */
     ssize_t received = __real_recv(fd, buffer, length - 1, flags | MSG_DONTWAIT | MSG_TRUNC);
@@ -101,14 +131,10 @@ void __wrap_printbuf(const uint8_t *data, int length, const char *label) {
     (void)data; (void)length; (void)label;
 }
 
-int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
-                        const char *password, uint64_t timeout_ms,
-                        const struct command *command, uint8_t *completion,
-                        uint8_t *data, uint32_t *length) {
-    deadline = now_us() + timeout_ms * 1000;
-    effect_active = effect_attempted = authentication_failed = 0;
+static struct ipmi_intf *session(const char *host, uint16_t port, const char *user,
+                                  const char *password, uint64_t timeout_ms) {
     struct ipmi_intf *intf = ipmi_intf_load("lanplus");
-    if (!intf) return 1;
+    if (!intf) return NULL;
     intf->my_addr = intf->target_addr = 0x20;
     intf->target_lun = intf->target_channel = 0;
     intf->transit_addr = intf->transit_channel = 0;
@@ -121,6 +147,25 @@ int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
     ipmi_intf_session_set_cipher_suite_id(intf, IPMI_LANPLUS_CIPHER_SUITE_3);
     ipmi_intf_session_set_retry(intf, 1);
     ipmi_intf_session_set_timeout(intf, (timeout_ms + 999) / 1000);
+    return intf;
+}
+
+static void close_session(struct ipmi_intf *intf) {
+    if (intf->opened) intf->close(intf);
+    ipmi_cleanup(intf);
+    ipmi_intf_session_cleanup(intf);
+    explicit_bzero(&intf->ssn_params, sizeof(intf->ssn_params));
+}
+
+int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
+                        const char *password, uint64_t timeout_ms,
+                        const struct command *command, uint8_t *completion,
+                        uint8_t *data, uint32_t *length) {
+    deadline = now_us() + timeout_ms * 1000;
+    effect_active = effect_attempted = authentication_failed = 0;
+    cancel_check = NULL;
+    struct ipmi_intf *intf = session(host, port, user, password, timeout_ms);
+    if (!intf) return 1;
     int status = 2;
     if (intf->open(intf) >= 0 && now_us() < deadline) {
         struct ipmi_rq request = {0};
@@ -145,9 +190,159 @@ int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
             status = 0;
         }
     }
-    if (intf->opened) intf->close(intf);
-    ipmi_cleanup(intf);
-    ipmi_intf_session_cleanup(intf);
-    explicit_bzero(&intf->ssn_params, sizeof(intf->ssn_params));
+    close_session(intf);
     return status == 2 && authentication_failed ? 4 : status;
+}
+
+struct sol_exchange {
+    uint8_t instance, flags, generate_break;
+    uint16_t input_length;
+    const uint8_t *input;
+    uint32_t read_ms, max_output_bytes;
+};
+
+struct sol_outcome {
+    int32_t activation_completion, deactivation_completion;
+    uint32_t input_acknowledged, output_length, output_bytes;
+    uint8_t output_truncated, session_closed;
+    uint16_t payload_port;
+};
+
+static uint8_t *sol_output;
+static uint32_t sol_limit;
+static struct sol_outcome *sol_result;
+static int sol_invalid_output;
+
+static void sol_capture(struct ipmi_rs *response) {
+    if (!response) return;
+    if (response->data_len < 0 || response->data_len >= IPMI_BUF_SIZE) {
+        sol_invalid_output = 1;
+        return;
+    }
+    uint32_t length = response->data_len;
+    sol_result->output_bytes += length;
+    uint32_t available = sol_limit - sol_result->output_length;
+    if (length > available) { length = available; sol_result->output_truncated = 1; }
+    memcpy(sol_output + sol_result->output_length, response->data, length);
+    sol_result->output_length += length;
+}
+
+static struct ipmi_rs *sol_control(struct ipmi_intf *intf, uint8_t command,
+                                  const struct sol_exchange *exchange) {
+    uint8_t data[6] = {IPMI_PAYLOAD_TYPE_SOL, exchange->instance, 0, 0, 0, 0};
+    if (command == IPMI_ACTIVATE_PAYLOAD) data[2] = exchange->flags;
+    struct ipmi_rq request = {0};
+    request.msg.netfn = IPMI_NETFN_APP;
+    request.msg.cmd = command;
+    request.msg.data = data;
+    request.msg.data_len = sizeof(data);
+    effect_active = 1;
+    effect_attempted = 0;
+    struct ipmi_rs *response = intf->sendrecv(intf, &request);
+    effect_active = 0;
+    return response;
+}
+
+int opsonde_ipmi_sol(const char *host, uint16_t port, const char *user,
+                     const char *password, uint64_t timeout_ms,
+                     const struct sol_exchange *exchange, uint8_t *output,
+                     struct sol_outcome *outcome,
+                     int (*check)(const void *), const void *context) {
+    uint64_t total_deadline = now_us() + timeout_ms * 1000;
+    uint64_t cleanup = timeout_ms / 3;
+    if (cleanup > 300) cleanup = 300;
+    deadline = total_deadline - cleanup * 1000;
+    effect_active = effect_attempted = authentication_failed = 0;
+    cancel_check = check;
+    cancel_context = context;
+    sol_output = output;
+    sol_limit = exchange->max_output_bytes;
+    sol_result = outcome;
+    sol_invalid_output = 0;
+    int status = 2, activated = 0;
+    struct ipmi_intf *intf = session(host, port, user, password, 1000);
+    if (!intf) { cancel_check = NULL; return 1; }
+    if (cancelled()) { status = 6; goto done; }
+    if (intf->open(intf) < 0) goto done;
+    if (cancelled()) { status = 6; goto done; }
+    intf->session->sol_data.sol_input_handler = sol_capture;
+    struct ipmi_rs *response = sol_control(intf, IPMI_ACTIVATE_PAYLOAD, exchange);
+    if (!response) {
+        status = effect_attempted ? 3 : (cancelled() ? 6 : 2);
+        activated = effect_attempted;
+        goto done;
+    }
+    outcome->activation_completion = response->ccode;
+    if (response->ccode) { status = 5; goto done; }
+    activated = 1;
+    status = 3;
+    if (response->data_len != sizeof(struct activate_payload_rsp)) goto done;
+    struct activate_payload_rsp activation;
+    memcpy(&activation, response->data, sizeof(activation));
+    intf->session->sol_data.max_inbound_payload_size =
+        activation.inbound_payload_size[0] | activation.inbound_payload_size[1] << 8;
+    intf->session->sol_data.max_outbound_payload_size =
+        activation.outbound_payload_size[0] | activation.outbound_payload_size[1] << 8;
+    intf->session->sol_data.port =
+        activation.payload_udp_port[0] | activation.payload_udp_port[1] << 8;
+    outcome->payload_port = intf->session->sol_data.port;
+    if (intf->session->sol_data.port != port) { status = 7; goto done; }
+    uint32_t chunk = intf->session->sol_data.max_inbound_payload_size;
+    if (chunk <= 4) goto done;
+    chunk -= 4;
+    if (chunk > 255) chunk = 255;
+    for (uint32_t offset = 0; offset < exchange->input_length ||
+         (!offset && exchange->generate_break);) {
+        if (cancelled() || now_us() >= deadline) goto done;
+        uint32_t length = exchange->input_length - offset;
+        if (length > chunk) length = chunk;
+        struct ipmi_v2_payload payload = {0};
+        memcpy(payload.payload.sol_packet.data, exchange->input + offset, length);
+        payload.payload.sol_packet.character_count = length;
+        payload.payload.sol_packet.generate_break = !offset && exchange->generate_break;
+        response = intf->send_sol(intf, &payload);
+        if (!response || response->session.payloadtype != IPMI_PAYLOAD_TYPE_SOL ||
+            response->payload.sol_packet.acked_packet_number != payload.payload.sol_packet.packet_sequence_number ||
+            response->payload.sol_packet.accepted_character_count != payload.payload.sol_packet.character_count ||
+            response->payload.sol_packet.is_nack || response->payload.sol_packet.transfer_unavailable)
+            goto done;
+        sol_capture(response);
+        outcome->input_acknowledged += length;
+        offset += length;
+        if (!length) break;
+    }
+    uint64_t read_until = now_us() + exchange->read_ms * 1000;
+    while (now_us() < read_until) {
+        if (cancelled() || now_us() >= deadline) goto done;
+        fd_set read;
+        FD_ZERO(&read);
+        FD_SET(intf->fd, &read);
+        uint64_t now = now_us();
+        if (now >= read_until) break;
+        uint64_t remaining = read_until - now;
+        struct timeval wait = {remaining / 1000000, remaining % 1000000};
+        int ready = __wrap_select(intf->fd + 1, &read, NULL, NULL, &wait);
+        if (ready < 0) goto done;
+        if (ready > 0) sol_capture(intf->recv_sol(intf));
+        if (sol_invalid_output) goto done;
+    }
+    if (!cancelled()) status = 0;
+done:
+    if (status == 2 && cancelled()) status = 6;
+    if (status == 2 && authentication_failed) status = 4;
+    cancel_check = NULL;
+    deadline = total_deadline;
+    if (activated) {
+        struct ipmi_rs *closed = sol_control(intf, IPMI_DEACTIVATE_PAYLOAD, exchange);
+        if (closed) {
+            outcome->deactivation_completion = closed->ccode;
+            outcome->session_closed = closed->ccode == 0;
+        }
+        if (!outcome->session_closed) status = 3;
+    }
+    effect_active = 0;
+    close_session(intf);
+    sol_output = NULL;
+    sol_result = NULL;
+    return status;
 }

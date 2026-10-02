@@ -6,6 +6,92 @@ defmodule Opsonde.Targets.IPMIRequestTest do
 
   @endpoint "ipmi://127.0.0.1:623"
 
+  @tag ipmi_sol: true
+  test "SOL exchange uses the existing exact IPMI effect authority for all profiles" do
+    for adapter <- [
+          IPMI,
+          Opsonde.Targets.Profiles.HPEILO.IPMI,
+          Opsonde.Targets.Profiles.DellIDRAC.IPMI
+        ] do
+      {:ok, state} = adapter.build(%{}, %{"username" => "fixture", "password" => "fixture"})
+      {:ok, state} = adapter.bind_connection(state, %Target.Connection{endpoint: @endpoint})
+
+      effect = %{
+        request(%{"input_hex" => "0d", "read_ms" => 100})
+        | operation: "console.exchange"
+      }
+
+      exact =
+        struct!(
+          Target.MethodRequest,
+          Map.take(Map.from_struct(effect), [
+            :provider_revision,
+            :connection,
+            :capability,
+            :operation,
+            :selectors,
+            :parameters
+          ])
+        )
+
+      assert {:ok, %Target.RequestClassification{kind: :effect}} =
+               Target.classify_request(adapter, state, exact)
+
+      assert {:error, :cancelled, _} =
+               adapter.effect(state, effect, %{cancelled?: fn -> true end})
+
+      for invalid <- [
+            Map.put(effect.parameters, "instance", 0),
+            Map.put(effect.parameters, "input_hex", "F"),
+            Map.put(effect.parameters, "activation_flags", 256),
+            Map.put(effect.parameters, "read_ms", 30_000),
+            Map.put(effect.parameters, "max_output_bytes", 60_001),
+            Map.put(effect.parameters, "generate_break", "true"),
+            Map.put(effect.parameters, "netfn", 6)
+          ] do
+        assert {:error, :failed, _} =
+                 Target.classify_request(adapter, state, %{exact | parameters: invalid})
+      end
+    end
+  end
+
+  @tag ipmi_deadline: true
+  test "SOL cancellation interrupts native authentication without retaining the SDK session" do
+    {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    on_exit(fn -> :gen_udp.close(socket) end)
+    {:ok, port} = :inet.port(socket)
+    credentials = %{"username" => "fixture", "password" => "fixture"}
+    {:ok, state} = IPMI.build(%{"timeout_ms" => 3000}, credentials)
+
+    {:ok, state} =
+      IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+
+    cancellation = :atomics.new(1, [])
+
+    effect = %{
+      request(%{"input_hex" => "0d"})
+      | connection: %Target.Connection{endpoint: state.endpoint},
+        operation: "console.exchange"
+    }
+
+    waiting =
+      Task.async(fn ->
+        IPMI.effect(state, effect, %{cancelled?: fn -> :atomics.get(cancellation, 1) == 1 end})
+      end)
+
+    assert {:ok, {_address, _port, _handshake}} = :gen_udp.recv(socket, 0, 1000)
+    started = System.monotonic_time(:millisecond)
+    :atomics.put(cancellation, 1, 1)
+    assert {:error, :cancelled, _} = Task.await(waiting, 1000)
+    assert System.monotonic_time(:millisecond) - started < 500
+    assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+
+    assert {:error, :unreachable, _} =
+             IPMI.check(%{state | timeout: 100}, %{"endpoint" => state.endpoint})
+
+    assert {:ok, {_address, _port, _next_handshake}} = :gen_udp.recv(socket, 0, 100)
+  end
+
   @tag ipmi_deadline: true
   test "IPMI checks do not send delayed requests after their deadline" do
     {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])

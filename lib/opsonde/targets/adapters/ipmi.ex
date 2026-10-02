@@ -90,7 +90,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       {:ok,
        %Target.Capabilities{
          observations: power.observations,
-         effects: effects ++ [method_effect_operation()]
+         effects: effects ++ [method_effect_operation(), console_operation()]
        }}
     end
   end
@@ -202,6 +202,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
+  defp method_effect(state, %{operation: "console.exchange"} = request, invocation) do
+    with {:ok, {:sol, exchange}, include_response?} <- method_request(state, request) do
+      console_effect(state, request, exchange, include_response?, invocation)
+    end
+  end
+
   defp method_effect(state, request, invocation) do
     with {:ok, command, include_response?} <- method_request(state, request),
          :ok <- not_cancelled(invocation) do
@@ -272,6 +278,44 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     }
   end
 
+  defp method_request(state, %{operation: "console.exchange"} = request) do
+    parameters = request.parameters
+
+    with true <- request.connection.endpoint == state.endpoint and request.selectors == %{},
+         true <-
+           Enum.all?(
+             Map.keys(parameters),
+             &(&1 in ~w(input_hex instance activation_flags generate_break read_ms max_output_bytes include_response))
+           ),
+         {:ok, input} <-
+           request_data(
+             Map.new(Map.take(parameters, ["input_hex"]), fn {_, value} -> {"data_hex", value} end)
+           ),
+         instance when is_integer(instance) and instance in 1..15 <-
+           Map.get(parameters, "instance", 1),
+         flags when is_integer(flags) and flags in 0..255 <-
+           Map.get(parameters, "activation_flags", 0xC6),
+         break? when is_boolean(break?) <- Map.get(parameters, "generate_break", false),
+         read_ms when is_integer(read_ms) and read_ms >= 0 and read_ms < state.timeout <-
+           Map.get(parameters, "read_ms", 0),
+         limit when is_integer(limit) and limit in 1..60_000 <-
+           Map.get(parameters, "max_output_bytes", 32_768),
+         include? when is_boolean(include?) <- Map.get(parameters, "include_response", false) do
+      {:ok,
+       {:sol,
+        %{
+          input: input,
+          instance: instance,
+          flags: flags,
+          generate_break: break?,
+          read_ms: read_ms,
+          max_output_bytes: limit
+        }}, include?}
+    else
+      _ -> {:error, :failed, "IPMI SOL exchange is invalid"}
+    end
+  end
+
   defp method_request(state, request) do
     parameters = request.parameters
 
@@ -293,6 +337,90 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       {:ok, Map.merge(routing, %{netfn: netfn, command: opcode, data: data}), include_response?}
     else
       _ -> {:error, :failed, "IPMI command request is invalid"}
+    end
+  end
+
+  defp console_operation do
+    %Target.Operation{
+      capability: @method_effect,
+      operation: "console.exchange",
+      description:
+        "Exchange exact SOL console bytes when the BMC supports SOL, then close the session",
+      input_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "selectors" => %{"type" => "object", "additionalProperties" => false},
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{
+              "input_hex" => %{"type" => "string", "maxLength" => @max_data_bytes * 2},
+              "instance" => %{"type" => "integer", "minimum" => 1, "maximum" => 15},
+              "activation_flags" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
+              "generate_break" => %{"type" => "boolean"},
+              "read_ms" => %{"type" => "integer", "minimum" => 0, "maximum" => 29_999},
+              "max_output_bytes" => %{"type" => "integer", "minimum" => 1, "maximum" => 60_000},
+              "include_response" => %{"type" => "boolean"}
+            },
+            "additionalProperties" => false
+          }
+        },
+        "required" => ["selectors", "parameters"],
+        "additionalProperties" => false
+      }
+    }
+  end
+
+  defp console_effect(state, request, exchange, include_response?, invocation) do
+    started = System.monotonic_time(:millisecond)
+
+    with :ok <- not_cancelled(invocation),
+         {:ok, address} <- resolve_address(state.host, state.port, state.timeout),
+         remaining = state.timeout - (System.monotonic_time(:millisecond) - started),
+         true <- remaining > 0 do
+      case IPMI.exchange_console(
+             address,
+             state.user,
+             state.password,
+             remaining,
+             exchange,
+             invocation
+           ) do
+        {:ok, result} ->
+          {output, details} = Map.pop(result, :output)
+          details = Map.new(details, fn {key, value} -> {Atom.to_string(key), value} end)
+          {status, details} = Map.pop(details, "status")
+
+          details =
+            if include_response? do
+              bytes =
+                output
+                |> :erlang.list_to_binary()
+                |> Opsonde.Providers.Redactor.message(%{"password" => state.password})
+
+              size = min(byte_size(bytes), exchange.max_output_bytes)
+
+              details
+              |> Map.put("output_hex", Base.encode16(binary_part(bytes, 0, size), case: :lower))
+              |> Map.update!("output_truncated", &(&1 or byte_size(bytes) > size))
+            else
+              Map.put(details, "response_redacted", true)
+            end
+
+          {:ok,
+           %Target.EffectResult{status: status, reference: request.operation, details: details}}
+
+        {:error, "cancelled"} ->
+          {:error, :cancelled, "IPMI SOL exchange was cancelled before dispatch"}
+
+        {:error, "authentication"} ->
+          {:error, :failed, "IPMI authentication failed"}
+
+        _ ->
+          {:error, :failed, "IPMI SOL connection failed before dispatch"}
+      end
+    else
+      false -> {:error, :failed, "IPMI SOL connection deadline expired"}
+      {:error, _, _} = error -> error
     end
   end
 
