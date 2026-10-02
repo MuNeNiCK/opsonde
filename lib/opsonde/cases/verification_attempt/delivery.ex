@@ -133,11 +133,12 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
     result =
       case incident.pending_intent do
         %{
-          "action" => "evaluate_verification",
+          "action" => action,
           "verification_attempt_id" => id,
           "verification_evidence_id" => evidence_id
         }
-        when id == attempt.id and evidence_id == evidence.id ->
+        when action in ["evaluate_verification", "await_source_recovery"] and
+               id == attempt.id and evidence_id == evidence.id ->
           :ok
 
         _other ->

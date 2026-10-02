@@ -2021,6 +2021,62 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:effect, _, _}
   end
 
+  test "a delivered effect retries verification scheduling without another Target effect",
+       context do
+    {incident, run, proposal} = authorized_proposal!("verification-job-persistence", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_verification_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.VerificationAttempt.Worker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_verification_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_verification_job()
+    """)
+
+    assert {:error, _error} =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :applied
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "verify_operation"
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 0
+
+    assert {:ok, nil} =
+             Cases.verification_attempt_by_operation(operation.id,
+               authorize?: false,
+               not_found_error?: false
+             )
+
+    Repo.query!("DROP TRIGGER reject_verification_job ON oban_jobs")
+
+    for _ <- 1..2 do
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn -> flunk("the completed effect was sent again") end)
+               )
+    end
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    assert attempt.status == :queued
+    assert verification_jobs(attempt.id) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
+    refute_receive {:effect, _, _}
+    refute_receive {:verify, _, _}
+  end
+
   test "terminal Operation automatically creates one exact VerificationAttempt and job",
        context do
     {_incident, run, proposal} = authorized_proposal!("verification-accept", context)
@@ -2857,6 +2913,77 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert is_binary(evidence_id)
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
+  test "saved fresh verification retries source-recovery scheduling without another observation",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _provider} =
+      authorized_proposal!("source-wait-job-persistence", context, trigger_kind: :signal)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_source_wait_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Case.SignalRecoveryCheckWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_source_wait_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_source_wait_job()
+    """)
+
+    assert {:error, _error} =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation({:ok, verified_result(%{"active_state" => "active"})})
+             )
+
+    assert_receive {:verify, _, _}
+    assert Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :verified
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "evaluate_verification"
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert recovery_check_jobs(incident.id) == []
+
+    refute Enum.any?(
+             Cases.list_case_events!(actor: context.operator),
+             &(&1.event_type == "case_awaiting_source_recovery")
+           )
+
+    Repo.query!("DROP TRIGGER reject_source_wait_job ON oban_jobs")
+
+    for _ <- 1..2 do
+      assert :ok =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation:
+                   invocation(fn -> flunk("saved verification was dispatched again") end)
+               )
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "await_source_recovery"
+
+    assert [_job] = recovery_check_jobs(incident.id)
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    refute_receive {:verify, _, _}
+    refute_receive {:effect, _, _}
   end
 
   test "a verified Signal effect waits, then investigates once if monitoring stays firing",

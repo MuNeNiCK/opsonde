@@ -60,7 +60,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.Accept do
            Targets.clear_target_request(request, actor: actor),
          :ok <- exact_provider(clearance, proposal.verification_tool),
          {:ok, attempt} <- create(operation, proposal, actor, clearance),
-         {:ok, _job} <- enqueue(attempt.id) do
+         {:ok, job} <- enqueue(attempt.id),
+         true <- is_integer(job.id) || {:error, "Fresh verification job was not persisted"} do
       {:ok, attempt}
     end
   end

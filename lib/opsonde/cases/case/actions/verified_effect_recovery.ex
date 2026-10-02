@@ -108,10 +108,12 @@ defmodule Opsonde.Cases.Case.Actions.VerifiedEffectRecovery do
                    },
                    authorize?: false
                  ),
-               {:ok, _job} <-
+               {:ok, job} <-
                  %{"case_id" => incident.id, "verification_attempt_id" => attempt.id}
                  |> SignalRecoveryCheckWorker.new(scheduled_at: deadline)
-                 |> Oban.insert() do
+                 |> Oban.insert(),
+               true <-
+                 is_integer(job.id) || {:error, "Source recovery check job was not persisted"} do
             {:ok, waiting}
           end
       end
