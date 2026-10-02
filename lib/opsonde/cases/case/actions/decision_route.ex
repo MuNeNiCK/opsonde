@@ -21,6 +21,7 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
 
         {:error, error} ->
           cond do
+            exception_failure?(error) -> {:error, error}
             file_route?(turn_id) -> {:error, error}
             rejected_target_selection?(turn_id, error) -> reconsider_target_selection(turn_id)
             true -> require_attention(turn_id, error)
@@ -51,6 +52,18 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
       _unavailable -> false
     end
   end
+
+  defp exception_failure?(%Ash.Error.Framework{}), do: true
+
+  defp exception_failure?(%Ash.Error.Unknown{errors: errors}),
+    do: Enum.any?(errors, &exception_failure?/1)
+
+  # Splode converts an unrecognized exception with Exception.format(:error, error).
+  # Intentional action rejections are plain strings in the same Ash error class.
+  defp exception_failure?(%Ash.Error.Unknown.UnknownError{error: "** (" <> _exception}),
+    do: true
+
+  defp exception_failure?(_error), do: false
 
   defp route_file_turn(turn) do
     with {:ok, superseded?} <- superseded_by_split?(turn) do

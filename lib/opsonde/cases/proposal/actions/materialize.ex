@@ -210,6 +210,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
               do: {:cont, :ok},
               else: {:halt, {:error, "Proposal cites unavailable Evidence"}}
 
+          {:error, %Ash.Error.Unknown{}} = error ->
+            {:halt, error}
+
+          {:error, %Ash.Error.Framework{}} = error ->
+            {:halt, error}
+
           _unavailable ->
             {:halt, {:error, "Proposal cites unavailable Evidence"}}
         end

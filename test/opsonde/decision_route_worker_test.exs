@@ -70,6 +70,55 @@ defmodule Opsonde.DecisionRouteWorkerTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
   end
 
+  @tag saved_proposal_citation_read_fault: true
+  test "a saved Proposal decision survives a temporary citation read failure", context do
+    {incident, run} = open_case!("citation-read", context.operator)
+    evidence = evidence!(incident, run, "citation-read")
+
+    turn =
+      completed_turn!(
+        incident,
+        run,
+        "citation-read",
+        proposal_intent(evidence.id, context),
+        :proposal
+      )
+
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+    before_events = Cases.list_case_events!(actor: context.admin)
+    job = %Oban.Job{args: %{"turn_id" => turn.id}}
+    Repo.query!("ALTER TABLE evidences RENAME COLUMN content TO unavailable_content")
+
+    try do
+      assert {:error, source_error} = Cases.materialize_proposal(turn.id, authorize?: false)
+      assert Exception.message(source_error) =~ "undefined_column"
+      assert {:error, _error} = DecisionRouteWorker.perform(job)
+    after
+      Repo.query!("ALTER TABLE evidences RENAME COLUMN unavailable_content TO content")
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+    assert Cases.list_case_events!(actor: context.admin) == before_events
+    assert Cases.list_proposals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert :ok = DecisionRouteWorker.perform(job)
+    assert [proposal] = Cases.list_proposals!(actor: context.admin)
+    assert proposal.source_turn_id == turn.id
+    assert proposal.status == :recommended
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units
+
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+  end
+
   test "persisted Proposal reaches the authority pending state without an effect", context do
     {incident, run} = open_case!("proposal", context.operator)
     evidence = evidence!(incident, run, "proposal")
