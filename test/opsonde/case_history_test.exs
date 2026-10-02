@@ -376,9 +376,10 @@ defmodule Opsonde.CaseHistoryTest do
         {:exhausted, :effect, "limit_exhausted", "attempted_kind", "attempted_amount", :exhausted}
       ],
       fault <- [:missing_kind, :missing_amount, :changed_kind, :changed_amount, :changed_type] do
+    @tag budget_fault: fault
     test "a #{producer} budget replay rejects #{fault} in its persisted event", context do
       producer = unquote(producer)
-      fault = unquote(fault)
+      fault = context.budget_fault
       kind = unquote(kind)
       type = unquote(type)
       kind_field = unquote(kind_field)
