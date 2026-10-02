@@ -217,8 +217,8 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       {:ok, invocations} ->
         {:ok, invocations}
 
-      {:error, _error} ->
-        {:error, ai_error(:unavailable, "Reviewer failure history is unavailable")}
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -291,6 +291,12 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
 
       {:ok, _changed} ->
         {:error, ai_error(:unavailable, "Reviewer assignment changed")}
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
 
       {:error, _error} ->
         {:error, ai_error(:unavailable, "Reviewer assignment is unavailable")}
@@ -399,16 +405,22 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     do: Cases.create_review_decision_record(attrs, authorize?: false)
 
   defp persist_failure(proposal, error, invocation, opts) do
-    {category, reason} = failure(error)
+    if is_nil(invocation) and
+         (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
+         not is_struct(find_error(error), AI.Error) do
+      {:error, error}
+    else
+      {category, reason} = failure(error)
 
-    with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
-      cond do
-        retryable_failure?(category) and retry_available?(opts) ->
-          {:error,
-           "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
+      with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
+        cond do
+          retryable_failure?(category) and retry_available?(opts) ->
+            {:error,
+             "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
 
-        true ->
-          stop_delivery(proposal, category, reason)
+          true ->
+            stop_delivery(proposal, category, reason)
+        end
       end
     end
   end

@@ -77,6 +77,83 @@ defmodule Opsonde.ProposalAuthorityTest do
     }
   end
 
+  for {table, column, attempt} <- [
+        {"ai_invocations", "category", 1},
+        {"ai_usage_role_assignments", "priority", 1},
+        {"evidences", "content", 3}
+      ] do
+    @tag proposal_review_input_read_fault: true,
+         read_table: table,
+         read_column: column,
+         delivery_attempt: attempt
+    test "temporary #{table} input read failure retains the exact reviewing Proposal", context do
+      configure_mode!(:auto, context.admin)
+      {incident, run, proposal} = proposal!("review-input-read", context)
+      Cases.route_proposal_authority!(proposal.id, authorize?: false)
+      before_proposal = Cases.get_proposal!(proposal.id, authorize?: false)
+      before_case = Cases.get_case!(incident.id, authorize?: false)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+      Repo.query!(
+        "ALTER TABLE #{context.read_table} RENAME COLUMN #{context.read_column} TO unavailable_input"
+      )
+
+      try do
+        assert {:error, _error} =
+                 ReviewWorker.perform(%Oban.Job{
+                   args: %{"proposal_id" => proposal.id},
+                   attempt: context.delivery_attempt,
+                   max_attempts: 3
+                 })
+      after
+        Repo.query!(
+          "ALTER TABLE #{context.read_table} RENAME COLUMN unavailable_input TO #{context.read_column}"
+        )
+      end
+
+      assert Cases.get_proposal!(proposal.id, authorize?: false) == before_proposal
+      assert Cases.get_case!(incident.id, authorize?: false) == before_case
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.list_ai_invocations!(authorize?: false) == []
+      assert Cases.list_review_decisions!(actor: context.admin) == []
+      assert Cases.list_approvals!(actor: context.admin) == []
+      assert Cases.list_operations!(actor: context.admin) == []
+
+      assert :ok =
+               ReviewDelivery.run(proposal.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request ->
+                     {:ok,
+                      %AI.ReviewDecision{
+                        purpose_assessment: :remediation,
+                        verdict: :approved,
+                        reason: "The exact effect follows the cited evidence",
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert_receive {:review, _, _}
+
+      assert :ok =
+               ReviewWorker.perform(%Oban.Job{
+                 args: %{"proposal_id" => proposal.id},
+                 attempt: 2,
+                 max_attempts: 3
+               })
+
+      refute_receive {:review, _, _}
+      assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+      assert [_invocation] = Cases.list_ai_invocations!(authorize?: false)
+      assert [_decision] = Cases.list_review_decisions!(actor: context.admin)
+      assert [_approval] = Cases.list_approvals!(actor: context.admin)
+      assert acceptance_jobs(proposal.id) == 1
+    end
+  end
+
   for {mode, worker, expected_status} <- [
         {:auto, ReviewWorker, :reviewing},
         {:ask, ProposalExpirationWorker, :awaiting_human},

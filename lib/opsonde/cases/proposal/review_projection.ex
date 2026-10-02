@@ -137,6 +137,12 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
 
           {:cont, {:ok, loaded ++ [item]}}
 
+        {:error, %Ash.Error.Unknown{}} = error ->
+          {:halt, error}
+
+        {:error, %Ash.Error.Framework{}} = error ->
+          {:halt, error}
+
         _unavailable ->
           {:halt, {:error, "Proposal Evidence is unavailable"}}
       end
