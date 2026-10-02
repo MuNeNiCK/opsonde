@@ -107,6 +107,73 @@ defmodule Opsonde.TargetDiscoveryRouteTest do
     assert Targets.list_external_identities!(actor: context.admin) == []
   end
 
+  @tag target_selection_read_fault: true
+  test "Target selection retains unreadable citation cause and retries the saved decision",
+       context do
+    incident = open!("selection-read-fault", context.operator)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    searched =
+      Cases.search_case_targets!(
+        incident.id,
+        run.id,
+        "selection-read-candidates",
+        "linux-route-01",
+        20,
+        %{"action" => "find_target"},
+        "Select a registered Target",
+        actor: context.operator
+      )
+
+    source =
+      completed_turn!(incident, searched.run, "selection-read", %{
+        "type" => "target_selection",
+        "target_id" => context.target.id,
+        "target_revision" => context.target.revision,
+        "evidence_ids" => [searched.value.id],
+        "reason" => "The discovered Target matches the incident"
+      })
+
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(source.id, authorize?: false)
+    before_events = Cases.list_case_events!(actor: context.admin)
+    job = %Oban.Job{args: %{"turn_id" => source.id}}
+    Repo.query!("ALTER TABLE evidences RENAME COLUMN content TO unavailable_content")
+
+    try do
+      assert {:error, error} =
+               Cases.select_case_target(
+                 incident.id,
+                 before_case.revision,
+                 run.id,
+                 [searched.value.id],
+                 context.target.id,
+                 context.target.revision,
+                 "The discovered Target matches the incident",
+                 "selection-read-direct",
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "does not exist"
+      assert {:error, _} = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    after
+      Repo.query!("ALTER TABLE evidences RENAME COLUMN unavailable_content TO content")
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(source.id, authorize?: false) == before_turn
+    assert Cases.list_case_events!(actor: context.admin) == before_events
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+    assert :ok = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    assert :ok = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.target.id
+    after_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert after_run.turn_count == before_run.turn_count + 1
+    assert after_run.ai_usage_units == before_run.ai_usage_units
+  end
+
   test "search and selection hand the current Turn to downstream routing", context do
     {incident, _run, search_turn} =
       completed_turn!("discovery-chain", context.operator, search_intent())
