@@ -1324,95 +1324,141 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  test "native Signal recovery during Reviewer delivery supersedes the Proposal without approval",
-       context do
-    configure_mode!(:auto, context.admin)
-    enable_signal_automation!(context.admin)
+  for read_fault? <- [false, true] do
+    @tag paid_proposal_context_read_fault: read_fault?, condition_read_fault: read_fault?
+    test "paid Proposal Review handles #{if read_fault?, do: "unavailable", else: "changed"} Conditions without applying stale authority",
+         context do
+      configure_mode!(:auto, context.admin)
+      enable_signal_automation!(context.admin)
 
-    signal_provider =
-      Providers.create_provider!(
-        "authority-native-monitor",
-        :signal,
-        "fixture-signal",
-        %{"source" => "authority-native"},
-        %{"secret" => "authority-native-secret"},
+      signal_provider =
+        Providers.create_provider!(
+          "authority-native-monitor",
+          :signal,
+          "fixture-signal",
+          %{"source" => "authority-native"},
+          %{"secret" => "authority-native-secret"},
+          actor: context.admin
+        )
+        |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+        |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+      Targets.create_external_identity!(
+        context.target.id,
+        "authority-native",
+        "hostname",
+        context.target.name,
         actor: context.admin
       )
-      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
-      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
 
-    Targets.create_external_identity!(
-      context.target.id,
-      "authority-native",
-      "hostname",
-      context.target.name,
-      actor: context.admin
-    )
+      fired_at = DateTime.add(DateTime.utc_now(), -10, :second)
 
-    fired_at = DateTime.add(DateTime.utc_now(), -10, :second)
-
-    ingest_authority_signal!(
-      signal_provider,
-      context.target.name,
-      "review-firing",
-      :firing,
-      fired_at
-    )
-
-    [incident] = Cases.list_cases!(actor: context.admin)
-    assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
-    run = Cases.active_resolution_run!(incident.id, authorize?: false)
-    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
-    [source_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
-
-    {_incident, _run, proposal} =
-      proposal_for_case!(incident, "native-review", context, :effect, nil,
-        started: started,
-        evidence: source_evidence
+      ingest_authority_signal!(
+        signal_provider,
+        context.target.name,
+        "review-firing",
+        :firing,
+        fired_at
       )
 
-    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+      [incident] = Cases.list_cases!(actor: context.admin)
+      assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+      run = Cases.active_resolution_run!(incident.id, authorize?: false)
+      [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+      [source_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
 
-    response = %AI.ReviewDecision{
-      purpose_assessment: :remediation,
-      verdict: :approved,
-      reason: "Approve the action based on the former firing Condition",
-      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
-    }
+      {_incident, _run, proposal} =
+        proposal_for_case!(incident, "native-review", context, :effect, nil,
+          started: started,
+          evidence: source_evidence
+        )
 
-    assert :ok =
-             ReviewDelivery.run(reviewing.id,
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn _request ->
-                   ingest_authority_signal!(
-                     signal_provider,
-                     context.target.name,
-                     "review-recovered",
-                     :recovered,
-                     DateTime.utc_now()
-                   )
+      reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
-                   {:ok, response}
-                 end
-               }
-             )
+      response = %AI.ReviewDecision{
+        purpose_assessment: :remediation,
+        verdict: :approved,
+        reason: "Approve the action based on the former firing Condition",
+        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+      }
 
-    assert_receive {:review, %{model: "reviewer-model"}, _request}
-    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
-    assert Cases.list_review_decisions!(actor: context.admin) == []
-    assert Cases.list_approvals!(actor: context.admin) == []
-    assert Cases.list_operations!(actor: context.admin) == []
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+      try do
+        result =
+          ReviewDelivery.run(reviewing.id,
+            ai_invocation: %{
+              test_pid: self(),
+              respond: fn _request ->
+                if context.condition_read_fault do
+                  Repo.query!(
+                    "ALTER TABLE conditions RENAME COLUMN subject_key TO unavailable_subject_key"
+                  )
+                else
+                  ingest_authority_signal!(
+                    signal_provider,
+                    context.target.name,
+                    "review-recovered",
+                    :recovered,
+                    DateTime.utc_now()
+                  )
+                end
 
-    [invocation] = Cases.list_ai_invocations!(authorize?: false)
-    assert invocation.category == "context_changed"
-    assert invocation.status == :failed
+                {:ok, response}
+              end
+            }
+          )
 
-    current = Cases.get_case!(incident.id, authorize?: false)
-    assert current.pending_intent["action"] == "resolve_turn"
-    assert current.pending_intent["source_proposal_id"] == proposal.id
-    assert [_reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
+        if context.condition_read_fault,
+          do: assert(match?({:error, _}, result)),
+          else: assert(result == :ok)
+      after
+        if context.condition_read_fault do
+          Repo.query!(
+            "ALTER TABLE conditions RENAME COLUMN unavailable_subject_key TO subject_key"
+          )
+        end
+      end
+
+      assert_receive {:review, %{model: "reviewer-model"}, _request}
+
+      if context.condition_read_fault do
+        assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
+
+        assert [%{verdict: :approved, input_tokens: 3, output_tokens: 2}] =
+                 Cases.list_review_decisions!(actor: context.admin)
+
+        assert [%{status: :completed, category: nil}] =
+                 Cases.list_ai_invocations!(authorize?: false)
+
+        assert Cases.list_approvals!(actor: context.admin) == []
+        assert Cases.list_operations!(actor: context.admin) == []
+        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+        for _ <- 1..2 do
+          assert :ok = ReviewWorker.perform(%Oban.Job{args: %{"proposal_id" => proposal.id}})
+        end
+
+        refute_receive {:review, _, _}
+        assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+        assert [_approval] = Cases.list_approvals!(actor: context.admin)
+        assert acceptance_jobs(proposal.id) == 1
+        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+      else
+        assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+        assert [%{verdict: :approved}] = Cases.list_review_decisions!(actor: context.admin)
+        assert Cases.list_approvals!(actor: context.admin) == []
+        assert Cases.list_operations!(actor: context.admin) == []
+        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+        [invocation] = Cases.list_ai_invocations!(authorize?: false)
+        assert invocation.category == nil
+        assert invocation.status == :completed
+
+        current = Cases.get_case!(incident.id, authorize?: false)
+        assert current.pending_intent["action"] == "resolve_turn"
+        assert current.pending_intent["source_proposal_id"] == proposal.id
+        assert [_reassessment] = Cases.started_turns_for_run!(run.id, authorize?: false)
+      end
+    end
   end
 
   test "Auto stops before review or effect when only Resolver is assigned", context do

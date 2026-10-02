@@ -68,22 +68,18 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
 
     case Providers.ai_review(selection.provider_id, request, invocation, authorize?: false) do
       {:ok, decision} ->
-        if review_context_current_with_conditions?(proposal) do
-          case accept(proposal, selection, request, claim.invocation, decision) do
-            {:ok, {:decision, stored}} ->
-              apply(stored)
+        case accept(proposal, selection, request, claim.invocation, decision) do
+          {:ok, {:decision, stored}} ->
+            apply(stored)
 
-            {:ok, :stopped} ->
-              :ok
+          {:ok, :stopped} ->
+            :ok
 
-            {:error, :context_changed} ->
-              settle_and_supersede(proposal, claim.invocation, decision.usage)
+          {:error, :context_changed} ->
+            settle_and_supersede(proposal, claim.invocation, decision.usage)
 
-            {:error, _error} = error ->
-              error
-          end
-        else
-          settle_and_supersede(proposal, claim.invocation, decision.usage)
+          {:error, _error} = error ->
+            error
         end
 
       {:error, error} ->
@@ -319,7 +315,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
                (incident.status == :running and not incident.cancel_requested and
                   current_proposal.status == :reviewing and
                   current_proposal.revision == proposal.revision) || {:error, :context_changed},
-             {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
              {:ok, charged} <-
                charge_usage(
                  proposal,
@@ -351,9 +346,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
                 {:exhausted, charged.reason}
               end
           end
-        else
-          {:ok, false} -> {:error, :context_changed}
-          other -> other
         end
       end)
 
