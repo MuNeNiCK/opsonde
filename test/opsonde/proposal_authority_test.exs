@@ -1324,9 +1324,12 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
-  for read_fault? <- [false, true] do
-    @tag paid_proposal_context_read_fault: read_fault?, condition_read_fault: read_fault?
-    test "paid Proposal Review handles #{if read_fault?, do: "unavailable", else: "changed"} Conditions without applying stale authority",
+  for {read_fault?, schema_error?} <- [{false, false}, {true, false}, {true, true}] do
+    @tag paid_proposal_context_read_fault: read_fault?,
+         condition_read_fault: read_fault?,
+         metered_proposal_error_context_read_fault: schema_error?,
+         schema_error: schema_error?
+    test "paid Proposal Review handles #{if read_fault?, do: "unavailable", else: "changed"} Conditions with #{if schema_error?, do: "schema error", else: "approval"} without applying stale authority",
          context do
       configure_mode!(:auto, context.admin)
       enable_signal_automation!(context.admin)
@@ -1385,6 +1388,8 @@ defmodule Opsonde.ProposalAuthorityTest do
       try do
         result =
           ReviewDelivery.run(reviewing.id,
+            delivery_attempt: 1,
+            max_delivery_attempts: 3,
             ai_invocation: %{
               test_pid: self(),
               respond: fn _request ->
@@ -1402,7 +1407,12 @@ defmodule Opsonde.ProposalAuthorityTest do
                   )
                 end
 
-                {:ok, response}
+                if context.schema_error do
+                  {:error, :invalid_output, "Object schema was rejected",
+                   %AI.Usage{input_tokens: 3, output_tokens: 2}, "schema_validation"}
+                else
+                  {:ok, response}
+                end
               end
             }
           )
@@ -1423,25 +1433,75 @@ defmodule Opsonde.ProposalAuthorityTest do
       if context.condition_read_fault do
         assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
 
-        assert [%{verdict: :approved, input_tokens: 3, output_tokens: 2}] =
-                 Cases.list_review_decisions!(actor: context.admin)
+        if context.schema_error do
+          assert Cases.list_review_decisions!(actor: context.admin) == []
 
-        assert [%{status: :completed, category: nil}] =
-                 Cases.list_ai_invocations!(authorize?: false)
+          assert [
+                   %{
+                     status: :failed,
+                     category: "invalid_output",
+                     failure_code: "schema_validation",
+                     input_tokens: 3,
+                     output_tokens: 2
+                   }
+                 ] = Cases.list_ai_invocations!(authorize?: false)
 
-        assert Cases.list_approvals!(actor: context.admin) == []
-        assert Cases.list_operations!(actor: context.admin) == []
-        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+          assert Cases.get_case!(incident.id, authorize?: false).status == :running
+          assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+          assert Cases.list_approvals!(actor: context.admin) == []
+          assert Cases.list_operations!(actor: context.admin) == []
 
-        for _ <- 1..2 do
-          assert :ok = ReviewWorker.perform(%Oban.Job{args: %{"proposal_id" => proposal.id}})
+          for _ <- 1..2 do
+            assert {:error, _} =
+                     ReviewWorker.perform(%Oban.Job{
+                       args: %{"proposal_id" => proposal.id},
+                       attempt: 1,
+                       max_attempts: 3
+                     })
+          end
+
+          refute_receive {:review, _, _}
+          assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+          assert :ok =
+                   ReviewDelivery.run(proposal.id,
+                     delivery_attempt: 2,
+                     max_delivery_attempts: 3,
+                     ai_invocation: %{
+                       test_pid: self(),
+                       respond: fn request ->
+                         assert request.retry_context["rejection_code"] == "schema_validation"
+                         {:ok, response}
+                       end
+                     }
+                   )
+
+          assert_receive {:review, _, _}
+          assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+          assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10
+          assert [_approval] = Cases.list_approvals!(actor: context.admin)
+          assert acceptance_jobs(proposal.id) == 1
+        else
+          assert [%{verdict: :approved, input_tokens: 3, output_tokens: 2}] =
+                   Cases.list_review_decisions!(actor: context.admin)
+
+          assert [%{status: :completed, category: nil}] =
+                   Cases.list_ai_invocations!(authorize?: false)
+
+          assert Cases.list_approvals!(actor: context.admin) == []
+          assert Cases.list_operations!(actor: context.admin) == []
+          assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+
+          for _ <- 1..2 do
+            assert :ok = ReviewWorker.perform(%Oban.Job{args: %{"proposal_id" => proposal.id}})
+          end
+
+          refute_receive {:review, _, _}
+          assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+          assert [_approval] = Cases.list_approvals!(actor: context.admin)
+          assert acceptance_jobs(proposal.id) == 1
+          assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
         end
-
-        refute_receive {:review, _, _}
-        assert Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
-        assert [_approval] = Cases.list_approvals!(actor: context.admin)
-        assert acceptance_jobs(proposal.id) == 1
-        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
       else
         assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
         assert [%{verdict: :approved}] = Cases.list_review_decisions!(actor: context.admin)

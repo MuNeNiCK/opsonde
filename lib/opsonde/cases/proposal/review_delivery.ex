@@ -83,14 +83,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         end
 
       {:error, error} ->
-        if review_context_current_with_conditions?(proposal),
-          do: persist_failure(proposal, error, claim.invocation, opts),
-          else:
-            settle_and_supersede(
-              proposal,
-              claim.invocation,
-              AIInvocation.failure_accounting(error, 0).usage
-            )
+        persist_failure(proposal, error, claim.invocation, opts)
     end
   end
 
@@ -613,16 +606,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
          {:ok, %{status: :reviewing, revision: revision}} <-
            Cases.get_proposal(proposal.id, authorize?: false) do
       revision == proposal.revision
-    else
-      _changed -> false
-    end
-  end
-
-  defp review_context_current_with_conditions?(proposal) do
-    with true <- review_context_current?(proposal),
-         {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
-         {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id) do
-      true
     else
       _changed -> false
     end
