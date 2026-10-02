@@ -67,7 +67,9 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
              Cases.mark_verification_dispatching(
                attempt,
                attempt.revision,
-               %{dispatch_started_at: DateTime.utc_now()}, authorize?: false) do
+               %{dispatch_started_at: DateTime.utc_now()},
+               authorize?: false
+             ) do
         %VerificationClaim{state: :claimed, attempt: claimed, actor: actor, clearance: clearance}
       end
     else
@@ -96,7 +98,9 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
                provider_evidence: evidence,
                observed_at: now,
                completed_at: now
-             }, authorize?: false) do
+             },
+             authorize?: false
+           ) do
       %VerificationClaim{state: :terminal, attempt: terminal}
     end
   end
