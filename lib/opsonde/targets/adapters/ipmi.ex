@@ -121,7 +121,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
-  defp classify_ipmi({:ok, _first, _second, _third, _fourth}, kind), do: {:ok, kind}
+  defp classify_ipmi({:ok, _command, _include_response}, kind), do: {:ok, kind}
   defp classify_ipmi(_invalid, _kind), do: {:error, :failed, "IPMI request is invalid"}
 
   @impl Opsonde.Providers.Target
@@ -203,11 +203,15 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   defp method_effect(state, request, invocation) do
-    with {:ok, netfn, opcode, data, include_response?} <- method_request(state, request),
+    with {:ok, command, include_response?} <- method_request(state, request),
          :ok <- not_cancelled(invocation) do
-      case command(state, netfn, opcode, data) do
+      case command(state, command) do
         {:ok, completion, response} ->
-          details = %{"netfn" => netfn, "command" => opcode, "completion_code" => completion}
+          details =
+            command
+            |> Map.delete(:data)
+            |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+            |> Map.put("completion_code", completion)
 
           details =
             if include_response? do
@@ -250,6 +254,11 @@ defmodule Opsonde.Targets.Adapters.IPMI do
             "properties" => %{
               "netfn" => %{"type" => "integer", "minimum" => 0, "maximum" => 62},
               "command" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
+              "lun" => %{"type" => "integer", "minimum" => 0, "maximum" => 3},
+              "target_address" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
+              "target_channel" => %{"type" => "integer", "minimum" => 0, "maximum" => 15},
+              "transit_address" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
+              "transit_channel" => %{"type" => "integer", "minimum" => 0, "maximum" => 15},
               "data_hex" => %{"type" => "string", "maxLength" => @max_data_bytes * 2},
               "include_response" => %{"type" => "boolean"}
             },
@@ -271,16 +280,43 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          true <- request.selectors == %{},
          %{"netfn" => netfn, "command" => opcode} <- parameters,
          true <-
-           Enum.all?(Map.keys(parameters), &(&1 in ~w(netfn command data_hex include_response))),
+           Enum.all?(
+             Map.keys(parameters),
+             &(&1 in ~w(netfn command data_hex include_response lun target_address target_channel transit_address transit_channel))
+           ),
          true <- is_integer(netfn) and netfn in 0..62 and rem(netfn, 2) == 0,
          true <- is_integer(opcode) and opcode in 0..255,
          include_response? when is_boolean(include_response?) <-
            Map.get(parameters, "include_response", false),
-         {:ok, data} <- request_data(Map.take(parameters, ["data_hex"])) do
-      {:ok, netfn, opcode, data, include_response?}
+         {:ok, data} <- request_data(Map.take(parameters, ["data_hex"])),
+         {:ok, routing} <- routing(parameters) do
+      {:ok, Map.merge(routing, %{netfn: netfn, command: opcode, data: data}), include_response?}
     else
       _ -> {:error, :failed, "IPMI command request is invalid"}
     end
+  end
+
+  defp routing(parameters) do
+    command = %{
+      lun: Map.get(parameters, "lun", 0),
+      target_address: Map.get(parameters, "target_address", 0x20),
+      target_channel: Map.get(parameters, "target_channel", 0),
+      transit_address: Map.get(parameters, "transit_address", 0),
+      transit_channel: Map.get(parameters, "transit_channel", 0)
+    }
+
+    if Enum.all?(command, fn {key, value} ->
+         max =
+           case key do
+             :lun -> 3
+             key when key in [:target_channel, :transit_channel] -> 15
+             _address -> 255
+           end
+
+         is_integer(value) and value in 0..max
+       end),
+       do: {:ok, command},
+       else: {:error, :invalid_routing}
   end
 
   defp unknown_effect(reference, reason) do
@@ -323,20 +359,30 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   end
 
   defp command(state, netfn, opcode, data) do
-    with {:ok, address} <- resolve_address(state.host, state.port, state.timeout) do
-      method_command(state, address, netfn, opcode, data)
+    {:ok, routing} = routing(%{})
+    command(state, Map.merge(routing, %{netfn: netfn, command: opcode, data: data}))
+  end
+
+  defp command(state, request) do
+    started = System.monotonic_time(:millisecond)
+
+    with {:ok, address} <- resolve_address(state.host, state.port, state.timeout),
+         remaining = state.timeout - (System.monotonic_time(:millisecond) - started),
+         true <- remaining > 0 do
+      method_command(state, address, request, remaining)
+    else
+      false -> {:error, :unreachable, "IPMI connection deadline expired"}
+      {:error, _, _} = error -> error
     end
   end
 
-  defp method_command(state, address, netfn, opcode, data) do
+  defp method_command(state, address, request, timeout) do
     case IPMI.send_command(
            address,
            state.user,
            state.password,
-           state.timeout,
-           netfn,
-           opcode,
-           data
+           timeout,
+           request
          ) do
       {:ok, {completion, response}}
       when is_integer(completion) and completion in 0..255 and is_list(response) and
@@ -366,12 +412,21 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:ok, socket_address(ip, port)}
 
       {:error, _reason} ->
+        started = System.monotonic_time(:millisecond)
+
         case :inet.getaddr(String.to_charlist(host), :inet, timeout) do
-          {:ok, ip} -> {:ok, socket_address(ip, port)}
-          {:error, _reason} -> resolve_ipv6(host, port, timeout)
+          {:ok, ip} ->
+            {:ok, socket_address(ip, port)}
+
+          {:error, _reason} ->
+            remaining = timeout - (System.monotonic_time(:millisecond) - started)
+            resolve_ipv6(host, port, remaining)
         end
     end
   end
+
+  defp resolve_ipv6(_host, _port, timeout) when timeout <= 0,
+    do: {:error, :unreachable, "IPMI BMC address could not be resolved"}
 
   defp resolve_ipv6(host, port, timeout) do
     case :inet.getaddr(String.to_charlist(host), :inet6, timeout) do

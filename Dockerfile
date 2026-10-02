@@ -24,7 +24,7 @@ ENV CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git \
+  && apt-get install -y --no-install-recommends build-essential git autoconf automake libtool pkg-config libssl-dev \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

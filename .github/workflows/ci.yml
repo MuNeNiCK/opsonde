@@ -33,6 +33,8 @@ jobs:
         run: rustup toolchain install 1.98.0 --profile minimal
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool pkg-config libssl-dev
           mix deps.get
           corepack pnpm --dir assets install --frozen-lockfile
       - name: Verify source
