@@ -4377,6 +4377,161 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  @tag paid_recovery_context_read_fault: true
+  test "a paid Recovery Review is retained when Condition reads fail after its response",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "paid-recovery-context-read",
+        trigger_kind: :signal,
+        recover_before_proposal: true
+      )
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    try do
+      assert {:error, _error} =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request ->
+                     Repo.query!(
+                       "ALTER TABLE conditions RENAME COLUMN subject_key TO unavailable_subject_key"
+                     )
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        purpose_assessment: :remediation,
+                        verdict: :approved,
+                        reason: "The current observation supports the stated recovery",
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+    after
+      Repo.query!("ALTER TABLE conditions RENAME COLUMN unavailable_subject_key TO subject_key")
+    end
+
+    assert_receive {:review_recovery, _, _}
+
+    reviews =
+      Enum.filter(
+        Cases.list_case_events!(actor: context.admin),
+        &(&1.event_type == "recovery_review_decided")
+      )
+
+    invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert [%{data: %{"verdict" => "approved"}}] = reviews
+    assert Enum.count(invocations, &(&1.role == :reviewer and &1.status == :completed)) == 1
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 6
+
+    for _ <- 1..2 do
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => turn.id}
+               })
+    end
+
+    refute_receive {:review_recovery, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 6
+
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(invocations)
+  end
+
+  for change <- [:reviewer_disabled, :condition_refired] do
+    @tag paid_recovery_context_change: true, recovery_change: change
+    test "a paid recovery approval cannot resolve after #{change}", context do
+      enable_signal_automation!(context.admin)
+
+      {incident, run, turn, _evidence} =
+        recovery_conclusion!(context, "paid-recovery-role-change",
+          trigger_kind: :signal,
+          recover_before_proposal: true
+        )
+
+      Cases.route_downstream_decision!(turn.id, authorize?: false)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request ->
+                     if context.recovery_change == :reviewer_disabled do
+                       Providers.disable_provider!(
+                         context.reviewer_provider,
+                         context.reviewer_provider.revision,
+                         actor: context.admin
+                       )
+                     else
+                       signal_provider =
+                         Enum.find(
+                           Providers.list_providers!(actor: context.admin),
+                           &(&1.kind == :signal)
+                         )
+
+                       fire_signal!(
+                         signal_provider,
+                         context,
+                         incident.initial_context["signal_event_key"],
+                         "refired-after-paid-review",
+                         DateTime.add(DateTime.utc_now(), 1, :second)
+                       )
+                     end
+
+                     {:ok,
+                      %AI.ReviewDecision{
+                        purpose_assessment: :remediation,
+                        verdict: :approved,
+                        reason: "The inspected service is active",
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert_receive {:review_recovery, _, _}
+      assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_run.ai_usage_units + 6
+
+      events = Cases.list_case_events!(actor: context.admin)
+      assert Enum.count(events, &(&1.event_type == "recovery_review_decided")) == 1
+      refute Enum.any?(events, &(&1.event_type == "case_resolved"))
+
+      assert Enum.count(
+               Cases.list_ai_invocations!(authorize?: false),
+               &(&1.role == :reviewer and &1.status == :completed)
+             ) == 1
+
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => turn.id}
+               })
+
+      refute_receive {:review_recovery, _, _}
+
+      refute Enum.any?(
+               Cases.list_case_events!(actor: context.admin),
+               &(&1.event_type == "case_resolved")
+             )
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_run.ai_usage_units + 6
+    end
+  end
+
   @tag recovered_condition_target_read_fault: true
   test "temporary recovered Condition Target read failure does not discard its recovery conclusion",
        context do

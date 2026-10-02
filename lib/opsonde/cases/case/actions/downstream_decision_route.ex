@@ -3,7 +3,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   require Ash.Query
 
-  alias Opsonde.Cases
+  alias Opsonde.{Cases, Providers}
 
   alias Opsonde.Cases.{Approval, Case, CaseEvent, Evidence, Proposal, ResolutionRun, Turn}
   alias Opsonde.Cases.Turn.RecoveryReviewFingerprint, as: RecoveryReviewFingerprint
@@ -34,7 +34,13 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
                      {:ok, run} <- lock_run(source_turn.resolution_run_id, incident.id),
                      {:ok, turn} <- lock_turn(source_turn.id, incident.id, run.id),
                      {:ok, current?} <- ConditionContext.current?(incident, turn.id),
-                     true <- current? || {:error, "Resolver Condition snapshot changed"},
+                     true <-
+                       current? ||
+                         {:error,
+                          Ash.Error.Action.InvalidArgument.exception(
+                            field: :turn_id,
+                            message: "Resolver Condition snapshot changed"
+                          )},
                      {:ok, intent} <- downstream_intent(turn),
                      :ok <- validate_intent(intent, turn, incident, run) do
                   route(turn, intent, incident, run)
@@ -233,6 +239,22 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               invocation.result_digest ==
                 Opsonde.Cases.AIInvocation.request_digest(event.data)) ||
              {:error, "Recovery Reviewer invocation is unavailable"},
+         {:ok, assignment} <-
+           Providers.load_current_ai_usage_role_assignment(
+             invocation.assignment_id,
+             :reviewer,
+             invocation.assignment_revision,
+             invocation.provider_revision,
+             authorize?: false,
+             not_found_error?: false
+           ),
+         true <-
+           (assignment && assignment.provider_id == invocation.provider_id) ||
+             {:error,
+              Ash.Error.Action.InvalidArgument.exception(
+                field: :turn_id,
+                message: "Recovery Reviewer assignment changed"
+              )},
          {:ok, resolved} <-
            complete_recovery(
              incident,
