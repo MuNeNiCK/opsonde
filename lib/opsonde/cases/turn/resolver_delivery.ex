@@ -237,6 +237,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
       {:ok, selection}
     else
       {:error, %AI.Error{} = error} -> {:error, error}
+      {:error, %Ash.Error.Unknown{} = error} -> {:error, error}
+      {:error, %Ash.Error.Framework{} = error} -> {:error, error}
       {:error, _error} -> {:error, ai_error(:unavailable, "Resolver AI is unavailable")}
     end
   end
@@ -673,6 +675,10 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   defp handle_failure(turn, error, invocation \\ nil) do
     cond do
+      is_nil(invocation) and
+          (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) ->
+        {:error, error}
+
       case_cancelled?(turn.case_id) ->
         {:cancel, "Case resolution was cancelled"}
 

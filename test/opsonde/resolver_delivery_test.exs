@@ -56,6 +56,59 @@ defmodule Opsonde.ResolverDeliveryTest do
     %{admin: admin, operator: operator, provider: provider, assignment: assignment}
   end
 
+  @tag resolver_case_read_fault: true
+  test "temporary Case input read failure retries the same Turn before AI dispatch", context do
+    {incident, run, turn} = turn!("resolver-case-read-failure", context.operator)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    Repo.query!(
+      "ALTER TABLE cases RENAME COLUMN selected_target_revision TO unavailable_target_revision"
+    )
+
+    try do
+      assert {:error, _error} = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    after
+      Repo.query!(
+        "ALTER TABLE cases RENAME COLUMN unavailable_target_revision TO selected_target_revision"
+      )
+    end
+
+    current_turn = Cases.get_turn!(turn.id, authorize?: false)
+    assert current_turn.status == :started
+    assert current_turn.revision == turn.revision
+    assert current_turn.ordinal == turn.ordinal
+    assert current_turn.result == %{}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{
+                        query: "linux-01 disk errors",
+                        reason: "Find the affected registered Target"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, _}
+    assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    refute_receive {:resolve, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :completed
+    assert [_job] = route_jobs(turn.id)
+  end
+
   test "result and AI usage commit once after a durable exact assignment", context do
     {incident, run, turn} = turn!("success", context.operator)
 
