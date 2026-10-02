@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Check, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData } from "@/api/client";
+import { apiClient, apiData, collectPages } from "@/api/client";
 import { FormSelect } from "@/components/form-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ export function AccessMethodForm({
   const [providerId, setProviderId] = useState(method?.provider_id ?? "");
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
   const [createdProvider, setCreatedProvider] = useState<Provider | null>(null);
-  const [checkedMethod, setCheckedMethod] = useState<AccessMethod | null>(null);
+  const [registeredMethod, setRegisteredMethod] = useState<AccessMethod | null>(null);
   const allowedTypes =
     catalog.types.find((item) => item.id === target.type_id)?.access_method_types ?? [];
   const availableProviders = [...providers, ...(createdProvider ? [createdProvider] : [])].filter(
@@ -86,6 +86,7 @@ export function AccessMethodForm({
               },
             }),
           ).data;
+      if (!method) setRegisteredMethod(registered);
       try {
         const checked = apiData(
           await apiClient.POST("/api/v1/access-methods/{id}/check", {
@@ -93,16 +94,56 @@ export function AccessMethodForm({
             body: { access_method: { expected_revision: registered.revision } },
           }),
         ).data;
-        if (!method && checked.check.current) {
-          setCheckedMethod(checked);
+        if (!method) {
+          setRegisteredMethod(checked);
           return;
         }
       } catch {
-        // Registration is durable even when the check response is lost.
-        await onSaved();
-        return onError(t("targets.requestFailed"));
+        if (method) await finish(true);
+        else onError(t("targets.requestFailed"));
+        return;
       }
+      await finish();
+    } catch {
+      onError(t("targets.requestFailed"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function finish(failed = false) {
+    try {
       await onSaved();
+    } catch {
+      failed = true;
+    }
+    if (failed) onError(t("targets.requestFailed"));
+  }
+
+  async function checkRegisteredMethod() {
+    if (!registeredMethod) return;
+    setPending(true);
+    onError("");
+    try {
+      const methods = await collectPages((after) =>
+        apiClient
+          .GET("/api/v1/access-methods", {
+            params: { query: { limit: 100, after: after ?? undefined } },
+          })
+          .then(apiData),
+      );
+      const current = methods.find((item) => item.id === registeredMethod.id);
+      if (!current) throw new Error(t("targets.connectionMissing"));
+      setRegisteredMethod(current);
+      if (!current.check.current) {
+        const checked = apiData(
+          await apiClient.POST("/api/v1/access-methods/{id}/check", {
+            params: { path: { id: current.id } },
+            body: { access_method: { expected_revision: current.revision } },
+          }),
+        ).data;
+        setRegisteredMethod(checked);
+      }
     } catch {
       onError(t("targets.requestFailed"));
     } finally {
@@ -112,48 +153,60 @@ export function AccessMethodForm({
 
   async function saveGrants(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!checkedMethod) return;
+    if (!registeredMethod?.check.current) return;
     const form = new FormData(event.currentTarget);
     setPending(true);
     onError("");
+    let failed = false;
     try {
-      apiData(
+      const saved = apiData(
         await apiClient.PATCH("/api/v1/access-methods/{id}", {
-          params: { path: { id: checkedMethod.id } },
+          params: { path: { id: registeredMethod.id } },
           body: {
             access_method: {
-              expected_revision: checkedMethod.revision,
+              expected_revision: registeredMethod.revision,
               capabilities: form
                 .getAll("capability")
                 .filter((entry): entry is string => typeof entry === "string"),
             },
           },
         }),
-      );
-      await onSaved();
+      ).data;
+      setRegisteredMethod(saved);
     } catch {
-      // Read the durable Method on the parent screen; a lost response is not a retry instruction.
-      await onSaved();
-      onError(t("targets.requestFailed"));
-    } finally {
-      setPending(false);
+      failed = true;
     }
+    await finish(failed);
+    setPending(false);
   }
 
-  if (checkedMethod)
+  if (registeredMethod)
     return (
       <form className="space-y-4" onSubmit={(event) => void saveGrants(event)}>
         <p className="text-sm">
-          {checkedMethod.name} · {endpoint}
+          {registeredMethod.name} · {registeredMethod.endpoint}
         </p>
-        <p className="text-sm text-muted-foreground">{t("targets.chooseMethodGrants")}</p>
-        <CapabilityFields method={checkedMethod} />
+        <p className="text-sm text-muted-foreground">
+          {t(
+            registeredMethod.check.current
+              ? "targets.chooseMethodGrants"
+              : "targets.methodCheckRequired",
+          )}
+        </p>
+        {registeredMethod.check.current && <CapabilityFields method={registeredMethod} />}
         <div className="flex gap-2">
-          <Button type="submit" disabled={pending}>
-            {pending ? <Spinner /> : <Check />}
-            {t("targets.saveAccessMethod")}
-          </Button>
-          <Button type="button" variant="ghost" disabled={pending} onClick={() => void onSaved()}>
+          {registeredMethod.check.current ? (
+            <Button type="submit" disabled={pending}>
+              {pending ? <Spinner /> : <Check />}
+              {t("targets.saveAccessMethod")}
+            </Button>
+          ) : (
+            <Button type="button" disabled={pending} onClick={() => void checkRegisteredMethod()}>
+              {pending ? <Spinner /> : <Check />}
+              {t("targets.check")}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" disabled={pending} onClick={() => void finish()}>
             {t("common.cancel")}
           </Button>
         </div>

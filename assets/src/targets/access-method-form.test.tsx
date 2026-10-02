@@ -84,7 +84,20 @@ test("connection check grants nothing until the operator selects allowed capabil
   }) as typeof apiClient.POST);
   vi.spyOn(apiClient, "PATCH").mockImplementation(((path: string, options: unknown) => {
     calls.push({ path, options });
-    return Promise.resolve({ data: { data: { id: "method-1" } }, response: new Response() });
+    return Promise.resolve({
+      data: {
+        data: {
+          id: "method-1",
+          revision: 4,
+          capabilities: ["request.http.observe"],
+          check: {
+            current: true,
+            observed_capabilities: ["request.http.observe", "request.http.effect"],
+          },
+        },
+      },
+      response: new Response(),
+    });
   }) as typeof apiClient.PATCH);
   const saved = vi.fn(async () => {});
   const error = vi.fn();
@@ -167,7 +180,14 @@ test("a first operator adds credentials and an exact Method without leaving the 
     return Promise.resolve({ data: { data }, response: new Response() });
   }) as typeof apiClient.POST);
   vi.spyOn(apiClient, "PATCH").mockResolvedValue({
-    data: { data: {} },
+    data: {
+      data: {
+        id: "method-1",
+        revision: 2,
+        capabilities: [],
+        check: { current: true, observed_capabilities: [] },
+      },
+    },
     response: new Response(),
   } as never);
   const saved = vi.fn(async () => {});
@@ -209,4 +229,119 @@ test("a first operator adds credentials and an exact Method without leaving the 
       },
     },
   });
+});
+
+test.each([false, true])(
+  "a lost check response retains one Method; persisted check current=%s",
+  async (current) => {
+    await i18n.changeLanguage("en");
+    const { target, provider, catalog } = fixture();
+    let registrations = 0;
+    let checks = 0;
+    const record = {
+      id: "method-1",
+      name: "edge",
+      endpoint: "https://edge.example",
+      revision: 1,
+      capabilities: [],
+      check: { current: false, observed_capabilities: [] },
+    };
+    vi.spyOn(apiClient, "POST").mockImplementation(((path: string) => {
+      if (path === "/api/v1/access-methods") {
+        registrations++;
+        return Promise.resolve({ data: { data: record }, response: new Response() });
+      }
+      if (++checks === 1) return Promise.reject(new Error("Lost check response"));
+      return Promise.resolve({
+        data: {
+          data: {
+            ...record,
+            endpoint: "https://current.edge.example",
+            revision: 3,
+            check: { current: true, observed_capabilities: ["request.http.observe"] },
+          },
+        },
+        response: new Response(),
+      });
+    }) as typeof apiClient.POST);
+    vi.spyOn(apiClient, "GET").mockResolvedValue({
+      data: {
+        data: [
+          {
+            ...record,
+            endpoint: "https://current.edge.example",
+            revision: 3,
+            check: { current, observed_capabilities: ["request.http.observe"] },
+          },
+        ],
+        page: { next: null },
+      },
+      response: new Response(),
+    } as never);
+    const saved = vi.fn().mockRejectedValue(new Error("Parent refresh failed"));
+    const user = userEvent.setup();
+    render(
+      <AccessMethodForm
+        target={target}
+        providers={[provider]}
+        catalog={catalog}
+        onSaved={saved}
+        onError={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Connection" }));
+    await user.click(screen.getByRole("option", { name: "Shared HTTP credentials · http-api" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "edge");
+    await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://edge.example");
+    await user.click(screen.getByRole("button", { name: "Add access method" }));
+    await user.click(await screen.findByRole("button", { name: "Check" }));
+    await screen.findByRole("checkbox", { name: "request.http.observe" });
+    expect(screen.getByText("edge · https://current.edge.example")).toBeTruthy();
+    expect(registrations).toBe(1);
+    expect(checks).toBe(current ? 1 : 2);
+    expect(saved).not.toHaveBeenCalled();
+  },
+);
+
+test("grant response and parent refresh loss do not repeat Method registration or the grant request", async () => {
+  await i18n.changeLanguage("en");
+  const { target, provider, catalog } = fixture();
+  const record = {
+    id: "method-1",
+    name: "edge",
+    endpoint: "https://edge.example",
+    revision: 3,
+    capabilities: [],
+    check: { current: true, observed_capabilities: ["request.http.observe"] },
+  };
+  let registrations = 0;
+  vi.spyOn(apiClient, "POST").mockImplementation(((path: string) => {
+    if (path === "/api/v1/access-methods") registrations++;
+    return Promise.resolve({ data: { data: record }, response: new Response() });
+  }) as typeof apiClient.POST);
+  const grant = vi.spyOn(apiClient, "PATCH").mockRejectedValue(new Error("Lost grant response"));
+  const saved = vi.fn().mockRejectedValue(new Error("Parent refresh failed"));
+  const error = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <AccessMethodForm
+      target={target}
+      providers={[provider]}
+      catalog={catalog}
+      onSaved={saved}
+      onError={error}
+    />,
+  );
+  await user.click(screen.getByRole("combobox", { name: "Connection" }));
+  await user.click(screen.getByRole("option", { name: "Shared HTTP credentials · http-api" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "edge");
+  await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://edge.example");
+  await user.click(screen.getByRole("button", { name: "Add access method" }));
+  await user.click(await screen.findByRole("checkbox", { name: "request.http.observe" }));
+  await user.click(screen.getByRole("button", { name: "Save access method" }));
+  await waitFor(() => expect(error).toHaveBeenLastCalledWith(i18n.t("targets.requestFailed")));
+  expect(registrations).toBe(1);
+  expect(grant).toHaveBeenCalledOnce();
+  expect(saved).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Add access method" })).toBeNull();
 });
