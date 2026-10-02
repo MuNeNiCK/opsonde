@@ -11,8 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("Method registration precedes its exact connection check and grants", async () => {
-  await i18n.changeLanguage("en");
+function fixture() {
   const time = "2026-09-30T00:00:00Z";
   const target: Target = {
     id: "target-1",
@@ -59,6 +58,12 @@ test("Method registration precedes its exact connection check and grants", async
     ],
     methods: [{ adapter_type: "http-api", label: "HTTP API", protocol: "http" }],
   };
+  return { target, provider, catalog };
+}
+
+test("Method registration precedes its exact connection check and grants", async () => {
+  await i18n.changeLanguage("en");
+  const { target, provider, catalog } = fixture();
   const calls: { path: string; options: unknown }[] = [];
   vi.spyOn(apiClient, "POST").mockImplementation(((path: string, options: unknown) => {
     calls.push({ path, options });
@@ -133,4 +138,59 @@ test("Method registration precedes its exact connection check and grants", async
     },
   ]);
   expect(error).toHaveBeenLastCalledWith("");
+});
+
+test("a first operator adds credentials and an exact Method without leaving the Target", async () => {
+  await i18n.changeLanguage("en");
+  const { target, provider, catalog } = fixture();
+  const registered: unknown[] = [];
+  vi.spyOn(apiClient, "POST").mockImplementation(((path: string, options: unknown) => {
+    if (path === "/api/v1/access-methods") registered.push(options);
+    const data = path.startsWith("/api/v1/providers")
+      ? { ...provider, name: "Edge credentials", enabled: path.endsWith("/enable") }
+      : { id: "method-1", revision: 1, check: { current: true, observed_capabilities: [] } };
+    return Promise.resolve({ data: { data }, response: new Response() });
+  }) as typeof apiClient.POST);
+  vi.spyOn(apiClient, "PATCH").mockResolvedValue({
+    data: { data: {} },
+    response: new Response(),
+  } as never);
+  const saved = vi.fn(async () => {});
+  const user = userEvent.setup();
+  render(
+    <AccessMethodForm
+      target={target}
+      providers={[]}
+      catalog={catalog}
+      onSaved={saved}
+      onError={vi.fn()}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Edge credentials");
+  await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://edge.example");
+  await user.type(screen.getByLabelText("Token"), "fixture-private-token");
+  await user.click(screen.getByRole("button", { name: "Add Target connection" }));
+  await screen.findByRole("button", { name: "Add access method" });
+  expect(screen.getByRole("textbox", { name: "Endpoint" })).toHaveProperty(
+    "value",
+    "https://edge.example",
+  );
+  expect(screen.queryByLabelText("Token")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Add access method" }));
+  await waitFor(() => expect(registered).toHaveLength(1));
+  await waitFor(() => expect(saved).toHaveBeenCalledOnce());
+  expect(registered[0]).toEqual({
+    body: {
+      access_method: {
+        target_id: "target-1",
+        provider_id: "provider-1",
+        provider_revision: 3,
+        method: "http",
+        name: "Edge credentials",
+        endpoint: "https://edge.example",
+        priority: 100,
+        capabilities: [],
+      },
+    },
+  });
 });

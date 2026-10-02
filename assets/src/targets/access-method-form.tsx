@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { TargetConnectionForm } from "@/targets/connection-form";
 import type { AccessMethod, Provider, Target, TargetTypeCatalog } from "@/targets/data";
 
 export function AccessMethodForm({
@@ -30,14 +31,18 @@ export function AccessMethodForm({
   const [pending, setPending] = useState(false);
   const [providerId, setProviderId] = useState(method?.provider_id ?? "");
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
+  const [createdProvider, setCreatedProvider] = useState<Provider | null>(null);
   const allowedTypes =
     catalog.types.find((item) => item.id === target.type_id)?.access_method_types ?? [];
-  const availableProviders = providers.filter(
+  const availableProviders = [...providers, ...(createdProvider ? [createdProvider] : [])].filter(
     (provider) =>
       provider.kind === "target" &&
       provider.enabled &&
       provider.access_method_profile &&
       allowedTypes.includes(provider.adapter_type),
+  );
+  const [creatingConnection, setCreatingConnection] = useState(
+    !method && availableProviders.length === 0,
   );
   const provider = availableProviders.find((item) => item.id === providerId);
   const currentEndpoint = endpoint;
@@ -113,6 +118,32 @@ export function AccessMethodForm({
     }
   }
 
+  if (creatingConnection) {
+    const choice = catalog.types.find((item) => item.id === target.type_id);
+    return (
+      choice && (
+        <div className="space-y-3">
+          {availableProviders.length > 0 && (
+            <Button variant="ghost" onClick={() => setCreatingConnection(false)}>
+              {t("targets.useExistingConnection")}
+            </Button>
+          )}
+          <TargetConnectionForm
+            choice={choice}
+            catalog={catalog}
+            onError={onError}
+            onCreated={({ provider, endpoint }) => {
+              setCreatedProvider(provider);
+              setProviderId(provider.id);
+              setEndpoint(endpoint ?? "");
+              setCreatingConnection(false);
+            }}
+          />
+        </div>
+      )
+    );
+  }
+
   return (
     <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => void submit(event)}>
       {method ? (
@@ -138,11 +169,25 @@ export function AccessMethodForm({
               label: `${item.name} · ${item.adapter_type}`,
             }))}
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setCreatingConnection(true)}
+          >
+            <Plus />
+            {t("targets.newConnection")}
+          </Button>
         </div>
       )}
       <div className="space-y-2">
         <Label htmlFor={`${fieldId}-name`}>{t("targets.name")}</Label>
-        <Input id={`${fieldId}-name`} name="name" defaultValue={method?.name} required />
+        <Input
+          id={`${fieldId}-name`}
+          name="name"
+          defaultValue={method?.name ?? createdProvider?.name}
+          required
+        />
       </div>
       <div className="space-y-2">
         <Label htmlFor={`${fieldId}-endpoint`}>{t("targets.endpoint")}</Label>

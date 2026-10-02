@@ -61,7 +61,14 @@ async function renderPage(path: string) {
   vi.spyOn(apiClient, "POST").mockImplementation(((path: string, options: unknown) => {
     calls.push({ path, options });
     return Promise.resolve({
-      data: { data: { id: "provider-1", revision: 1, enabled: true, check: { status: null } } },
+      data: {
+        data: {
+          id: "provider-1",
+          revision: 1,
+          enabled: path.endsWith("/enable"),
+          check: { status: null },
+        },
+      },
       response: new Response(),
     });
   }) as typeof apiClient.POST);
@@ -160,3 +167,50 @@ test("Custom network NETCONF preserves protocol auth and host fingerprint", asyn
     },
   });
 });
+
+test.each([false, true])(
+  "activation response loss retains one connection; current enabled=%s",
+  async (enabled) => {
+    const { user } = await renderPage("/targets/connections/new/custom-bmc");
+    let created = 0;
+    let activated = 0;
+    vi.mocked(apiClient.GET).mockImplementation(((path: string) =>
+      Promise.resolve({
+        data: {
+          data:
+            path === "/api/v1/target-types"
+              ? catalog
+              : { id: "provider-1", revision: enabled ? 2 : 1, enabled },
+        },
+        response: new Response(),
+      })) as typeof apiClient.GET);
+    vi.mocked(apiClient.POST).mockImplementation(((path: string) => {
+      if (path === "/api/v1/providers") created++;
+      if (path.endsWith("/enable") && ++activated === 1)
+        return Promise.reject(new Error("Lost response"));
+      return Promise.resolve({
+        data: { data: { id: "provider-1", revision: 1, enabled: path.endsWith("/enable") } },
+        response: new Response(),
+      });
+    }) as typeof apiClient.POST);
+    await screen.findByRole("textbox", { name: "Name" });
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "rack-controller");
+    await user.type(
+      screen.getByRole("textbox", { name: "Endpoint" }),
+      "https://controller.example",
+    );
+    await user.type(screen.getByRole("textbox", { name: "Username" }), "operator");
+    await user.type(screen.getByLabelText("Password"), "fixture-secret");
+    await user.type(screen.getByRole("textbox", { name: "CA certificate" }), "fixture-ca");
+    await user.click(screen.getByRole("button", { name: "Add Target connection" }));
+    await screen.findByRole("button", { name: "Enable connection" });
+    expect(screen.getByRole("textbox", { name: "Endpoint" }).closest("fieldset")).toHaveProperty(
+      "disabled",
+      true,
+    );
+    await user.click(screen.getByRole("button", { name: "Enable connection" }));
+    await screen.findByText("Connection saved");
+    expect(created).toBe(1);
+    expect(activated).toBe(enabled ? 1 : 2);
+  },
+);
