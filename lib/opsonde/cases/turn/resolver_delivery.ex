@@ -676,7 +676,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp handle_failure(turn, error, invocation \\ nil) do
     cond do
       is_nil(invocation) and
-          (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) ->
+        (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
+          not is_struct(find_error(error), AI.Error) ->
         {:error, error}
 
       case_cancelled?(turn.case_id) ->

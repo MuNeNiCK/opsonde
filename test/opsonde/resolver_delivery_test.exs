@@ -109,6 +109,19 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert [_job] = route_jobs(turn.id)
   end
 
+  @tag missing_resolver_assignment: true
+  test "a genuinely missing Resolver assignment requires attention without invoking AI",
+       context do
+    {incident, run, turn} = turn!("missing-resolver", context.operator)
+    Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
+
+    assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+    assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+    refute_receive {:resolve, _, _}
+  end
+
   test "result and AI usage commit once after a durable exact assignment", context do
     {incident, run, turn} = turn!("success", context.operator)
 
