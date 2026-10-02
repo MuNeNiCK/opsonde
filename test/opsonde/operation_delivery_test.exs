@@ -2077,6 +2077,48 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
+  @tag dispatch_actor_read_fault: true
+  test "a temporary actor read failure retries queued operation before any Target send",
+       context do
+    {incident, run, proposal} = authorized_proposal!("dispatch-actor-read-failure", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    Repo.query!("ALTER TABLE users RENAME COLUMN role_version TO unavailable_role_version")
+
+    try do
+      assert {:error, _error} =
+               OperationWorker.perform(%Oban.Job{args: %{"operation_id" => operation.id}})
+    after
+      Repo.query!("ALTER TABLE users RENAME COLUMN unavailable_role_version TO role_version")
+    end
+
+    unchanged = Cases.get_operation!(operation.id, authorize?: false)
+    assert unchanged.status == :queued
+    assert unchanged.dispatch_started_at == nil
+    assert unchanged.outcome_category == nil
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("saved operation was sent again") end)
+             )
+
+    refute_receive {:effect, _, _}
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :applied
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    assert verification_jobs(attempt.id) == 1
+  end
+
   test "terminal Operation automatically creates one exact VerificationAttempt and job",
        context do
     {_incident, run, proposal} = authorized_proposal!("verification-accept", context)

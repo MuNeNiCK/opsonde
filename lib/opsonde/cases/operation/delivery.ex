@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.Operation.Delivery do
   @moduledoc false
 
-  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.{Cases, Targets}
 
   alias Opsonde.Cases.{
     Case,
@@ -16,14 +16,13 @@ defmodule Opsonde.Cases.Operation.Delivery do
   alias Opsonde.Cases.ResolutionRun.BudgetResult
 
   alias Opsonde.Providers.Target, as: ProviderTarget
-  alias Opsonde.Targets.TargetRequest.{Request, Clearance}
 
   @terminal [:applied, :failed, :partial, :unknown]
 
   def run(operation_id, opts \\ []) do
     case Cases.claim_operation_dispatch(operation_id, authorize?: false) do
-      {:ok, %OperationClaim{state: :claimed, operation: operation}} ->
-        dispatch(operation, opts)
+      {:ok, %OperationClaim{state: :claimed} = claim} ->
+        dispatch(claim, opts)
 
       {:ok, %OperationClaim{state: :deferred, operation: operation}} ->
         remaining = DateTime.diff(operation.not_before, DateTime.utc_now(), :millisecond)
@@ -37,32 +36,19 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
-  defp dispatch(operation, opts) do
-    with {:ok, actor} <- current_actor(operation),
-         {:ok, %Clearance{} = clearance} <-
-           Targets.clear_target_request(request(operation), actor: actor),
-         :ok <- exact_clearance(clearance, operation) do
-      invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
+  defp dispatch(%OperationClaim{operation: operation, actor: actor, clearance: clearance}, opts) do
+    invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
 
-      invocation =
-        Map.put(invocation, :result_reference_reader, fn reference ->
-          Cases.read_operation_result_reference(reference, operation.case_id, clearance,
-            actor: actor
-          )
-        end)
+    invocation =
+      Map.put(invocation, :result_reference_reader, fn reference ->
+        Cases.read_operation_result_reference(reference, operation.case_id, clearance,
+          actor: actor
+        )
+      end)
 
-      outcome = dispatch_target(operation, clearance, invocation, actor)
+    outcome = dispatch_target(operation, clearance, invocation, actor)
 
-      persist_and_handoff(operation, outcome)
-    else
-      {:error, _error} ->
-        persist_and_handoff(operation, %{
-          status: :failed,
-          category: "authorization_invalidated",
-          reference: nil,
-          details: %{"message" => "Operation authorization changed before dispatch"}
-        })
-    end
+    persist_and_handoff(operation, outcome)
   end
 
   defp dispatch_target(%{request_kind: :observation}, clearance, invocation, actor) do
@@ -496,45 +482,6 @@ defmodule Opsonde.Cases.Operation.Delivery do
 
   defp evidence_turn_id(%{purpose: :investigation}, proposal), do: proposal.source_turn_id
   defp evidence_turn_id(%{purpose: :remediation}, _proposal), do: nil
-
-  defp current_actor(operation) do
-    case Accounts.get_user(operation.actor_id, authorize?: false) do
-      {:ok, %{role: role, role_version: version} = actor}
-      when role in [:admin, :operator] and version == operation.actor_role_version ->
-        {:ok, actor}
-
-      _unavailable ->
-        {:error, "Operation actor authority changed"}
-    end
-  end
-
-  defp request(operation) do
-    %Request{
-      kind: operation.request_kind,
-      authority_mode: operation.authority_mode,
-      target_id: operation.target_id,
-      target_revision: operation.target_revision,
-      access_method_id: operation.access_method_id,
-      access_method_revision: operation.access_method_revision,
-      capability: operation.capability,
-      operation: operation.operation,
-      selectors: operation.selectors,
-      parameters: operation.parameters,
-      operation_id: operation.id,
-      idempotency_key: operation.idempotency_key,
-      max_attempts: 1
-    }
-  end
-
-  defp exact_clearance(clearance, operation) do
-    digest = Base.encode16(clearance.digest, case: :lower)
-
-    if clearance.provider_id == operation.provider_id and
-         clearance.provider_revision == operation.provider_revision and
-         digest == operation.authorization_digest,
-       do: :ok,
-       else: {:error, "Operation clearance changed"}
-  end
 
   defp invocation(case_id, supplied) do
     supplied_cancelled = Map.get(supplied, :cancelled?)

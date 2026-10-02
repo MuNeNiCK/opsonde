@@ -451,8 +451,14 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
 
   defp current_actor(%{id: actor_id}) do
     case Accounts.get_user(actor_id, authorize?: false) do
-      {:ok, %{role: role} = actor} when role in [:admin, :operator] -> {:ok, actor}
-      _other -> {:error, request_error(:forbidden, "Actor is not authorized for Target requests")}
+      {:ok, %{role: role} = actor} when role in [:admin, :operator] ->
+        {:ok, actor}
+
+      {:ok, _other} ->
+        {:error, request_error(:forbidden, "Actor is not authorized for Target requests")}
+
+      {:error, _error} = error ->
+        error
     end
   end
 

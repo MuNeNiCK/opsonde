@@ -35,6 +35,28 @@ defmodule Opsonde.TargetRequestTest do
     }
   end
 
+  @tag request_actor_read_fault: true
+  test "Target request clearance preserves temporary actor read errors", context do
+    input =
+      request(context.linux, context.ssh, :observation, :auto,
+        capability: "observe.command",
+        operation: "filesystem.read"
+      )
+
+    Repo.query!("ALTER TABLE users RENAME COLUMN role_version TO unavailable_role_version")
+
+    try do
+      assert {:error, %Ash.Error.Unknown{}} =
+               Targets.clear_target_request(input, actor: context.operator)
+    after
+      Repo.query!("ALTER TABLE users RENAME COLUMN unavailable_role_version TO role_version")
+    end
+
+    assert %Clearance{} = Targets.clear_target_request!(input, actor: context.operator)
+    refute_receive {:observe, _, _}
+    refute_receive {:effect, _, _}
+  end
+
   test "cleared request dispatches the exact registered Method snapshot",
        context do
     other = create_target!(context.admin, "linux-02", "host", "linux")

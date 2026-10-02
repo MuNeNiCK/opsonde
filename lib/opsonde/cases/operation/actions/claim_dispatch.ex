@@ -3,7 +3,8 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
   import Ash.Expr
   require Ash.Query
 
-  alias Opsonde.Cases
+  alias Opsonde.{Accounts, Cases, Targets}
+  alias Opsonde.Targets.TargetRequest.{Request, RequestError}
 
   alias Opsonde.Cases.{Case, CaseEvent, Evidence, Operation, Proposal, ResolutionRun, Turn}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
@@ -91,15 +92,7 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     if DateTime.compare(DateTime.utc_now(), operation.not_before) == :lt do
       %OperationClaim{state: :deferred, operation: operation}
     else
-      with {:ok, claimed} <-
-             Cases.mark_operation_dispatching(
-               operation,
-               operation.revision,
-               %{dispatch_started_at: DateTime.utc_now()},
-               authorize?: false
-             ) do
-        %OperationClaim{state: :claimed, operation: claimed}
-      end
+      claim_authorized(operation)
     end
   end
 
@@ -135,6 +128,83 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
            ) do
       %OperationClaim{state: :terminal, operation: terminal}
     end
+  end
+
+  defp claim_authorized(operation) do
+    with {:ok, actor} <- current_actor(operation),
+         {:ok, clearance} <- Targets.clear_target_request(request(operation), actor: actor),
+         :ok <- exact_clearance(clearance, operation) do
+      with {:ok, claimed} <-
+             Cases.mark_operation_dispatching(
+               operation,
+               operation.revision,
+               %{dispatch_started_at: DateTime.utc_now()},
+               authorize?: false
+             ) do
+        %OperationClaim{state: :claimed, operation: claimed, actor: actor, clearance: clearance}
+      end
+    else
+      {:error, error}
+      when is_struct(error, Ash.Error.Invalid) or
+             is_struct(error, Ash.Error.Forbidden) or is_struct(error, RequestError) ->
+        terminal_no_send(
+          operation,
+          "authorization_invalidated",
+          "Operation authorization changed before dispatch"
+        )
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp current_actor(operation) do
+    case Accounts.get_user(operation.actor_id, authorize?: false) do
+      {:ok, %{role: role, role_version: version} = actor}
+      when role in [:admin, :operator] and version == operation.actor_role_version ->
+        {:ok, actor}
+
+      {:ok, _changed} ->
+        {:error,
+         RequestError.exception(
+           category: :forbidden,
+           message: "Operation actor authority changed"
+         )}
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp request(operation) do
+    %Request{
+      kind: operation.request_kind,
+      authority_mode: operation.authority_mode,
+      target_id: operation.target_id,
+      target_revision: operation.target_revision,
+      access_method_id: operation.access_method_id,
+      access_method_revision: operation.access_method_revision,
+      capability: operation.capability,
+      operation: operation.operation,
+      selectors: operation.selectors,
+      parameters: operation.parameters,
+      operation_id: operation.id,
+      idempotency_key: operation.idempotency_key,
+      max_attempts: 1
+    }
+  end
+
+  defp exact_clearance(clearance, operation) do
+    if clearance.provider_id == operation.provider_id and
+         clearance.provider_revision == operation.provider_revision and
+         Base.encode16(clearance.digest, case: :lower) == operation.authorization_digest,
+       do: :ok,
+       else:
+         {:error,
+          RequestError.exception(
+            category: :clearance_mismatch,
+            message: "Operation clearance changed"
+          )}
   end
 
   defp effect_conflict(%{request_kind: :observation}, _proposal), do: {:ok, :clear}
