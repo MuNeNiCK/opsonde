@@ -287,10 +287,12 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp retry_changed_context(turn) do
-    cond do
-      case_cancelled?(turn.case_id) -> {:cancel, "Case resolution was cancelled"}
-      turn_completed?(turn.id) -> :ok
-      true -> supersede_changed_context(turn)
+    with {:ok, cancelled?} <- case_cancelled?(turn.case_id) do
+      cond do
+        cancelled? -> {:cancel, "Case resolution was cancelled"}
+        turn_completed?(turn.id) -> :ok
+        true -> supersede_changed_context(turn)
+      end
     end
   end
 
@@ -339,10 +341,10 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   defp case_cancelled?(case_id) do
     case Cases.get_case(case_id, authorize?: false) do
-      {:ok, %{cancel_requested: true}} -> true
-      {:ok, %{status: status}} when status != :running -> true
-      {:ok, _incident} -> false
-      {:error, _error} -> true
+      {:ok, %{cancel_requested: true}} -> {:ok, true}
+      {:ok, %{status: status}} when status != :running -> {:ok, true}
+      {:ok, _incident} -> {:ok, false}
+      {:error, _error} = error -> error
     end
   end
 
@@ -665,36 +667,39 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp handle_failure(turn, error, invocation \\ nil) do
-    cond do
-      is_nil(invocation) and
-        (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
-          not is_struct(find_error(error), AI.Error) ->
-        {:error, error}
+    if is_nil(invocation) and
+         (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
+         not is_struct(find_error(error), AI.Error) do
+      {:error, error}
+    else
+      with {:ok, cancelled?} <- case_cancelled?(turn.case_id) do
+        cond do
+          cancelled? ->
+            {:cancel, "Case resolution was cancelled"}
 
-      case_cancelled?(turn.case_id) ->
-        {:cancel, "Case resolution was cancelled"}
-
-      turn_completed?(turn.id) ->
-        :ok
-
-      true ->
-        {category, message} = failure(error)
-        rejection_code = rejection_code(error)
-
-        case persist_failure(
-               turn,
-               invocation,
-               error,
-               category,
-               message,
-               rejection_code
-             ) do
-          {:ok, _incident} ->
+          turn_completed?(turn.id) ->
             :ok
 
-          {:error, persistence_error} ->
-            if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
+          true ->
+            {category, message} = failure(error)
+            rejection_code = rejection_code(error)
+
+            case persist_failure(
+                   turn,
+                   invocation,
+                   error,
+                   category,
+                   message,
+                   rejection_code
+                 ) do
+              {:ok, _incident} ->
+                :ok
+
+              {:error, persistence_error} ->
+                if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
+            end
         end
+      end
     end
   end
 

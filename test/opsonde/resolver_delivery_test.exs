@@ -109,6 +109,45 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert [_job] = route_jobs(turn.id)
   end
 
+  @tag post_dispatch_case_read_fault: true
+  test "unreadable Case state after dispatch is retryable rather than a false cancellation",
+       context do
+    {incident, run, turn} = turn!("post-dispatch-case-read", context.operator)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    try do
+      assert {:error, _error} =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request ->
+                     Repo.query!(
+                       "ALTER TABLE cases RENAME COLUMN selected_target_revision TO unavailable_target_revision"
+                     )
+
+                     {:error, :invalid_output, "Object schema was rejected",
+                      %AI.Usage{input_tokens: 7, output_tokens: 5}, "schema_validation"}
+                   end
+                 }
+               )
+    after
+      Repo.query!(
+        "ALTER TABLE cases RENAME COLUMN unavailable_target_revision TO selected_target_revision"
+      )
+    end
+
+    assert_receive {:resolve, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+    assert [%{status: :dispatching}] = Cases.list_ai_invocations!(authorize?: false)
+    assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    refute_receive {:resolve, _, _}
+    assert [%{status: :unknown}] = Cases.list_ai_invocations!(authorize?: false)
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10_000
+  end
+
   @tag missing_resolver_assignment: true
   test "a genuinely missing Resolver assignment requires attention without invoking AI",
        context do
