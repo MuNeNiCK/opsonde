@@ -61,7 +61,7 @@ function fixture() {
   return { target, provider, catalog };
 }
 
-test("Method registration precedes its exact connection check and grants", async () => {
+test("connection check grants nothing until the operator selects allowed capabilities", async () => {
   await i18n.changeLanguage("en");
   const { target, provider, catalog } = fixture();
   const calls: { path: string; options: unknown }[] = [];
@@ -71,10 +71,11 @@ test("Method registration precedes its exact connection check and grants", async
       data: {
         data: {
           id: "method-1",
+          capabilities: [],
           revision: path.endsWith("/check") ? 3 : 1,
           check: {
             current: path.endsWith("/check"),
-            observed_capabilities: ["request.http.observe"],
+            observed_capabilities: ["request.http.observe", "request.http.effect"],
           },
         },
       },
@@ -103,6 +104,15 @@ test("Method registration precedes its exact connection check and grants", async
   await user.type(screen.getByRole("textbox", { name: "Name" }), "second device");
   await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://second.example");
   await user.click(screen.getByRole("button", { name: "Add access method" }));
+  await screen.findByRole("checkbox", { name: "request.http.effect" });
+  expect(saved).not.toHaveBeenCalled();
+  expect(calls.filter((call) => call.path === "/api/v1/access-methods/{id}")).toEqual([]);
+  expect(screen.getByRole("checkbox", { name: "request.http.effect" })).toHaveProperty(
+    "checked",
+    false,
+  );
+  await user.click(screen.getByRole("checkbox", { name: "request.http.observe" }));
+  await user.click(screen.getByRole("button", { name: "Save access method" }));
   await waitFor(() => expect(saved).toHaveBeenCalledOnce());
   expect(calls).toEqual([
     {
@@ -148,7 +158,12 @@ test("a first operator adds credentials and an exact Method without leaving the 
     if (path === "/api/v1/access-methods") registered.push(options);
     const data = path.startsWith("/api/v1/providers")
       ? { ...provider, name: "Edge credentials", enabled: path.endsWith("/enable") }
-      : { id: "method-1", revision: 1, check: { current: true, observed_capabilities: [] } };
+      : {
+          id: "method-1",
+          revision: 1,
+          capabilities: [],
+          check: { current: true, observed_capabilities: [] },
+        };
     return Promise.resolve({ data: { data }, response: new Response() });
   }) as typeof apiClient.POST);
   vi.spyOn(apiClient, "PATCH").mockResolvedValue({
@@ -178,6 +193,7 @@ test("a first operator adds credentials and an exact Method without leaving the 
   expect(screen.queryByLabelText("Token")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Add access method" }));
   await waitFor(() => expect(registered).toHaveLength(1));
+  await user.click(await screen.findByRole("button", { name: "Save access method" }));
   await waitFor(() => expect(saved).toHaveBeenCalledOnce());
   expect(registered[0]).toEqual({
     body: {

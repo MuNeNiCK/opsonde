@@ -32,6 +32,7 @@ export function AccessMethodForm({
   const [providerId, setProviderId] = useState(method?.provider_id ?? "");
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
   const [createdProvider, setCreatedProvider] = useState<Provider | null>(null);
+  const [checkedMethod, setCheckedMethod] = useState<AccessMethod | null>(null);
   const allowedTypes =
     catalog.types.find((item) => item.id === target.type_id)?.access_method_types ?? [];
   const availableProviders = [...providers, ...(createdProvider ? [createdProvider] : [])].filter(
@@ -93,17 +94,8 @@ export function AccessMethodForm({
           }),
         ).data;
         if (!method && checked.check.current) {
-          apiData(
-            await apiClient.PATCH("/api/v1/access-methods/{id}", {
-              params: { path: { id: checked.id } },
-              body: {
-                access_method: {
-                  expected_revision: checked.revision,
-                  capabilities: checked.check.observed_capabilities,
-                },
-              },
-            }),
-          );
+          setCheckedMethod(checked);
+          return;
         }
       } catch {
         // Registration is durable even when the check response is lost.
@@ -117,6 +109,56 @@ export function AccessMethodForm({
       setPending(false);
     }
   }
+
+  async function saveGrants(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!checkedMethod) return;
+    const form = new FormData(event.currentTarget);
+    setPending(true);
+    onError("");
+    try {
+      apiData(
+        await apiClient.PATCH("/api/v1/access-methods/{id}", {
+          params: { path: { id: checkedMethod.id } },
+          body: {
+            access_method: {
+              expected_revision: checkedMethod.revision,
+              capabilities: form
+                .getAll("capability")
+                .filter((entry): entry is string => typeof entry === "string"),
+            },
+          },
+        }),
+      );
+      await onSaved();
+    } catch {
+      // Read the durable Method on the parent screen; a lost response is not a retry instruction.
+      await onSaved();
+      onError(t("targets.requestFailed"));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (checkedMethod)
+    return (
+      <form className="space-y-4" onSubmit={(event) => void saveGrants(event)}>
+        <p className="text-sm">
+          {checkedMethod.name} · {endpoint}
+        </p>
+        <p className="text-sm text-muted-foreground">{t("targets.chooseMethodGrants")}</p>
+        <CapabilityFields method={checkedMethod} />
+        <div className="flex gap-2">
+          <Button type="submit" disabled={pending}>
+            {pending ? <Spinner /> : <Check />}
+            {t("targets.saveAccessMethod")}
+          </Button>
+          <Button type="button" variant="ghost" disabled={pending} onClick={() => void onSaved()}>
+            {t("common.cancel")}
+          </Button>
+        </div>
+      </form>
+    );
 
   if (creatingConnection) {
     const choice = catalog.types.find((item) => item.id === target.type_id);
@@ -211,24 +253,7 @@ export function AccessMethodForm({
           required
         />
       </div>
-      {method && (
-        <fieldset className="space-y-2 md:col-span-2">
-          <legend className="text-sm font-medium">{t("targets.allowedCapabilities")}</legend>
-          {Array.from(new Set([...method.check.observed_capabilities, ...method.capabilities])).map(
-            (capability) => (
-              <label key={capability} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  name="capability"
-                  value={capability}
-                  defaultChecked={method.capabilities.includes(capability)}
-                />
-                {capability}
-              </label>
-            ),
-          )}
-        </fieldset>
-      )}
+      {method && <CapabilityFields method={method} />}
       <div className="flex gap-2 md:col-span-2">
         <Button type="submit" disabled={pending || !provider}>
           {pending ? <Spinner /> : method ? <Check /> : <Plus />}
@@ -241,5 +266,27 @@ export function AccessMethodForm({
         )}
       </div>
     </form>
+  );
+}
+
+function CapabilityFields({ method }: { method: AccessMethod }) {
+  const { t } = useTranslation();
+  return (
+    <fieldset className="space-y-2 md:col-span-2">
+      <legend className="text-sm font-medium">{t("targets.allowedCapabilities")}</legend>
+      {Array.from(new Set([...method.check.observed_capabilities, ...method.capabilities])).map(
+        (capability) => (
+          <label key={capability} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="capability"
+              value={capability}
+              defaultChecked={method.capabilities.includes(capability)}
+            />
+            {capability}
+          </label>
+        ),
+      )}
+    </fieldset>
   );
 }

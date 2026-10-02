@@ -1150,6 +1150,7 @@ const ja = {
       redfishSystemPath: "電源操作に使うSystemパス（任意）",
       redfishSystemUuid: "Systemを指定する場合の照合UUID",
       allowedCapabilities: "許可する操作",
+      chooseMethodGrants: "接続を確認しました。許可する操作を選択してください。",
       observedCapabilities: "確認できた操作",
       checkAtMethod: "接続確認は対象のAccess Methodで行います。",
       methodCheckRequired: "このAccess Methodの接続確認が必要です。",
