@@ -120,6 +120,78 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Enum.count(events, &(&1.event_type == "turn_completed")) == 1
   end
 
+  for fault <- [:missing_row, :storage_error] do
+    @tag route_job_fault: fault
+    test "saved paid Resolver result retries #{fault} routing without another AI call", context do
+      {_incident, run, turn} = turn!("route-job-persistence", context.operator)
+
+      rejection =
+        case context.route_job_fault do
+          :missing_row -> "RETURN NULL;"
+          :storage_error -> "RAISE EXCEPTION 'injected route job persistence failure';"
+        end
+
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_resolver_route_job() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.worker = 'Opsonde.Cases.Case.DecisionRouteWorker' THEN #{rejection} END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER reject_resolver_route_job BEFORE INSERT ON oban_jobs
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_resolver_route_job()
+      """)
+
+      deliver = fn ->
+        ResolverDelivery.run(turn.id,
+          ai_invocation: %{
+            test_pid: self(),
+            respond: fn _request ->
+              {:ok,
+               %AI.ResolverDecision{
+                 intent: %AI.TargetSearch{
+                   query: "linux-01 disk errors",
+                   reason: "Find the registered Target referenced by the incident"
+                 },
+                 usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+               }}
+            end
+          }
+        )
+      end
+
+      case context.route_job_fault do
+        :missing_row -> assert {:error, _error} = deliver.()
+        :storage_error -> assert_raise Postgrex.Error, deliver
+      end
+
+      assert_receive {:resolve, _, _}
+      completed = Cases.get_turn!(turn.id, authorize?: false)
+      assert completed.status == :completed
+      assert completed.result["outcome"] == "decision"
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+      assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+      assert invocation.status == :completed
+      assert route_jobs(turn.id) == []
+
+      Repo.query!("DROP TRIGGER reject_resolver_route_job ON oban_jobs")
+
+      for _ <- 1..2 do
+        assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+      end
+
+      assert Cases.get_turn!(turn.id, authorize?: false) == completed
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+      assert Cases.list_ai_invocations!(authorize?: false) == [invocation]
+      assert [%Oban.Job{id: id}] = route_jobs(turn.id)
+      assert is_integer(id)
+      refute_receive {:resolve, _, _}
+    end
+  end
+
   test "Resolver chooses a file range and receives exact citable contents next turn", context do
     {turn, run, source, reference} = file_turn!(context)
 

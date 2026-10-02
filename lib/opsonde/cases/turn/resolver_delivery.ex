@@ -24,7 +24,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   def run(turn_id, opts \\ []) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
       if turn.status == :completed do
-        :ok
+        continue_saved_result(turn)
       else
         deliver(turn, opts)
       end
@@ -50,7 +50,11 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         handle_interruption(turn, invocation)
 
       {:ok, %AIInvocationClaim{state: :terminal}} ->
-        if turn_completed?(turn.id), do: :ok, else: {:error, "AI invocation is already terminal"}
+        with {:ok, current} <- Cases.get_turn(turn.id, authorize?: false) do
+          if current.status == :completed,
+            do: continue_saved_result(current),
+            else: {:error, "AI invocation is already terminal"}
+        end
 
       {:error, error} ->
         if resolver_context_current?(request),
@@ -85,7 +89,9 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
            :ok <- valid_result_size(result) do
         case accept(turn, invocation, decision, result, request) do
           {:ok, _accepted} ->
-            :ok
+            with {:ok, current} <- Cases.get_turn(turn.id, authorize?: false) do
+              continue_saved_result(current)
+            end
 
           {:error, :context_changed} ->
             with {:ok, _charged} <-
@@ -374,8 +380,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
              record_invocation(invocation, :completed,
                usage: decision.usage,
                result_digest: digest(result)
-             ),
-           {:ok, _job} <- enqueue_route(turn.id) do
+             ) do
         completion
       end
     end)
@@ -419,6 +424,15 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     |> Opsonde.Cases.Case.DecisionRouteWorker.new()
     |> Oban.insert()
   end
+
+  defp continue_saved_result(%{status: :completed, result: %{"outcome" => "decision"}} = turn) do
+    with {:ok, job} <- enqueue_route(turn.id),
+         true <- is_integer(job.id) || {:error, "Resolver decision route job was not persisted"} do
+      :ok
+    end
+  end
+
+  defp continue_saved_result(_turn), do: :ok
 
   defp accepted_or_existing({:ok, result}, _turn, _invocation, _decision), do: {:ok, result}
 
