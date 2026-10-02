@@ -4377,6 +4377,56 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  @tag recovered_condition_target_read_fault: true
+  test "temporary recovered Condition Target read failure does not discard its recovery conclusion",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "recovered-target-read",
+        trigger_kind: :signal,
+        recover_before_proposal: true
+      )
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    Repo.query!("ALTER TABLE targets RENAME COLUMN facts TO unavailable_facts")
+
+    try do
+      assert {:error, _error} =
+               Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => turn.id},
+                 attempt: 1,
+                 max_attempts: 3
+               })
+    after
+      Repo.query!("ALTER TABLE targets RENAME COLUMN unavailable_facts TO facts")
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+    assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+    approve_recovery!(turn, context)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 6
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+               args: %{"turn_id" => turn.id},
+               attempt: 2,
+               max_attempts: 3
+             })
+
+    refute_receive {:review_recovery, _, _}
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)
@@ -5964,8 +6014,14 @@ defmodule Opsonde.OperationDeliveryTest do
     )
   end
 
-  defp recovery_conclusion!(context, suffix) do
-    {incident, run, proposal} = authorized_proposal!(suffix, context, request_kind: :observation)
+  defp recovery_conclusion!(context, suffix, opts \\ []) do
+    {incident, run, proposal} =
+      authorized_proposal!(suffix, context, Keyword.put(opts, :request_kind, :observation))
+      |> then(fn
+        {incident, run, proposal} -> {incident, run, proposal}
+        {incident, run, proposal, _signal_provider} -> {incident, run, proposal}
+      end)
+
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
     assert :ok = deliver_observation(operation, %{"active_state" => "active"})
     evidence = operation_evidence_record(operation.id)
@@ -5984,14 +6040,28 @@ defmodule Opsonde.OperationDeliveryTest do
                       intent: %AI.RecoveryConclusion{
                         reason: "The inspected service is active",
                         evidence_ids: [evidence.id],
-                        desired_outcome_claims: [
-                          %{
-                            "symptom_id" => request.case_symptom.id,
-                            "evidence_id" => evidence.id,
-                            "fact_keys" => ["active_state"],
-                            "reason" => "The inspected service is active"
-                          }
-                        ]
+                        condition_claims:
+                          Enum.map(request.conditions, fn condition ->
+                            %{
+                              "condition_id" => condition.id,
+                              "revision" => condition.revision,
+                              "evidence_id" => evidence.id,
+                              "reason" =>
+                                "The current observation shows the inspected service is active"
+                            }
+                          end),
+                        desired_outcome_claims:
+                          if(request.case_symptom,
+                            do: [
+                              %{
+                                "symptom_id" => request.case_symptom.id,
+                                "evidence_id" => evidence.id,
+                                "fact_keys" => ["active_state"],
+                                "reason" => "The inspected service is active"
+                              }
+                            ],
+                            else: []
+                          )
                       },
                       usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
                     }}

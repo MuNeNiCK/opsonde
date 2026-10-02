@@ -22,8 +22,9 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
            length(evidence) <= @max_evidence || {:error, "Condition evidence window is full"} do
       Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
         with {:ok, condition} <- Signals.get_condition(membership.condition_id, authorize?: false),
-             {:ok, baseline} <- condition_baseline(incident, condition.id, effects) do
-          {:cont, {:ok, [assess_condition(condition, evidence, baseline) | collected]}}
+             {:ok, baseline} <- condition_baseline(incident, condition.id, effects),
+             {:ok, assessment} <- assess_condition(condition, evidence, baseline) do
+          {:cont, {:ok, [assessment | collected]}}
         else
           {:error, _error} = error -> {:halt, error}
         end
@@ -176,10 +177,10 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   defp assess_condition(condition, evidence, after_at) do
     cond do
       condition.state != :recovered ->
-        result(condition, :firing)
+        {:ok, result(condition, :firing)}
 
       is_nil(condition.target_id) ->
-        result(condition, :unmapped_target)
+        {:ok, result(condition, :unmapped_target)}
 
       true ->
         case Targets.get_target(condition.target_id, authorize?: false) do
@@ -198,18 +199,25 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
               |> Enum.take(@max_citations_per_condition)
               |> Enum.map(& &1.id)
 
-            case citations do
-              [] ->
-                if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
-                  do: result(condition, :stale_source, [], failed_ids),
-                  else: result(condition, :needs_observation, [], failed_ids)
+            {:ok,
+             case citations do
+               [] ->
+                 if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
+                   do: result(condition, :stale_source, [], failed_ids),
+                   else: result(condition, :needs_observation, [], failed_ids)
 
-              ids ->
-                result(condition, :ready_for_review, ids, failed_ids)
-            end
+               ids ->
+                 result(condition, :ready_for_review, ids, failed_ids)
+             end}
+
+          {:error, %Ash.Error.Unknown{}} = error ->
+            error
+
+          {:error, %Ash.Error.Framework{}} = error ->
+            error
 
           _other ->
-            result(condition, :target_changed)
+            {:ok, result(condition, :target_changed)}
         end
     end
   end
