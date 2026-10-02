@@ -3317,7 +3317,8 @@ defmodule Opsonde.OperationDeliveryTest do
              1
   end
 
-  test "a native recovered Condition with a fresh exact observation can conclude without an effect",
+  @tag late_recovery_evidence_read_fault: true
+  test "a recovered Condition retries unreadable recovery Evidence before concluding",
        context do
     enable_signal_automation!(context.admin)
 
@@ -3348,6 +3349,37 @@ defmodule Opsonde.OperationDeliveryTest do
     evidence = operation_evidence_record(operation.id)
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: context.resolver_provider.id,
+      provider_revision: context.resolver_provider.revision,
+      source: :assignment
+    }
+
+    assert {:ok, baseline} = ResolverProjection.build(turn.id, selection)
+    assert evidence.id in baseline.recovery_evidence_ids
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    with_projection_read_fault("evidences", "content", "jsonb", evidence.id, fn ->
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               Cases.get_evidence(evidence.id, authorize?: false)
+
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+      assert {:error, %Ash.Error.Unknown{}} = ResolverProjection.build(turn.id, selection)
+
+      assert {:error, %Ash.Error.Unknown{}} =
+               Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+      assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+    end)
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
 
     assert :ok =
              ResolverDelivery.run(turn.id,
@@ -3381,6 +3413,18 @@ defmodule Opsonde.OperationDeliveryTest do
                  end
                }
              )
+
+    assert_receive {:resolve, _, _}
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    refute_receive {:resolve, _, _}
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 5
+
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
 
     completed = Cases.get_turn!(turn.id, authorize?: false)
 
@@ -5705,7 +5749,8 @@ defmodule Opsonde.OperationDeliveryTest do
            )
   end
 
-  test "a resumed firing Case receives verified continuity without stale observations",
+  @tag late_continuity_read_fault: true
+  test "a resumed Case retries unreadable verified continuity without losing it",
        context do
     enable_signal_automation!(context.admin)
 
@@ -5865,6 +5910,39 @@ defmodule Opsonde.OperationDeliveryTest do
       actor: context.admin
     )
 
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: context.resolver_provider.id,
+      provider_revision: context.resolver_provider.revision,
+      source: :assignment
+    }
+
+    assert {:ok, baseline} = ResolverProjection.build(resumed_turn.id, selection)
+    assert Enum.any?(baseline.evidence, &(&1.id == verification_id))
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(resumed_run.id, authorize?: false)
+    before_turn = Cases.get_turn!(resumed_turn.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    with_projection_read_fault("operations", "revision", "bigint", operation.id, fn ->
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               Cases.get_operation(operation.id, authorize?: false)
+
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+      assert {:error, %Ash.Error.Unknown{}} = ResolverProjection.build(resumed_turn.id, selection)
+
+      assert {:error, %Ash.Error.Unknown{}} =
+               Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => resumed_turn.id}
+               })
+
+      assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+    end)
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(resumed_run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(resumed_turn.id, authorize?: false) == before_turn
+
     assert {:ok, request} =
              ResolverProjection.build(resumed_turn.id, %AI.Selection{
                role: :resolver,
@@ -5890,6 +5968,39 @@ defmodule Opsonde.OperationDeliveryTest do
 
     assert [%AI.ProposalTool{request_kind: :observation}] = request.proposal_tools
     assert [%AI.ObservationTool{operation: "service.inspect"}] = request.observation_tools
+
+    assert :ok =
+             ResolverDelivery.run(resumed_turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert Enum.any?(request.evidence, &(&1.id == verification_id))
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Handoff{
+                        reason: "Review fixture observations",
+                        required_input: "Review"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, _}
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{
+               args: %{"turn_id" => resumed_turn.id}
+             })
+
+    refute_receive {:resolve, _, _}
+
+    assert Cases.get_resolution_run!(resumed_run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 12
+
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
   end
 
   test "remaining symptoms create a new Proposal without replaying the prior Operation",
@@ -6040,6 +6151,47 @@ defmodule Opsonde.OperationDeliveryTest do
     Cases.route_downstream_decision!(completed.id, authorize?: false)
     proposal = Cases.proposal_by_source_turn!(completed.id, authorize?: false)
     Cases.accept_operation!(proposal.id, authorize?: false)
+  end
+
+  # Window and assessment scans remain readable; only the later primary-ID read fails.
+  defp with_projection_read_fault(table, column, type, id, run) do
+    columns =
+      Repo.query!(
+        "SELECT attname FROM pg_attribute WHERE attrelid = '#{table}'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+      ).rows
+      |> List.flatten()
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.projection_read_fault(#{type}) RETURNS #{type}
+    LANGUAGE plpgsql STABLE AS $$ BEGIN
+      IF strpos(split_part(current_query(), ' WHERE ', 2), '"id"') > 0
+         AND strpos(split_part(current_query(), ' WHERE ', 2), '"case_id"') = 0 THEN
+        RAISE EXCEPTION 'Projection record temporarily unavailable';
+      END IF;
+      RETURN $1;
+    END $$
+    """)
+
+    Repo.query!("ALTER TABLE #{table} RENAME TO #{table}_projection_source")
+
+    fields =
+      Enum.map_join(columns, ", ", fn
+        ^column ->
+          "CASE WHEN id = '#{id}'::uuid THEN pg_temp.projection_read_fault(#{column}) ELSE #{column} END AS #{column}"
+
+        name ->
+          "\"#{name}\""
+      end)
+
+    Repo.query!("CREATE VIEW #{table} AS SELECT #{fields} FROM #{table}_projection_source")
+
+    try do
+      run.()
+    after
+      Repo.query!("DROP VIEW #{table}")
+      Repo.query!("ALTER TABLE #{table}_projection_source RENAME TO #{table}")
+      Repo.query!("DROP FUNCTION pg_temp.projection_read_fault(#{type})")
+    end
   end
 
   defp authorized_proposal!(suffix, context, opts \\ []) do

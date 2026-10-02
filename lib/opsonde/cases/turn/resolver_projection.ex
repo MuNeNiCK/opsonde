@@ -87,6 +87,9 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
                kind in ["observation", "target_verification", "file_read"] ->
           {:cont, {:ok, [item | loaded]}}
 
+        {:error, error} ->
+          {:halt, {:error, error}}
+
         _unavailable ->
           {:halt, {:error, "Current recovery Evidence is unavailable"}}
       end
@@ -198,7 +201,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
           candidate.content["target_id"] == target.id
         end)
 
-      {:ok, prepend_verified_continuity(evidence, latest, incident, target)}
+      prepend_verified_continuity(evidence, latest, incident, target)
     end
   end
 
@@ -225,14 +228,16 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
             target_id: ^target_id,
             target_revision: ^target_revision,
             status: :applied
-          }} <- Cases.get_operation(operation_id, authorize?: false) do
-      [latest | evidence]
+          }} <-
+           Cases.get_operation(operation_id, authorize?: false, not_found_error?: false) do
+      {:ok, [latest | evidence]}
     else
-      _existing_or_stale -> evidence
+      {:error, error} -> {:error, error}
+      _existing_or_stale -> {:ok, evidence}
     end
   end
 
-  defp prepend_verified_continuity(evidence, _latest, _incident, _target), do: evidence
+  defp prepend_verified_continuity(evidence, _latest, _incident, _target), do: {:ok, evidence}
 
   defp relations(nil, _incident, _run, _turn), do: {:ok, {[], []}}
 
