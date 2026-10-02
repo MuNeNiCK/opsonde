@@ -262,6 +262,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).related_target_count == 1
   end
 
+  @tag signal_citation_read_fault: true
   test "a resumed run can traverse with the Case's current Signal evidence", context do
     signal_provider =
       Providers.create_provider!(
@@ -359,10 +360,29 @@ defmodule Opsonde.RelatedTargetRouteTest do
       Cases.list_turns!(actor: context.admin)
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
-    next_turn =
-      resumed_turn
-      |> complete_traversal!(context.runs_on, context.vm, signal)
-      |> route_traversal!()
+    source = complete_traversal!(resumed_turn, context.runs_on, context.vm, signal)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(resumed_run.id, authorize?: false)
+    before_evidence = Cases.list_evidence!(actor: context.admin)
+    before_turns = Cases.list_turns!(actor: context.admin)
+
+    Repo.query!(
+      "ALTER TABLE case_condition_memberships RENAME COLUMN condition_id TO unavailable_condition_id"
+    )
+
+    try do
+      assert {:error, _error} = Cases.route_related_target(source.id, authorize?: false)
+    after
+      Repo.query!(
+        "ALTER TABLE case_condition_memberships RENAME COLUMN unavailable_condition_id TO condition_id"
+      )
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(resumed_run.id, authorize?: false) == before_run
+    assert Cases.list_evidence!(actor: context.admin) == before_evidence
+    assert Cases.list_turns!(actor: context.admin) == before_turns
+    next_turn = route_traversal!(source)
 
     selected = Cases.get_case!(incident.id, authorize?: false)
     assert selected.status == :running
