@@ -1,4 +1,4 @@
-defmodule Opsonde.Cases.Evidence.ReviewerEvidence do
+defmodule Opsonde.Cases.Evidence.Projection do
   @moduledoc false
 
   alias Opsonde.Cases
@@ -49,7 +49,7 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidence do
   def file_contents(incident, evidence) do
     evidence
     |> Enum.reduce_while({:ok, []}, fn item, {:ok, loaded} ->
-      if item.kind == "file_read" and item.target_id == incident.selected_target_id do
+      if item.kind == "file_read" and file_target_id(item) == incident.selected_target_id do
         case Cases.read_file_content(item.id, incident.id, authorize?: false) do
           {:ok, content} -> {:cont, {:ok, [%{item | content: content} | loaded]}}
           {:error, _error} = error -> {:halt, error}
@@ -63,6 +63,9 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidence do
       error -> error
     end
   end
+
+  defp file_target_id(%AI.Evidence{target_id: id}), do: id
+  defp file_target_id(%Cases.Evidence{content: content}), do: content["target_id"]
 
   defp context_identity(%{kind: "file_read", id: id}), do: {"file_read", id}
 

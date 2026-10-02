@@ -6,6 +6,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.Turn.TraversalBoundary, as: TraversalBoundary
+  alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
   alias Opsonde.Providers.AI
 
   @diagnostic_text_limit 2_000
@@ -33,7 +34,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, incident, conditions, continuity),
-         {:ok, continuity} <- project_file_contents(continuity, incident),
+         {:ok, continuity} <- EvidenceProjection.file_contents(incident, continuity),
          request <-
            request(
              selection,
@@ -58,25 +59,6 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
   def build(_turn_id, _selection),
     do: {:error, "Resolver AI selection is invalid"}
-
-  defp project_file_contents(evidence, incident) do
-    evidence
-    |> Enum.reduce_while({:ok, []}, fn item, {:ok, loaded} ->
-      if item.kind == "file_read" and
-           item.content["target_id"] == incident.selected_target_id do
-        case Cases.read_file_content(item.id, incident.id, authorize?: false) do
-          {:ok, content} -> {:cont, {:ok, [%{item | content: content} | loaded]}}
-          {:error, _error} = error -> {:halt, error}
-        end
-      else
-        {:cont, {:ok, [item | loaded]}}
-      end
-    end)
-    |> case do
-      {:ok, loaded} -> {:ok, Enum.reverse(loaded)}
-      error -> error
-    end
-  end
 
   defp requested_file_visible(request, turn) do
     requested = turn.intent["file_read_evidence_id"]

@@ -2,7 +2,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   @moduledoc false
 
   alias Opsonde.{Cases, Targets}
-  alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
+  alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Providers.AI
@@ -27,14 +27,14 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
            ),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
-         {:ok, evidence} <- ReviewerEvidence.file_contents(incident, evidence),
+         {:ok, evidence} <- EvidenceProjection.file_contents(incident, evidence),
          {:ok, context_evidence} <-
-           ReviewerEvidence.recent(
+           EvidenceProjection.recent(
              incident.id,
              proposal.target_id,
              Enum.map(evidence, & &1.id)
            ),
-         {:ok, context_evidence} <- ReviewerEvidence.file_contents(incident, context_evidence),
+         {:ok, context_evidence} <- EvidenceProjection.file_contents(incident, context_evidence),
          {:ok, target_relations} <- target_relations(incident, proposal),
          {:ok, target} <- current_target(proposal),
          {:ok, recovery_ids} <-
@@ -132,7 +132,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
             kind: evidence.kind,
             target_id: evidence_target(evidence.content),
             observed_at_us: DateTime.to_unix(evidence.observed_at, :microsecond),
-            content: ReviewerEvidence.project_content(evidence.content)
+            content: EvidenceProjection.project_content(evidence.content)
           }
 
           {:cont, {:ok, loaded ++ [item]}}

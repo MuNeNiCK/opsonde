@@ -1,7 +1,7 @@
-defmodule Opsonde.Cases.Evidence.ReviewerEvidenceTest do
+defmodule Opsonde.Cases.Evidence.ProjectionTest do
   use ExUnit.Case, async: true
 
-  alias Opsonde.Cases.Evidence.ReviewerEvidence, as: ReviewerEvidence
+  alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
 
   test "Reviewer projection preserves facts while removing duplicated transport data" do
     facts = %{"stdout" => String.duplicate("service active\n", 1_400), "exit_status" => 0}
@@ -17,7 +17,7 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidenceTest do
       }
     }
 
-    projected = ReviewerEvidence.project_content(content)
+    projected = EvidenceProjection.project_content(content)
 
     assert projected["facts"] == facts
     assert projected["target_id"] == "linux-target"
@@ -32,6 +32,6 @@ defmodule Opsonde.Cases.Evidence.ReviewerEvidenceTest do
       "details" => %{"message" => "permission denied"}
     }
 
-    assert ReviewerEvidence.project_content(content) == content
+    assert EvidenceProjection.project_content(content) == content
   end
 end
