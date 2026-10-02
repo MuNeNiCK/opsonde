@@ -385,6 +385,7 @@ defmodule Opsonde.AI.ReqLLM do
       "traversal_options" => traversal_options(request),
       "observation_tools" => plain(request.observation_tools),
       "proposal_tools" => plain(request.proposal_tools),
+      "investigation_evidence_ids" => available_evidence_ids(request),
       "effect_evidence_ids" => AI.proposal_evidence_ids(request)
     }
 
@@ -398,7 +399,7 @@ defmodule Opsonde.AI.ReqLLM do
         "For a Target request using body_file, it is a label in parameters.files. " <>
         "Include parameters.files with that label mapped to an exact supplied file reference; " <>
         "body_file alone is neither a file UUID nor a filesystem path. " <>
-        "Every proposal includes delay_seconds: 0 for immediate execution, or the number of " <>
+        "Every proposal includes intent.delay_seconds: 0 for immediate execution, or the number of " <>
         "seconds to wait before sending that exact request. For a pending remote operation, " <>
         "use the observed Retry-After or progress information to choose an appropriate delay " <>
         "for the next observation. Waiting schedules that request without another Resolver call. " <>
@@ -461,8 +462,10 @@ defmodule Opsonde.AI.ReqLLM do
         "Every proposal declares intent.purpose as investigation or remediation. Protocol effect " <>
         "means a request may change state; it does not establish its purpose. Investigation " <>
         "collects evidence, may use an effect-capable tool after authority review, cites current " <>
-        "context, and has no verification or expected result. Before the first observation, " <>
-        "evidence_ids may be empty: use the supplied Case objective and current Target to select " <>
+        "context, and has no verification or expected result. For investigation, " <>
+        "take investigation evidence_ids only from investigation_evidence_ids. If that list " <>
+        "is empty, return evidence_ids: [] even when historical facts inform the next request. " <>
+        "Before the first observation, evidence_ids may be empty: use the supplied Case objective and current Target to select " <>
         "the investigation; never invent prior observations. Never call a modification investigation. " <>
         "For remediation, intent.verification contains either only expected_result_json for " <>
         "later investigation, or tool_id, selectors_json, parameters_json, and expected_result_json for " <>
@@ -502,7 +505,7 @@ defmodule Opsonde.AI.ReqLLM do
         "When a required selector is unknown, use the Target's discovery operation before " <>
         "an operation that requires the exact resource name. Do not repeat a failed guess. " <>
         "historical_evidence records previous ResolutionRuns. Reuse its discovered resource " <>
-        "names and effect chronology, but never cite it as current recovery proof; obtain " <>
+        "names and effect chronology, but never cite its IDs in a new proposal or recovery; obtain " <>
         "a fresh observation of the actual symptom after the latest effect. " <>
         "Treat a monitoring source's claim about a related Target as a hypothesis, not proof. " <>
         "For target_selection, return the candidate_ref from exactly one supplied " <>
@@ -634,6 +637,8 @@ defmodule Opsonde.AI.ReqLLM do
     "If retry_context is present, the previous response was rejected before any decision " <>
       "was accepted. When its rejection_code is schema_validation, check the next response " <>
       "against the current output schema. If rejection_path is present, correct that field. " <>
+      "For /intent/evidence_ids, select only IDs in the supplied investigation_evidence_ids " <>
+      "or effect_evidence_ids according to purpose; an empty investigation list requires []. " <>
       "When rejection_path is reason or /reason, replace the explanation with one short " <>
       "sentence well below its character limit; do not expand it or repeat the Case history. " <>
       "Copy enum values exactly, include every required field, and add no field that the " <>
@@ -1062,7 +1067,7 @@ defmodule Opsonde.AI.ReqLLM do
     intent = if is_map(value["intent"]), do: value["intent"], else: %{}
 
     known_intent_keys =
-      ~w(type purpose action evidence_ids affected_conditions candidate_ref file_ref offset length target_id relationship_id query required_input condition_claims verification expected_result_json)
+      ~w(type purpose action delay_seconds evidence_ids affected_conditions candidate_ref file_ref offset length target_id relationship_id query required_input condition_claims verification expected_result_json)
 
     intent_type =
       if intent["type"] in @resolver_intent_types,
@@ -1237,7 +1242,7 @@ defmodule Opsonde.AI.ReqLLM do
     |> Map.keys()
     |> Enum.filter(fn key ->
       Map.has_key?(properties, key) and
-        key in ~w(type purpose action verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors_json parameters_json) and
+        key in ~w(type purpose action delay_seconds verification evidence_ids affected_conditions expected_result_json required_input target_id relationship_id query tool_id selectors_json parameters_json) and
         not schema_field_valid?(value[key], properties[key])
     end)
     |> Enum.sort()
@@ -1350,7 +1355,7 @@ defmodule Opsonde.AI.ReqLLM do
 
         case Regex.run(~r/property '([A-Za-z_]+)' is required/, message) do
           [_, field]
-          when field in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors_json parameters_json) ->
+          when field in ~w(reason intent type purpose action delay_seconds evidence_ids affected_conditions verification expected_result_json condition_claims condition_assessments required_input tool_id selectors_json parameters_json) ->
             "/intent/" <> field
 
           _other ->
@@ -1411,7 +1416,7 @@ defmodule Opsonde.AI.ReqLLM do
         []
     end)
     |> Enum.filter(
-      &(&1 in ~w(reason intent type purpose action evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors_json parameters_json required_input))
+      &(&1 in ~w(reason intent type purpose action delay_seconds evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors_json parameters_json required_input))
     )
     |> Enum.uniq()
     |> Enum.sort()

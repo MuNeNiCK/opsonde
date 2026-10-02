@@ -383,6 +383,64 @@ defmodule Opsonde.AI.ReqLLMTest do
     end
   end
 
+  test "continued investigation discloses current citations while retaining historical facts",
+       context do
+    tool = %{
+      proposal_tool()
+      | request_kind: :observation,
+        capability: "observe.command",
+        operation: "service.inspect"
+    }
+
+    historical = %AI.Evidence{
+      id: "previous-run-observation",
+      kind: "observation",
+      target_id: tool.target_id,
+      content: %{"service" => "api", "status" => "pending"}
+    }
+
+    request = %{
+      resolver_request()
+      | selected_target_id: tool.target_id,
+        selected_target_revision: tool.target_revision,
+        proposal_tools: [tool],
+        historical_evidence: [historical]
+    }
+
+    wire = %{
+      "reason" => "Observe the pending request after the disclosed delay",
+      "intent" => %{
+        "type" => "proposal",
+        "delay_seconds" => 30,
+        "purpose" => "investigation",
+        "action" => %{
+          "tool_id" => tool.id,
+          "selectors_json" => Jason.encode!(%{"service" => "api"}),
+          "parameters_json" => Jason.encode!(%{"grace_seconds" => 0})
+        },
+        "evidence_ids" => [],
+        "affected_conditions" => []
+      }
+    }
+
+    set_mode(context.agent, {:decision, wire})
+    state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
+    assert {:ok, decision} = Adapter.resolve(state, request, %{})
+    assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
+    [sent] = requests(context.agent)
+    payload = user_payload(sent)
+    assert payload["investigation_evidence_ids"] == []
+
+    assert [%{"id" => "previous-run-observation", "content" => %{"status" => "pending"}}] =
+             payload["historical_evidence"]
+
+    assert decision.intent.delay_seconds == 30
+    stale = %{decision | intent: %{decision.intent | evidence_ids: ["previous-run-observation"]}}
+
+    assert {:error, %AI.Error{category: :invalid_output}} =
+             AI.Validator.validate_decision(:resolve, stale, request)
+  end
+
   test "invalid encoded Method objects retain usage and never become Target inputs", context do
     tool = proposal_tool()
     request = %{resolver_request() | proposal_tools: [tool]}
