@@ -2457,6 +2457,84 @@ defmodule Opsonde.SignalIngressTest do
            ) == 0
   end
 
+  test "Target catalog rejects missing Case reconciliation without an orphan Target or identity",
+       context do
+    existing =
+      Targets.create_target!("identity-parent", "host", "linux", %{}, nil, actor: context.admin)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.drop_catalog_reconciliation() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Case.TargetCatalogReconciliationWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER drop_catalog_reconciliation BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.drop_catalog_reconciliation()
+    """)
+
+    assert {:error, _error} =
+             Targets.create_target(
+               "missing-reconciliation",
+               "host",
+               "linux",
+               %{},
+               nil,
+               actor: context.admin
+             )
+
+    assert {:error, _error} =
+             Targets.create_external_identity(
+               existing.id,
+               "test-monitor",
+               "hostname",
+               "missing-identity",
+               actor: context.admin
+             )
+
+    assert [retained] = Targets.list_targets!(actor: context.admin)
+    assert retained.id == existing.id
+    assert retained.name == "identity-parent"
+    assert retained.revision == 1
+    assert Targets.list_external_identities!(actor: context.admin) == []
+
+    Repo.query!("DROP TRIGGER drop_catalog_reconciliation ON oban_jobs")
+
+    target =
+      Targets.create_target!(
+        "missing-reconciliation",
+        "host",
+        "linux",
+        %{},
+        nil,
+        actor: context.admin
+      )
+
+    identity =
+      Targets.create_external_identity!(
+        existing.id,
+        "test-monitor",
+        "hostname",
+        "missing-identity",
+        actor: context.admin
+      )
+
+    jobs =
+      Repo.all(Oban.Job)
+      |> Enum.filter(&(&1.worker == "Opsonde.Cases.Case.TargetCatalogReconciliationWorker"))
+
+    assert Enum.count(jobs, &(&1.args["resource_id"] == target.id)) == 1
+    assert Enum.count(jobs, &(&1.args["resource_id"] == identity.id)) == 1
+    assert Enum.all?(jobs, &is_integer(&1.id))
+    assert [registered] = Targets.list_external_identities!(actor: context.admin)
+    assert registered.id == identity.id
+    assert registered.target_id == existing.id
+    assert registered.value == "missing-identity"
+  end
+
   defp dispatch_initial!(incident) do
     Opsonde.Cases.CaseDispatch.Worker.perform(%Oban.Job{args: %{"case_id" => incident.id}})
   end

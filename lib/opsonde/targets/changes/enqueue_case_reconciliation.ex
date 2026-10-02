@@ -18,7 +18,8 @@ defmodule Opsonde.Targets.Changes.EnqueueCaseReconciliation do
       args = %{"resource" => resource, "resource_id" => result.id, "revision" => result.revision}
 
       case args |> Opsonde.Cases.Case.TargetCatalogReconciliationWorker.new() |> Oban.insert() do
-        {:ok, _job} -> {:ok, result}
+        {:ok, %Oban.Job{id: id}} when is_integer(id) -> {:ok, result}
+        {:ok, _unpersisted} -> {:error, "Case reconciliation job was not persisted"}
         {:error, error} -> {:error, error}
       end
     end)
