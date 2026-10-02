@@ -262,6 +262,7 @@ defmodule Opsonde.DecisionRouteWorkerTest do
 
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => "effect-tool",

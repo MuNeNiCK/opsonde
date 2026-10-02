@@ -209,6 +209,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => reason,
         "intent" => %{
           "type" => "proposal",
+          "delay_seconds" => decision["delay_seconds"],
           "purpose" => decision["purpose"],
           "action" => action(decision),
           "evidence_ids" => decision["evidence_ids"],
@@ -320,6 +321,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => "Send the exact supplied file through the selected Method",
         "intent" => %{
           "type" => "proposal",
+          "delay_seconds" => 30,
           "purpose" => "investigation",
           "action" => %{
             "tool_id" => tool.id,
@@ -336,6 +338,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       state = state!(provider, ai_endpoint, %{"api_key" => "file-secret"})
       assert {:ok, decision} = Adapter.resolve(state, request, %{})
       assert decision.intent.parameters == parameters
+      assert decision.intent.delay_seconds == 30
       assert :ok = AI.Validator.validate_decision(:resolve, decision, request)
 
       if type == "restconf" do
@@ -388,6 +391,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "Investigate with the selected Method",
       "intent" => %{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "investigation",
         "action" => %{
           "tool_id" => tool.id,
@@ -1312,6 +1316,7 @@ defmodule Opsonde.AI.ReqLLMTest do
            "reason" => "Restore the currently observed power state",
            "intent" => %{
              "type" => "proposal",
+             "delay_seconds" => 0,
              "purpose" => "remediation",
              "action" => %{
                "tool_id" => effect.id,
@@ -2466,6 +2471,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "Start the service shown inactive by current Target output",
       "intent" => %{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "remediation",
         "action" => %{
           "tool_id" => tool.id,
@@ -2537,6 +2543,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "Inspect service status before selecting a repair",
       "intent" => %{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "investigation",
         "action" => %{
           "tool_id" => tool.id,
@@ -2608,6 +2615,7 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     decision = %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "remediation",
       "reason" => "Restore availability",
       "tool_id" => "proposal-tool",
@@ -2693,6 +2701,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "Restore availability",
       "intent" => %{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "remediation",
         "action" => ProviderStub.action(decision),
         "evidence_ids" => ["source-evidence-1"],
@@ -2771,6 +2780,7 @@ defmodule Opsonde.AI.ReqLLMTest do
         "reason" => "Inspect this service",
         "intent" => %{
           "type" => "proposal",
+          "delay_seconds" => 0,
           "purpose" => "investigation",
           "action" => %{
             "tool_id" => tool.id,
@@ -2890,6 +2900,7 @@ defmodule Opsonde.AI.ReqLLMTest do
       "reason" => "The guest remains unavailable while its controller reports power off",
       "intent" => %{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "remediation",
         "action" => %{
           "tool_id" => "proposal-tool",

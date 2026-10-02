@@ -3080,6 +3080,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "not_before": {
+            "format": "date-time",
+            "type": "string"
+          },
           "operation": {
             "maxLength": 120,
             "minLength": 1,
@@ -3182,6 +3186,7 @@
           "reference",
           "result_details",
           "accepted_at",
+          "not_before",
           "completed_at",
           "revision",
           "inserted_at",
@@ -4679,6 +4684,11 @@
             "minLength": 1,
             "type": "string"
           },
+          "delay_seconds": {
+            "maximum": 86400,
+            "minimum": 0,
+            "type": "integer"
+          },
           "status": {
             "enum": [
               "proposed",
@@ -4832,6 +4842,7 @@
           "selectors",
           "parameters",
           "reason",
+          "delay_seconds",
           "evidence_ids",
           "affected_conditions",
           "expected_result",

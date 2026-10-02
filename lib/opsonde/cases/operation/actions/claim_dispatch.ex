@@ -30,34 +30,42 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
   end
 
   defp claim(%{status: :queued} = operation, incident, run) do
-    if incident.status == :running and not incident.cancel_requested and run.active and
-         run.status == :running and run.generation == operation.case_generation do
-      with {:ok, proposal} <- lock(Proposal, operation.proposal_id),
-           {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id),
-           {:ok, affected_current?} <-
-             ConditionContext.affected_current?(
-               incident,
-               proposal.request_kind,
-               proposal.affected_conditions,
-               proposal.evidence_ids,
-               proposal,
-               operation.id
-             ) do
-        if current? and affected_current? do
-          with {:ok, conflict} <- effect_conflict(operation, proposal) do
-            claim_after_conflict(operation, incident, run, conflict)
+    cond do
+      incident.status != :running or incident.cancel_requested or not run.active or
+        run.status != :running or run.generation != operation.case_generation ->
+        terminal_no_send(
+          operation,
+          "cancelled_before_dispatch",
+          "Case stopped before the Target request was dispatched"
+        )
+
+      DateTime.compare(DateTime.utc_now(), run.deadline_at) != :lt ->
+        terminal_no_send(
+          operation,
+          "run_deadline_elapsed",
+          "ResolutionRun deadline elapsed before the Target request was dispatched"
+        )
+
+      true ->
+        with {:ok, proposal} <- lock(Proposal, operation.proposal_id),
+             {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id),
+             {:ok, affected_current?} <-
+               ConditionContext.affected_current?(
+                 incident,
+                 proposal.request_kind,
+                 proposal.affected_conditions,
+                 proposal.evidence_ids,
+                 proposal,
+                 operation.id
+               ) do
+          if current? and affected_current? do
+            with {:ok, conflict} <- effect_conflict(operation, proposal) do
+              claim_after_conflict(operation, incident, run, conflict)
+            end
+          else
+            stop_stale_dispatch(operation, incident, run)
           end
-        else
-          stop_stale_dispatch(operation, incident, run)
         end
-      end
-    else
-      with {:ok, terminal} <-
-             no_send(operation, "cancelled_before_dispatch", %{
-               "message" => "Case stopped before the remote effect was dispatched"
-             }) do
-        %OperationClaim{state: :terminal, operation: terminal}
-      end
     end
   end
 
@@ -73,15 +81,25 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
   defp claim(%{status: status} = operation, _incident, _run) when status in @terminal,
     do: %OperationClaim{state: :terminal, operation: operation}
 
+  defp terminal_no_send(operation, category, message) do
+    with {:ok, terminal} <- no_send(operation, category, %{"message" => message}) do
+      %OperationClaim{state: :terminal, operation: terminal}
+    end
+  end
+
   defp claim_after_conflict(operation, _incident, _run, :clear) do
-    with {:ok, claimed} <-
-           Cases.mark_operation_dispatching(
-             operation,
-             operation.revision,
-             %{dispatch_started_at: DateTime.utc_now()},
-             authorize?: false
-           ) do
-      %OperationClaim{state: :claimed, operation: claimed}
+    if DateTime.compare(DateTime.utc_now(), operation.not_before) == :lt do
+      %OperationClaim{state: :deferred, operation: operation}
+    else
+      with {:ok, claimed} <-
+             Cases.mark_operation_dispatching(
+               operation,
+               operation.revision,
+               %{dispatch_started_at: DateTime.utc_now()},
+               authorize?: false
+             ) do
+        %OperationClaim{state: :claimed, operation: claimed}
+      end
     end
   end
 

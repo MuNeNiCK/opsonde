@@ -2139,6 +2139,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => tool["id"],
@@ -2191,6 +2192,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "investigation",
       "request_kind" => "observation",
       "tool_id" => tool["id"],

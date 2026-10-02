@@ -398,6 +398,10 @@ defmodule Opsonde.AI.ReqLLM do
         "For a Target request using body_file, it is a label in parameters.files. " <>
         "Include parameters.files with that label mapped to an exact supplied file reference; " <>
         "body_file alone is neither a file UUID nor a filesystem path. " <>
+        "Every proposal includes delay_seconds: 0 for immediate execution, or the number of " <>
+        "seconds to wait before sending that exact request. For a pending remote operation, " <>
+        "use the observed Retry-After or progress information to choose an appropriate delay " <>
+        "for the next observation. Waiting schedules that request without another Resolver call. " <>
         file_evidence_instructions() <>
         "If status is unavailable, no contents were obtained; choose another useful " <>
         "observation rather than handoff solely because this file cannot be read. " <>
@@ -768,6 +772,7 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, reason} <- string(value, "reason"),
          {:ok, evidence_ids} <- string_list(value, "evidence_ids"),
          claims when is_list(claims) <- Map.get(value, "affected_conditions", []),
+         {:ok, delay_seconds} <- integer(value, "delay_seconds", nil, 0, 86_400),
          {:ok, purpose} <- proposal_purpose(value["purpose"]),
          true <- AI.valid_proposal_purpose?(tool.request_kind, purpose),
          {:ok, expected_result, verification} <-
@@ -788,6 +793,7 @@ defmodule Opsonde.AI.ReqLLM do
          reason: reason,
          evidence_ids: evidence_ids,
          affected_conditions: claims,
+         delay_seconds: delay_seconds,
          expected_result: expected_result,
          verification_intent: verification
        }}
@@ -1766,6 +1772,7 @@ defmodule Opsonde.AI.ReqLLM do
     observation_schema =
       if observation_variants != [] do
         intent_schema("proposal", %{
+          "delay_seconds" => %{"type" => "integer", "minimum" => 0, "maximum" => 86_400},
           "purpose" => enum_schema(["investigation"]),
           "action" => %{"anyOf" => observation_variants},
           "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),
@@ -1778,6 +1785,7 @@ defmodule Opsonde.AI.ReqLLM do
            AI.effect_target_evidence_ids(request) != [] and
            (request.conditions == [] or actionable_conditions != []) do
         intent_schema("proposal", %{
+          "delay_seconds" => %{"type" => "integer", "minimum" => 0, "maximum" => 86_400},
           "purpose" => enum_schema(["remediation"]),
           "action" => %{"anyOf" => effect_variants},
           "evidence_ids" => identifier_array_schema(effect_evidence_ids),
@@ -1807,6 +1815,7 @@ defmodule Opsonde.AI.ReqLLM do
     investigation_schema =
       if investigation_variants != [] do
         intent_schema("proposal", %{
+          "delay_seconds" => %{"type" => "integer", "minimum" => 0, "maximum" => 86_400},
           "purpose" => enum_schema(["investigation"]),
           "action" => %{"anyOf" => investigation_variants},
           "evidence_ids" => evidence_array_schema(observation_evidence_ids, 0),

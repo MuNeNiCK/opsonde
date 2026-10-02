@@ -140,6 +140,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       positive?(intent["target_revision"]) and
       positive?(intent["access_method_revision"]) and
       is_map(intent["selectors"]) and is_map(intent["parameters"]) and
+      is_integer(intent["delay_seconds"]) and intent["delay_seconds"] in 0..86_400 and
       is_list(intent["affected_conditions"]) and
       Providers.AI.valid_proposal_purpose?(request_kind(intent), purpose(intent)) and
       exact_request_tool?(intent, request_tool) and
@@ -308,6 +309,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       selectors: intent["selectors"],
       parameters: intent["parameters"],
       reason: intent["reason"],
+      delay_seconds: intent["delay_seconds"],
       evidence_ids: intent["evidence_ids"],
       affected_conditions: intent["affected_conditions"],
       expected_result: intent["expected_result"],

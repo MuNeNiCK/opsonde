@@ -101,6 +101,51 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  test "a delayed observation persists its due time and sends once without another Resolver call",
+       context do
+    {incident, run, proposal} =
+      authorized_proposal!("delayed-observation", context,
+        request_kind: :observation,
+        delay_seconds: 2
+      )
+
+    assert Map.get(proposal, :delay_seconds) == 2
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert DateTime.diff(operation.not_before, proposal.inserted_at, :second) == 2
+    assert operation_job(operation.id).scheduled_at == operation.not_before
+
+    invocation =
+      invocation(fn ->
+        send(self(), :delayed_observation_sent)
+
+        {:ok,
+         %Target.Observation{
+           facts: %{"service" => "running"},
+           observed_at: DateTime.utc_now(),
+           evidence: []
+         }}
+      end)
+
+    assert {:snooze, seconds} = OperationDelivery.run(operation.id, target_invocation: invocation)
+    assert seconds in 1..2
+    refute_receive :delayed_observation_sent
+    queued = Cases.get_operation!(operation.id, actor: context.operator)
+    assert queued.status == :queued
+    assert queued.dispatch_started_at == nil
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
+    assert Cases.list_ai_invocations!(actor: context.operator) == []
+
+    remaining = max(DateTime.diff(operation.not_before, DateTime.utc_now(), :millisecond), 0)
+    Process.sleep(remaining + 10)
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation)
+    assert_receive :delayed_observation_sent
+    assert Cases.get_operation!(operation.id, actor: context.operator).status == :applied
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation)
+    refute_receive :delayed_observation_sent
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 1
+  end
+
   test "a protected remote result survives delivery without entering public Case evidence",
        context do
     {incident, _run, proposal} =
@@ -1735,14 +1780,26 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   test "authorization changed after acceptance fails before Target dispatch", context do
-    {incident, _run, proposal} = authorized_proposal!("instructions-before-dispatch", context)
+    {incident, _run, proposal} =
+      authorized_proposal!("instructions-before-dispatch", context, delay_seconds: 2)
+
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert {:snooze, _} =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(fn -> flunk("scheduled Operation was sent early") end)
+             )
 
     Targets.update_target!(
       context.target,
       context.target.revision,
       %{operating_instructions: "Do not restart the API service"},
       actor: context.admin
+    )
+
+    Process.sleep(
+      max(DateTime.diff(operation.not_before, DateTime.utc_now(), :millisecond), 0) + 10
     )
 
     assert :ok =
@@ -1780,8 +1837,8 @@ defmodule Opsonde.OperationDeliveryTest do
     assert operation_evidence(operation.id) == 1
   end
 
-  test "cancellation before claim records no-send failure", context do
-    {incident, _run, proposal} = authorized_proposal!("cancel", context)
+  test "cancellation during scheduled waiting records no-send failure", context do
+    {incident, _run, proposal} = authorized_proposal!("cancel", context, delay_seconds: 60)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
     current = Cases.get_case!(incident.id, authorize?: false)
@@ -1795,7 +1852,67 @@ defmodule Opsonde.OperationDeliveryTest do
     cancelled = Cases.get_operation!(operation.id, authorize?: false)
     assert cancelled.status == :failed
     assert cancelled.outcome_category == "cancelled_before_dispatch"
+    assert cancelled.dispatch_started_at == nil
     refute_receive {:effect, _, _}
+  end
+
+  test "a request scheduled beyond the run deadline creates no Operation, job or budget charge",
+       context do
+    {_incident, run, proposal} =
+      authorized_proposal!("delay-beyond-deadline", context,
+        request_kind: :observation,
+        delay_seconds: 86_400
+      )
+
+    assert {:error, error} = Cases.accept_operation(proposal.id, authorize?: false)
+    assert Exception.message(error) =~ "Authorized Proposal is stale"
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert Cases.get_resolution_run!(run.id, authorize?: false).target_request_count == 0
+    assert operation_jobs(proposal.reserved_operation_id) == 0
+  end
+
+  @tag timeout: 90_000
+  test "a scheduled request claimed after its run deadline is never sent", context do
+    setting = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      setting.setting_revision,
+      :full_access,
+      setting.signal_automation_enabled,
+      60,
+      setting.max_resolver_turns,
+      setting.max_target_requests,
+      setting.max_effects,
+      setting.max_related_targets,
+      setting.max_ai_usage_units,
+      setting.max_no_progress_turns,
+      "Verify elapsed deadline before scheduled dispatch",
+      actor: context.admin
+    )
+
+    {_incident, run, proposal} =
+      authorized_proposal!("elapsed-delay", context,
+        request_kind: :observation,
+        delay_seconds: 30
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    invocation =
+      invocation(fn ->
+        send(self(), :expired_request_sent)
+        {:error, :unexpected_send}
+      end)
+
+    assert {:snooze, _} = OperationDelivery.run(operation.id, target_invocation: invocation)
+    Process.sleep(max(DateTime.diff(run.deadline_at, DateTime.utc_now(), :millisecond), 0) + 10)
+
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation)
+    stopped = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stopped.status == :failed
+    assert stopped.outcome_category == "run_deadline_elapsed"
+    assert stopped.dispatch_started_at == nil
+    refute_receive :expired_request_sent
   end
 
   test "native Signal change after acceptance stops the Target send and starts one reassessment",
@@ -5052,6 +5169,8 @@ defmodule Opsonde.OperationDeliveryTest do
         result
       end
 
+    result = put_in(result, ["intent", "delay_seconds"], Keyword.get(opts, :delay_seconds, 0))
+
     turn =
       Cases.complete_turn!(
         started.value.id,
@@ -5113,6 +5232,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => tool["id"],
@@ -5167,6 +5287,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "investigation",
       "request_kind" => "observation",
       "tool_id" => tool["id"],

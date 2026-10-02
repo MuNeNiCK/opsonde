@@ -57,6 +57,7 @@ defmodule Opsonde.Cases.Proposal do
         :operation,
         :selectors,
         :parameters,
+        :delay_seconds,
         :reason,
         :evidence_ids,
         :affected_conditions,
@@ -277,6 +278,12 @@ defmodule Opsonde.Cases.Proposal do
       allow_nil? false
       public? true
     end
+
+    attribute :delay_seconds, :integer,
+      allow_nil?: false,
+      public?: true,
+      default: 0,
+      constraints: [min: 0, max: 86_400]
 
     attribute :reason, :string do
       allow_nil? false

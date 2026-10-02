@@ -25,8 +25,9 @@ defmodule Opsonde.Cases.Operation.Delivery do
       {:ok, %OperationClaim{state: :claimed, operation: operation}} ->
         dispatch(operation, opts)
 
-      {:ok, %OperationClaim{state: :deferred}} ->
-        {:snooze, 5}
+      {:ok, %OperationClaim{state: :deferred, operation: operation}} ->
+        remaining = DateTime.diff(operation.not_before, DateTime.utc_now(), :millisecond)
+        {:snooze, if(remaining > 0, do: div(remaining + 999, 1000), else: 5)}
 
       {:ok, %OperationClaim{state: :terminal, operation: operation}} ->
         handoff(operation)

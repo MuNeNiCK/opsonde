@@ -1324,6 +1324,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     intent = %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => if(kind == :effect, do: "remediation", else: "investigation"),
       "request_kind" => tool["request_kind"],
       "tool_id" => tool["id"],

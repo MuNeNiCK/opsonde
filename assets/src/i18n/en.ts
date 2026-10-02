@@ -574,6 +574,7 @@ const en = {
       noProposals: "No Target requests have been proposed.",
       effectsAndVerification: "Target requests and verification",
       effectRequest: "Exact request",
+      requestDelay: "Execute {{seconds}} seconds after proposal",
       effectResult: "Operation result",
       expectedResult: "Expected result",
       verification: "Independent verification",
@@ -625,6 +626,7 @@ const en = {
         },
         fields: {
           purpose: "Assessed purpose",
+          scheduledAt: "Scheduled execution",
           decision: "AI decision",
           selectedAction: "Next selected action",
           target: "Target",

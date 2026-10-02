@@ -223,11 +223,16 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           label: t("cases.workflow.fields.result"),
           value: item.outcome_category,
         },
+        item.status === "queued" && {
+          label: t("cases.workflow.fields.scheduledAt"),
+          value: new Date(item.not_before).toLocaleString(),
+        },
       ]),
       technical: {
         selectors: item.selectors,
         parameters: item.parameters,
         outcome_category: item.outcome_category,
+        not_before: item.not_before,
         reference: item.reference,
         result: item.result_details,
       },

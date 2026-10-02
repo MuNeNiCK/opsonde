@@ -380,7 +380,12 @@ defmodule Opsonde.Providers.AI do
     ]
 
     defstruct @enforce_keys ++
-                [affected_conditions: [], expected_result: %{}, verification_intent: nil]
+                [
+                  affected_conditions: [],
+                  expected_result: %{},
+                  verification_intent: nil,
+                  delay_seconds: 0
+                ]
 
     @type t :: %__MODULE__{}
   end

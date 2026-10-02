@@ -272,6 +272,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
       selectors: proposal.selectors,
       parameters: proposal.parameters,
       reason: proposal.reason,
+      delay_seconds: proposal.delay_seconds,
       evidence_ids: proposal.evidence_ids,
       affected_conditions: proposal.affected_conditions,
       expected_result: proposal.expected_result,

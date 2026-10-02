@@ -397,6 +397,7 @@ defmodule Opsonde.ProposalMaterializationTest do
       Map.drop(identity, ["id", "provider_id", "provider_revision"])
       |> Map.merge(%{
         "type" => "proposal",
+        "delay_seconds" => 0,
         "purpose" => "investigation",
         "request_kind" => "effect",
         "tool_id" => tool.id,
@@ -792,6 +793,7 @@ defmodule Opsonde.ProposalMaterializationTest do
   defp proposal_intent(evidence_id, context) do
     %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => "remediation",
       "request_kind" => "effect",
       "tool_id" => "effect-tool",

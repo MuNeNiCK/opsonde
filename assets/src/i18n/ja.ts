@@ -561,6 +561,7 @@ const ja = {
       noProposals: "Target要求はありません。",
       effectsAndVerification: "Target要求と検証",
       effectRequest: "正確な要求",
+      requestDelay: "提案から{{seconds}}秒後に実行",
       effectResult: "操作結果",
       expectedResult: "期待結果",
       verification: "独立検証",
@@ -610,6 +611,7 @@ const ja = {
           recoveredEdge: "復旧",
         },
         fields: {
+          scheduledAt: "実行予定",
           purpose: "審査した目的",
           decision: "AIの判断",
           selectedAction: "次に選んだ処理",

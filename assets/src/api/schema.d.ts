@@ -2325,6 +2325,8 @@ export interface components {
             id: string;
             /** Format: date-time */
             inserted_at: string;
+            /** Format: date-time */
+            not_before: string;
             operation: string;
             outcome_category: string | null;
             parameters: {
@@ -2734,6 +2736,7 @@ export interface components {
             revision: number;
             evidence_ids: string[];
             tool_id: string;
+            delay_seconds: number;
             /** @enum {string} */
             status: "proposed" | "blocked" | "recommended" | "awaiting_human" | "reviewing" | "authorized" | "rejected" | "invalidated";
             /** Format: uuid */

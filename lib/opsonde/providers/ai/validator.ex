@@ -690,6 +690,7 @@ defmodule Opsonde.Providers.AI.Validator do
              valid_effect_citations?(proposal, request) and
              valid_request_verification?(proposal, tool, request.observation_tools) and
              AI.valid_resolver_reason?(proposal.reason) and
+             is_integer(proposal.delay_seconds) and proposal.delay_seconds in 0..86_400 and
              valid_request_evidence_ids?(proposal, evidence_ids) do
           :ok
         else
@@ -921,6 +922,7 @@ defmodule Opsonde.Providers.AI.Validator do
       nonempty?(proposal.capability) and
       nonempty?(proposal.operation) and is_map(proposal.parameters) and
       AI.valid_resolver_reason?(proposal.reason) and is_map(proposal.selectors) and
+      is_integer(proposal.delay_seconds) and proposal.delay_seconds in 0..86_400 and
       valid_request_evidence_ids?(proposal, evidence_ids) and
       valid_review_verification?(proposal)
   end

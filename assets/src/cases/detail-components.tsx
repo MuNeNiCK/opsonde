@@ -67,6 +67,11 @@ export function ProposalCard({
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm">{proposal.reason}</p>
+        {proposal.delay_seconds > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {t("cases.requestDelay", { seconds: proposal.delay_seconds })}
+          </p>
+        )}
         {proposal.affected_conditions.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-medium">{t("cases.conditionsTitle")}</p>

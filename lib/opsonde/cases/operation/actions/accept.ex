@@ -68,7 +68,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
            Targets.clear_target_request(Proposal.target_request(proposal), actor: actor),
          :ok <- exact_provider(clearance, proposal),
          {:ok, operation} <- create(proposal, approval, actor, clearance),
-         {:ok, _job} <- enqueue(operation.id) do
+         {:ok, _job} <- enqueue(operation) do
       {:ok, operation}
     end
   end
@@ -80,7 +80,9 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
               run.generation == proposal.case_generation and
               proposal.authority_mode == incident.authority_mode and
               proposal.authority_mode == run.authority_mode and
-              DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt) ||
+              DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt and
+              DateTime.compare(not_before(proposal), proposal.expires_at) == :lt and
+              DateTime.compare(not_before(proposal), run.deadline_at) == :lt) ||
              {:error, "Authorized Proposal is stale"},
          {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
          {:ok, true} <-
@@ -167,14 +169,21 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         parameters: proposal.parameters,
         idempotency_key: proposal.operation_idempotency_key,
         authorization_digest: Base.encode16(clearance.digest, case: :lower),
-        accepted_at: DateTime.utc_now()
+        accepted_at: DateTime.utc_now(),
+        not_before: not_before(proposal)
       },
       authorize?: false
     )
   end
 
-  defp enqueue(id),
-    do: id |> then(&Opsonde.Cases.Operation.Worker.new(%{"operation_id" => &1})) |> Oban.insert()
+  defp not_before(proposal),
+    do: DateTime.add(proposal.inserted_at, proposal.delay_seconds, :second)
+
+  defp enqueue(operation) do
+    %{"operation_id" => operation.id}
+    |> Opsonde.Cases.Operation.Worker.new(scheduled_at: operation.not_before)
+    |> Oban.insert()
+  end
 
   defp required_existing(proposal_id) do
     case existing(proposal_id) do

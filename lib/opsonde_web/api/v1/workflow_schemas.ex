@@ -524,6 +524,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         parameters: map(),
         reason: string(1, 500),
         evidence_ids: array(Schemas.uuid(), 0, 100),
+        delay_seconds: integer(0, 86_400),
         affected_conditions:
           array(
             object(
@@ -550,7 +551,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind purpose tool_id capability operation selectors parameters reason evidence_ids affected_conditions expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode case_generation target_revision access_method_revision provider_revision request_kind purpose tool_id capability operation selectors parameters reason delay_seconds evidence_ids affected_conditions expected_result verification_intent verification_tool preflight_status preflight_reason proposal_digest expires_at revision inserted_at updated_at)a,
       false
     )
   end
@@ -594,12 +595,13 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         reference: nullable_string(500),
         result_details: map(),
         accepted_at: Schemas.timestamp(),
+        not_before: Schemas.timestamp(),
         completed_at: nullable_timestamp(),
         revision: positive_integer(),
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind purpose capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at completed_at revision inserted_at updated_at)a,
+      ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind purpose capability operation selectors parameters dispatch_started_at outcome_category reference result_details accepted_at not_before completed_at revision inserted_at updated_at)a,
       false
     )
   end

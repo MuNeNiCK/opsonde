@@ -113,7 +113,8 @@ defmodule Opsonde.Cases.Operation do
         :parameters,
         :idempotency_key,
         :authorization_digest,
-        :accepted_at
+        :accepted_at,
+        :not_before
       ]
 
       validate {Opsonde.Validations.BoundedMap, attribute: :selectors}
@@ -306,6 +307,11 @@ defmodule Opsonde.Cases.Operation do
       constraints: [min_length: 64, max_length: 64]
 
     attribute :accepted_at, :utc_datetime_usec, allow_nil?: false, public?: true
+
+    attribute :not_before, :utc_datetime_usec,
+      allow_nil?: false,
+      public?: true,
+      default: &DateTime.utc_now/0
 
     attribute :dispatch_started_at, :utc_datetime_usec, public?: true
 

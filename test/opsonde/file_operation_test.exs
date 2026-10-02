@@ -1019,6 +1019,7 @@ defmodule Opsonde.FileOperationTest do
 
     intent = %{
       "type" => "proposal",
+      "delay_seconds" => 0,
       "purpose" => if(kind == "observation", do: "investigation", else: "remediation"),
       "request_kind" => kind,
       "tool_id" => tool["id"],
