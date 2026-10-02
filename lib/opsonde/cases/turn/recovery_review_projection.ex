@@ -111,6 +111,12 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
         {:ok, %{case_id: case_id} = item} when case_id == incident.id ->
           {:cont, {:ok, [project_evidence(item) | items]}}
 
+        {:error, %Ash.Error.Unknown{}} = error ->
+          {:halt, error}
+
+        {:error, %Ash.Error.Framework{}} = error ->
+          {:halt, error}
+
         _unavailable ->
           {:halt, {:error, "Recovery Review cited Evidence is unavailable"}}
       end

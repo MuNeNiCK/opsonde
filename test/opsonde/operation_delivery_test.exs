@@ -4313,6 +4313,70 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  for {table, column} <- [
+        {"cases", "selected_target_revision"},
+        {"ai_usage_role_assignments", "priority"},
+        {"evidences", "content"}
+      ] do
+    @tag recovery_review_input_read_fault: true, read_table: table, read_column: column
+    test "temporary #{table} recovery Review input read failure retains the saved conclusion",
+         context do
+      {incident, run, turn, _evidence} =
+        recovery_conclusion!(context, "recovery-review-case-read")
+
+      Cases.route_downstream_decision!(turn.id, authorize?: false)
+      before_case = Cases.get_case!(incident.id, authorize?: false)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+      before_invocations = Cases.list_ai_invocations!(authorize?: false)
+      before_events = Cases.list_case_events!(actor: context.operator)
+
+      Repo.query!(
+        "ALTER TABLE #{context.read_table} RENAME COLUMN #{context.read_column} TO unavailable_input"
+      )
+
+      try do
+        assert {:error, _error} =
+                 Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                   args: %{"turn_id" => turn.id},
+                   attempt: 1,
+                   max_attempts: 3
+                 })
+      after
+        Repo.query!(
+          "ALTER TABLE #{context.read_table} RENAME COLUMN unavailable_input TO #{context.read_column}"
+        )
+      end
+
+      assert Cases.get_case!(incident.id, authorize?: false) == before_case
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+      events = Cases.list_case_events!(actor: context.operator)
+      refute Enum.any?(events, &(&1.event_type in ["case_attention_required", "case_resolved"]))
+
+      assert Enum.count(events, &(&1.event_type == "recovery_review_decided")) ==
+               Enum.count(before_events, &(&1.event_type == "recovery_review_decided"))
+
+      approve_recovery!(turn, context)
+      after_run = Cases.get_resolution_run!(run.id, authorize?: false)
+      assert after_run.ai_usage_units == before_run.ai_usage_units + 6
+
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => turn.id},
+                 attempt: 2,
+                 max_attempts: 3
+               })
+
+      refute_receive {:review_recovery, _, _}
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               after_run.ai_usage_units
+
+      assert length(Cases.list_ai_invocations!(authorize?: false)) ==
+               length(before_invocations) + 1
+    end
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)
