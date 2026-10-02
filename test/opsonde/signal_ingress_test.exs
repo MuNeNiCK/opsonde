@@ -42,6 +42,62 @@ defmodule Opsonde.SignalIngressTest do
     %{admin: admin, provider: provider}
   end
 
+  test "active Signal admission cannot persist without its initial Case dispatch job", context do
+    enable_signal_automation!(context.admin)
+    now = DateTime.utc_now()
+    payload = envelope("dispatch-job-persistence", now)
+
+    incoming =
+      invocation("dispatch-job-persistence", [
+        event("dispatch-job-persistence", "alert", :firing, now)
+      ])
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_signal_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.CaseDispatch.Worker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_signal_dispatch BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_signal_dispatch()
+    """)
+
+    assert {:error, _error} =
+             Signals.ingest_signal(
+               context.provider.id,
+               context.provider.revision,
+               payload,
+               incoming
+             )
+
+    assert Cases.list_cases!(actor: context.admin) == []
+    assert Cases.list_resolution_runs!(actor: context.admin) == []
+    assert Cases.list_case_events!(actor: context.admin) == []
+    assert Signals.list_conditions!(actor: context.admin) == []
+    assert Signals.list_signal_events!(actor: context.admin) == []
+    assert Signals.list_signal_receipts!(actor: context.admin) == []
+
+    Repo.query!("DROP TRIGGER reject_signal_dispatch ON oban_jobs")
+
+    accepted = ingest!(context.provider, payload, incoming)
+    assert ingest!(context.provider, payload, incoming).id == accepted.id
+    assert [incident] = Cases.list_cases!(actor: context.admin)
+    assert Cases.case_dispatch!(incident.id, authorize?: false).state == :collecting
+
+    assert [job] =
+             Repo.all(Oban.Job)
+             |> Enum.filter(&(&1.worker == "Opsonde.Cases.CaseDispatch.Worker"))
+
+    assert job.args == %{"case_id" => incident.id}
+    assert is_integer(job.id)
+    assert length(Signals.list_conditions!(actor: context.admin)) == 1
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
+  end
+
   test "authenticated firing resolves only an exact registered identity and starts one Case",
        context do
     Accounts.change_preferred_language!(context.admin, :ja, actor: context.admin)

@@ -35,7 +35,8 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
                  },
                  authorize?: false
                ),
-             {:ok, _job} <- enqueue(turn.id) do
+             {:ok, job} <- enqueue(turn.id),
+             true <- is_integer(job.id) || {:error, "Resolver job was not persisted"} do
           {:ok, turn}
         end
       end,

@@ -322,6 +322,43 @@ defmodule Opsonde.CaseHistoryTest do
     end
   end
 
+  test "a Turn cannot commit its budget charge without a persisted Resolver job", context do
+    {incident, run} = open!("turn-job-persistence", context.operator)
+    before_run = Cases.get_resolution_run!(run.id, actor: context.viewer)
+    before_case = Cases.get_case!(incident.id, actor: context.viewer)
+    before_events = Cases.list_case_events!(actor: context.viewer)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_resolver_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Turn.ResolverWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_resolver_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_resolver_job()
+    """)
+
+    assert {:error, _error} = start(incident, run, "turn", %{"action" => "inspect"})
+    assert Cases.get_resolution_run!(run.id, actor: context.viewer) == before_run
+    assert Cases.get_case!(incident.id, actor: context.viewer) == before_case
+    assert Cases.list_case_events!(actor: context.viewer) == before_events
+    assert Cases.list_turns!(actor: context.viewer) == []
+
+    Repo.query!("DROP TRIGGER reject_resolver_job ON oban_jobs")
+
+    accepted = start!(incident, run, "turn", %{"action" => "inspect"})
+    assert accepted.status == :charged
+    assert start!(incident, run, "turn", %{"action" => "inspect"}).status == :duplicate
+    assert Cases.get_resolution_run!(run.id, actor: context.viewer).turn_count == 1
+    assert [%Oban.Job{id: job_id}] = jobs_for(accepted.value.id)
+    assert is_integer(job_id)
+    assert length(Cases.list_turns!(actor: context.viewer)) == 1
+  end
+
   test "a budget replay cannot use a charge from a previous resolution generation", context do
     {incident, run} = open!("budget-replay-generation", context.operator)
     charged = charge!(incident, run, :target_request, 1, "same-request")

@@ -218,10 +218,11 @@ defmodule Opsonde.Cases.Case.Actions.Open do
              },
              authorize?: false
            ),
-         {:ok, _job} <-
+         {:ok, job} <-
            %{"case_id" => incident.id}
            |> Opsonde.Cases.CaseDispatch.Worker.new(scheduled_at: now)
-           |> Oban.insert() do
+           |> Oban.insert(),
+         true <- is_integer(job.id) || {:error, "Initial Case dispatch job was not persisted"} do
       :ok
     end
   end

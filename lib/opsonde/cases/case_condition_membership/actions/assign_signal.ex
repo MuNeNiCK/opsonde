@@ -105,10 +105,12 @@ defmodule Opsonde.Cases.CaseConditionMembership.Actions.AssignSignal do
              authorize?: false
            ) do
       if state == :collecting do
-        with {:ok, _job} <-
+        with {:ok, job} <-
                %{"case_id" => incident.id}
                |> Opsonde.Cases.CaseDispatch.Worker.new(scheduled_at: due_at)
-               |> Oban.insert() do
+               |> Oban.insert(),
+             true <-
+               is_integer(job.id) || {:error, "Initial Signal dispatch job was not persisted"} do
           {:ok, dispatch}
         end
       else

@@ -20,6 +20,56 @@ defmodule Opsonde.CaseLifecycleTest do
     %{admin: admin, operator: operator, next_operator: next_operator, viewer: viewer}
   end
 
+  test "manual opening cannot persist a Case without its initial dispatch job", context do
+    open = fn ->
+      Cases.open_case(
+        :manual,
+        "web",
+        "missing-initial-dispatch",
+        "Inspect the current Target",
+        :warning,
+        %{"desired_outcome" => "Target responds as expected"},
+        nil,
+        :en,
+        actor: context.operator
+      )
+    end
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_initial_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.CaseDispatch.Worker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_initial_dispatch BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_initial_dispatch()
+    """)
+
+    assert {:error, _error} = open.()
+    assert Cases.list_cases!(actor: context.viewer) == []
+    assert Cases.list_resolution_runs!(actor: context.viewer) == []
+    assert Cases.list_case_events!(actor: context.viewer) == []
+
+    Repo.query!("DROP TRIGGER reject_initial_dispatch ON oban_jobs")
+
+    assert {:ok, incident} = open.()
+    assert {:ok, replayed} = open.()
+    assert replayed.id == incident.id
+    assert Cases.case_dispatch!(incident.id, authorize?: false).state == :collecting
+
+    assert [job] =
+             Repo.all(Oban.Job)
+             |> Enum.filter(&(&1.worker == "Opsonde.Cases.CaseDispatch.Worker"))
+
+    assert job.args == %{"case_id" => incident.id}
+    assert is_integer(job.id)
+    assert length(Cases.list_cases!(actor: context.viewer)) == 1
+  end
+
   test "Case resolution cannot be repeated after the Case is terminal", context do
     incident = open_case!(:manual, "web", "named-transition", context.operator)
 
