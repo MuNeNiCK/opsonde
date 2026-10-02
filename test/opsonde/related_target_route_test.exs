@@ -56,6 +56,100 @@ defmodule Opsonde.RelatedTargetRouteTest do
     }
   end
 
+  @tag projection_neighbor_read_fault: true
+  test "Resolver retries an unreadable adjacent Target before paying for an incomplete context",
+       context do
+    provider =
+      Providers.create_provider!(
+        "neighbor-fault-ai",
+        :ai,
+        "fixture-ai",
+        %{"model" => "resolver-model"},
+        %{"api_key" => "fixture-secret"}, actor: context.admin)
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    Opsonde.TestAIUsage.configure!(provider.id, :resolver, 10, context.admin)
+    {incident, run, _evidence, turn} = case_with_evidence!("late-neighbor-read", context)
+    assert {:ok, baseline} = projection(turn, context)
+    assert context.vm.id in adjacent_target_ids(baseline, context.linux.id)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+
+    columns =
+      Repo.query!(
+        "SELECT attname FROM pg_attribute WHERE attrelid = 'targets'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+      ).rows
+      |> List.flatten()
+
+    Repo.query!(
+      "CREATE FUNCTION pg_temp.failed_neighbor_revision(bigint) RETURNS bigint LANGUAGE plpgsql STABLE AS $$ BEGIN RAISE EXCEPTION 'Adjacent Target read temporarily unavailable'; END $$"
+    )
+
+    Repo.query!("ALTER TABLE targets RENAME TO targets_projection_source")
+
+    fields =
+      Enum.map_join(columns, ", ", fn
+        "revision" ->
+          "CASE WHEN id = '#{context.vm.id}'::uuid THEN pg_temp.failed_neighbor_revision(revision) ELSE revision END AS revision"
+
+        column ->
+          "\"#{column}\""
+      end)
+
+    Repo.query!("CREATE VIEW targets AS SELECT #{fields} FROM targets_projection_source")
+
+    try do
+      assert {:ok, selected} = Targets.get_target(context.linux.id, authorize?: false)
+      assert selected.id == context.linux.id
+      assert {:error, %Ash.Error.Unknown{} = error} = projection(turn, context)
+      assert Exception.message(error) =~ "Adjacent Target read temporarily unavailable"
+
+      assert {:error, %Ash.Error.Unknown{}} =
+               Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+      assert Cases.list_ai_invocations!(authorize?: false) == []
+    after
+      Repo.query!("DROP VIEW targets")
+      Repo.query!("ALTER TABLE targets_projection_source RENAME TO targets")
+      Repo.query!("DROP FUNCTION pg_temp.failed_neighbor_revision(bigint)")
+    end
+
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert context.vm.id in adjacent_target_ids(request, context.linux.id)
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.Handoff{
+                        reason: "Review fixture observations",
+                        required_input: "Review"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, _}
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    refute_receive {:resolve, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :completed
+  end
+
   @tag relationship_read_fault: true
   test "a saved related Target decision retries unreadable metadata without a new investigation",
        context do

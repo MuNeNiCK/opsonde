@@ -269,7 +269,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
         do: relationship.destination_target_id,
         else: relationship.source_target_id
 
-    case Targets.get_target(next_target_id, authorize?: false) do
+    case Targets.get_target(next_target_id, authorize?: false, not_found_error?: false) do
       {:ok, %{active: true} = next_target} ->
         with {:ok, methods} <-
                Targets.available_access_methods_for_target(next_target.id,
@@ -294,7 +294,10 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
             }, methods != []}}
         end
 
-      _unavailable ->
+      {:error, error} ->
+        {:error, error}
+
+      _inactive_or_missing ->
         :skip
     end
   end
