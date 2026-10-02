@@ -1800,7 +1800,7 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.list_cases!(actor: context.admin)) == 2
   end
 
-  test "a recurrence during Resolver delivery is charged and retried from current Conditions",
+  test "a recurrence during Resolver delivery retains its paid decision and routes one reassessment",
        context do
     enable_signal_automation!(context.admin)
     configure_resolver_ai!(context.admin)
@@ -1837,7 +1837,18 @@ defmodule Opsonde.SignalIngressTest do
              )
 
     assert Cases.get_turn!(first_turn.id, authorize?: false).result["outcome"] ==
-             "context_changed"
+             "decision"
+
+    assert Cases.started_turns_for_run!(first_turn.resolution_run_id, authorize?: false) == []
+
+    for _ <- 1..2 do
+      assert %{status: :completed} =
+               Cases.route_resolver_decision!(first_turn.id, authorize?: false)
+    end
+
+    assert Cases.list_proposals!(actor: context.admin) == []
+    assert Cases.list_operations!(actor: context.admin) == []
+    assert [%{status: :completed, category: nil}] = Cases.list_ai_invocations!(authorize?: false)
 
     assert Cases.get_resolution_run!(first_turn.resolution_run_id, authorize?: false).ai_usage_units ==
              5

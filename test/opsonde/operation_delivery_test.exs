@@ -4512,6 +4512,92 @@ defmodule Opsonde.OperationDeliveryTest do
     assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
   end
 
+  @tag paid_resolver_context_read_fault: true
+  test "a known paid Resolver conclusion survives unavailable Condition reads after response",
+       context do
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("paid-context-read", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(operation, %{"active_state" => "active"})
+    evidence = operation_evidence_record(operation.id)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(before_case.pending_intent["turn_id"], authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turns = Cases.list_turns!(actor: context.admin)
+
+    try do
+      assert :ok =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     Repo.query!(
+                       "ALTER TABLE conditions RENAME COLUMN subject_key TO unavailable_subject_key"
+                     )
+
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.RecoveryConclusion{
+                          reason: "The inspected service is active",
+                          evidence_ids: [evidence.id],
+                          condition_claims:
+                            Enum.map(request.conditions, fn condition ->
+                              %{
+                                "condition_id" => condition.id,
+                                "revision" => condition.revision,
+                                "evidence_id" => evidence.id,
+                                "reason" =>
+                                  "The current observation shows the inspected service is active"
+                              }
+                            end)
+                        },
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert {:error, _error} =
+               Opsonde.Cases.Case.DecisionRouteWorker.perform(%Oban.Job{
+                 args: %{"turn_id" => turn.id}
+               })
+    after
+      Repo.query!("ALTER TABLE conditions RENAME COLUMN unavailable_subject_key TO subject_key")
+    end
+
+    assert_receive {:resolve, _, _}
+    saved = Cases.get_turn!(turn.id, authorize?: false)
+    assert saved.status == :completed
+    assert saved.result["outcome"] == "decision"
+    assert get_in(saved.result, ["intent", "type"]) == "recovery_conclusion"
+    assert length(Cases.list_turns!(actor: context.admin)) == length(before_turns)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 5
+
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :completed
+    assert invocation.category != "context_changed"
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    approve_recovery!(saved, context)
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    refute_receive {:resolve, _, _}
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == 2
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 11
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)

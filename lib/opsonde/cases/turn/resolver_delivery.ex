@@ -84,31 +84,25 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp accept_decision(turn, selection, request, invocation, decision) do
-    if resolver_context_current?(request) do
-      with {:ok, result} <- result(decision, selection, request),
-           :ok <- valid_result_size(result) do
-        case accept(turn, invocation, decision, result, request) do
-          {:ok, _accepted} ->
-            with {:ok, current} <- Cases.get_turn(turn.id, authorize?: false) do
-              continue_saved_result(current)
-            end
+    with {:ok, result} <- result(decision, selection, request),
+         :ok <- valid_result_size(result) do
+      case accept(turn, invocation, decision, result, request) do
+        {:ok, _accepted} ->
+          with {:ok, current} <- Cases.get_turn(turn.id, authorize?: false) do
+            continue_saved_result(current)
+          end
 
-          {:error, :context_changed} ->
-            with {:ok, _charged} <-
-                   settle_unused_result(turn, invocation, decision, "context_changed") do
-              retry_changed_context(turn)
-            end
+        {:error, :context_changed} ->
+          with {:ok, _charged} <-
+                 settle_unused_result(turn, invocation, decision, "context_changed") do
+            retry_changed_context(turn)
+          end
 
-          {:error, error} ->
-            handle_failure(turn, error, invocation)
-        end
-      else
-        {:error, error} -> handle_failure(turn, error, invocation)
+        {:error, error} ->
+          handle_failure(turn, error, invocation)
       end
     else
-      with {:ok, _result} <- settle_unused_result(turn, invocation, decision, "context_changed") do
-        retry_changed_context(turn)
-      end
+      {:error, error} -> handle_failure(turn, error, invocation)
     end
   end
 
@@ -262,9 +256,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp resolver_context_matches?(incident, request, check_assessment? \\ true) do
-    incident.status == :running and not incident.cancel_requested and
-      incident.selected_target_id == request.selected_target_id and
-      incident.selected_target_revision == request.selected_target_revision and
+    case_context_matches?(incident, request) and
       case ConditionContext.current_conditions(incident) do
         {:ok, conditions} ->
           same_conditions? =
@@ -293,6 +285,12 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         {:error, _error} ->
           false
       end
+  end
+
+  defp case_context_matches?(incident, request) do
+    incident.status == :running and not incident.cancel_requested and
+      incident.selected_target_id == request.selected_target_id and
+      incident.selected_target_revision == request.selected_target_revision
   end
 
   defp retry_changed_context(turn) do
@@ -362,7 +360,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, incident} <- lock_case(turn.case_id),
-           true <- resolver_context_matches?(incident, request) || :context_changed,
+           true <- case_context_matches?(incident, request) || :context_changed,
            {:ok, usage_result} <-
              charge_usage(turn, usage_units, "resolver-result:#{invocation.id}"),
            true <-
