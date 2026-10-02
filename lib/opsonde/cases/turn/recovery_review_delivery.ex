@@ -353,31 +353,49 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     )
   end
 
-  defp apply_result(turn, %CaseEvent{data: %{"verdict" => "approved"}}) do
+  defp apply_result(turn, event) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
-      if incident.status in [:running, :resolved] do
-        case Cases.route_downstream_decision(turn.id, authorize?: false) do
-          {:ok, _resolved} ->
-            :ok
+      cond do
+        incident.status == :resolved ->
+          apply_current_result(turn, event)
 
-          {:error, %Ash.Error.Invalid{} = error} ->
-            attention(turn, "Recovery Review could not be applied", error)
+        incident.status != :running ->
+          :ok
 
-          {:error, %Ash.Error.Forbidden{} = error} ->
-            attention(turn, "Recovery Review could not be applied", error)
-
-          {:error, _error} = error ->
-            error
-        end
-      else
-        :ok
+        true ->
+          with {:ok, current?} <-
+                 Opsonde.Cases.Case.ConditionContext.current?(incident, turn.id) do
+            if current? do
+              apply_current_result(turn, event)
+            else
+              case Cases.route_resolver_decision(turn.id, authorize?: false) do
+                {:ok, _routed} -> :ok
+                {:error, _error} = error -> error
+              end
+            end
+          end
       end
     end
   end
 
-  defp apply_result(turn, %CaseEvent{data: %{"verdict" => "rejected", "reason" => reason}}) do
+  defp apply_current_result(turn, %CaseEvent{data: %{"verdict" => "approved"}}) do
+    case Cases.route_downstream_decision(turn.id, authorize?: false) do
+      {:ok, _resolved} ->
+        :ok
+
+      {:error, %Ash.Error.Invalid{} = error} ->
+        attention(turn, "Recovery Review could not be applied", error)
+
+      {:error, %Ash.Error.Forbidden{} = error} ->
+        attention(turn, "Recovery Review could not be applied", error)
+
+      {:error, _error} = error ->
+        error
+    end
+  end
+
+  defp apply_current_result(turn, %CaseEvent{data: %{"verdict" => "rejected", "reason" => reason}}) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
-         {:ok, true} <- Opsonde.Cases.Case.ConditionContext.current?(incident, turn.id),
          {:ok, selection} <- selection(turn),
          {:ok, _selection} <- current_selection(selection) do
       if incident.status == :running and
@@ -387,9 +405,6 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         :ok
       end
     else
-      {:ok, false} ->
-        attention(turn, "Recovery Review context changed", "Review was superseded")
-
       {:error, %Ash.Error.Unknown{}} = error ->
         error
 
@@ -401,10 +416,12 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     end
   end
 
-  defp apply_result(turn, %CaseEvent{data: %{"verdict" => "needs_human", "reason" => reason}}),
-    do: attention(turn, "Recovery requires operator input", reason)
+  defp apply_current_result(turn, %CaseEvent{
+         data: %{"verdict" => "needs_human", "reason" => reason}
+       }),
+       do: attention(turn, "Recovery requires operator input", reason)
 
-  defp apply_result(turn, _event),
+  defp apply_current_result(turn, _event),
     do: attention(turn, "Recovery Review is invalid", "No valid Reviewer verdict")
 
   defp reconsider_rejected_recovery(turn, reason) do

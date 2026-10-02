@@ -4501,7 +4501,19 @@ defmodule Opsonde.OperationDeliveryTest do
                )
 
       assert_receive {:review_recovery, _, _}
-      assert Cases.get_case!(incident.id, authorize?: false).status == :needs_attention
+      current = Cases.get_case!(incident.id, authorize?: false)
+
+      assert current.status ==
+               if(context.recovery_change == :reviewer_disabled,
+                 do: :needs_attention,
+                 else: :running
+               )
+
+      if context.recovery_change == :condition_refired do
+        assert current.pending_intent["action"] == "resolve_turn"
+        assert [successor] = Cases.started_turns_for_run!(run.id, authorize?: false)
+        assert current.pending_intent["turn_id"] == successor.id
+      end
 
       assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
                before_run.ai_usage_units + 6
@@ -4529,6 +4541,43 @@ defmodule Opsonde.OperationDeliveryTest do
 
       assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
                before_run.ai_usage_units + 6
+
+      if context.recovery_change == :condition_refired do
+        assert [successor] = Cases.started_turns_for_run!(run.id, authorize?: false)
+
+        assert :ok =
+                 ResolverDelivery.run(successor.id,
+                   ai_invocation: %{
+                     test_pid: self(),
+                     respond: fn request ->
+                       assert Enum.any?(request.conditions, &(&1.state == :firing))
+
+                       {:ok,
+                        %AI.ResolverDecision{
+                          intent: %AI.TargetSearch{
+                            query: "current service fault",
+                            reason: "Find the affected Target using the current symptoms"
+                          },
+                          usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                        }}
+                     end
+                   }
+                 )
+
+        Cases.route_resolver_decision!(successor.id, authorize?: false)
+        advanced = Cases.get_case!(incident.id, authorize?: false)
+        advanced_run = Cases.get_resolution_run!(run.id, authorize?: false)
+        refute advanced.pending_intent["turn_id"] == successor.id
+        assert advanced.pending_intent["action"] == "resolve_turn"
+
+        assert :ok =
+                 Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                   args: %{"turn_id" => turn.id}
+                 })
+
+        assert Cases.get_case!(incident.id, authorize?: false) == advanced
+        assert Cases.get_resolution_run!(run.id, authorize?: false) == advanced_run
+      end
     end
   end
 

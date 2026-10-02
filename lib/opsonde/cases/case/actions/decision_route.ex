@@ -309,6 +309,12 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
   defp set_retry_pending(%{status: :exhausted} = result, _source_turn_id),
     do: {:ok, result}
 
+  defp set_retry_pending(
+         %{status: :duplicate, value: %{status: :completed}} = result,
+         _source_id
+       ),
+       do: {:ok, result}
+
   defp set_retry_pending(%{status: status, case: incident, value: next_turn} = result, source_id)
        when status in [:charged, :duplicate] do
     pending = %{
