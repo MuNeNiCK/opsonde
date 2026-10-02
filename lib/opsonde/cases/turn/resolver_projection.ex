@@ -845,7 +845,8 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       ])
 
     if content["status"] != "applied" or not is_map(facts) or map_size(facts) == 0 do
-      maybe_put_diagnostics(projected, content["details"])
+      diagnostics = Map.merge(if(is_map(facts), do: facts, else: %{}), content["details"] || %{})
+      maybe_put_diagnostics(projected, diagnostics)
     else
       projected
     end

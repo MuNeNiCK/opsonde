@@ -244,7 +244,7 @@ fn sol_exchange(
     if !(1..=30_000).contains(&timeout_ms)
         || !(1..=15).contains(&request.instance)
         || request.input.len() > 2048
-        || !(1..=60_000).contains(&request.max_output_bytes)
+        || !(1..=30_000).contains(&request.max_output_bytes)
         || request.read_ms as u64 >= timeout_ms
         || username.is_empty()
         || username.len() > 16

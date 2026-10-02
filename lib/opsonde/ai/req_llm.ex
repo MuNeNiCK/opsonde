@@ -240,8 +240,7 @@ defmodule Opsonde.AI.ReqLLM do
         "observation's actual facts. " <>
         "Review recent Case evidence, including prior ResolutionRuns and effect chronology, " <>
         "even when the Resolver did not cite it. A post-effect failure may be caused by the " <>
-        "effect. An Evidence item with details_compacted retains its canonical facts but omits " <>
-        "duplicate transport details; do not assume facts absent from that item. " <>
+        "effect. " <>
         "An earlier successful observation can contradict a claim of host outage. " <>
         "A recovered monitoring state establishes only what the source reported. " <>
         "Read the source attributes to identify what was actually monitored; do not expand " <>

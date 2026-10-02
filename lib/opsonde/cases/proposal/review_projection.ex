@@ -132,7 +132,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
             kind: evidence.kind,
             target_id: evidence_target(evidence.content),
             observed_at_us: DateTime.to_unix(evidence.observed_at, :microsecond),
-            content: EvidenceProjection.project_content(evidence.content)
+            content: evidence.content
           }
 
           {:cont, {:ok, loaded ++ [item]}}

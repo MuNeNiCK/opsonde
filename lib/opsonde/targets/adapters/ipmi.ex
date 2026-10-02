@@ -9,6 +9,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   alias Opsonde.Transports.IPMI
 
   @max_data_bytes 2048
+  # Hex doubles retained output; leave room for the receipt within the shared 64 KiB result.
+  @max_console_output_bytes 30_000
   @method_effect "request.ipmi.effect"
 
   defmodule State do
@@ -298,8 +300,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          break? when is_boolean(break?) <- Map.get(parameters, "generate_break", false),
          read_ms when is_integer(read_ms) and read_ms >= 0 and read_ms < state.timeout <-
            Map.get(parameters, "read_ms", 0),
-         limit when is_integer(limit) and limit in 1..60_000 <-
-           Map.get(parameters, "max_output_bytes", 32_768),
+         limit when is_integer(limit) and limit in 1..@max_console_output_bytes <-
+           Map.get(parameters, "max_output_bytes", @max_console_output_bytes),
          include? when is_boolean(include?) <- Map.get(parameters, "include_response", false) do
       {:ok,
        {:sol,
@@ -358,7 +360,11 @@ defmodule Opsonde.Targets.Adapters.IPMI do
               "activation_flags" => %{"type" => "integer", "minimum" => 0, "maximum" => 255},
               "generate_break" => %{"type" => "boolean"},
               "read_ms" => %{"type" => "integer", "minimum" => 0, "maximum" => 29_999},
-              "max_output_bytes" => %{"type" => "integer", "minimum" => 1, "maximum" => 60_000},
+              "max_output_bytes" => %{
+                "type" => "integer",
+                "minimum" => 1,
+                "maximum" => @max_console_output_bytes
+              },
               "include_response" => %{"type" => "boolean"}
             },
             "additionalProperties" => false

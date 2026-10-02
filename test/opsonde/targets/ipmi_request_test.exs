@@ -17,7 +17,7 @@ defmodule Opsonde.Targets.IPMIRequestTest do
       {:ok, state} = adapter.bind_connection(state, %Target.Connection{endpoint: @endpoint})
 
       effect = %{
-        request(%{"input_hex" => "0d", "read_ms" => 100})
+        request(%{"input_hex" => "0d", "read_ms" => 100, "max_output_bytes" => 30_000})
         | operation: "console.exchange"
       }
 
@@ -45,7 +45,7 @@ defmodule Opsonde.Targets.IPMIRequestTest do
             Map.put(effect.parameters, "input_hex", "F"),
             Map.put(effect.parameters, "activation_flags", 256),
             Map.put(effect.parameters, "read_ms", 30_000),
-            Map.put(effect.parameters, "max_output_bytes", 60_001),
+            Map.put(effect.parameters, "max_output_bytes", 30_001),
             Map.put(effect.parameters, "generate_break", "true"),
             Map.put(effect.parameters, "netfn", 6)
           ] do

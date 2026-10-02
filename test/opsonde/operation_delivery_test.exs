@@ -426,6 +426,7 @@ defmodule Opsonde.OperationDeliveryTest do
   test "auto diagnostic effects are independently reviewed and return to investigation without repair verification",
        context do
     configure_mode!(context.admin, :auto)
+    diagnostic_output = String.duplicate("x", 50_000) <> "\nnginx is running"
 
     {incident, run, proposal} =
       authorized_proposal!("diagnostic-effect", context, purpose: :investigation)
@@ -468,7 +469,7 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok,
                     %Target.EffectResult{
                       status: :applied,
-                      details: %{"stdout" => "nginx is running"}
+                      details: %{"stdout" => diagnostic_output}
                     }}
                  )
              )
@@ -485,7 +486,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert evidence.kind == "observation"
     assert evidence.content["request_kind"] == "effect"
     assert evidence.content["purpose"] == "investigation"
-    assert evidence.content["facts"]["stdout"] == "nginx is running"
+    assert evidence.content["facts"]["stdout"] == diagnostic_output
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
 
     assert :ok =
@@ -503,6 +504,8 @@ defmodule Opsonde.OperationDeliveryTest do
                  test_pid: self(),
                  respond: fn request ->
                    assert evidence.id in request.recovery_evidence_ids
+                   observed = Enum.find(request.evidence, &(&1.id == evidence.id))
+                   assert observed.content["facts"]["stdout"] == diagnostic_output
 
                    {:ok,
                     %AI.ResolverDecision{
