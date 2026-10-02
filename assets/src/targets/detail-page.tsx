@@ -113,6 +113,18 @@ export function TargetDetailPage() {
           {target.kind}
           {boundary ? " · " + boundary.name : ""}
         </p>
+        {Object.keys(target.facts).length > 0 && (
+          <dl className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {Object.entries(target.facts).map(([name, value]) => (
+              <div key={name} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
+                <dt className="min-w-0 break-all text-muted-foreground">{name}</dt>
+                <dd className="min-w-0 break-all">
+                  {typeof value === "string" ? value : JSON.stringify(value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
 
       {error && (

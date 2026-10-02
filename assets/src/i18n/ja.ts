@@ -1020,6 +1020,10 @@ const ja = {
       targetCreated:
         "Targetを作成しました。識別子、接続経路、層間関係、運用指示をここで設定できます。",
       targetIdentity: "Targetの識別情報",
+      addAttribute: "属性を追加",
+      attributeName: "項目名",
+      attributeValue: "値",
+      attributeNamesUnique: "項目名を入力し、重複をなくしてください。",
       targetCreateGuidance:
         "最初にインフラの識別情報を登録します。許可する接続経路と禁止事項は詳細画面から追加します。",
       boundaryCreated: "管理境界を作成しました。新しいTargetで選択できます。",

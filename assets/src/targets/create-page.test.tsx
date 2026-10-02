@@ -75,6 +75,9 @@ test("lists published types, filters categories, and creates the selected type",
 
   await user.click(screen.getByText("Custom network device"));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "edge-1");
+  await user.click(screen.getByRole("button", { name: "Add attribute" }));
+  await user.type(screen.getByRole("textbox", { name: "Attribute name" }), "manufacturer");
+  await user.type(screen.getByRole("textbox", { name: "Attribute value" }), "UnlistedVendor");
   await user.click(screen.getByRole("button", { name: "Add Target" }));
 
   await waitFor(() => expect(screen.getByText("Target saved")).toBeTruthy());
@@ -87,7 +90,7 @@ test("lists published types, filters categories, and creates the selected type",
             name: "edge-1",
             kind: "network_device",
             type_id: "custom-network-device",
-            facts: {},
+            facts: { manufacturer: "UnlistedVendor" },
             management_boundary_id: null,
           },
         },

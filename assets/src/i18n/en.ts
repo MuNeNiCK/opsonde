@@ -1043,6 +1043,10 @@ const en = {
       targetCreated:
         "Target created. Add its identities, access methods, relationships, and operating instructions here.",
       targetIdentity: "Target identity",
+      addAttribute: "Add attribute",
+      attributeName: "Attribute name",
+      attributeValue: "Attribute value",
+      attributeNamesUnique: "Attribute names must be nonempty and unique.",
       targetCreateGuidance:
         "Register the infrastructure identity first. Add permitted access and safeguards from its detail page.",
       boundaryCreated: "Management boundary created. It is now available for the new Target.",

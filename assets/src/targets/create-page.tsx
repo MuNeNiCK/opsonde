@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, Plus, Server } from "lucide-react";
+import { ArrowLeft, Plus, Server, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -30,6 +30,7 @@ export function TargetCreatePage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [attributes, setAttributes] = useState<{ id: string; name: string; value: string }[]>([]);
   const canManage = account?.role === "admin";
   const choice = catalog?.types.find((item) => item.id === targetType);
   const categoryLabels = new Map(
@@ -93,6 +94,11 @@ export function TargetCreatePage() {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const names = attributes.map((attribute) => attribute.name.trim());
+    if (names.some((name) => !name) || new Set(names).size !== names.length) {
+      setError(t("targets.attributeNamesUnique"));
+      return;
+    }
     setPending(true);
     setError("");
     try {
@@ -104,7 +110,9 @@ export function TargetCreatePage() {
               name: value(form, "name"),
               kind: choice.kind,
               type_id: choice.id,
-              facts: {},
+              facts: Object.fromEntries(
+                attributes.map((attribute) => [attribute.name.trim(), attribute.value]),
+              ),
               management_boundary_id: value(form, "management_boundary_id") || null,
             },
           },
@@ -253,6 +261,65 @@ export function TargetCreatePage() {
                     .map((item) => ({ value: item.id, label: item.name }))}
                 />
               </div>
+              <div className="md:col-span-2 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setAttributes((current) => [
+                      ...current,
+                      { id: crypto.randomUUID(), name: "", value: "" },
+                    ])
+                  }
+                >
+                  <Plus />
+                  {t("targets.addAttribute")}
+                </Button>
+              </div>
+              {attributes.map((attribute) => (
+                <div key={attribute.id} className="md:col-span-2 flex items-end gap-3">
+                  <div className="grid flex-1 gap-3 md:grid-cols-2">
+                    <Field
+                      label={t("targets.attributeName")}
+                      name={`attribute-name-${attribute.id}`}
+                      value={attribute.name}
+                      required
+                      onChange={(event) =>
+                        setAttributes((current) =>
+                          current.map((item) =>
+                            item.id === attribute.id ? { ...item, name: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <Field
+                      label={t("targets.attributeValue")}
+                      name={`attribute-value-${attribute.id}`}
+                      value={attribute.value}
+                      onChange={(event) =>
+                        setAttributes((current) =>
+                          current.map((item) =>
+                            item.id === attribute.id
+                              ? { ...item, value: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t("common.remove")}
+                    onClick={() =>
+                      setAttributes((current) => current.filter((item) => item.id !== attribute.id))
+                    }
+                  >
+                    <X />
+                  </Button>
+                </div>
+              ))}
               <div className="md:col-span-2 flex flex-wrap gap-2">
                 <Button type="submit" disabled={pending || boundaries === null}>
                   {pending ? <Spinner /> : <Plus />}
