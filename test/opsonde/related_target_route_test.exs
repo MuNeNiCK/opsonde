@@ -56,6 +56,45 @@ defmodule Opsonde.RelatedTargetRouteTest do
     }
   end
 
+  @tag relationship_read_fault: true
+  test "a saved related Target decision retries unreadable metadata without a new investigation",
+       context do
+    {incident, run, evidence, turn} = case_with_evidence!("relationship-read", context)
+    source = complete_traversal!(turn, context.runs_on, context.vm, evidence)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(source.id, authorize?: false)
+    before_evidence = Cases.list_evidence!(actor: context.admin)
+    before_turns = Cases.list_turns!(actor: context.admin)
+    before_events = Cases.list_case_events!(actor: context.admin)
+    job = %Oban.Job{args: %{"turn_id" => source.id}}
+    Repo.query!("ALTER TABLE relationships RENAME COLUMN facts TO unavailable_facts")
+
+    try do
+      assert {:error, _error} = Cases.route_related_target(source.id, authorize?: false)
+      assert {:error, _error} = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    after
+      Repo.query!("ALTER TABLE relationships RENAME COLUMN unavailable_facts TO facts")
+    end
+
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(source.id, authorize?: false) == before_turn
+    assert Cases.list_evidence!(actor: context.admin) == before_evidence
+    assert Cases.list_turns!(actor: context.admin) == before_turns
+    assert Cases.list_case_events!(actor: context.admin) == before_events
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+    assert :ok = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    assert :ok = Opsonde.Cases.Case.DecisionRouteWorker.perform(job)
+    assert Cases.get_case!(incident.id, authorize?: false).selected_target_id == context.vm.id
+    after_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert after_run.related_target_count == before_run.related_target_count + 1
+    assert after_run.turn_count == before_run.turn_count + 1
+    assert after_run.ai_usage_units == before_run.ai_usage_units
+    assert length(Cases.list_turns!(actor: context.admin)) == length(before_turns) + 1
+    assert Cases.list_evidence!(actor: context.admin) == before_evidence
+  end
+
   test "Resolver traverses evidence-selected layers without family branches or inherited access",
        context do
     {incident, run, evidence, first_turn} = case_with_evidence!("layered", context)

@@ -56,6 +56,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       when status in [:charged, :duplicate] ->
         start_next_turn(turn, selected_case, charged_run, intent)
 
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
+
       {:error, error} ->
         persist_failure(turn, intent, incident, run, traversal_error(error))
     end
@@ -123,6 +129,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
               do: {:cont, :ok},
               else: {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
 
+          {:error, %Ash.Error.Unknown{}} = error ->
+            {:halt, error}
+
+          {:error, %Ash.Error.Framework{}} = error ->
+            {:halt, error}
+
           _unavailable ->
             {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
         end
@@ -139,6 +151,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
     case Targets.load_relationship_for_traversal(id, revision, authorize?: false) do
       {:ok, relationship} ->
         {:ok, relationship}
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
 
       {:error, _error} ->
         traversal_failure(:stale_relationship, "Target relationship is unavailable or changed")
@@ -206,6 +224,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, %{role: role} = actor} when role in [:admin, :operator] ->
         {:ok, actor}
 
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
+
       _unavailable ->
         traversal_failure(:denied, "Case owner cannot authorize related Target access")
     end
@@ -226,6 +250,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, %{active: false}} ->
         traversal_failure(:unavailable, "Related Target is inactive")
 
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
+
       {:error, _error} ->
         traversal_failure(:denied, "Case owner is not authorized for the related Target")
     end
@@ -238,6 +268,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
 
       {:ok, []} ->
         traversal_failure(:unavailable, "Related Target has no available Access Method")
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
 
       {:error, _error} ->
         traversal_failure(:unavailable, "Related Target Access Methods are unavailable")
