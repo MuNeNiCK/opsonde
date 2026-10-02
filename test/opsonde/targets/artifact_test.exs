@@ -799,50 +799,74 @@ defmodule Opsonde.Targets.ArtifactTest do
     assert Targets.revoke_artifact!(upload.id, actor: context.admin).revision == revoked.revision
   end
 
-  test "an upload is not accepted when its durable cleanup schedule cannot be saved", context do
-    # Local DB fault fixture at the intent persistence seam, no remote operation is involved.
-    Opsonde.Repo.query!("""
-    CREATE FUNCTION pg_temp.reject_artifact_expiry_job() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.worker = 'Opsonde.Targets.Artifact.ExpiryWorker' THEN
-        RAISE EXCEPTION 'injected artifact cleanup persistence failure';
-      END IF;
-      RETURN NEW;
-    END;
-    $$;
-    """)
+  for fault <- [:missing_row, :storage_error] do
+    @tag expiry_job_fault: fault
+    test "a file is not accepted when durable cleanup returns #{fault}", context do
+      rejection =
+        case context.expiry_job_fault do
+          :missing_row -> "RETURN NULL;"
+          :storage_error -> "RAISE EXCEPTION 'injected artifact cleanup persistence failure';"
+        end
 
-    Opsonde.Repo.query!("""
-    CREATE TRIGGER reject_artifact_expiry_job BEFORE INSERT ON oban_jobs
-    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_artifact_expiry_job();
-    """)
+      # Local DB fault fixture at the intent persistence seam, no remote operation is involved.
+      Opsonde.Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_artifact_expiry_job() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.worker = 'Opsonde.Targets.Artifact.ExpiryWorker' THEN
+          #{rejection}
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
 
-    assert {:error, _} =
-             Targets.begin_artifact(
-               context.target.id,
-               "device.bin",
-               "application/octet-stream",
-               5,
-               "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
-               "failed-cleanup",
-               actor: context.admin
-             )
+      Opsonde.Repo.query!("""
+      CREATE TRIGGER reject_artifact_expiry_job BEFORE INSERT ON oban_jobs
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_artifact_expiry_job();
+      """)
 
-    assert {:error, _} =
-             Targets.begin_artifact_receipt(
-               context.target.id,
-               "response.bin",
-               "application/octet-stream",
-               "failed-incoming-cleanup",
-               actor: context.admin
-             )
+      upload = fn ->
+        Targets.begin_artifact(
+          context.target.id,
+          "device.bin",
+          "application/octet-stream",
+          5,
+          "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd",
+          "failed-cleanup",
+          actor: context.admin
+        )
+      end
 
-    assert Targets.page_artifacts!(context.target.id, actor: context.admin).results == []
-    refute_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker)
+      receipt = fn ->
+        Targets.begin_artifact_receipt(
+          context.target.id,
+          "response.bin",
+          "application/octet-stream",
+          "failed-incoming-cleanup",
+          actor: context.admin
+        )
+      end
 
-    Opsonde.Repo.query!("DROP TRIGGER reject_artifact_expiry_job ON oban_jobs")
-    upload = begin_upload(context, "failed-cleanup")
-    assert upload.status == :uploading
-    assert_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker, args: %{id: upload.id})
+      case context.expiry_job_fault do
+        :missing_row ->
+          assert_raise Ash.Error.Unknown, upload
+          assert_raise Ash.Error.Unknown, receipt
+
+        :storage_error ->
+          assert {:error, _} = upload.()
+          assert {:error, _} = receipt.()
+      end
+
+      assert Targets.page_artifacts!(context.target.id, actor: context.admin).results == []
+      refute_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker)
+
+      Opsonde.Repo.query!("DROP TRIGGER reject_artifact_expiry_job ON oban_jobs")
+      upload = begin_upload(context, "failed-cleanup")
+      assert upload.status == :uploading
+      assert_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker, args: %{id: upload.id})
+      receipt = begin_receipt(context, "failed-incoming-cleanup")
+      assert receipt.status == :receiving
+      assert_enqueued(worker: Opsonde.Targets.Artifact.ExpiryWorker, args: %{id: receipt.id})
+    end
   end
 end
