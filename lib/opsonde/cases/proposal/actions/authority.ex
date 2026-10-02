@@ -323,7 +323,8 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp await_reviewer(proposal, incident) do
     with {:ok, reviewing} <- transition(proposal, :reviewing),
          {:ok, _case} <- handoff(incident, reviewing, :review),
-         {:ok, _job} <- enqueue_review(reviewing.id) do
+         {:ok, job} <- enqueue_review(reviewing.id),
+         true <- is_integer(job.id) || {:error, "Proposal Reviewer job was not persisted"} do
       reviewing
     end
   end
@@ -840,14 +841,16 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp schedule_acceptance(proposal) do
     case Opsonde.Cases.Operation.AcceptanceWorker.new(%{"proposal_id" => proposal.id})
          |> Oban.insert() do
-      {:ok, _job} -> :ok
+      {:ok, %Oban.Job{id: id}} when is_integer(id) -> :ok
+      {:ok, _unpersisted} -> {:error, "Operation acceptance job was not persisted"}
       {:error, _error} = error -> error
     end
   end
 
   defp schedule_expiration(proposal) do
     case proposal |> ProposalExpirationWorker.job() |> Oban.insert() do
-      {:ok, _job} -> :ok
+      {:ok, %Oban.Job{id: id}} when is_integer(id) -> :ok
+      {:ok, _unpersisted} -> {:error, "Proposal expiration job was not persisted"}
       {:error, _error} = error -> error
     end
   end

@@ -3961,6 +3961,50 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  test "a saved recovery conclusion cannot request Review without a persisted job", context do
+    {incident, run, turn, _evidence} = recovery_conclusion!(context, "recovery-review-job")
+    before_case = Cases.get_case!(incident.id, actor: context.operator)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_events = Cases.list_case_events!(actor: context.operator)
+    before_invocations = Cases.list_ai_invocations!(actor: context.operator)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_recovery_review_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Turn.RecoveryReviewWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_recovery_review_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_recovery_review_job()
+    """)
+
+    assert {:error, _error} = Cases.route_downstream_decision(turn.id, authorize?: false)
+    assert Cases.get_case!(incident.id, actor: context.operator) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.list_case_events!(actor: context.operator) == before_events
+    assert Cases.list_ai_invocations!(actor: context.operator) == before_invocations
+
+    Repo.query!("DROP TRIGGER reject_recovery_review_job ON oban_jobs")
+
+    for _ <- 1..2 do
+      assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent ==
+               %{"action" => "review_recovery", "turn_id" => turn.id}
+    end
+
+    assert [job] =
+             Repo.all(Oban.Job)
+             |> Enum.filter(&(&1.worker == "Opsonde.Cases.Turn.RecoveryReviewWorker"))
+
+    assert job.args == %{"turn_id" => turn.id}
+    assert is_integer(job.id)
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.list_ai_invocations!(actor: context.operator) == before_invocations
+  end
+
   for {table, predicate, failure} <- [
         {"case_events", "NEW.event_type = 'case_resolved'",
          "RAISE EXCEPTION 'test completion persistence unavailable';"},
@@ -3968,41 +4012,8 @@ defmodule Opsonde.OperationDeliveryTest do
       ] do
     @tag completion_table: table, completion_predicate: predicate, completion_failure: failure
     test "a #{table} completion failure retains the approved recovery for replay", context do
-      {incident, run, proposal} =
-        authorized_proposal!("recovery-completion-failure", context, request_kind: :observation)
-
-      operation = Cases.accept_operation!(proposal.id, authorize?: false)
-      assert :ok = deliver_observation(operation, %{"active_state" => "active"})
-      evidence = operation_evidence_record(operation.id)
-      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-      turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
-
-      assert :ok =
-               ResolverDelivery.run(turn.id,
-                 target_invocation:
-                   invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
-                 ai_invocation: %{
-                   test_pid: self(),
-                   respond: fn request ->
-                     {:ok,
-                      %AI.ResolverDecision{
-                        intent: %AI.RecoveryConclusion{
-                          reason: "The inspected service is active",
-                          evidence_ids: [evidence.id],
-                          desired_outcome_claims: [
-                            %{
-                              "symptom_id" => request.case_symptom.id,
-                              "evidence_id" => evidence.id,
-                              "fact_keys" => ["active_state"],
-                              "reason" => "The inspected service is active"
-                            }
-                          ]
-                        },
-                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
-                      }}
-                   end
-                 }
-               )
+      {incident, run, turn, evidence} =
+        recovery_conclusion!(context, "recovery-completion-failure")
 
       assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent[
                "action"
@@ -5665,6 +5676,44 @@ defmodule Opsonde.OperationDeliveryTest do
             fragment("?->>'case_id'", job.args) == ^case_id
       )
     )
+  end
+
+  defp recovery_conclusion!(context, suffix) do
+    {incident, run, proposal} = authorized_proposal!(suffix, context, request_kind: :observation)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(operation, %{"active_state" => "active"})
+    evidence = operation_evidence_record(operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The inspected service is active",
+                        evidence_ids: [evidence.id],
+                        desired_outcome_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => evidence.id,
+                            "fact_keys" => ["active_state"],
+                            "reason" => "The inspected service is active"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    {incident, run, turn, evidence}
   end
 
   defp approve_recovery!(turn, context, delivery_opts \\ []) do

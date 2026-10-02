@@ -77,6 +77,127 @@ defmodule Opsonde.ProposalAuthorityTest do
     }
   end
 
+  for {mode, worker, expected_status} <- [
+        {:auto, ReviewWorker, :reviewing},
+        {:ask, ProposalExpirationWorker, :awaiting_human},
+        {:full_access, OperationAcceptanceWorker, :authorized}
+      ] do
+    @tag authority_mode: mode, required_worker: worker, scheduled_status: expected_status
+    test "#{mode} Proposal routing cannot commit without its required continuation job",
+         context do
+      configure_mode!(context.authority_mode, context.admin)
+      {incident, run, proposal} = proposal!("authority-job-persistence", context)
+      before_case = Cases.get_case!(incident.id, actor: context.operator)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+      before_proposal = Cases.get_proposal!(proposal.id, actor: context.operator)
+      before_events = Cases.list_case_events!(actor: context.operator)
+
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_authority_job() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.worker = '#{Oban.Worker.to_string(context.required_worker)}' THEN RETURN NULL; END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER reject_authority_job BEFORE INSERT ON oban_jobs
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_authority_job()
+      """)
+
+      assert {:error, _error} = Cases.route_proposal_authority(proposal.id, authorize?: false)
+      assert Cases.get_case!(incident.id, actor: context.operator) == before_case
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.get_proposal!(proposal.id, actor: context.operator) == before_proposal
+      assert Cases.list_case_events!(actor: context.operator) == before_events
+      assert Cases.list_approvals!(actor: context.operator) == []
+      assert Cases.list_review_decisions!(actor: context.operator) == []
+
+      Repo.query!("DROP TRIGGER reject_authority_job ON oban_jobs")
+
+      scheduled = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+      assert scheduled.status == context.scheduled_status
+      assert Cases.route_proposal_authority!(proposal.id, authorize?: false).id == scheduled.id
+
+      assert [job] =
+               Repo.all(Oban.Job)
+               |> Enum.filter(&(&1.worker == Oban.Worker.to_string(context.required_worker)))
+
+      assert job.args == %{"proposal_id" => proposal.id}
+      assert is_integer(job.id)
+      assert Cases.list_operations!(actor: context.operator) == []
+      assert Cases.list_ai_invocations!(actor: context.operator) == []
+    end
+  end
+
+  test "saved Reviewer approval retries acceptance scheduling without another paid review",
+       context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("paid-review-job-persistence", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, actor: context.operator)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_review_acceptance_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Operation.AcceptanceWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_review_acceptance_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_review_acceptance_job()
+    """)
+
+    assert {:error, _error} =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
+                      verdict: :approved,
+                      reason: "The proposed exact request is justified",
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, %{model: "reviewer-model"}, _request}
+    assert Cases.get_case!(incident.id, actor: context.operator) == before_case
+    assert Cases.get_proposal!(proposal.id, actor: context.operator).status == :reviewing
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+    assert [decision] = Cases.list_review_decisions!(actor: context.operator)
+    assert decision.verdict == :approved
+    invocations = Cases.list_ai_invocations!(actor: context.operator)
+    assert Cases.list_approvals!(actor: context.operator) == []
+    assert acceptance_jobs(proposal.id) == 0
+
+    Repo.query!("DROP TRIGGER reject_review_acceptance_job ON oban_jobs")
+
+    for _ <- 1..2 do
+      assert :ok =
+               ReviewDelivery.run(reviewing.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn _request -> flunk("saved approval was reviewed again") end
+                 }
+               )
+    end
+
+    assert Cases.get_proposal!(proposal.id, actor: context.operator).status == :authorized
+    assert acceptance_jobs(proposal.id) == 1
+    assert length(Cases.list_approvals!(actor: context.operator)) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+    assert Cases.list_ai_invocations!(actor: context.operator) == invocations
+    refute_receive {:review, _, _}
+  end
+
   test "Reviewer receives distinct citable ranges of a captured file", context do
     configure_mode!(:auto, context.admin)
     {incident, run, proposal} = proposal!("file-review", context, :effect)

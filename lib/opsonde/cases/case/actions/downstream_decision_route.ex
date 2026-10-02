@@ -184,10 +184,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
              },
              authorize?: false
            ),
-         {:ok, _job} <-
+         {:ok, job} <-
            %{"turn_id" => turn.id}
            |> Opsonde.Cases.Turn.RecoveryReviewWorker.new()
-           |> Oban.insert() do
+           |> Oban.insert(),
+         true <- is_integer(job.id) || {:error, "Recovery Reviewer job was not persisted"} do
       updated
     end
   end
