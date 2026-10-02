@@ -72,14 +72,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         accept_decision(turn, selection, request, claim.invocation, decision)
 
       {:error, error} ->
-        if resolver_context_current?(request) do
-          handle_failure(turn, error, claim.invocation)
-        else
-          with {:ok, _invocation} <-
-                 settle_failed_usage(turn, claim.invocation, "context_changed", error) do
-            retry_changed_context(turn)
-          end
-        end
+        handle_failure(turn, error, claim.invocation)
     end
   end
 

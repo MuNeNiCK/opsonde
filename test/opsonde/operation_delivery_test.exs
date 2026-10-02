@@ -4839,6 +4839,101 @@ defmodule Opsonde.OperationDeliveryTest do
              before_run.ai_usage_units + 11
   end
 
+  for change <- [:read_unavailable, :condition_recovered] do
+    @tag metered_resolver_error_context_read_fault: true, error_context_change: change
+    test "a metered Resolver schema error keeps its cause after #{change}",
+         context do
+      enable_signal_automation!(context.admin)
+
+      {incident, run, proposal, signal_provider} =
+        authorized_proposal!("metered-error-context-read", context,
+          trigger_kind: :signal,
+          request_kind: :observation
+        )
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+      assert :ok = deliver_observation(operation, %{"active_state" => "inactive"})
+      current = Cases.get_case!(incident.id, authorize?: false)
+      turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+
+      try do
+        assert :ok =
+                 ResolverDelivery.run(turn.id,
+                   ai_invocation: %{
+                     test_pid: self(),
+                     respond: fn _request ->
+                       case context.error_context_change do
+                         :read_unavailable ->
+                           Repo.query!(
+                             "ALTER TABLE conditions RENAME COLUMN subject_key TO unavailable_subject_key"
+                           )
+
+                         :condition_recovered ->
+                           recover_signal!(
+                             signal_provider,
+                             context,
+                             incident.initial_context["signal_event_key"],
+                             "metered-error-recovered"
+                           )
+                       end
+
+                       {:error, :invalid_output, "Object schema was rejected",
+                        %AI.Usage{input_tokens: 3, output_tokens: 2}, "schema_validation"}
+                     end
+                   }
+                 )
+      after
+        if context.error_context_change == :read_unavailable do
+          Repo.query!(
+            "ALTER TABLE conditions RENAME COLUMN unavailable_subject_key TO subject_key"
+          )
+        end
+      end
+
+      assert_receive {:resolve, _, _}
+      saved = Cases.get_turn!(turn.id, authorize?: false)
+      assert saved.result["outcome"] == "delivery_failed"
+      assert saved.result["category"] == "invalid_output"
+      assert saved.result["rejection_code"] == "schema_validation"
+      assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+      assert invocation.status == :failed
+      assert invocation.category == "invalid_output"
+      assert invocation.input_tokens == 3
+      assert invocation.output_tokens == 2
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_run.ai_usage_units + 5
+
+      assert [successor] = Cases.started_turns_for_run!(run.id, authorize?: false)
+      assert successor.intent["category"] == "invalid_output"
+      assert successor.intent["rejection_code"] == "schema_validation"
+
+      assert {:ok, request} =
+               ResolverProjection.build(
+                 successor.id,
+                 Providers.select_resolver_ai!(authorize?: false)
+               )
+
+      assert request.retry_context["rejection_code"] == "schema_validation"
+
+      assert Enum.map(request.conditions, & &1.state) ==
+               if(context.error_context_change == :condition_recovered,
+                 do: [:recovered],
+                 else: [:firing]
+               )
+
+      assert :ok =
+               Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+      refute_receive {:resolve, _, _}
+      assert Cases.started_turns_for_run!(run.id, authorize?: false) == [successor]
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_run.ai_usage_units + 5
+    end
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)
