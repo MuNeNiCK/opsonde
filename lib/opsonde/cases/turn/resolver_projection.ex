@@ -35,6 +35,8 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, incident, conditions, continuity),
          {:ok, continuity} <- EvidenceProjection.file_contents(incident, continuity),
+         {:ok, manual_recovery_ids} <-
+           ConditionRecovery.manual_evidence_ids(incident, run, target, continuity),
          request <-
            request(
              selection,
@@ -42,7 +44,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
              run,
              turn,
              conditions,
-             recovery_ids,
+             recovery_ids ++ manual_recovery_ids,
              continuity,
              historical_evidence,
              recent_recovery_review,
@@ -538,9 +540,6 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
     file_reads = Enum.sort_by(file_reads, &(&1.id != turn.intent["file_read_evidence_id"]))
 
-    manual_recovery_ids =
-      ConditionRecovery.manual_evidence_ids(incident, run, target, file_reads ++ other_evidence)
-
     base
     |> add_items(:evidence, generic_evidence(file_reads, base.disclosure.allowed_target_ids))
     |> add_items(
@@ -575,7 +574,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
-    |> mark_recovery_proofs(recovery_ids ++ manual_recovery_ids)
+    |> mark_recovery_proofs(recovery_ids)
     |> mark_visible_failed_observations()
     |> then(fn current ->
       visible_ids = MapSet.new(Enum.map(current.target_relations, & &1.id))

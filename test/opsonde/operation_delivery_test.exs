@@ -4427,6 +4427,91 @@ defmodule Opsonde.OperationDeliveryTest do
     assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
   end
 
+  @tag manual_recovery_proof_read_fault: true
+  test "manual recovery proof history read failure retries before another paid Resolver call",
+       context do
+    setting = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      setting.setting_revision,
+      :full_access,
+      setting.signal_automation_enabled,
+      setting.max_elapsed_seconds,
+      setting.max_resolver_turns,
+      1,
+      0,
+      setting.max_related_targets,
+      setting.max_ai_usage_units,
+      setting.max_no_progress_turns,
+      "Conclude from the final allowed observation",
+      actor: context.admin
+    )
+
+    {incident, run, proposal} =
+      authorized_proposal!("manual-proof-read", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = deliver_observation(operation, %{"active_state" => "active"})
+    evidence = operation_evidence_record(operation.id)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    turn = Cases.get_turn!(before_case.pending_intent["turn_id"], authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    response = fn request ->
+      {:ok,
+       %AI.ResolverDecision{
+         intent: %AI.RecoveryConclusion{
+           reason: "The inspected service is active",
+           evidence_ids: [evidence.id],
+           desired_outcome_claims: [
+             %{
+               "symptom_id" => request.case_symptom.id,
+               "evidence_id" => evidence.id,
+               "fact_keys" => ["active_state"],
+               "reason" => "The inspected service is active"
+             }
+           ]
+         },
+         usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+       }}
+    end
+
+    opts = [ai_invocation: %{test_pid: self(), respond: response}]
+
+    Repo.query!(
+      "ALTER TABLE operations RENAME COLUMN outcome_category TO unavailable_outcome_category"
+    )
+
+    try do
+      assert {:error, _error} = ResolverDelivery.run(turn.id, opts)
+    after
+      Repo.query!(
+        "ALTER TABLE operations RENAME COLUMN unavailable_outcome_category TO outcome_category"
+      )
+    end
+
+    refute_receive {:resolve, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+    assert Cases.get_turn!(turn.id, authorize?: false).revision == turn.revision
+    assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+
+    assert :ok = ResolverDelivery.run(turn.id, opts)
+    assert_receive {:resolve, _, request}
+    assert evidence.id in request.recovery_evidence_ids
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 5
+
+    assert :ok =
+             Opsonde.Cases.Turn.ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    refute_receive {:resolve, _, _}
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)

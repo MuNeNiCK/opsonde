@@ -84,34 +84,46 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       when incident.trigger_kind in [:manual, :audit] and not is_nil(target) do
     case baseline_for_case(incident) do
       {:ok, baseline} ->
-        evidence
-        |> Enum.filter(&manual_candidate?(&1, incident, run, target, baseline))
-        |> Enum.map(& &1.id)
+        with {:ok, candidates} <-
+               select_evidence(evidence, &manual_candidate(&1, incident, run, target, baseline)) do
+          {:ok, Enum.map(candidates, & &1.id)}
+        end
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
 
       {:error, _unavailable} ->
-        []
+        {:ok, []}
     end
   end
 
-  def manual_evidence_ids(_incident, _run, _target, _evidence), do: []
+  def manual_evidence_ids(_incident, _run, _target, _evidence), do: {:ok, []}
 
-  defp manual_candidate?(
+  defp manual_candidate(
          %{kind: "file_read"} = evidence,
          incident,
          run,
          target,
          baseline
        ) do
-    is_binary(evidence.content["value"]) and
+    if is_binary(evidence.content["value"]) do
       case Cases.file_read_source(evidence.id, incident.id, authorize?: false) do
-        {:ok, source} -> manual_candidate?(source, incident, run, target, baseline)
-        {:error, _unavailable} -> false
+        {:ok, source} -> manual_candidate(source, incident, run, target, baseline)
+        {:error, %Ash.Error.Unknown{}} = error -> error
+        {:error, %Ash.Error.Framework{}} = error -> error
+        {:error, _unavailable} -> {:ok, false}
       end
+    else
+      {:ok, false}
+    end
   end
 
-  defp manual_candidate?(evidence, incident, run, target, baseline) do
-    DateTime.compare(evidence.observed_at, baseline) != :lt and
-      evidence.content["target_id"] == target.id and
+  defp manual_candidate(evidence, incident, run, target, baseline) do
+    if DateTime.compare(evidence.observed_at, baseline) != :lt and
+         evidence.content["target_id"] == target.id do
       case evidence do
         %{
           kind: "observation",
@@ -121,15 +133,22 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
         when is_map(facts) and map_size(facts) > 0 ->
           case Cases.get_operation(operation_id, authorize?: false) do
             {:ok, operation} ->
-              evidence.resolution_run_id == run.id and operation.case_id == incident.id and
-                operation.resolution_run_id == run.id and
-                operation.target_id == target.id and operation.target_revision == target.revision and
-                operation.purpose == :investigation and operation.status == :applied and
-                is_struct(operation.dispatch_started_at, DateTime) and
-                DateTime.compare(operation.dispatch_started_at, baseline) != :lt
+              {:ok,
+               evidence.resolution_run_id == run.id and operation.case_id == incident.id and
+                 operation.resolution_run_id == run.id and
+                 operation.target_id == target.id and operation.target_revision == target.revision and
+                 operation.purpose == :investigation and operation.status == :applied and
+                 is_struct(operation.dispatch_started_at, DateTime) and
+                 DateTime.compare(operation.dispatch_started_at, baseline) != :lt}
+
+            {:error, %Ash.Error.Unknown{}} = error ->
+              error
+
+            {:error, %Ash.Error.Framework{}} = error ->
+              error
 
             _other ->
-              false
+              {:ok, false}
           end
 
         %{
@@ -139,18 +158,24 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           with {:ok, operation} <- Cases.get_operation(operation_id, authorize?: false),
                {:ok, attempt} <-
                  Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
-            operation.case_id == incident.id and operation.target_id == target.id and
-              operation.target_revision == target.revision and
-              operation.purpose == :remediation and operation.status == :applied and
-              attempt.status == :verified and attempt.case_id == incident.id and
-              attempt.observed_at == evidence.observed_at
+            {:ok,
+             operation.case_id == incident.id and operation.target_id == target.id and
+               operation.target_revision == target.revision and
+               operation.purpose == :remediation and operation.status == :applied and
+               attempt.status == :verified and attempt.case_id == incident.id and
+               attempt.observed_at == evidence.observed_at}
           else
-            _other -> false
+            {:error, %Ash.Error.Unknown{}} = error -> error
+            {:error, %Ash.Error.Framework{}} = error -> error
+            _other -> {:ok, false}
           end
 
         _other ->
-          false
+          {:ok, false}
       end
+    else
+      {:ok, false}
+    end
   end
 
   def ready_for_review?(assessments) when is_list(assessments) and assessments != [] do
@@ -159,19 +184,24 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   def ready_for_review?(_assessments), do: false
 
-  def current_evidence?(%{kind: "file_read"} = evidence, condition, baseline, target_revision) do
+  defp current_evidence(%{kind: "file_read"} = evidence, condition, baseline, target_revision) do
     case Cases.file_read_source(evidence.id, evidence.case_id, authorize?: false) do
-      {:ok, source} -> current_evidence?(source, condition, baseline, target_revision)
-      {:error, _unavailable} -> false
+      {:ok, source} -> current_evidence(source, condition, baseline, target_revision)
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _unavailable} -> {:ok, false}
     end
   end
 
-  def current_evidence?(evidence, condition, baseline, target_revision)
-      when is_struct(baseline, DateTime) do
-    DateTime.compare(evidence.observed_at, baseline) != :lt and
-      DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt and
-      evidence.content["target_id"] == condition.target_id and
-      valid_operation_evidence?(evidence, condition, target_revision)
+  defp current_evidence(evidence, condition, baseline, target_revision)
+       when is_struct(baseline, DateTime) do
+    if DateTime.compare(evidence.observed_at, baseline) != :lt and
+         DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt and
+         evidence.content["target_id"] == condition.target_id do
+      valid_operation_evidence(evidence, condition, target_revision)
+    else
+      {:ok, false}
+    end
   end
 
   defp assess_condition(condition, evidence, after_at) do
@@ -185,30 +215,36 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       true ->
         case Targets.get_target(condition.target_id, authorize?: false) do
           {:ok, %{active: true, revision: revision}} ->
-            failed_ids =
-              evidence
-              |> Enum.filter(&current_failed_observation?(&1, condition, after_at, revision))
-              |> Enum.uniq_by(&citation_scope/1)
-              |> Enum.take(@max_citations_per_condition)
-              |> Enum.map(& &1.id)
+            with {:ok, failed_evidence} <-
+                   select_evidence(
+                     evidence,
+                     &current_failed_observation(&1, condition, after_at, revision)
+                   ),
+                 {:ok, current_evidence} <-
+                   select_evidence(evidence, &current_evidence(&1, condition, after_at, revision)) do
+              failed_ids =
+                failed_evidence
+                |> Enum.uniq_by(&citation_scope/1)
+                |> Enum.take(@max_citations_per_condition)
+                |> Enum.map(& &1.id)
 
-            citations =
-              evidence
-              |> Enum.filter(&current_evidence?(&1, condition, after_at, revision))
-              |> Enum.uniq_by(&citation_scope/1)
-              |> Enum.take(@max_citations_per_condition)
-              |> Enum.map(& &1.id)
+              citations =
+                current_evidence
+                |> Enum.uniq_by(&citation_scope/1)
+                |> Enum.take(@max_citations_per_condition)
+                |> Enum.map(& &1.id)
 
-            {:ok,
-             case citations do
-               [] ->
-                 if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
-                   do: result(condition, :stale_source, [], failed_ids),
-                   else: result(condition, :needs_observation, [], failed_ids)
+              {:ok,
+               case citations do
+                 [] ->
+                   if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
+                     do: result(condition, :stale_source, [], failed_ids),
+                     else: result(condition, :needs_observation, [], failed_ids)
 
-               ids ->
-                 result(condition, :ready_for_review, ids, failed_ids)
-             end}
+                 ids ->
+                   result(condition, :ready_for_review, ids, failed_ids)
+               end}
+            end
 
           {:error, %Ash.Error.Unknown{}} = error ->
             error
@@ -323,7 +359,22 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     }
   end
 
-  defp current_failed_observation?(evidence, condition, baseline, target_revision) do
+  defp select_evidence(evidence, candidate) do
+    evidence
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, selected} ->
+      case candidate.(item) do
+        {:ok, true} -> {:cont, {:ok, [item | selected]}}
+        {:ok, false} -> {:cont, {:ok, selected}}
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, selected} -> {:ok, Enum.reverse(selected)}
+      error -> error
+    end
+  end
+
+  defp current_failed_observation(evidence, condition, baseline, target_revision) do
     with true <- DateTime.compare(evidence.observed_at, baseline) != :lt,
          true <- DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt,
          true <-
@@ -342,13 +393,15 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
            operation.capability == evidence.content["capability"] and
              operation.operation == evidence.content["operation"] and
              operation.selectors == evidence.content["selectors"] do
-      true
+      {:ok, true}
     else
-      _invalid -> false
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
+      _invalid -> {:ok, false}
     end
   end
 
-  defp valid_operation_evidence?(
+  defp valid_operation_evidence(
          %{kind: "observation", content: content} = evidence,
          condition,
          revision
@@ -363,13 +416,15 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <- operation.capability == content["capability"],
          true <- operation.operation == content["operation"],
          true <- operation.selectors == content["selectors"] do
-      true
+      {:ok, true}
     else
-      _other -> false
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
+      _other -> {:ok, false}
     end
   end
 
-  defp valid_operation_evidence?(
+  defp valid_operation_evidence(
          %{kind: "target_verification", content: content} = evidence,
          condition,
          revision
@@ -385,11 +440,13 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <- attempt.status == :verified and attempt.target_id == condition.target_id,
          true <-
            attempt.target_revision == revision and attempt.observed_at == evidence.observed_at do
-      true
+      {:ok, true}
     else
-      _other -> false
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Ash.Error.Framework{}} = error -> error
+      _other -> {:ok, false}
     end
   end
 
-  defp valid_operation_evidence?(_evidence, _condition, _revision), do: false
+  defp valid_operation_evidence(_evidence, _condition, _revision), do: {:ok, false}
 end

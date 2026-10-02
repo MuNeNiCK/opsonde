@@ -115,7 +115,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
       end)
       |> case do
         {:ok, items} ->
-          {:ok, ConditionRecovery.manual_evidence_ids(incident, run, target, items)}
+          ConditionRecovery.manual_evidence_ids(incident, run, target, items)
 
         error ->
           error
