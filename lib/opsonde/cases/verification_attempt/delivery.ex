@@ -29,6 +29,13 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
          :ok <- exact_clearance(clearance, attempt) do
       invocation = invocation(attempt.case_id, Keyword.get(opts, :target_invocation, %{}))
 
+      invocation =
+        Map.put(invocation, :result_reference_reader, fn reference ->
+          Cases.read_operation_result_reference(reference, attempt.case_id, clearance,
+            actor: actor
+          )
+        end)
+
       outcome =
         case Targets.dispatch_target_verification(clearance, invocation,
                actor: actor,

@@ -43,6 +43,13 @@ defmodule Opsonde.Cases.Operation.Delivery do
          :ok <- exact_clearance(clearance, operation) do
       invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
 
+      invocation =
+        Map.put(invocation, :result_reference_reader, fn reference ->
+          Cases.read_operation_result_reference(reference, operation.case_id, clearance,
+            actor: actor
+          )
+        end)
+
       outcome = dispatch_target(operation, clearance, invocation, actor)
 
       persist_and_handoff(operation, outcome)
@@ -85,7 +92,12 @@ defmodule Opsonde.Cases.Operation.Delivery do
              %{
                status: outcome.status,
                outcome_category: outcome.category,
-               reference: outcome.reference,
+               reference:
+                 if(Map.get(outcome, :protected_reference),
+                   do: operation.id,
+                   else: outcome.reference
+                 ),
+               protected_reference: Map.get(outcome, :protected_reference),
                result_details: outcome.details,
                completed_at: DateTime.utc_now()
              },
@@ -100,6 +112,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
       status: result.status,
       category: "target_#{result.status}",
       reference: result.reference,
+      protected_reference: result.protected_reference,
       details: result.details
     }
   end

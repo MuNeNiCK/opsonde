@@ -5,7 +5,7 @@ defmodule Opsonde.Cases.Operation do
     authorizers: [Ash.Policy.Authorizer],
     simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer,
-    extensions: [AshStateMachine]
+    extensions: [AshStateMachine, AshCloak]
 
   postgres do
     table "operations"
@@ -16,6 +16,18 @@ defmodule Opsonde.Cases.Operation do
       index [:resolution_run_id]
       index [:target_id]
       index [:target_id, :resource_scope]
+    end
+  end
+
+  field_policies do
+    private_fields :include
+
+    field_policy [:protected_reference, :encrypted_protected_reference] do
+      forbid_if always()
+    end
+
+    field_policy :* do
+      authorize_if always()
     end
   end
 
@@ -32,6 +44,11 @@ defmodule Opsonde.Cases.Operation do
         from: :dispatching,
         to: [:applied, :failed, :partial, :unknown]
     end
+  end
+
+  cloak do
+    vault(Opsonde.Vault)
+    attributes([:protected_reference])
   end
 
   actions do
@@ -115,13 +132,26 @@ defmodule Opsonde.Cases.Operation do
     end
 
     update :record_outcome do
-      accept [:status, :outcome_category, :reference, :result_details, :completed_at]
+      accept [
+        :status,
+        :outcome_category,
+        :reference,
+        :result_details,
+        :completed_at,
+        :protected_reference
+      ]
+
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
       validate present(:completed_at)
       validate present(:outcome_category)
       validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
+
+      validate {Opsonde.Validations.BoundedMap, argument: :protected_reference} do
+        where present(:protected_reference)
+      end
+
       change Opsonde.Cases.Operation.Changes.TransitionOutcome
       change optimistic_lock(:revision)
     end
@@ -158,6 +188,20 @@ defmodule Opsonde.Cases.Operation do
       argument :id, :uuid, allow_nil?: false
       run Opsonde.Cases.Operation.Actions.AccountObservationProgress
     end
+
+    action :read_result_reference, :map do
+      public? false
+      transaction? false
+      argument :reference_id, :uuid, allow_nil?: false
+      argument :case_id, :uuid, allow_nil?: false
+
+      argument :clearance, :struct,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [instance_of: Opsonde.Targets.TargetRequest.Clearance]
+
+      run Opsonde.Cases.Operation.Actions.ResultReference
+    end
   end
 
   policies do
@@ -178,6 +222,11 @@ defmodule Opsonde.Cases.Operation do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
+    end
+
+    policy action(:read_result_reference) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:role, :operator)
     end
   end
 
@@ -267,6 +316,8 @@ defmodule Opsonde.Cases.Operation do
     attribute :reference, :string,
       public?: true,
       constraints: [min_length: 1, max_length: 500]
+
+    attribute :protected_reference, :map, sensitive?: true
 
     attribute :result_details, :map, allow_nil?: false, public?: true, default: %{}
     attribute :completed_at, :utc_datetime_usec, public?: true

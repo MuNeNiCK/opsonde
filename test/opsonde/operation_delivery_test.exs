@@ -101,6 +101,283 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  test "a protected remote result survives delivery without entering public Case evidence",
+       context do
+    {incident, _run, proposal} =
+      authorized_proposal!("protected-result", context)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    protected = %{"uri" => "/vendor/monitor/42?ticket=operation-secret", "kind" => "task"}
+
+    result =
+      %Target.EffectResult{status: :unknown, details: %{"http_status" => 202}}
+      |> Map.put(:protected_reference, protected)
+
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation({:ok, result}))
+    stored = Cases.get_operation!(operation.id, authorize?: false)
+    assert stored.status == :unknown
+    assert stored.reference == operation.id
+
+    ciphertext =
+      Repo.query!("SELECT encrypted_protected_reference FROM operations WHERE id = $1", [
+        Ecto.UUID.dump!(operation.id)
+      ]).rows
+      |> hd()
+      |> hd()
+
+    assert is_binary(ciphertext)
+    refute ciphertext =~ "operation-secret"
+    refute ciphertext =~ "/vendor/monitor/42"
+
+    public = Cases.get_operation!(operation.id, actor: context.operator)
+    serialized = OpsondeWeb.API.V1.WorkflowJSON.operation(public) |> Jason.encode!()
+    refute serialized =~ "ticket"
+    refute serialized =~ "operation-secret"
+
+    evidence =
+      Cases.evidence_by_idempotency!(incident.id, "operation:outcome:#{operation.id}",
+        authorize?: false
+      )
+
+    refute Jason.encode!(evidence.content) =~ "ticket"
+    assert evidence.content["reference"] == operation.id
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   reader = Map.fetch!(invocation, :result_reference_reader)
+                   assert reader.(operation.id) == {:ok, protected}
+                   assert {:error, _} = reader.(Ecto.UUID.generate())
+                   send(invocation.test_pid, {:protected_reference_read, protected})
+
+                   {:ok,
+                    %Target.Verification{
+                      status: :unknown,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"task_state" => "Running"}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:protected_reference_read, ^protected}
+    assert Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :unknown
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(fn -> flunk("accepted remote write was repeated") end)
+             )
+
+    assert Cases.get_operation!(operation.id, authorize?: false).reference == operation.id
+  end
+
+  test "a protected result reader rechecks authority inside the follow-up dispatch", context do
+    {incident, _run, proposal} = authorized_proposal!("protected-revocation", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    protected = %{"uri" => "/vendor/tasks/7?ticket=operation-secret"}
+
+    result =
+      %Target.EffectResult{status: :unknown, details: %{"http_status" => 202}}
+      |> Map.put(:protected_reference, protected)
+
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation({:ok, result}))
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   reader = Map.fetch!(invocation, :result_reference_reader)
+                   before = reader.(operation.id)
+                   method = Targets.get_access_method!(context.method.id, actor: context.admin)
+
+                   Targets.update_access_method!(
+                     method,
+                     method.revision,
+                     %{capabilities: ["effect.service"]},
+                     actor: context.admin
+                   )
+
+                   after_revocation = reader.(operation.id)
+                   send(invocation.test_pid, {:reference_authority, before, after_revocation})
+
+                   {:ok,
+                    %Target.Verification{
+                      status: :unknown,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"reference_unavailable" => true}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:reference_authority, {:ok, ^protected}, {:error, _}}
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    assert current.status == :running
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
+  end
+
+  test "a protected outcome save failure cannot publish a reference or repeat the remote write",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("protected-save-failure", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    protected = %{"uri" => "/vendor/monitor/9?ticket=operation-secret"}
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_protected_operation_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.encrypted_protected_reference IS NOT NULL THEN
+        RAISE EXCEPTION 'test outcome publication unavailable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_protected_operation_outcome BEFORE UPDATE ON operations
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_protected_operation_outcome()
+    """)
+
+    assert {:error, _} =
+             OperationDelivery.run(operation.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   send(invocation.test_pid, :protected_write_sent)
+
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :unknown,
+                      details: %{"http_status" => 202},
+                      protected_reference: protected
+                    }}
+                 end
+               }
+             )
+
+    assert_receive :protected_write_sent
+    unsaved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert unsaved.status == :dispatching
+    assert unsaved.reference == nil
+
+    Repo.query!("DROP TRIGGER reject_protected_operation_outcome ON operations")
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> send(self(), :protected_write_sent) end)
+             )
+
+    refute_receive :protected_write_sent
+    recovered = Cases.get_operation!(operation.id, actor: context.operator)
+    assert recovered.status == :unknown
+    assert recovered.outcome_category == "dispatch_interrupted"
+    assert recovered.reference == nil
+
+    evidence =
+      Cases.evidence_by_idempotency!(incident.id, "operation:outcome:#{operation.id}",
+        authorize?: false
+      )
+
+    assert evidence.content["status"] == "unknown"
+    refute Jason.encode!(evidence.content) =~ "ticket"
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   result = invocation.result_reference_reader.(operation.id)
+                   send(invocation.test_pid, {:unsaved_reference, result})
+
+                   {:ok,
+                    %Target.Verification{
+                      status: :unknown,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:unsaved_reference, {:error, _}}
+  end
+
+  test "protected result reads require the current Case owner and the exact Method lineage",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("protected-scope", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    protected = %{"uri" => "/vendor/monitor/42?ticket=operation-secret"}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :unknown,
+                      protected_reference: protected,
+                      details: %{"http_status" => 202}
+                    }}
+                 )
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    request = %Opsonde.Targets.TargetRequest.Request{
+      kind: :verification,
+      authority_mode: attempt.authority_mode,
+      target_id: attempt.target_id,
+      target_revision: attempt.target_revision,
+      access_method_id: attempt.access_method_id,
+      access_method_revision: attempt.access_method_revision,
+      capability: attempt.capability,
+      operation: attempt.operation,
+      selectors: attempt.selectors,
+      parameters: attempt.parameters,
+      operation_id: attempt.operation_id,
+      reference: attempt.operation_reference,
+      expected: attempt.expected,
+      max_attempts: 1
+    }
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    assert {:ok, ^protected} =
+             Cases.read_operation_result_reference(operation.id, incident.id, clearance,
+               actor: context.operator
+             )
+
+    for {case_id, offered, actor} <- [
+          {Ecto.UUID.generate(), clearance, context.operator},
+          {incident.id, clearance, context.admin},
+          {incident.id, %{clearance | target_id: Ecto.UUID.generate()}, context.operator},
+          {incident.id, %{clearance | access_method_id: Ecto.UUID.generate()}, context.operator},
+          {incident.id, %{clearance | provider_id: Ecto.UUID.generate()}, context.operator}
+        ] do
+      assert {:error, _} =
+               Cases.read_operation_result_reference(operation.id, case_id, offered, actor: actor)
+    end
+
+    public = Cases.get_operation!(operation.id, actor: context.operator)
+    loaded = Ash.load!(public, :protected_reference, actor: context.operator)
+    assert %Ash.ForbiddenField{} = loaded.protected_reference
+
+    Accounts.change_role!(context.operator, :viewer, actor: context.admin)
+
+    assert {:error, _} =
+             Cases.read_operation_result_reference(operation.id, incident.id, clearance,
+               actor: context.operator
+             )
+  end
+
   test "auto diagnostic effects are independently reviewed and return to investigation without repair verification",
        context do
     configure_mode!(context.admin, :auto)

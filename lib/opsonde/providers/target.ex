@@ -326,7 +326,8 @@ defmodule Opsonde.Providers.Target do
   defmodule EffectResult do
     @moduledoc false
     @enforce_keys [:status]
-    defstruct @enforce_keys ++ [reference: nil, details: %{}]
+    @derive {Inspect, except: [:protected_reference]}
+    defstruct @enforce_keys ++ [reference: nil, details: %{}, protected_reference: nil]
     @type t :: %__MODULE__{}
   end
 

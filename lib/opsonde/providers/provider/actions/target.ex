@@ -276,8 +276,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp normalize_effect({:ok, %Target.EffectResult{status: status} = value}, credentials)
        when status in @effect_statuses and is_map(value.details) do
     if bounded_map?(value.details) and
-         (is_nil(value.reference) or nonempty_binary?(value.reference)) do
-      {:ok, Redactor.value(value, credentials)}
+         (is_nil(value.reference) or nonempty_binary?(value.reference)) and
+         (is_nil(value.protected_reference) or bounded_map?(value.protected_reference)) do
+      public = Redactor.value(%{value | protected_reference: nil}, credentials)
+      {:ok, %{public | protected_reference: value.protected_reference}}
     else
       {:error, target_error(:failed, "Invalid effect result")}
     end

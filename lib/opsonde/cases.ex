@@ -474,6 +474,10 @@ defmodule Opsonde.Cases do
       define :accept_operation, action: :accept, args: [:proposal_id]
       define :claim_operation_dispatch, action: :claim_dispatch, args: [:id]
       define :account_observation_progress, action: :account_observation_progress, args: [:id]
+
+      define :read_operation_result_reference,
+        action: :read_result_reference,
+        args: [:reference_id, :case_id, :clearance]
     end
 
     resource Opsonde.Cases.VerificationAttempt do
