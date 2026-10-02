@@ -293,9 +293,15 @@ defmodule Opsonde.Signals.SignalReceipt.Actions.Ingest do
   end
 
   defp maybe_recheck(%{status: :running} = incident, %{state: :recovered}, true) do
-    %{"case_id" => incident.id}
-    |> RecoveryRecheckWorker.new(scheduled_at: DateTime.add(DateTime.utc_now(), 2, :second))
-    |> Oban.insert()
+    with {:ok, job} <-
+           %{"case_id" => incident.id}
+           |> RecoveryRecheckWorker.new(
+             scheduled_at: DateTime.add(DateTime.utc_now(), 2, :second)
+           )
+           |> Oban.insert(),
+         true <- is_integer(job.id) || {:error, "Signal recovery recheck job was not persisted"} do
+      {:ok, job}
+    end
   end
 
   defp maybe_recheck(_incident, _event, _current?), do: {:ok, nil}

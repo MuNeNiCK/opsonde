@@ -401,6 +401,71 @@ defmodule Opsonde.SignalIngressTest do
              recheck_turn.id
   end
 
+  test "recovery receipt requires a persisted recheck before accepting recovered state",
+       context do
+    enable_signal_automation!(context.admin)
+    firing_at = DateTime.add(DateTime.utc_now(), -10, :second)
+    ingest_one!(context.provider, "missing-recheck-firing", :firing, firing_at)
+    [incident] = Cases.list_cases!(actor: context.admin)
+    before_conditions = Signals.list_conditions!(actor: context.admin)
+    before_events = Signals.list_signal_events!(actor: context.admin)
+    before_evidence = Cases.list_evidence!(actor: context.admin)
+    recovered_at = DateTime.utc_now()
+    payload = envelope("missing-recheck-recovered", recovered_at)
+
+    incoming =
+      invocation("missing-recheck-recovered", [
+        event("missing-recheck-recovered", "same-alert", :recovered, recovered_at)
+      ])
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_recovery_recheck_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.worker = 'Opsonde.Cases.Case.RecoveryRecheckWorker' THEN RETURN NULL; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_recovery_recheck_job BEFORE INSERT ON oban_jobs
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_recovery_recheck_job()
+    """)
+
+    assert {:error, _error} =
+             Signals.ingest_signal(
+               context.provider.id,
+               context.provider.revision,
+               payload,
+               incoming
+             )
+
+    assert Signals.list_conditions!(actor: context.admin) == before_conditions
+    assert Signals.list_signal_events!(actor: context.admin) == before_events
+    assert Cases.list_evidence!(actor: context.admin) == before_evidence
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 1
+
+    Repo.query!("DROP TRIGGER reject_recovery_recheck_job ON oban_jobs")
+
+    receipt = ingest!(context.provider, payload, incoming)
+    assert ingest!(context.provider, payload, incoming).id == receipt.id
+    assert [condition] = Signals.list_conditions!(actor: context.admin)
+    assert condition.state == :recovered
+    worker = Oban.Worker.to_string(RecoveryRecheckWorker)
+
+    assert [job] =
+             Repo.all(
+               from job in Oban.Job,
+                 where: job.worker == ^worker and job.args["case_id"] == ^incident.id
+             )
+
+    assert is_integer(job.id)
+    assert length(Signals.list_signal_receipts!(actor: context.admin)) == 2
+    assert length(Signals.list_signal_events!(actor: context.admin)) == 2
+    refute_receive {:resolve, _, _}
+    refute_receive {:effect, _, _}
+  end
+
   test "twenty native recoveries coalesce into one Case-bound recheck", context do
     enable_signal_automation!(context.admin)
 
