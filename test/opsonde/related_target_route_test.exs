@@ -65,7 +65,9 @@ defmodule Opsonde.RelatedTargetRouteTest do
         :ai,
         "fixture-ai",
         %{"model" => "resolver-model"},
-        %{"api_key" => "fixture-secret"}, actor: context.admin)
+        %{"api_key" => "fixture-secret"},
+        actor: context.admin
+      )
       |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
 
