@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config libssl-dev
+          sudo apt-get install -y curl autoconf automake libtool pkg-config libssl-dev
           mix deps.get
           corepack pnpm --dir assets install --frozen-lockfile
       - name: Verify source
@@ -80,7 +80,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.value }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full autoconf automake libtool pkg-config libssl-dev
+          sudo apt-get install -y p7zip-full curl autoconf automake libtool pkg-config libssl-dev
           mix deps.get --only prod
           for target in linux_x86_64 linux_aarch64 macos_x86_64 macos_aarch64 windows_x86_64; do
             BURRITO_TARGET=${target} mix release opsonde --overwrite

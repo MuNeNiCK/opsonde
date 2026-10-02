@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config libssl-dev
+          sudo apt-get install -y curl autoconf automake libtool pkg-config libssl-dev
           mix deps.get
           corepack pnpm --dir assets install --frozen-lockfile
       - name: Verify source
