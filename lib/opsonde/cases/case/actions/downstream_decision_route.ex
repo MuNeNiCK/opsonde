@@ -15,7 +15,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
-  alias Opsonde.Cases.Case.Actions.RecoveryCompletion
+  alias Opsonde.Reports.Report.GenerationWorker
 
   @impl true
   def run(input, _opts, _context) do
@@ -62,7 +62,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               {:cont, :ok}
 
             {:ok, _unavailable} ->
-              {:halt, {:error, "Recovery file contents are no longer available"}}
+              {:halt,
+               {:error,
+                Ash.Error.Action.InvalidArgument.exception(
+                  field: :turn_id,
+                  message: "Recovery file contents are no longer available"
+                )}}
 
             {:error, _error} = error ->
               {:halt, error}
@@ -228,7 +233,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
                 Opsonde.Cases.AIInvocation.request_digest(event.data)) ||
              {:error, "Recovery Reviewer invocation is unavailable"},
          {:ok, resolved} <-
-           RecoveryCompletion.complete(
+           complete_recovery(
              incident,
              run,
              route_key(turn),
@@ -237,6 +242,50 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
       resolved
     end
   end
+
+  defp complete_recovery(incident, run, idempotency_key, data) do
+    now = DateTime.utc_now()
+
+    with :ok <- condition_completion_ready(incident),
+         {:ok, resolved} <-
+           Cases.record_case_resolution(incident, incident.revision, now, authorize?: false),
+         {:ok, _completed} <-
+           Cases.retire_resolution_run(
+             run,
+             run.revision,
+             %{status: :completed, ended_at: now},
+             authorize?: false
+           ),
+         {:ok, _event} <-
+           Cases.create_case_event_record(
+             %{
+               case_id: incident.id,
+               resolution_run_id: run.id,
+               event_type: "case_resolved",
+               idempotency_key: idempotency_key,
+               data: data
+             },
+             authorize?: false
+           ),
+         {:ok, job} <-
+           %{"case_id" => resolved.id, "case_revision" => resolved.revision}
+           |> GenerationWorker.new()
+           |> Oban.insert(),
+         true <- is_integer(job.id) || {:error, "Report generation job was not persisted"} do
+      {:ok, resolved}
+    end
+  end
+
+  defp condition_completion_ready(%{trigger_kind: :signal} = incident) do
+    with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
+         true <-
+           ConditionRecovery.ready_for_review?(assessments) ||
+             {:error, "Signal Conditions require current observations and Resolver assessment"} do
+      :ok
+    end
+  end
+
+  defp condition_completion_ready(_incident), do: :ok
 
   defp recovery_review_event(turn) do
     existing_event(turn.case_id, review_result_key(turn))

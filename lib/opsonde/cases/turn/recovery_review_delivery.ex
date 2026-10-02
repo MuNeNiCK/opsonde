@@ -345,8 +345,17 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
 
   defp apply_result(turn, %CaseEvent{data: %{"verdict" => "approved"}}) do
     case Cases.route_downstream_decision(turn.id, authorize?: false) do
-      {:ok, _resolved} -> :ok
-      {:error, error} -> attention(turn, "Recovery Review could not be applied", error)
+      {:ok, _resolved} ->
+        :ok
+
+      {:error, %Ash.Error.Invalid{} = error} ->
+        attention(turn, "Recovery Review could not be applied", error)
+
+      {:error, %Ash.Error.Forbidden{} = error} ->
+        attention(turn, "Recovery Review could not be applied", error)
+
+      {:error, _error} = error ->
+        error
     end
   end
 

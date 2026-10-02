@@ -3900,6 +3900,125 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  for {table, predicate, failure} <- [
+        {"case_events", "NEW.event_type = 'case_resolved'",
+         "RAISE EXCEPTION 'test completion persistence unavailable';"},
+        {"oban_jobs", "NEW.worker = 'Opsonde.Reports.Report.GenerationWorker'", "RETURN NULL;"}
+      ] do
+    @tag completion_table: table, completion_predicate: predicate, completion_failure: failure
+    test "a #{table} completion failure retains the approved recovery for replay", context do
+      {incident, run, proposal} =
+        authorized_proposal!("recovery-completion-failure", context, request_kind: :observation)
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+      assert :ok = deliver_observation(operation, %{"active_state" => "active"})
+      evidence = operation_evidence_record(operation.id)
+      pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+      turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+      assert :ok =
+               ResolverDelivery.run(turn.id,
+                 target_invocation:
+                   invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.RecoveryConclusion{
+                          reason: "The inspected service is active",
+                          evidence_ids: [evidence.id],
+                          desired_outcome_claims: [
+                            %{
+                              "symptom_id" => request.case_symptom.id,
+                              "evidence_id" => evidence.id,
+                              "fact_keys" => ["active_state"],
+                              "reason" => "The inspected service is active"
+                            }
+                          ]
+                        },
+                        usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent[
+               "action"
+             ] == "review_recovery"
+
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_case_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{context.completion_predicate} THEN
+          #{context.completion_failure}
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER reject_case_completion BEFORE INSERT ON #{context.completion_table}
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_case_completion()
+      """)
+
+      assert {:error, _} =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     {:ok,
+                      %AI.ReviewDecision{
+                        purpose_assessment: :remediation,
+                        verdict: :approved,
+                        reason: "The current observation supports the desired outcome",
+                        desired_outcome_assessment: %{
+                          "symptom_id" => request.case_symptom.id,
+                          "desired_outcome" => request.case_symptom.desired_outcome,
+                          "evidence_ids" => [evidence.id],
+                          "status" => "supported",
+                          "reason" => "The inspected service is active"
+                        },
+                        usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                      }}
+                   end
+                 }
+               )
+
+      assert_receive {:review_recovery, %{model: "reviewer-model"}, _request}
+      waiting = Cases.get_case!(incident.id, authorize?: false)
+      assert waiting.status == :running
+      assert waiting.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id}
+      charged = Cases.get_resolution_run!(run.id, authorize?: false)
+      assert charged.status == :running
+      assert report_jobs(incident.id) == []
+      events = Cases.page_case_events!(incident.id, actor: context.operator).results
+      assert Enum.count(events, &(&1.event_type == "recovery_review_decided")) == 1
+      refute Enum.any?(events, &(&1.event_type == "case_resolved"))
+
+      Repo.query!("DROP TRIGGER reject_case_completion ON #{context.completion_table}")
+
+      for replay <- 2..3 do
+        assert :ok =
+                 Opsonde.Cases.Turn.RecoveryReviewWorker.perform(%Oban.Job{
+                   args: %{"turn_id" => turn.id},
+                   attempt: replay,
+                   max_attempts: 3
+                 })
+      end
+
+      refute_receive {:review_recovery, _, _}
+      assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+      completed = Cases.get_resolution_run!(run.id, authorize?: false)
+      assert completed.status == :completed
+      assert completed.ai_usage_units == charged.ai_usage_units
+      assert [_job] = report_jobs(incident.id)
+      events = Cases.page_case_events!(incident.id, actor: context.operator).results
+      assert Enum.count(events, &(&1.event_type == "case_resolved")) == 1
+    end
+  end
+
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
     {incident, run, proposal} =
       authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)

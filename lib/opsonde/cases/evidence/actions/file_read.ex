@@ -250,7 +250,11 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
         do: Map.merge(content, %{"encoding" => "utf8", "value" => bytes}),
         else: Map.merge(content, %{"encoding" => "base64", "value" => Base.encode64(bytes)})
     else
-      {:error, "File-read Evidence integrity check failed"}
+      {:error,
+       Ash.Error.Action.InvalidArgument.exception(
+         field: :id,
+         message: "File-read Evidence integrity check failed"
+       )}
     end
   end
 
