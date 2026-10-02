@@ -1362,6 +1362,67 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 0
   end
 
+  for {table, predicate, failure} <- [
+        {"operations", "TRUE",
+         "RAISE EXCEPTION 'test operation acceptance persistence unavailable';"},
+        {"oban_jobs", "NEW.worker = 'Opsonde.Cases.Operation.Worker'", "RETURN NULL;"}
+      ] do
+    @tag acceptance_table: table, acceptance_predicate: predicate, acceptance_failure: failure
+    test "Operation acceptance #{table} failure retries without pausing or charging", context do
+      {incident, run, proposal} = authorized_proposal!("acceptance-save-failure", context)
+      before_case = Cases.get_case!(incident.id, actor: context.operator)
+      before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+      before_invocations = Cases.list_ai_invocations!(actor: context.operator)
+
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_operation_acceptance() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{context.acceptance_predicate} THEN
+          #{context.acceptance_failure}
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER reject_operation_acceptance BEFORE INSERT ON #{context.acceptance_table}
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_operation_acceptance()
+      """)
+
+      assert {:error, _error} =
+               OperationAcceptanceWorker.perform(%Oban.Job{
+                 args: %{"proposal_id" => proposal.id},
+                 attempt: 1
+               })
+
+      assert Cases.get_case!(incident.id, actor: context.operator) == before_case
+      assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+      assert Cases.list_operations!(actor: context.operator) == []
+      assert operation_jobs(proposal.reserved_operation_id) == 0
+      assert Cases.list_ai_invocations!(actor: context.operator) == before_invocations
+
+      Repo.query!("DROP TRIGGER reject_operation_acceptance ON #{context.acceptance_table}")
+
+      for attempt <- [2, 3] do
+        assert :ok =
+                 OperationAcceptanceWorker.perform(%Oban.Job{
+                   args: %{"proposal_id" => proposal.id},
+                   attempt: attempt
+                 })
+      end
+
+      assert [operation] = Cases.list_operations!(actor: context.operator)
+      assert operation.id == proposal.reserved_operation_id
+      assert operation.status == :queued
+      assert operation_jobs(operation.id) == 1
+      assert Cases.get_resolution_run!(run.id, authorize?: false).effect_count == 1
+      assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+      assert Cases.list_ai_invocations!(actor: context.operator) == before_invocations
+      refute_receive {:effect, _, _}
+    end
+  end
+
   test "Target instructions changed after approval prevent acceptance", context do
     {_incident, run, proposal} = authorized_proposal!("policy-before-accept", context)
 

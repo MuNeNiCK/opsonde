@@ -18,7 +18,9 @@ defmodule Opsonde.Cases.Operation.AcceptanceWorker do
   def perform(%Oban.Job{args: %{"proposal_id" => proposal_id}}) when is_binary(proposal_id) do
     case Cases.accept_operation(proposal_id, authorize?: false) do
       {:ok, _operation} -> :ok
-      {:error, _error} = error -> require_attention(proposal_id, error)
+      {:error, %Ash.Error.Invalid{} = error} -> require_attention(proposal_id, error)
+      {:error, %Ash.Error.Forbidden{} = error} -> require_attention(proposal_id, error)
+      {:error, _error} = error -> error
     end
   end
 

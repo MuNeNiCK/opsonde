@@ -68,7 +68,8 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
            Targets.clear_target_request(Proposal.target_request(proposal), actor: actor),
          :ok <- exact_provider(clearance, proposal),
          {:ok, operation} <- create(proposal, approval, actor, clearance),
-         {:ok, _job} <- enqueue(operation) do
+         {:ok, job} <- enqueue(operation),
+         true <- is_integer(job.id) || {:error, "Operation dispatch job was not persisted"} do
       {:ok, operation}
     end
   end
@@ -83,7 +84,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
               DateTime.compare(DateTime.utc_now(), proposal.expires_at) == :lt and
               DateTime.compare(not_before(proposal), proposal.expires_at) == :lt and
               DateTime.compare(not_before(proposal), run.deadline_at) == :lt) ||
-             {:error, "Authorized Proposal is stale"},
+             invalid_input("Authorized Proposal is stale"),
          {:ok, true} <- ConditionContext.current?(incident, proposal.source_turn_id),
          {:ok, true} <-
            ConditionContext.affected_current?(
@@ -120,7 +121,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
          approval.proposal_revision + 1 == proposal.revision and
          approval.case_generation == proposal.case_generation,
        do: :ok,
-       else: {:error, "Approval does not authorize the current Proposal"}
+       else: invalid_input("Approval does not authorize the current Proposal")
   end
 
   defp current_actor(approval) do
@@ -129,8 +130,11 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
       when role in [:admin, :operator] and version == approval.actor_role_version ->
         {:ok, actor}
 
-      _unavailable ->
-        {:error, "Approval actor authority changed"}
+      {:ok, _changed} ->
+        invalid_input("Approval actor authority changed")
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -138,7 +142,11 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
     if clearance.provider_id == proposal.provider_id and
          clearance.provider_revision == proposal.provider_revision,
        do: :ok,
-       else: {:error, "Target Provider changed after approval"}
+       else: invalid_input("Target Provider changed after approval")
+  end
+
+  defp invalid_input(message) do
+    {:error, Ash.Error.Action.InvalidArgument.exception(field: :proposal_id, message: message)}
   end
 
   defp create(proposal, approval, actor, clearance) do
