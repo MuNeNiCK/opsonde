@@ -1,7 +1,7 @@
 defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.Redfish
   alias Opsonde.Targets.TargetRequest.Request
@@ -239,6 +239,34 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> json(202, %{"Message" => "accepted"})
     end
 
+    defp route(%{method: "POST", request_path: "/redfish/v1/Oem/OpaqueAsync"} = conn, agent) do
+      Agent.update(agent, &Map.update(&1, :async_writes, 1, fn count -> count + 1 end))
+
+      conn
+      |> put_resp_header(
+        "location",
+        Agent.get(
+          agent,
+          &Map.get(&1, :task_location, "/vendor/monitor/session-secret?ticket=private-value")
+        )
+      )
+      |> put_resp_header("retry-after", Agent.get(agent, &Map.get(&1, :retry_after, "3")))
+      |> json(202, %{
+        "TaskState" => "Running",
+        "TaskMonitor" => "/vendor/monitor/session-secret?ticket=private-value",
+        "Ticket" => "private-value"
+      })
+    end
+
+    defp route(%{method: "GET", request_path: "/vendor/monitor/session-secret"} = conn, agent) do
+      Agent.update(agent, &Map.put(&1, :monitor_query, conn.query_string))
+      status = Agent.get(agent, &Map.get(&1, :monitor_status, 202))
+
+      conn
+      |> put_resp_header("retry-after", "3")
+      |> json(status, Agent.get(agent, &Map.get(&1, :monitor_body, %{"TaskState" => "Running"})))
+    end
+
     defp route(%{method: "POST", request_path: "/redfish/v1/Oem/Drop"} = _conn, agent) do
       Agent.update(agent, &Map.update!(&1, :echo_calls, fn count -> count + 1 end))
       Process.exit(self(), :kill)
@@ -360,8 +388,10 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       assert result.details["file"]["sha256"] ==
                "b55f1659c0645fd1cee6dfa8b3af06795e9da7e48cb65c2b999f896c9f539dbd"
 
-      if verb == "POST",
-        do: assert(result.details["task_location"] == "/redfish/v1/TaskService/TaskMonitors/2")
+      if verb == "POST" do
+        assert result.protected_reference["uri"] == "/redfish/v1/TaskService/TaskMonitors/2"
+        refute Map.has_key?(result.details, "task_location")
+      end
 
       catalog =
         Enum.find(
@@ -689,6 +719,412 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
            )
   end
 
+  test "an opaque async monitor is retained privately without a TaskService path assumption",
+       context do
+    {:ok, state} = redfish_state(context.method.endpoint)
+
+    assert {:ok, %Target.EffectResult{status: :unknown} = result} =
+             Redfish.effect(
+               state,
+               method_effect_request(context, "POST", "/redfish/v1/Oem/OpaqueAsync", %{})
+               |> Map.update!(:parameters, &Map.put(&1, "include_response", true)),
+               %{}
+             )
+
+    assert result.protected_reference == %{
+             "kind" => "redfish_task_monitor",
+             "uri" => "/vendor/monitor/session-secret?ticket=private-value",
+             "retry_after_seconds" => 3
+           }
+
+    refute Jason.encode!(result.details) =~ "session-secret"
+    refute Jason.encode!(result.details) =~ "private-value"
+    assert result.details["retry_after_seconds"] == 3
+    refute inspect(result) =~ "private-value"
+    refute Map.has_key?(result.details, "task_location")
+
+    retry_at = DateTime.add(DateTime.utc_now(), 120, :second)
+
+    Agent.update(
+      context.agent,
+      &Map.put(&1, :retry_after, Calendar.strftime(retry_at, "%a, %d %b %Y %H:%M:%S GMT"))
+    )
+
+    assert {:ok, timed} =
+             Redfish.effect(
+               state,
+               method_effect_request(context, "POST", "/redfish/v1/Oem/OpaqueAsync", %{}),
+               %{}
+             )
+
+    assert timed.protected_reference["retry_after_seconds"] in 118..120
+
+    Agent.update(context.agent, &Map.put(&1, :retry_after, "not a valid delay"))
+
+    assert {:ok, malformed} =
+             Redfish.effect(
+               state,
+               method_effect_request(context, "POST", "/redfish/v1/Oem/OpaqueAsync", %{}),
+               %{}
+             )
+
+    assert malformed.status == :unknown
+
+    assert malformed.protected_reference["uri"] ==
+             "/vendor/monitor/session-secret?ticket=private-value"
+
+    refute Map.has_key?(malformed.protected_reference, "retry_after_seconds")
+
+    Agent.update(
+      context.agent,
+      &Map.put(
+        &1,
+        :task_location,
+        "https://other.example/vendor/monitor/session-secret?ticket=private-value"
+      )
+    )
+
+    assert {:ok, outside} =
+             Redfish.effect(
+               state,
+               method_effect_request(context, "POST", "/redfish/v1/Oem/OpaqueAsync", %{})
+               |> Map.update!(:parameters, &Map.put(&1, "include_response", true)),
+               %{}
+             )
+
+    assert outside.status == :unknown
+    assert outside.protected_reference == nil
+    refute Jason.encode!(outside.details) =~ "private-value"
+    refute Jason.encode!(outside.details) =~ "session-secret"
+  end
+
+  test "the checked read Method follows only the supplied protected task reference", context do
+    reference_id = Ecto.UUID.generate()
+
+    request =
+      file_request(context, :observation, %{"result_reference" => reference_id})
+      |> Map.put(:operation, "task.observe")
+
+    clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+    invocation = %{
+      result_reference_reader: fn ^reference_id ->
+        {:ok,
+         %{
+           "kind" => "redfish_task_monitor",
+           "uri" => "/vendor/monitor/session-secret?ticket=private-value"
+         }}
+      end
+    }
+
+    assert %Target.Observation{facts: facts} =
+             Targets.dispatch_target_observation!(clearance, invocation, actor: context.operator)
+
+    assert facts["http_status"] == 202
+    assert facts["task_state"] == "Running"
+    assert facts["task_outcome"] == "running"
+    assert facts["retry_after_seconds"] == 3
+    assert Agent.get(context.agent, & &1.monitor_query) == "ticket=private-value"
+    refute Jason.encode!(facts) =~ "private-value"
+
+    Agent.update(context.agent, &Map.merge(&1, %{monitor_status: 204, monitor_body: %{}}))
+
+    completed =
+      Targets.dispatch_target_observation!(clearance, invocation, actor: context.operator)
+
+    assert completed.facts["task_outcome"] == "completed"
+    refute inspect(completed) =~ "session-secret"
+
+    for {status, body, expected} <- [
+          {200, %{"TaskState" => "Exception"}, "failed"},
+          {200, %{"TaskState" => "FutureState", "TaskMonitor" => "private-value"}, "unknown"},
+          {200, "opaque native response", "completed"},
+          {404, %{}, "unavailable"},
+          {410, %{}, "unavailable"},
+          {403, %{}, "unknown"},
+          {302, %{}, "unknown"},
+          {500, %{}, "failed"}
+        ] do
+      Agent.update(context.agent, &Map.merge(&1, %{monitor_status: status, monitor_body: body}))
+
+      observation =
+        Targets.dispatch_target_observation!(clearance, invocation, actor: context.operator)
+
+      assert observation.facts["http_status"] == status
+      assert observation.facts["task_outcome"] == expected
+      refute inspect(observation) =~ "private-value"
+    end
+
+    paths = Agent.get(context.agent, & &1.paths)
+
+    for uri <- [
+          "https://other.example/vendor/task?ticket=private-value",
+          "https://user:password@127.0.0.1/vendor/task",
+          "//other.example/vendor/task",
+          "/vendor/task#fragment",
+          "/vendor/task\r\nheader"
+        ] do
+      denied = %{
+        result_reference_reader: fn ^reference_id ->
+          {:ok, %{"kind" => "redfish_task_monitor", "uri" => uri}}
+        end
+      }
+
+      assert {:error, _} =
+               Targets.dispatch_target_observation(clearance, denied, actor: context.operator)
+
+      assert Agent.get(context.agent, & &1.paths) == paths
+    end
+
+    assert {:error, _} =
+             Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+
+    assert Agent.get(context.agent, & &1.paths) == paths
+
+    assert Agent.get(context.agent, & &1.writes) == 0
+  end
+
+  test "a reviewed Case write is followed through its saved monitor without resolving the Case",
+       context do
+    ai =
+      Providers.create_provider!(
+        "Task AI fixture",
+        :ai,
+        "fixture-ai",
+        %{"model" => "task-fixture"},
+        %{"api_key" => "test-only"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    assignments = Opsonde.TestAIUsage.configure!(ai.id, :all, 10, context.admin)
+    setting = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      setting.setting_revision,
+      :auto,
+      setting.signal_automation_enabled,
+      setting.max_elapsed_seconds,
+      setting.max_resolver_turns,
+      setting.max_target_requests,
+      setting.max_effects,
+      setting.max_related_targets,
+      setting.max_ai_usage_units,
+      setting.max_no_progress_turns,
+      "Task Case fixture",
+      actor: context.admin
+    )
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        Ecto.UUID.generate(),
+        "Apply asynchronous configuration",
+        :warning,
+        %{"desired_outcome" => "The requested configuration works"},
+        context.target.id,
+        :en,
+        actor: context.operator
+      )
+
+    context = Map.merge(context, %{ai: ai, assignments: assignments, incident: incident})
+
+    proposal =
+      task_case_proposal!(context, :effect, "request.execute", %{
+        "method" => "POST",
+        "uri" => "/redfish/v1/Oem/OpaqueAsync",
+        "body" => %{}
+      })
+
+    assert proposal.status == :reviewing
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   send(self(), {:task_reviewed, request.proposal.parameters})
+
+                   {:ok,
+                    %Opsonde.Providers.AI.ReviewDecision{
+                      verdict: :approved,
+                      purpose_assessment: :remediation,
+                      reason: "Approve this exact async write",
+                      usage: %Opsonde.Providers.AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:task_reviewed, %{"uri" => "/redfish/v1/Oem/OpaqueAsync"}}
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    stored = Cases.get_operation!(operation.id, actor: context.operator)
+    assert stored.status == :unknown
+    assert stored.reference == operation.id
+
+    for {http_status, body, expected} <- [
+          {202, %{"TaskState" => "Running"}, "running"},
+          {204, %{}, "completed"}
+        ] do
+      Agent.update(
+        context.agent,
+        &Map.merge(&1, %{monitor_status: http_status, monitor_body: body})
+      )
+
+      observation =
+        task_case_proposal!(context, :observation, "task.observe", %{
+          "result_reference" => operation.id
+        })
+
+      follow_up = Cases.accept_operation!(observation.id, authorize?: false)
+      assert :ok = Opsonde.Cases.Operation.Delivery.run(follow_up.id)
+      result = Cases.get_operation!(follow_up.id, actor: context.operator)
+      assert result.status == :applied
+      assert result.result_details["facts"]["task_outcome"] == expected
+      assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+      refute Jason.encode!(OpsondeWeb.API.V1.WorkflowJSON.operation(result)) =~ "private-value"
+      assert Agent.get(context.agent, & &1.monitor_query) == "ticket=private-value"
+    end
+
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    assert {:error, _} = Opsonde.Cases.Operation.Delivery.run(operation.id)
+
+    assert Cases.get_case!(incident.id, actor: context.operator).pending_intent ==
+             current.pending_intent
+
+    assert Agent.get(context.agent, & &1.async_writes) == 1
+
+    proposal =
+      task_case_proposal!(context, :observation, "task.observe", %{
+        "result_reference" => operation.id
+      })
+
+    denied_operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    paths = Agent.get(context.agent, & &1.paths)
+    method = Targets.get_access_method!(context.method.id, actor: context.admin)
+
+    Targets.update_access_method!(
+      method,
+      method.revision,
+      %{capabilities: ["request.redfish.effect"]},
+      actor: context.admin
+    )
+
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(denied_operation.id)
+    denied = Cases.get_operation!(denied_operation.id, actor: context.operator)
+    assert denied.status == :failed
+    assert denied.outcome_category == "authorization_invalidated"
+    assert Agent.get(context.agent, & &1.paths) == paths
+  end
+
+  defp task_case_proposal!(context, kind, operation, parameters) do
+    incident = Cases.get_case!(context.incident.id, actor: context.operator)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        Ecto.UUID.generate(),
+        "observation",
+        "tls-fixture",
+        "task-peer",
+        %{"target_id" => context.target.id},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    capability = if kind == :effect, do: "request.redfish.effect", else: "request.redfish.observe"
+
+    tool = %{
+      "id" => Ecto.UUID.generate(),
+      "request_kind" => Atom.to_string(kind),
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "access_method_id" => context.method.id,
+      "access_method_revision" => context.method.revision,
+      "provider_id" => context.method.provider_id,
+      "provider_revision" => context.method.provider_revision,
+      "capability" => capability,
+      "operation" => operation
+    }
+
+    intent = %{
+      "type" => "proposal",
+      "purpose" => if(kind == :effect, do: "remediation", else: "investigation"),
+      "request_kind" => tool["request_kind"],
+      "tool_id" => tool["id"],
+      "tool" => tool,
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "access_method_id" => context.method.id,
+      "access_method_revision" => context.method.revision,
+      "capability" => capability,
+      "operation" => operation,
+      "selectors" => %{},
+      "parameters" => parameters,
+      "reason" => "Send this exact task request",
+      "evidence_ids" => [evidence.id],
+      "affected_conditions" => [],
+      "expected_result" =>
+        if(kind == :effect,
+          do: %{"desired_outcome" => "The requested configuration works"},
+          else: %{}
+        ),
+      "verification_intent" => %{},
+      "verification_tool" => %{}
+    }
+
+    turn =
+      case Cases.started_turns_for_run!(run.id, authorize?: false) do
+        [started] ->
+          started
+
+        [] ->
+          Cases.start_turn!(
+            incident.id,
+            run.id,
+            Ecto.UUID.generate(),
+            %{"objective" => "Check task progress"},
+            %{"action" => "continue"},
+            "Review limits",
+            authorize?: false
+          ).value
+      end
+
+    resolver = context.assignments.resolver
+
+    result = %{
+      "outcome" => "decision",
+      "intent" => intent,
+      "resolver" => %{
+        "provider_id" => context.ai.id,
+        "provider_revision" => context.ai.revision,
+        "assignment_id" => resolver.id,
+        "assignment_revision" => resolver.revision
+      },
+      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+    }
+
+    completed =
+      Cases.complete_turn!(
+        turn.id,
+        turn.revision,
+        result,
+        :proposal,
+        %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+        "Review request",
+        authorize?: false
+      ).value
+
+    Cases.route_resolver_decision!(completed.id, authorize?: false)
+    Cases.proposal_by_source_turn!(completed.id, authorize?: false)
+  end
+
   test "Redfish Method effects validate URI and ETag and preserve uncertain results", context do
     {:ok, state} = redfish_state(context.method.endpoint)
     {:ok, capabilities} = Redfish.capabilities(state, %{})
@@ -728,14 +1164,15 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     assert plain == %{"http_status" => 200, "response_redacted" => true}
 
-    assert {:ok, %{status: :unknown, details: async}} =
+    assert {:ok, %{status: :unknown} = async} =
              Redfish.effect(
                state,
                method_effect_request(context, "POST", "/redfish/v1/Oem/AsyncSafe", %{}),
                %{}
              )
 
-    assert async["task_location"] == "/redfish/v1/TaskService/TaskMonitors/2"
+    assert async.protected_reference["uri"] == "/redfish/v1/TaskService/TaskMonitors/2"
+    refute Map.has_key?(async.details, "task_location")
 
     assert {:ok, %{status: :unknown, details: lost}} =
              Redfish.effect(
@@ -1208,8 +1645,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     assert Enum.map(
              Enum.filter(projection.observation_tools, &(&1.access_method_id == second.id)),
-             & &1.capability
-           ) == ["request.redfish.observe"]
+             &{&1.capability, &1.operation}
+           ) == [
+             {"request.redfish.observe", "request.observe"},
+             {"request.redfish.observe", "task.observe"}
+           ]
 
     assert Enum.map(
              Enum.filter(

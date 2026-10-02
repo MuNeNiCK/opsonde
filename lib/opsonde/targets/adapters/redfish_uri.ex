@@ -33,6 +33,26 @@ defmodule Opsonde.Targets.Adapters.RedfishURI do
 
   def from_link(_endpoint, _uri), do: {:error, :invalid_resource_uri}
 
+  # Task monitors are opaque service-generated links, not Redfish resource identifiers.
+  def monitor(endpoint, uri) when is_binary(endpoint) and is_binary(uri) do
+    with %URI{} = origin <- URI.parse(endpoint),
+         %URI{path: path} = parsed <- URI.parse(uri),
+         true <- byte_size(uri) in 1..@max_uri_bytes,
+         true <- same_origin?(origin, parsed),
+         true <- is_binary(path) and String.starts_with?(path, "/"),
+         true <- not String.starts_with?(path, "//"),
+         true <- is_nil(parsed.fragment) and is_nil(parsed.userinfo),
+         true <- not String.match?(uri, ~r/[\x00-\x20\x7f\\]/) do
+      {:ok, relative_path(parsed)}
+    else
+      _ -> {:error, :invalid_resource_uri}
+    end
+  rescue
+    _ -> {:error, :invalid_resource_uri}
+  end
+
+  def monitor(_endpoint, _uri), do: {:error, :invalid_resource_uri}
+
   def from_link(endpoint, uri, current_path)
       when is_binary(endpoint) and is_binary(uri) and is_binary(current_path) do
     with {:ok, current} <- relative(current_path),

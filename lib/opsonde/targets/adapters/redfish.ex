@@ -103,7 +103,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
     {:ok,
      %Target.Capabilities{
-       observations: power.observations ++ [method_read_operation()],
+       observations: power.observations ++ [method_read_operation(), task_read_operation()],
        effects: power.effects ++ [method_effect_operation()]
      }}
   end
@@ -164,6 +164,13 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp classify_redfish(_invalid, _kind), do: {:error, :failed, "Redfish request is invalid"}
 
   @impl Opsonde.Providers.Target
+  def observe(
+        %State{} = state,
+        %{capability: @method_read, operation: "task.observe"} = request,
+        invocation
+      ),
+      do: task_observe(state, request, invocation)
+
   def observe(%State{} = state, %{capability: @method_read} = request, invocation),
     do: method_observe(state, request, invocation)
 
@@ -205,13 +212,16 @@ defmodule Opsonde.Targets.Adapters.Redfish do
            }}
 
         {:ok, 202, headers, _body} ->
+          protected = response_task_reference(state, headers)
+
           {:ok,
            %Target.EffectResult{
              status: :unknown,
              reference: intent.operation,
+             protected_reference: protected,
              details:
                %{"reason" => "Redfish task was accepted but is not complete"}
-               |> maybe_task_location(response_task_location(state, headers))
+               |> maybe_retry_after(protected)
            }}
 
         {:error, :transport, _message} ->
@@ -317,6 +327,48 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     }
   end
 
+  defp task_read_operation do
+    output = %{
+      "type" => "object",
+      "properties" => %{
+        "http_status" => %{"type" => "integer"},
+        "task_outcome" => %{"type" => "string"},
+        "task_state" => %{"type" => "string"},
+        "task_status" => %{"type" => "string"},
+        "percent_complete" => %{"type" => "integer"},
+        "retry_after_seconds" => %{"type" => "integer"}
+      },
+      "required" => ["http_status", "task_outcome"],
+      "additionalProperties" => false
+    }
+
+    %Target.Operation{
+      capability: @method_read,
+      operation: "task.observe",
+      description:
+        "Read a saved remote task using its result_reference UUID. Reports operation progress, not desired-outcome recovery; never resends the write or exposes the monitor URI.",
+      input_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "selectors" => %{
+            "type" => "object",
+            "properties" => %{},
+            "additionalProperties" => false
+          },
+          "parameters" => %{
+            "type" => "object",
+            "properties" => %{"result_reference" => %{"type" => "string", "format" => "uuid"}},
+            "required" => ["result_reference"],
+            "additionalProperties" => false
+          }
+        },
+        "required" => ["selectors", "parameters"],
+        "additionalProperties" => false
+      },
+      output_schema: output
+    }
+  end
+
   defp method_schema(methods, write? \\ false) do
     selector_properties =
       if write?, do: %{"if_match" => %{"type" => "string", "maxLength" => 256}}, else: %{}
@@ -361,6 +413,18 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     }
   end
 
+  defp method_read_request(state, %{operation: "task.observe"} = request) do
+    with true <- request.connection.endpoint == state.endpoint,
+         true <- request.selectors == %{},
+         %{"result_reference" => reference} when map_size(request.parameters) == 1 <-
+           request.parameters,
+         {:ok, _} <- Ecto.UUID.cast(reference) do
+      {:ok, :get, reference, %{}}
+    else
+      _ -> {:error, :failed, "Redfish task observation request is invalid"}
+    end
+  end
+
   defp method_read_request(state, request) do
     with true <- request.operation == "request.observe",
          true <- request.connection.endpoint == state.endpoint,
@@ -375,6 +439,73 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       _ -> {:error, :failed, "Redfish read request is invalid"}
     end
   end
+
+  defp task_observe(state, request, invocation) do
+    with {:ok, :get, reference_id, _transfer} <- method_read_request(state, request),
+         reader when is_function(reader, 1) <- invocation[:result_reference_reader],
+         {:ok, %{"kind" => "redfish_task_monitor", "uri" => uri}} <- reader.(reference_id),
+         {:ok, path} <- RedfishURI.monitor(state.endpoint, uri),
+         :ok <- not_cancelled(invocation),
+         {:ok, status, headers, body} <-
+           request(state, :get, path, nil, [], %{"task_monitor" => true}, invocation) do
+      facts = %{"http_status" => status, "task_outcome" => task_outcome(status, body)}
+
+      facts =
+        facts
+        |> task_fact(
+          "task_state",
+          body["TaskState"],
+          ~w(New Starting Running Suspended Interrupted Pending Stopping Completed Killed Exception Service)
+        )
+        |> task_fact("task_status", body["TaskStatus"], ~w(OK Warning Critical))
+
+      facts =
+        case body["PercentComplete"] do
+          value when is_integer(value) and value in 0..100 ->
+            Map.put(facts, "percent_complete", value)
+
+          _ ->
+            facts
+        end
+
+      facts =
+        case retry_after(headers) do
+          nil -> facts
+          seconds -> Map.put(facts, "retry_after_seconds", seconds)
+        end
+
+      {:ok,
+       %Target.Observation{
+         facts: facts,
+         observed_at: DateTime.utc_now(),
+         evidence: [
+           %{"source" => "redfish", "result_reference" => reference_id, "http_status" => status}
+         ]
+       }}
+    else
+      _ -> {:error, :failed, "Redfish task progress is unavailable"}
+    end
+  end
+
+  defp task_outcome(status, _body) when status in [404, 410], do: "unavailable"
+  defp task_outcome(status, _body) when status in [401, 403] or status in 300..399, do: "unknown"
+  defp task_outcome(status, _body) when status >= 400, do: "failed"
+  defp task_outcome(202, _body), do: "running"
+
+  defp task_outcome(_status, %{"TaskState" => state}) when state in ["Exception", "Killed"],
+    do: "failed"
+
+  defp task_outcome(_status, %{"TaskState" => state})
+       when state in ~w(New Starting Running Suspended Interrupted Pending Stopping Service),
+       do: "running"
+
+  defp task_outcome(_status, %{"TaskState" => state}) when state != "Completed", do: "unknown"
+
+  defp task_outcome(status, _body) when status in 200..299, do: "completed"
+  defp task_outcome(_status, _body), do: "unknown"
+
+  defp task_fact(facts, key, value, allowed),
+    do: if(value in allowed, do: Map.put(facts, key, value), else: facts)
 
   defp method_effect(state, target_request, invocation) do
     with {:ok, method, path, body, headers, include_response?, transfer} <-
@@ -477,14 +608,20 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   defp effect_response(state, {:ok, status, headers, reply}, reference, details)
        when status in [200, 201, 202, 204] do
     outcome = if status == 202, do: :unknown, else: :applied
-    visible = details.(status, reply)
+    protected = if(status == 202, do: response_task_reference(state, headers))
 
     visible =
-      if status == 202,
-        do: maybe_task_location(visible, response_task_location(state, headers)),
-        else: visible
+      details.(status, reply)
+      |> redact_task_reference(if(status == 202, do: headers))
+      |> maybe_retry_after(protected)
 
-    {:ok, %Target.EffectResult{status: outcome, reference: reference, details: visible}}
+    {:ok,
+     %Target.EffectResult{
+       status: outcome,
+       reference: reference,
+       details: visible,
+       protected_reference: protected
+     }}
   end
 
   defp effect_response(_state, {:ok, status, _headers, _reply}, reference, _details) do
@@ -507,6 +644,32 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp effect_response(_state, {:error, _category, message}, _reference, _details),
     do: {:error, :failed, message}
+
+  defp redact_task_reference(details, headers) when is_map(headers) do
+    values =
+      Enum.flat_map(
+        Req.Response.get_header(%Req.Response{headers: headers}, "location"),
+        fn uri ->
+          parsed = URI.parse(uri)
+
+          query_values =
+            if parsed.query, do: URI.decode_query(parsed.query) |> Map.values(), else: []
+
+          [uri, parsed.path, parsed.query | query_values]
+        end
+      )
+
+    Opsonde.Providers.Redactor.value(details, %{"secret" => values})
+  rescue
+    _ -> %{"http_status" => 202, "response_redacted" => true}
+  end
+
+  defp redact_task_reference(details, _reference), do: details
+
+  defp maybe_retry_after(details, %{"retry_after_seconds" => seconds}),
+    do: Map.put(details, "retry_after_seconds", seconds)
+
+  defp maybe_retry_after(details, _reference), do: details
 
   defp read_api_resource(state, method, path, transfer, invocation) do
     case request(state, method, path, nil, [], transfer, invocation) do
@@ -606,32 +769,31 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp valid_etag?(_etag), do: false
 
-  defp response_task_location(state, headers) do
-    case Req.Response.get_header(%Req.Response{headers: headers}, "location") do
-      [location] -> safe_task_location(state, location)
+  defp response_task_reference(state, headers) do
+    response = %Req.Response{headers: headers}
+
+    with [location] <- Req.Response.get_header(response, "location"),
+         {:ok, uri} <- RedfishURI.monitor(state.endpoint, location) do
+      reference = %{"kind" => "redfish_task_monitor", "uri" => uri}
+
+      case retry_after(headers) do
+        nil -> reference
+        seconds -> Map.put(reference, "retry_after_seconds", seconds)
+      end
+    else
       _ -> nil
     end
   end
 
-  defp safe_task_location(state, location) do
-    case resource_path(state, location) do
-      {:ok, path} ->
-        if Regex.match?(
-             ~r{\A/redfish/v1/TaskService/(?:TaskMonitors|Tasks)/[A-Za-z0-9._~-]+\z},
-             path
-           ),
-           do: path,
-           else: nil
-
-      _ ->
-        nil
+  defp retry_after(headers) do
+    # Req's installed implementation returns milliseconds for both delay and HTTP-date forms.
+    case Req.Response.get_retry_after(%Req.Response{headers: headers}) do
+      value when is_integer(value) and value >= 0 -> div(value + 999, 1_000)
+      _ -> nil
     end
+  rescue
+    _ -> nil
   end
-
-  defp maybe_task_location(details, location) when is_binary(location),
-    do: Map.put(details, "task_location", location)
-
-  defp maybe_task_location(details, _location), do: details
 
   defp sanitize_response(value), do: sanitize_response(value, 0)
 
@@ -797,9 +959,16 @@ defmodule Opsonde.Targets.Adapters.Redfish do
                 {:ok, status, headers, value}
 
               _ ->
-                {:error, response_failure_category(method),
-                 "Redfish response is not a JSON object"}
+                if transfer["task_monitor"] == true do
+                  {:ok, status, headers, %{}}
+                else
+                  {:error, response_failure_category(method),
+                   "Redfish response is not a JSON object"}
+                end
             end
+
+          transfer["task_monitor"] == true ->
+            {:ok, status, headers, %{}}
 
           status in [401, 403] ->
             {:error, :authentication, "Redfish authentication failed"}
