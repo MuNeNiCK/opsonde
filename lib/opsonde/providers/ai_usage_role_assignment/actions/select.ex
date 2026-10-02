@@ -16,8 +16,8 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment.Actions.Select do
           assignment -> {:ok, assigned_selection(assignment, role)}
         end
 
-      {:error, _error} ->
-        {:error, ai_error("AI usage role selection failed")}
+      {:error, _error} = error ->
+        error
     end
   end
 

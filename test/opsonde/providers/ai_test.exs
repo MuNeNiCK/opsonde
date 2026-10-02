@@ -519,6 +519,47 @@ defmodule Opsonde.Providers.AITest do
     assert Exception.message(wrong_kind) =~ "only AI connections have usage roles"
   end
 
+  @tag ai_role_selection_read_fault: true
+  test "role selection preserves a storage read failure instead of reporting no eligible AI",
+       context do
+    Opsonde.TestAIUsage.configure!(context.provider.id, :all, 10, context.admin)
+
+    Repo.query!(
+      "ALTER TABLE ai_usage_role_assignments RENAME COLUMN priority TO unavailable_priority"
+    )
+
+    try do
+      for result <- [
+            Providers.select_resolver_ai(actor: context.operator),
+            Providers.select_reviewer_ai([], actor: context.operator)
+          ] do
+        assert {:error, error} = result
+        assert Exception.message(error) =~ "undefined_column"
+        refute Exception.message(error) =~ "AI usage role selection failed"
+      end
+    after
+      Repo.query!(
+        "ALTER TABLE ai_usage_role_assignments RENAME COLUMN unavailable_priority TO priority"
+      )
+    end
+
+    assert Providers.select_resolver_ai!(actor: context.operator).provider_id ==
+             context.provider.id
+
+    assert Providers.select_reviewer_ai!([], actor: context.operator).provider_id ==
+             context.provider.id
+
+    Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
+
+    for {result, role} <- [
+          {Providers.select_resolver_ai(actor: context.operator), "Resolver"},
+          {Providers.select_reviewer_ai([], actor: context.operator), "Reviewer"}
+        ] do
+      assert {:error, error} = result
+      assert Exception.message(error) =~ "No eligible #{role} AI is assigned"
+    end
+  end
+
   test "selection uses role assignments and never borrows a Resolver for review",
        context do
     resolver_assignment = assign!(context.admin, context.provider, :resolver, 50)
