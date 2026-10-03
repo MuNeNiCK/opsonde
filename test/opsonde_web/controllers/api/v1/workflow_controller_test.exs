@@ -1278,6 +1278,41 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_operation_response(invalid_revision)
   end
 
+  test "public evidence pages expose the complete canonical receipt to authenticated clients",
+       context do
+    configure_mode!(:full_access, context.admin)
+    setup = proposal_setup!(context)
+    {incident, proposal} = awaiting_proposal!(setup, context.operator)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    details = %{"payload" => String.duplicate("y", 65_522)}
+
+    assert :ok =
+             Opsonde.Cases.Operation.Delivery.run(operation.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn ->
+                   {:ok,
+                    %Opsonde.Providers.Target.EffectResult{status: :applied, details: details}}
+                 end
+               }
+             )
+
+    assert_receive {:effect, _, _}
+
+    for token <- [context.operator_token, context.viewer_token] do
+      response = get_json("/api/v1/cases/#{incident.id}/evidence", token)
+      assert_operation_response(response)
+      body = json_response(response, 200)
+      receipt = Enum.find(body["data"], &(&1["source_ref"] == operation.id))
+      assert receipt["content"]["details"] == details
+      assert receipt["content"]["parameters"] == %{"service" => "api"}
+      assert receipt["content"]["tool_id"] == proposal.tool_id
+      refute Map.has_key?(receipt, "stored_content")
+    end
+
+    assert get_json("/api/v1/cases/#{incident.id}/evidence", nil).status == 401
+  end
+
   defp resume_input(incident, run, expected_run_revision) do
     %{
       "expected_case_revision" => incident.revision,

@@ -440,7 +440,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     |> Ash.Query.for_read(:read)
     |> Ash.Query.filter(
       case_id == ^case_id and kind == "signal_event" and
-        content["condition_id"] == ^condition.id
+        stored_content["condition_id"] == ^condition.id
     )
     |> Ash.Query.sort(observed_at: :desc, inserted_at: :desc, id: :desc)
     |> Ash.Query.limit(1)

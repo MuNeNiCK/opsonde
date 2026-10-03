@@ -459,7 +459,7 @@ defmodule Opsonde.ResolverProjectionTest do
         nil,
         "compact-applied-observation",
         "observation",
-        "operation",
+        "fixture",
         Ecto.UUID.generate(),
         %{
           "request_kind" => "observation",
@@ -487,7 +487,7 @@ defmodule Opsonde.ResolverProjectionTest do
         nil,
         "compact-failed-effect",
         "operation_outcome",
-        "operation",
+        "fixture",
         Ecto.UUID.generate(),
         %{
           "request_kind" => "effect",
@@ -519,7 +519,7 @@ defmodule Opsonde.ResolverProjectionTest do
         nil,
         "compact-verification",
         "target_verification",
-        "verification",
+        "fixture",
         Ecto.UUID.generate(),
         %{
           "target_id" => context.target.id,
@@ -710,7 +710,7 @@ defmodule Opsonde.ResolverProjectionTest do
         nil,
         key,
         "observation",
-        "operation",
+        "fixture",
         key,
         %{
           "request_kind" => "observation",

@@ -88,7 +88,7 @@ defmodule Opsonde.Cases.Evidence do
       filter expr(
                case_id == ^arg(:case_id) and
                  kind in ["observation", "operation_outcome", "target_verification", "file_read"] and
-                 get_path(content, ["target_id"]) == ^arg(:target_id)
+                 get_path(stored_content, ["target_id"]) == ^arg(:target_id)
              )
 
       prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 101)
@@ -126,11 +126,12 @@ defmodule Opsonde.Cases.Evidence do
         :kind,
         :source,
         :source_ref,
-        :content,
         :observed_at
       ]
 
-      validate {Opsonde.Validations.BoundedMap, attribute: :content}
+      argument :content, :map, allow_nil?: false
+      validate {Opsonde.Validations.BoundedMap, argument: :content}
+      change set_attribute(:stored_content, arg(:content))
     end
 
     action :append, :struct do
@@ -208,6 +209,14 @@ defmodule Opsonde.Cases.Evidence do
     end
   end
 
+  preparations do
+    prepare build(load: [:content])
+  end
+
+  changes do
+    change load(:content), on: [:create]
+  end
+
   attributes do
     uuid_primary_key :id
 
@@ -235,9 +244,9 @@ defmodule Opsonde.Cases.Evidence do
       constraints min_length: 1, max_length: 500
     end
 
-    attribute :content, :map do
+    attribute :stored_content, :map do
       allow_nil? false
-      public? true
+      source :content
     end
 
     attribute :observed_at, :utc_datetime_usec do
@@ -260,6 +269,12 @@ defmodule Opsonde.Cases.Evidence do
     end
 
     belongs_to :turn, Opsonde.Cases.Turn do
+      public? true
+    end
+  end
+
+  calculations do
+    calculate :content, :map, Opsonde.Cases.Evidence.Calculations.Content do
       public? true
     end
   end

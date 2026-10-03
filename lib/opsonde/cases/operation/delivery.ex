@@ -266,7 +266,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
              evidence_kind(operation),
              "operation",
              operation.id,
-             evidence_content(operation, proposal),
+             %{"target_id" => operation.target_id},
              operation.completed_at,
              authorize?: false
            ),
@@ -534,34 +534,6 @@ defmodule Opsonde.Cases.Operation.Delivery do
           _active -> {:error, error}
         end
     end
-  end
-
-  defp evidence_content(operation, proposal) do
-    {facts, details} = Map.pop(operation.result_details, "facts")
-
-    {facts, details} =
-      if operation.purpose == :investigation and operation.request_kind == :effect and
-           is_nil(facts),
-         do: {details, %{}},
-         else: {facts || %{}, details}
-
-    %{
-      "status" => to_string(operation.status),
-      "category" => operation.outcome_category,
-      "reference" => operation.reference,
-      "request_kind" => to_string(operation.request_kind),
-      "purpose" => to_string(operation.purpose),
-      "capability" => operation.capability,
-      "operation" => operation.operation,
-      "selectors" => operation.selectors,
-      "parameters" => operation.parameters,
-      "details" => details,
-      "facts" => facts,
-      "tool_id" => proposal.tool_id,
-      "target_id" => operation.target_id,
-      "access_method_id" => operation.access_method_id,
-      "access_method_revision" => operation.access_method_revision
-    }
   end
 
   defp evidence_kind(%{purpose: :investigation}), do: "observation"

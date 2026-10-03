@@ -174,7 +174,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
              "target_verification",
              "verification",
              attempt.id,
-             evidence_content(attempt),
+             %{"target_id" => attempt.target_id},
              attempt.observed_at,
              authorize?: false
            ),
@@ -230,18 +230,5 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
           _missing -> conflict
         end
     end
-  end
-
-  defp evidence_content(attempt) do
-    %{
-      "status" => to_string(attempt.status),
-      "category" => attempt.outcome_category,
-      "facts" => attempt.facts,
-      "provider_evidence" => attempt.provider_evidence,
-      "expected" => attempt.expected,
-      "operation_id" => attempt.operation_id,
-      "target_id" => attempt.target_id,
-      "access_method_id" => attempt.access_method_id
-    }
   end
 end

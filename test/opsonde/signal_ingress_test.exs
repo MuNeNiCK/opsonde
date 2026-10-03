@@ -42,6 +42,21 @@ defmodule Opsonde.SignalIngressTest do
     %{admin: admin, provider: provider}
   end
 
+  test "Signal source names cannot be mistaken for operation or verification receipts", context do
+    enable_signal_automation!(context.admin)
+    now = DateTime.utc_now()
+
+    for source <- ["operation", "verification"] do
+      provider = signal_provider!(context.admin, source)
+      ingest_one!(provider, "source-name-#{source}", :firing, now)
+
+      evidence = Cases.list_evidence!(actor: context.admin) |> Enum.find(&(&1.source == source))
+      assert evidence.kind == "signal_event"
+      assert evidence.source_ref == "same-alert"
+      assert evidence.content["state"] == "firing"
+    end
+  end
+
   test "active Signal admission cannot persist without its initial Case dispatch job", context do
     enable_signal_automation!(context.admin)
     now = DateTime.utc_now()

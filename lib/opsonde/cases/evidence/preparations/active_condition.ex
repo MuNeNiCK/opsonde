@@ -21,7 +21,7 @@ defmodule Opsonde.Cases.Evidence.Preparations.ActiveCondition do
             values -> values
           end
 
-        Ash.Query.filter(query, content["condition_id"] in ^ids)
+        Ash.Query.filter(query, stored_content["condition_id"] in ^ids)
 
       {:error, error} ->
         Ash.Query.add_error(query, error)

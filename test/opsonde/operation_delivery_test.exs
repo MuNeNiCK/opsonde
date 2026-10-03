@@ -101,6 +101,259 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  test "large admitted request and result survive an Evidence save failure without resending",
+       context do
+    parameters = %{"service" => "api", "padding" => String.duplicate("x", 60_000)}
+    details = %{"payload" => String.duplicate("y", 65_522)}
+    assert byte_size(Jason.encode!(details)) == 65_536
+
+    {incident, _run, proposal} =
+      authorized_proposal!("large-receipt", context, parameters: parameters)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_large_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Receipt storage unavailable'; END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_large_receipt BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source = 'operation')
+    EXECUTE FUNCTION pg_temp.reject_large_receipt()
+    """)
+
+    try do
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn ->
+                     send(self(), :large_receipt_effect)
+                     {:ok, %Target.EffectResult{status: :applied, details: details}}
+                   end)
+               )
+
+      assert Exception.message(error) =~ "Receipt storage unavailable"
+    after
+      Repo.query!("DROP TRIGGER reject_large_receipt ON evidences")
+    end
+
+    assert_received :large_receipt_effect
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert saved.status == :applied
+    assert saved.parameters == parameters
+    assert saved.result_details == details
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("saved effect was resent") end)
+             )
+
+    receipt = operation_evidence_record(operation.id)
+    assert receipt.content["parameters"] == parameters
+    assert receipt.content["details"] == details
+    assert byte_size(Jason.encode!(receipt.content)) > 65_536
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("saved effect was resent") end)
+             )
+
+    page = Cases.page_case_evidence!(incident.id, actor: context.operator)
+    public_receipt = Enum.find(page.results, &(&1.id == receipt.id))
+    assert public_receipt.content == receipt.content
+
+    with_projection_read_fault("operations", "status", "text", operation.id, fn ->
+      assert {:error, error} = Cases.page_case_evidence(incident.id, actor: context.operator)
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+    end)
+
+    assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
+
+    receipts = Cases.list_evidence!(actor: context.operator)
+    assert Enum.count(receipts, &(&1.source_ref == operation.id)) == 1
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+  end
+
+  test "large verification receipts survive failed Evidence storage and retain the exact expectation",
+       context do
+    expected = %{"padding" => String.duplicate("z", 60_000)}
+
+    {incident, _run, proposal} =
+      authorized_proposal!("large-verification-receipt", context, verification_expected: expected)
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    facts = Map.put(expected, "observation", String.duplicate("y", 5_000))
+
+    result = %Target.Verification{
+      status: :verified,
+      facts: facts,
+      observed_at: DateTime.utc_now()
+    }
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_verification_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Verification receipt storage unavailable'; END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_verification_receipt BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source = 'verification')
+    EXECUTE FUNCTION pg_temp.reject_verification_receipt()
+    """)
+
+    try do
+      assert {:error, error} =
+               VerificationDelivery.run(attempt.id, target_invocation: invocation({:ok, result}))
+
+      assert Exception.message(error) =~ "Verification receipt storage unavailable"
+    after
+      Repo.query!("DROP TRIGGER reject_verification_receipt ON evidences")
+    end
+
+    assert_receive {:verify, _, _}
+    saved = Cases.get_verification_attempt!(attempt.id, actor: context.operator)
+    assert saved.status == :verified
+    assert saved.facts == facts
+    assert saved.expected == expected
+
+    for _ <- 1..2 do
+      assert :ok =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation(fn -> flunk("saved verification was resent") end)
+               )
+    end
+
+    page = Cases.page_case_evidence!(incident.id, actor: context.operator)
+    receipt = Enum.find(page.results, &(&1.source_ref == attempt.id))
+    assert receipt.content["facts"] == facts
+    assert receipt.content["expected"] == expected
+    assert byte_size(Jason.encode!(receipt.content)) > 65_536
+    assert Enum.count(page.results, &(&1.source_ref == attempt.id)) == 1
+
+    assert Cases.get_case!(incident.id, actor: context.operator).pending_intent["action"] ==
+             "resolve_turn"
+
+    refute_receive {:verify, _, _}
+  end
+
+  test "canonical Evidence requires the original terminal source, scope and observation time",
+       context do
+    {incident, run, proposal} = authorized_proposal!("receipt-provenance", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert {:error, _} =
+             Cases.append_evidence(
+               incident.id,
+               run.id,
+               nil,
+               "queued-receipt",
+               "operation_outcome",
+               "operation",
+               operation.id,
+               %{"target_id" => operation.target_id},
+               DateTime.utc_now(),
+               authorize?: false
+             )
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    saved = Cases.get_operation!(operation.id, authorize?: false)
+    attempt = Cases.verification_attempt_by_operation!(saved.id, authorize?: false)
+
+    assert {:error, _} =
+             Cases.append_evidence(
+               incident.id,
+               run.id,
+               nil,
+               "queued-verification-receipt",
+               "target_verification",
+               "verification",
+               attempt.id,
+               %{"target_id" => attempt.target_id},
+               DateTime.utc_now(),
+               authorize?: false
+             )
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation({:ok, verified_result(%{"service" => "running"})})
+             )
+
+    verified = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    {other_case, other_run, _proposal} = authorized_proposal!("receipt-other-case", context)
+    before_ids = Cases.list_evidence!(actor: context.operator) |> Enum.map(& &1.id) |> Enum.sort()
+
+    for {key, case_id, run_id, kind, source_ref, target_id, observed_at} <- [
+          {"foreign-case", other_case.id, other_run.id, "operation_outcome", saved.id,
+           saved.target_id, saved.completed_at},
+          {"missing-source", incident.id, run.id, "operation_outcome", Ecto.UUID.generate(),
+           saved.target_id, saved.completed_at},
+          {"wrong-kind", incident.id, run.id, "observation", saved.id, saved.target_id,
+           saved.completed_at},
+          {"wrong-target", incident.id, run.id, "operation_outcome", saved.id,
+           Ecto.UUID.generate(), saved.completed_at},
+          {"wrong-time", incident.id, run.id, "operation_outcome", saved.id, saved.target_id,
+           DateTime.add(saved.completed_at, 1, :second)}
+        ] do
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Cases.append_evidence(
+                 case_id,
+                 run_id,
+                 nil,
+                 key,
+                 kind,
+                 "operation",
+                 source_ref,
+                 %{"target_id" => target_id},
+                 observed_at,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "no matching terminal Operation receipt"
+    end
+
+    for {key, case_id, run_id, source_ref, observed_at} <- [
+          {"foreign-verification", other_case.id, other_run.id, verified.id,
+           verified.observed_at},
+          {"missing-verification", incident.id, run.id, Ecto.UUID.generate(),
+           verified.observed_at},
+          {"wrong-verification-time", incident.id, run.id, verified.id,
+           DateTime.add(verified.observed_at, 1, :second)}
+        ] do
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Cases.append_evidence(
+                 case_id,
+                 run_id,
+                 nil,
+                 key,
+                 "target_verification",
+                 "verification",
+                 source_ref,
+                 %{"target_id" => verified.target_id},
+                 observed_at,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "no matching terminal Verification receipt"
+    end
+
+    assert Cases.list_evidence!(actor: context.operator) |> Enum.map(& &1.id) |> Enum.sort() ==
+             before_ids
+  end
+
   test "a delayed observation persists its due time and sends once without another Resolver call",
        context do
     {incident, run, proposal} =
@@ -7187,6 +7440,16 @@ defmodule Opsonde.OperationDeliveryTest do
         result
       end
 
+    result =
+      if parameters = Keyword.get(opts, :parameters),
+        do: put_in(result, ["intent", "parameters"], parameters),
+        else: result
+
+    result =
+      if expected = Keyword.get(opts, :verification_expected),
+        do: put_in(result, ["intent", "verification_intent", "expected_result"], expected),
+        else: result
+
     result = put_in(result, ["intent", "delay_seconds"], Keyword.get(opts, :delay_seconds, 0))
 
     turn =
@@ -7662,10 +7925,12 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   defp operation_evidence_record(operation_id) do
-    Opsonde.Repo.one!(
-      from(evidence in Opsonde.Cases.Evidence,
-        where: evidence.idempotency_key == ^"operation:outcome:#{operation_id}"
-      )
+    operation = Cases.get_operation!(operation_id, authorize?: false)
+
+    Cases.evidence_by_idempotency!(
+      operation.case_id,
+      "operation:outcome:#{operation_id}",
+      authorize?: false
     )
   end
 

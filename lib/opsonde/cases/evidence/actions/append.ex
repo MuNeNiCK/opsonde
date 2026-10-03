@@ -123,11 +123,11 @@ defmodule Opsonde.Cases.Evidence.Actions.Append do
       :kind,
       :source,
       :source_ref,
-      :content,
       :observed_at
     ]
 
-    if Map.take(evidence, fields) == Map.take(arguments, fields) do
+    if Map.take(evidence, fields) == Map.take(arguments, fields) and
+         evidence.stored_content == arguments.content do
       :ok
     else
       {:error, "Evidence idempotency key was already used with different content"}
