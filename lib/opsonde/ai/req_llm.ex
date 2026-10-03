@@ -337,33 +337,26 @@ defmodule Opsonde.AI.ReqLLM do
     cond do
       match?({:error, _}, cancellation) ->
         {:error, cause} = cancellation
-        cancel(cancel_stream)
 
-        case Task.shutdown(task, :brutal_kill) do
-          {:ok, result} ->
-            result
-
-          _stopped ->
-            {:error,
-             Ash.Error.to_error_class([
-               cause,
-               AI.Error.exception(
-                 category: :failed,
-                 message: "AI invocation context check failed",
-                 dispatched?: true
-               )
-             ])}
-        end
+        stop(
+          task,
+          cancel_stream,
+          {:error,
+           Ash.Error.to_error_class([
+             cause,
+             AI.Error.exception(
+               category: :failed,
+               message: "AI invocation context check failed",
+               dispatched?: true
+             )
+           ])}
+        )
 
       cancellation ->
-        cancel(cancel_stream)
-        Task.shutdown(task, :brutal_kill)
-        {:error, :cancelled, "AI decision was cancelled"}
+        stop(task, cancel_stream, {:error, :cancelled, "AI decision was cancelled"})
 
       System.monotonic_time(:millisecond) >= deadline ->
-        cancel(cancel_stream)
-        Task.shutdown(task, :brutal_kill)
-        {:error, :timeout, "AI provider timed out"}
+        stop(task, cancel_stream, {:error, :timeout, "AI provider timed out"})
 
       true ->
         receive do
@@ -376,6 +369,21 @@ defmodule Opsonde.AI.ReqLLM do
               {:exit, _reason} -> {:error, :failed, "AI provider failed"}
               nil -> await(task, stream_ref, cancel_stream, cancelled?, deadline)
             end
+        end
+    end
+  end
+
+  defp stop(task, cancel_stream, failure) do
+    case Task.yield(task, 0) do
+      {:ok, result} ->
+        result
+
+      _waiting ->
+        cancel(cancel_stream)
+
+        case Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> result
+          _stopped -> failure
         end
     end
   end

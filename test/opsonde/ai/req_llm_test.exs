@@ -1098,6 +1098,158 @@ defmodule Opsonde.AI.ReqLLMTest do
     assert length(requests(context.agent)) == 1
   end
 
+  @tag completed_response_race: true
+  test "cancellation during a slow context check preserves the received native decision and usage",
+       context do
+    admin =
+      Accounts.bootstrap!(
+        "received-response-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    provider =
+      Providers.create_provider!(
+        "received-response-ai",
+        :ai,
+        Adapter.type(),
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => context.endpoint <> "/v1"
+        },
+        %{"api_key" => "received-response-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    set_mode(context.agent, {:decision, handoff()})
+    calls = :atomics.new(1, [])
+
+    cancelled? = fn ->
+      if :atomics.add_get(calls, 1, 1) == 1 do
+        false
+      else
+        # The remote response arrives while this context check is still waiting.
+        Process.sleep(500)
+        true
+      end
+    end
+
+    assert {:ok,
+            %AI.ResolverDecision{
+              usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+            }} =
+             Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+               actor: admin
+             )
+
+    assert length(requests(context.agent)) == 1
+  end
+
+  @tag completed_response_race: true
+  test "received buffered and streamed usage survives a deadline or context fault", context do
+    admin =
+      Accounts.bootstrap!(
+        "response-races-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    for stream? <- [false, true] do
+      mode = if stream?, do: :stream, else: :decision
+      set_mode(context.agent, {mode, %{"status" => "ready"}})
+
+      provider =
+        Providers.create_provider!(
+          "response-races-ai-#{stream?}",
+          :ai,
+          Adapter.type(),
+          %{
+            "provider" => "openai",
+            "model" => "test-model",
+            "endpoint" => context.endpoint <> "/v1",
+            "stream" => stream?,
+            "timeout_ms" => 1000
+          },
+          %{"api_key" => "response-races-secret"},
+          actor: admin
+        )
+        |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+        |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+      for stop <- [:cancel, :deadline, :read_fault] do
+        set_mode(context.agent, {mode, handoff()})
+        calls = :atomics.new(1, [])
+
+        cancelled? = fn ->
+          if :atomics.add_get(calls, 1, 1) == 1 do
+            false
+          else
+            Process.sleep(if stop == :deadline, do: 1100, else: 500)
+
+            case stop do
+              :cancel ->
+                true
+
+              :deadline ->
+                false
+
+              :read_fault ->
+                {:error, error} =
+                  Opsonde.Repo.query("SELECT invocation_context_unavailable", [],
+                    mode: :savepoint
+                  )
+
+                raise error
+            end
+          end
+        end
+
+        assert {:ok,
+                %AI.ResolverDecision{
+                  usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                }} =
+                 Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+                   actor: admin
+                 )
+
+        assert length(requests(context.agent)) == 1
+      end
+
+      set_mode(context.agent, {mode, %{"unexpected" => true}})
+      calls = :atomics.new(1, [])
+
+      cancelled? = fn ->
+        if :atomics.add_get(calls, 1, 1) == 1 do
+          false
+        else
+          Process.sleep(500)
+          true
+        end
+      end
+
+      assert {:error, error} =
+               Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+                 actor: admin
+               )
+
+      assert %AI.Error{
+               category: :invalid_output,
+               dispatched?: true,
+               usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+             } = AI.Error.find(error)
+
+      assert %{amount: 12, dispatched?: true} =
+               Opsonde.Cases.AIInvocation.failure_accounting(error, 65_536)
+
+      assert length(requests(context.agent)) == 1
+    end
+  end
+
   test "plain output requests preserve timeout and cancellation", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{
