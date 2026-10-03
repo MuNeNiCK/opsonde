@@ -348,6 +348,75 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
   end
 
+  @tag target_callback_read_fault: true
+  test "a context callback storage fault retries unsent Operation and Verification dispatches",
+       context do
+    {_incident, _run, proposal} = authorized_proposal!("dispatch-context-read-fault", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    cancelled? = fn ->
+      {:error, error} = Repo.query("SELECT target_context_unavailable", [], mode: :savepoint)
+      raise error
+    end
+
+    assert {:error, error} =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(fn -> flunk("unsent effect ran") end)
+                 |> Map.put(:cancelled?, cancelled?)
+             )
+
+    assert Exception.message(error) =~ "target_context_unavailable"
+    unsent = Cases.get_operation!(operation.id, authorize?: false)
+    assert unsent.status == :queued
+    assert unsent.dispatch_started_at == nil
+    refute_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert {:error, error} =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(fn -> flunk("unsent verification ran") end)
+                 |> Map.put(:cancelled?, cancelled?)
+             )
+
+    assert Exception.message(error) =~ "target_context_unavailable"
+    unsent_attempt = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert unsent_attempt.status == :queued
+    assert unsent_attempt.dispatch_started_at == nil
+    refute_receive {:verify, _, _}
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, %Target.Verification{status: :verified, observed_at: DateTime.utc_now()}}
+                 )
+             )
+
+    assert_receive {:verify, _, _}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("completed effect replayed") end)
+             )
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("completed verification replayed") end)
+             )
+
+    refute_receive {:effect, _, _}
+    refute_receive {:verify, _, _}
+  end
+
   @tag dispatch_method_read_fault: true
   test "Method storage faults keep unsent Operation and Verification dispatches retryable",
        context do

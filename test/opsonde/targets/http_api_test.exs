@@ -12,6 +12,12 @@ defmodule Opsonde.Targets.HTTPAPITest do
     def init(agent), do: agent
 
     def call(conn, agent) do
+      Agent.update(agent, fn state ->
+        Map.update(state, :requests, [{conn.method, conn.request_path}], fn requests ->
+          [{conn.method, conn.request_path} | requests]
+        end)
+      end)
+
       if get_req_header(conn, "authorization") == ["Bearer fixture-token"] and
            Agent.get(agent, &Map.get(&1, :authorized, true)) do
         route(conn, agent)
@@ -220,6 +226,63 @@ defmodule Opsonde.Targets.HTTPAPITest do
       state: state,
       agent: agent
     }
+  end
+
+  @tag target_callback_read_fault: true
+  test "pre-send context read faults retain their cause without calling the HTTP Method",
+       context do
+    read = read_request(context, "GET", "/api/status")
+    write = write_request(context, "POST", "/api/action", "{}")
+
+    verify = %Target.VerificationRequest{
+      provider_revision: 1,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.endpoint},
+      capability: "request.http.observe",
+      operation: "request.observe",
+      authorization_digest: "fixture",
+      operation_id: "fixture",
+      parameters: %{"method" => "GET", "path" => "/api/status"}
+    }
+
+    before_requests = Agent.get(context.agent, & &1.requests)
+
+    cancelled? = fn ->
+      {:error, error} =
+        Opsonde.Repo.query("SELECT target_invocation_context_unavailable", [], mode: :savepoint)
+
+      raise error
+    end
+
+    for {action, request} <- [
+          {&Providers.target_observe/4, read},
+          {&Providers.target_effect/4, write},
+          {&Providers.target_verify/4, verify}
+        ] do
+      assert {:error, error} =
+               action.(context.provider.id, request, %{cancelled?: cancelled?},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert %Target.BeforeSendError{cause: %Postgrex.Error{} = cause} =
+               unsent = Target.BeforeSendError.unwrap(error)
+
+      assert Exception.message(cause) =~ "target_invocation_context_unavailable"
+      assert Target.BeforeSendError.retryable?(unsent)
+      assert Agent.get(context.agent, & &1.requests) == before_requests
+    end
+
+    assert {:ok, %Target.Observation{facts: %{"status" => 200}}} =
+             Providers.target_observe(context.provider.id, read, %{},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert length(Agent.get(context.agent, & &1.requests)) == length(before_requests) + 1
   end
 
   test "a registered Method check records connection facts separately from operator grants",

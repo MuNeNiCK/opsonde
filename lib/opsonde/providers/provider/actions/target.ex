@@ -433,6 +433,12 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     else
       :ok
     end
+  rescue
+    cause -> {:error, Target.BeforeSendError.exception(cause: cause)}
+  catch
+    kind, reason ->
+      {:error,
+       Target.BeforeSendError.exception(cause: ErlangError.exception(original: {kind, reason}))}
   end
 
   defp ensure_not_cancelled(_invocation), do: :ok
