@@ -41,16 +41,10 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
            claim(turn, incident, selection, request, delivery_attempt(opts)) do
       dispatch(turn, selection, request, claim, opts)
     else
-      {:error, %Ash.Error.Unknown{} = failure} = error ->
-        if AI.Error.unwrap(failure),
-          do: attention(turn, "Recovery Reviewer is unavailable", failure),
-          else: error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, error} ->
-        attention(turn, "Recovery Reviewer is unavailable", error)
+      {:error, error} = failure ->
+        if AI.Error.context_failure?(error),
+          do: failure,
+          else: attention(turn, "Recovery Reviewer is unavailable", error)
     end
   end
 
@@ -69,14 +63,10 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       {:ok, _changed} ->
         {:error, "Recovery Reviewer assignment changed"}
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _error} ->
-        {:error, "Recovery Reviewer assignment is unavailable"}
+      {:error, error} = failure ->
+        if AI.Error.context_failure?(error) or AI.Error.unwrap(error),
+          do: failure,
+          else: {:error, "Recovery Reviewer assignment is unavailable"}
     end
   end
 
@@ -404,14 +394,10 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         :ok
       end
     else
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, error} ->
-        attention(turn, "Recovery Review context changed", error)
+      {:error, error} = failure ->
+        if AI.Error.context_failure?(error),
+          do: failure,
+          else: attention(turn, "Recovery Review context changed", error)
     end
   end
 

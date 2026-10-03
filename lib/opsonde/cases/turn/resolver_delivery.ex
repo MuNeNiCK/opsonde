@@ -223,10 +223,13 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
              {:error, ai_error(:unavailable, "Resolver AI assignment changed")} do
       {:ok, selection}
     else
-      {:error, %AI.Error{} = error} -> {:error, error}
-      {:error, %Ash.Error.Unknown{} = error} -> {:error, error}
-      {:error, %Ash.Error.Framework{} = error} -> {:error, error}
-      {:error, _error} -> {:error, ai_error(:unavailable, "Resolver AI is unavailable")}
+      {:error, %AI.Error{} = error} ->
+        {:error, error}
+
+      {:error, error} = failure ->
+        if AI.Error.context_failure?(error) or AI.Error.unwrap(error),
+          do: failure,
+          else: {:error, ai_error(:unavailable, "Resolver AI is unavailable")}
     end
   end
 
@@ -667,9 +670,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp handle_failure(turn, error, invocation \\ nil) do
-    if is_nil(invocation) and
-         (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
-         not is_struct(AI.Error.unwrap(error), AI.Error) do
+    if is_nil(invocation) and AI.Error.context_failure?(error) do
       {:error, error}
     else
       with {:ok, cancelled?} <- case_cancelled?(turn.case_id) do

@@ -38,6 +38,24 @@ defmodule Opsonde.Providers.AITest do
     for errors <- [[storage, nested], [nested, storage]] do
       mixed = Ash.Error.Unknown.exception(errors: errors)
       assert AI.Error.unwrap(mixed) == nil
+      assert AI.Error.context_failure?(mixed)
+
+      invalid =
+        Ash.Error.Invalid.exception(
+          errors: [
+            Ash.Error.Action.InvalidArgument.exception(
+              field: :request,
+              message: "Invalid request"
+            ),
+            mixed
+          ]
+        )
+
+      assert AI.Error.context_failure?(invalid)
+
+      classified = Ash.Error.to_error_class([native, storage, hd(invalid.errors)])
+      assert %Ash.Error.Invalid{} = classified
+      assert AI.Error.context_failure?(classified)
 
       assert %{amount: 34, usage: %AI.Usage{}, dispatched?: true} =
                Opsonde.Cases.AIInvocation.failure_accounting(mixed, 65_536)
@@ -46,6 +64,15 @@ defmodule Opsonde.Providers.AITest do
     end
 
     assert AI.Error.unwrap(Ash.Error.Framework.exception(errors: [native])) == nil
+    refute AI.Error.context_failure?(native)
+    refute AI.Error.context_failure?(nested)
+
+    refute AI.Error.context_failure?(
+             Ash.Error.Action.InvalidArgument.exception(
+               field: :request,
+               message: "Invalid request"
+             )
+           )
   end
 
   test "an effect on a firing Condition survives a recovered peer but stale or foreign claims do not" do

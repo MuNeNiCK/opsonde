@@ -685,6 +685,17 @@ defmodule Opsonde.Providers.AI do
     def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
     def unwrap(_error), do: nil
 
+    # Ash may select Invalid/Forbidden as the outer class of a mixed error.
+    def context_failure?(%__MODULE__{}), do: false
+    def context_failure?(%Ash.Error.Unknown{} = error), do: is_nil(unwrap(error))
+    def context_failure?(%Ash.Error.Framework{}), do: true
+
+    def context_failure?(%{errors: errors}) when is_list(errors),
+      do: Enum.any?(errors, &context_failure?/1)
+
+    def context_failure?(%{class: class}) when class in [:unknown, :framework], do: true
+    def context_failure?(_error), do: false
+
     # Accounting preserves known native usage even when another failure is present.
     def find(%__MODULE__{} = error), do: error
     def find(%{errors: errors}) when is_list(errors), do: Enum.find_value(errors, &find/1)
