@@ -2,6 +2,7 @@ defmodule Opsonde.Targets.SFTPTest do
   use Opsonde.DataCase, async: false
 
   alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.Providers.Target
   alias Opsonde.Targets.TargetRequest.Request
   @password "correct horse battery staple"
   @bytes <<0, 255, 1, 128, 10>>
@@ -828,6 +829,56 @@ defmodule Opsonde.Targets.SFTPTest do
     Targets.artifact_reference!(file.id, context.target.id, actor: context.operator)
   end
 
+  for phase <- [:begin, :append] do
+    @tag ssh_file_port_fault: true, sftp_file_fault_phase: phase
+    test "SFTP #{phase} storage faults retain their original cause", context do
+      phase = context.sftp_file_fault_phase
+      condition = if phase == :begin, do: "TRUE", else: "NEW.received_bytes <> OLD.received_bytes"
+      event = if phase == :begin, do: "INSERT", else: "UPDATE"
+
+      Opsonde.Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_sftp_file_port() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{condition} THEN RAISE EXCEPTION 'SFTP file port unavailable'; END IF;
+        RETURN NEW;
+      END $$;
+      """)
+
+      Opsonde.Repo.query!(
+        "CREATE TRIGGER reject_sftp_file_port BEFORE #{event} ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_sftp_file_port()"
+      )
+
+      clearance =
+        request(context, :observation, "sftp.read_file", %{
+          "path" => "/download.bin",
+          "response_file" => %{
+            "name" => "download-fault.bin",
+            "media_type" => "application/octet-stream"
+          }
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      assert {:error, error} =
+               Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
+
+      if phase == :begin do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ "SFTP file port unavailable"
+        assert Agent.get(context.agent, & &1.opens) == 0
+      else
+        assert Exception.message(error) =~ "SFTP file port unavailable"
+        assert Target.Error.context_failure?(error)
+
+        assert %{"receiving_file_id" => id, "received_bytes" => 0, "pending_chunk_bytes" => 5} =
+                 Target.Error.context_progress(error)
+
+        assert Targets.get_artifact!(id, actor: context.operator).status == :receiving
+        assert Agent.get(context.agent, & &1.opens) == 1
+      end
+    end
+  end
+
+  @tag ssh_file_port_fault: true
   test "SFTP receipt publication failure leaves downloaded bytes unpublished", context do
     Opsonde.Repo.query!("""
     CREATE FUNCTION pg_temp.reject_sftp_completion() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -853,7 +904,7 @@ defmodule Opsonde.Targets.SFTPTest do
 
     read = %{read | operation_id: "sftp-save-failure"}
 
-    assert {:error, _} =
+    assert {:error, error} =
              read
              |> Targets.clear_target_request!(actor: context.operator)
              |> Targets.dispatch_target_observation(%{}, actor: context.operator)
@@ -862,12 +913,75 @@ defmodule Opsonde.Targets.SFTPTest do
     assert receipt.status == :receiving
     assert receipt.received_bytes == 5
     assert receipt.completion_reason == nil
+    assert Exception.message(error) =~ "test SFTP receipt publication unavailable"
+
+    assert Target.Error.context_progress(error) == %{
+             "receiving_file_id" => receipt.id,
+             "received_bytes" => 5
+           }
 
     assert {:error, _} =
              Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
 
     assert Agent.get(context.agent, & &1.opens) == 1
     Opsonde.Repo.query!("DROP TRIGGER reject_sftp_completion ON artifacts")
+  end
+
+  for phase <- [:initial, :stream] do
+    @tag ssh_file_port_fault: true, sftp_reader_fault_phase: phase
+    test "public SFTP input reader #{phase} faults retain cause and partial remote bytes",
+         context do
+      file = stage_file(context)
+      remote = "/reader-fault-#{Ecto.UUID.generate()}.bin"
+
+      request = %Target.EffectRequest{
+        provider_revision: context.provider.revision,
+        target_id: context.target.id,
+        target_revision: context.target.revision,
+        access_method_id: context.method.id,
+        access_method_revision: context.method.revision,
+        connection: %Target.Connection{endpoint: context.endpoint},
+        capability: "request.ssh.effect",
+        operation: "sftp.write_file",
+        authorization_digest: "fixture",
+        operation_id: Ecto.UUID.generate(),
+        idempotency_key: Ecto.UUID.generate(),
+        files: %{"payload" => file},
+        parameters: %{"path" => remote, "body_file" => "payload"}
+      }
+
+      reader = fn "payload", offset ->
+        if context.sftp_reader_fault_phase == :stream and offset == 0 do
+          {:ok, binary_part(@bytes, 0, 2)}
+        else
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT sftp_reader_context_unavailable", [], mode: :savepoint)
+
+          {:error, Target.Error.context_failure(cause)}
+        end
+      end
+
+      assert {:error, error} =
+               Providers.target_effect(context.provider.id, request, %{file_reader: reader},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      if context.sftp_reader_fault_phase == :initial do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ "sftp_reader_context_unavailable"
+        assert Agent.get(context.agent, & &1.opens) == 0
+        refute File.exists?(Path.join(context.directory, String.trim_leading(remote, "/")))
+      else
+        assert Exception.message(error) =~ "sftp_reader_context_unavailable"
+        assert Target.Error.context_failure?(error)
+        assert Target.Error.context_progress(error)["input_file_id"] == file["id"]
+        assert Agent.get(context.agent, & &1.writes) == 1
+
+        assert File.read!(Path.join(context.directory, String.trim_leading(remote, "/"))) ==
+                 binary_part(@bytes, 0, 2)
+      end
+    end
   end
 
   for {adapter, kind, type, protocol} <- [

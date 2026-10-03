@@ -290,7 +290,10 @@ defmodule Opsonde.Transports.SSH.SFTP do
       {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 ->
         with {:ok, next} <- Target.FileWriter.append(writer, offset, bytes),
              do: download(pid, handle, writer, deadline, next),
-             else: (_ -> file_error())
+             else: (
+               {:error, cause} -> file_error(cause, :in_flight)
+               _ -> file_error()
+             )
 
       {:error, _, _} = error ->
         error
@@ -312,9 +315,12 @@ defmodule Opsonde.Transports.SSH.SFTP do
       end)
     end
   catch
-    {:file_read_error, _} ->
-      {:error, :disconnected_after_dispatch,
-       "SFTP input file became unavailable; the remote file may be partial"}
+    {:file_read_error, cause} ->
+      if Target.Error.context_failure?(cause),
+        do: file_error(cause, :in_flight, %{"input_file_id" => file["id"]}),
+        else:
+          {:error, :disconnected_after_dispatch,
+           "SFTP input file became unavailable; the remote file may be partial"}
   end
 
   defp write_chunks(_pid, _handle, <<>>, _limit, _deadline), do: :ok
@@ -339,6 +345,9 @@ defmodule Opsonde.Transports.SSH.SFTP do
       when is_binary(bytes) and byte_size(bytes) <= size and (size == 0 or byte_size(bytes) > 0) ->
         :ok
 
+      {:error, cause} ->
+        file_error(cause, :before_send)
+
       _ ->
         file_error()
     end
@@ -353,6 +362,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
        when is_function(callback, 3) do
     case callback.(Ecto.UUID.generate(), name, media) do
       {:ok, %Target.FileWriter{status: :receiving, offset: 0} = writer} -> {:ok, writer}
+      {:error, cause} -> file_error(cause, :before_send)
       _ -> file_error()
     end
   end
@@ -360,18 +370,40 @@ defmodule Opsonde.Transports.SSH.SFTP do
   defp capture(_output, _invocation), do: file_error()
   defp file_error, do: {:error, :failed, "SFTP file transfer could not be saved or read"}
 
+  defp file_error(cause, phase, progress \\ nil) do
+    if Target.Error.context_failure?(cause) do
+      if phase == :before_send,
+        do: {:error, Target.BeforeSendError.exception(cause: cause)},
+        else: {:error, Target.Error.context_failure(cause, progress)}
+    else
+      file_error()
+    end
+  end
+
   defp append_receipt(writer, bytes) do
     case Target.FileWriter.append(writer, 0, bytes) do
       {:ok, offset} -> {:ok, offset}
+      {:error, cause} -> file_error(cause, :in_flight)
       _ -> file_error()
     end
   end
 
   defp publish(writer, size, reason) do
     case writer.complete.(size, nil, reason) do
-      {:ok, file} -> {:ok, file}
-      {:error, %{category: :cancelled}} -> {:error, :cancelled, "SFTP transfer was cancelled"}
-      _ -> file_error()
+      {:ok, file} ->
+        {:ok, file}
+
+      {:error, %{category: :cancelled}} ->
+        {:error, :cancelled, "SFTP transfer was cancelled"}
+
+      {:error, cause} ->
+        file_error(cause, :in_flight, %{
+          "receiving_file_id" => writer.id,
+          "received_bytes" => size
+        })
+
+      _ ->
+        file_error()
     end
   end
 

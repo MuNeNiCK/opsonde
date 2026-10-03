@@ -624,6 +624,66 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert Enum.at(details["steps"], 2)["data"] == "dGFpbA=="
   end
 
+  for phase <- [:begin, :append] do
+    @tag ssh_file_port_fault: true, subsystem_file_fault_phase: phase
+    test "subsystem #{phase} storage faults retain their original cause", context do
+      phase = context.subsystem_file_fault_phase
+      condition = if phase == :begin, do: "TRUE", else: "NEW.received_bytes <> OLD.received_bytes"
+      event = if phase == :begin, do: "INSERT", else: "UPDATE"
+
+      Opsonde.Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_subsystem_file_port() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{condition} THEN RAISE EXCEPTION 'subsystem file port unavailable'; END IF;
+        RETURN NEW;
+      END $$;
+      """)
+
+      Opsonde.Repo.query!(
+        "CREATE TRIGGER reject_subsystem_file_port BEFORE #{event} ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_subsystem_file_port()"
+      )
+
+      {admin, exact} =
+        subsystem_request(context, [
+          %{"op" => "send", "data" => "cGluZw=="},
+          %{
+            "op" => "receive",
+            "until" => %{"bytes" => 4},
+            "response_file" => %{
+              "name" => "reply-fault.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "close"}
+        ])
+
+      clearance = Targets.clear_target_request!(exact, actor: admin)
+
+      assert {:error, error} =
+               Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+      if phase == :begin do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ "subsystem file port unavailable"
+        assert Agent.get(context.subsystem_calls, &length/1) == 0
+      else
+        assert Exception.message(error) =~ "subsystem file port unavailable"
+        assert Target.Error.context_failure?(error)
+
+        assert %{
+                 "receiving_file_id" => id,
+                 "received_bytes" => 0,
+                 "pending_chunk_bytes" => 4,
+                 "steps" => [%{"bytes_sent" => 4}]
+               } = Target.Error.context_progress(error)
+
+        assert Targets.get_artifact!(id, actor: admin).status == :receiving
+        assert Agent.get(context.subsystem_calls, &length/1) == 1
+      end
+    end
+  end
+
+  @tag ssh_file_port_fault: true
   test "subsystem receipt publication failure retains progress without success or replay",
        context do
     Opsonde.Repo.query!("""
@@ -659,16 +719,97 @@ defmodule Opsonde.Targets.SSHMethodTest do
     exact = %{exact | operation_id: "subsystem-save-failure"}
     clearance = Targets.clear_target_request!(exact, actor: admin)
 
-    assert %Target.EffectResult{status: :unknown, details: details} =
-             Targets.dispatch_target_effect!(clearance, %{}, actor: admin, authorize?: false)
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{}, actor: admin, authorize?: false)
+
+    assert Exception.message(error) =~ "test subsystem receipt publication unavailable"
+    assert Target.Error.context_failure?(error)
+    details = Target.Error.context_progress(error)
 
     assert details["current_step"]["size_bytes"] == 4
     [receipt] = Targets.page_artifacts!(exact.target_id, actor: admin).results
     assert receipt.status == :receiving
     assert receipt.received_bytes == 4
+    assert details["receiving_file_id"] == receipt.id
+    assert details["received_bytes"] == 4
     assert {:error, _} = Targets.artifact_reference(receipt.id, exact.target_id, actor: admin)
     assert Agent.get(context.subsystem_calls, &length/1) == 1
     Opsonde.Repo.query!("DROP TRIGGER reject_subsystem_completion ON artifacts")
+  end
+
+  for phase <- [:initial, :stream] do
+    @tag ssh_file_port_fault: true, subsystem_reader_fault_phase: phase
+    test "public subsystem input reader #{phase} faults retain cause and confirmed sends",
+         context do
+      {admin, exact} =
+        subsystem_request(context, [
+          %{"op" => "send", "body_file" => "payload"},
+          %{"op" => "close"}
+        ])
+
+      file =
+        Targets.begin_artifact!(
+          exact.target_id,
+          "input.bin",
+          "application/octet-stream",
+          3,
+          Base.encode16(:crypto.hash(:sha256, "abc"), case: :lower),
+          "reader-fault",
+          actor: admin
+        )
+
+      Targets.append_artifact_chunk!(file.id, 0, "abc", actor: admin)
+      Targets.complete_artifact!(file.id, actor: admin)
+      reference = Targets.artifact_reference!(file.id, exact.target_id, actor: admin)
+      method = Targets.get_access_method!(exact.access_method_id, actor: admin)
+
+      request = %Target.EffectRequest{
+        provider_revision: method.provider_revision,
+        target_id: exact.target_id,
+        target_revision: exact.target_revision,
+        access_method_id: method.id,
+        access_method_revision: method.revision,
+        connection: %Target.Connection{endpoint: context.endpoint},
+        capability: exact.capability,
+        operation: exact.operation,
+        authorization_digest: "fixture",
+        operation_id: Ecto.UUID.generate(),
+        idempotency_key: Ecto.UUID.generate(),
+        files: %{"payload" => reference},
+        parameters: exact.parameters
+      }
+
+      reader = fn "payload", offset ->
+        if context.subsystem_reader_fault_phase == :stream and offset == 0 do
+          {:ok, "ab"}
+        else
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT subsystem_reader_context_unavailable", [],
+              mode: :savepoint
+            )
+
+          {:error, Target.Error.context_failure(cause)}
+        end
+      end
+
+      assert {:error, error} =
+               Providers.target_effect(method.provider_id, request, %{file_reader: reader},
+                 actor: admin,
+                 authorize?: false
+               )
+
+      if context.subsystem_reader_fault_phase == :initial do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ "subsystem_reader_context_unavailable"
+        assert Agent.get(context.subsystem_calls, &length/1) == 0
+      else
+        assert Exception.message(error) =~ "subsystem_reader_context_unavailable"
+        assert Target.Error.context_failure?(error)
+        assert %{"input_file_id" => id, "bytes_sent" => 2} = Target.Error.context_progress(error)
+        assert id == file.id
+        assert Agent.get(context.subsystem_calls, &length/1) == 1
+      end
+    end
   end
 
   test "subsystem invalid sequences and current authority checks dispatch no payload", context do

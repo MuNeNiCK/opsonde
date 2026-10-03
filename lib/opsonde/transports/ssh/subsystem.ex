@@ -93,7 +93,8 @@ defmodule Opsonde.Transports.SSH.Subsystem do
         error
     end
   catch
-    :throw, {:file_read_error, _} -> file_error()
+    :throw, {:file_read_error, cause} ->
+      file_error(cause, :in_flight, %{"input_file_id" => file["id"]})
   end
 
   defp step(state, %{"op" => "send_eof"}) do
@@ -233,6 +234,7 @@ defmodule Opsonde.Transports.SSH.Subsystem do
       report(next)
       {:ok, next}
     else
+      {:error, cause} -> file_error(cause, :in_flight)
       _ -> file_error()
     end
   end
@@ -244,6 +246,12 @@ defmodule Opsonde.Transports.SSH.Subsystem do
           do: {:ok, file},
           else: file_error()
         )
+
+      {:error, cause} ->
+        file_error(cause, :in_flight, %{
+          "receiving_file_id" => writer.id,
+          "received_bytes" => size
+        })
 
       _ ->
         file_error()
@@ -361,6 +369,9 @@ defmodule Opsonde.Transports.SSH.Subsystem do
                        (size == 0 or byte_size(bytes) > 0) ->
                   {:cont, {:ok, Map.put(readers, index, &reader.(label, &1)), writers}}
 
+                {:error, cause} ->
+                  {:halt, file_error(cause, :before_send)}
+
                 _ ->
                   {:halt, file_error()}
               end
@@ -375,6 +386,9 @@ defmodule Opsonde.Transports.SSH.Subsystem do
               case writer.(Ecto.UUID.generate(), name, media) do
                 {:ok, %Target.FileWriter{status: :receiving, offset: 0} = capture} ->
                   {:cont, {:ok, readers, Map.put(writers, index, capture)}}
+
+                {:error, cause} ->
+                  {:halt, file_error(cause, :before_send)}
 
                 _ ->
                   {:halt, file_error()}
@@ -391,4 +405,14 @@ defmodule Opsonde.Transports.SSH.Subsystem do
   end
 
   defp file_error, do: {:error, :failed, "SSH subsystem file could not be read or published"}
+
+  defp file_error(cause, phase, progress \\ nil) do
+    if Target.Error.context_failure?(cause) do
+      if phase == :before_send,
+        do: {:error, Target.BeforeSendError.exception(cause: cause)},
+        else: {:error, Target.Error.context_failure(cause, progress)}
+    else
+      file_error()
+    end
+  end
 end

@@ -545,8 +545,24 @@ defmodule Opsonde.Transports.SSH do
     {_connection, _phase, latest} = latest_state(reference, connection, phase, progress)
 
     case result do
-      {:error, category, message} -> interrupted(category, message, latest)
-      _ -> result
+      {:error, category, message} ->
+        interrupted(category, message, latest)
+
+      {:error, cause} ->
+        if Opsonde.Providers.Target.Error.context_failure?(cause) do
+          facts =
+            Map.merge(
+              latest || %{},
+              Opsonde.Providers.Target.Error.context_progress(cause) || %{}
+            )
+
+          {:error, Opsonde.Providers.Target.Error.context_failure(cause, facts)}
+        else
+          result
+        end
+
+      _ ->
+        result
     end
   end
 
