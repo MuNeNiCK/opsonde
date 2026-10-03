@@ -56,14 +56,10 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       when status in [:charged, :duplicate] ->
         start_next_turn(turn, selected_case, charged_run, intent)
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
       {:error, error} ->
-        persist_failure(turn, intent, incident, run, traversal_error(error))
+        if unexpected_failure?(error),
+          do: {:error, error},
+          else: persist_failure(turn, intent, incident, run, traversal_error(error))
     end
   end
 
@@ -130,14 +126,9 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
               {:error, _error} = error -> {:halt, error}
             end
 
-          {:error, %Ash.Error.Unknown{}} = error ->
-            {:halt, error}
-
-          {:error, %Ash.Error.Framework{}} = error ->
-            {:halt, error}
-
-          _unavailable ->
-            {:halt, traversal_failure(:invalid_evidence, "Cited Evidence is unavailable")}
+          {:error, error} ->
+            {:halt,
+             traversal_rejection(error, :invalid_evidence, "Cited Evidence is unavailable")}
         end
       end)
     else
@@ -153,14 +144,12 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, relationship} ->
         {:ok, relationship}
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _error} ->
-        traversal_failure(:stale_relationship, "Target relationship is unavailable or changed")
+      {:error, error} ->
+        traversal_rejection(
+          error,
+          :stale_relationship,
+          "Target relationship is unavailable or changed"
+        )
     end
   end
 
@@ -225,13 +214,10 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, %{role: role} = actor} when role in [:admin, :operator] ->
         {:ok, actor}
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
+      {:error, error} ->
+        traversal_rejection(error, :denied, "Case owner cannot authorize related Target access")
 
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      _unavailable ->
+      {:ok, _unavailable} ->
         traversal_failure(:denied, "Case owner cannot authorize related Target access")
     end
   end
@@ -251,14 +237,8 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, %{active: false}} ->
         traversal_failure(:unavailable, "Related Target is inactive")
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _error} ->
-        traversal_failure(:denied, "Case owner is not authorized for the related Target")
+      {:error, error} ->
+        traversal_rejection(error, :denied, "Case owner is not authorized for the related Target")
     end
   end
 
@@ -270,14 +250,8 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
       {:ok, []} ->
         traversal_failure(:unavailable, "Related Target has no available Access Method")
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _error} ->
-        traversal_failure(:unavailable, "Related Target Access Methods are unavailable")
+      {:error, error} ->
+        traversal_rejection(error, :unavailable, "Related Target Access Methods are unavailable")
     end
   end
 
@@ -447,11 +421,15 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
 
     if Enum.all?(required, &Map.has_key?(intent, &1)),
       do: {:ok, intent},
-      else: {:error, "Target traversal decision is incomplete"}
+      else: traversal_failure(:invalid_intent, "Target traversal decision is incomplete")
   end
 
   defp traversal_intent(_turn),
-    do: {:error, "Completed Turn does not contain a Target traversal decision"}
+    do:
+      traversal_failure(
+        :invalid_intent,
+        "Completed Turn does not contain a Target traversal decision"
+      )
 
   defp traversal_error(%Error{category: category, message: message}), do: {category, message}
 
@@ -472,6 +450,21 @@ defmodule Opsonde.Cases.Case.Actions.RelatedTargetRoute do
 
   defp traversal_failure(category, message),
     do: {:error, Error.exception(category: category, message: message)}
+
+  defp traversal_rejection(error, category, message) do
+    if unexpected_failure?(error),
+      do: {:error, error},
+      else: traversal_failure(category, message)
+  end
+
+  defp unexpected_failure?(%Ash.Error.Unknown{}), do: true
+  defp unexpected_failure?(%Ash.Error.Framework{}), do: true
+
+  defp unexpected_failure?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &unexpected_failure?/1)
+
+  defp unexpected_failure?(%{class: class}) when class in [:unknown, :framework], do: true
+  defp unexpected_failure?(_error), do: false
 
   defp traversal_key(turn), do: Budget.key("resolver-route:related-target", turn.id)
   defp route_key(turn, kind), do: "resolver-route:#{turn.id}:related-target:#{kind}"

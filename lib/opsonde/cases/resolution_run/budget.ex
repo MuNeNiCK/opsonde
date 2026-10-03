@@ -62,7 +62,7 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
          replay_input_matches?(event, opts) and replay_data_matches?(event, opts) do
       :ok
     else
-      {:error, "Idempotency key was already used with different budget input"}
+      invalid("Idempotency key was already used with different budget input")
     end
   end
 
@@ -167,7 +167,7 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
     |> required("Active ResolutionRun is unavailable")
   end
 
-  defp required({:ok, nil}, message), do: {:error, message}
+  defp required({:ok, nil}, message), do: invalid(message)
   defp required(result, _message), do: result
 
   defp existing_event(case_id, key) do
@@ -178,10 +178,10 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
   end
 
   defp ensure_running(%{cancel_requested: true}, _run),
-    do: {:error, "Case cancellation was requested"}
+    do: invalid("Case cancellation was requested")
 
   defp ensure_running(%{status: :running}, %{status: :running}), do: :ok
-  defp ensure_running(_incident, _run), do: {:error, "Case resolution is not running"}
+  defp ensure_running(_incident, _run), do: invalid("Case resolution is not running")
 
   defp exhausted_limit(run, kind, amount, now) do
     cond do
@@ -271,4 +271,7 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
 
   defp limit_reason(:repeated_observation),
     do: "Repeated identical Target observation limit exhausted"
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

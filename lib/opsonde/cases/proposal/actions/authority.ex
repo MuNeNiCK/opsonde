@@ -55,7 +55,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
             if proposal.status in [:proposed, :blocked] and
                  incident.pending_intent["proposal_id"] == proposal.id,
                do: supersede_locked(proposal, incident, run),
-               else: {:error, "Proposal Conditions changed before authority routing"}
+               else: invalid("Proposal Conditions changed before authority routing")
           end
         end
       end)
@@ -191,7 +191,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
                 supersede_locked(proposal, incident, run)
 
               not current? ->
-                {:error, "Proposal Conditions changed before human decision"}
+                invalid("Proposal Conditions changed before human decision")
 
               true ->
                 decide_locked(proposal, incident, run, arguments, current_actor)
@@ -324,7 +324,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     with {:ok, reviewing} <- transition(proposal, :reviewing),
          {:ok, _case} <- handoff(incident, reviewing, :review),
          {:ok, job} <- enqueue_review(reviewing.id),
-         true <- is_integer(job.id) || {:error, "Proposal Reviewer job was not persisted"} do
+         true <-
+           is_integer(job.id) ||
+             {:error,
+              Ash.Error.Unknown.UnknownError.exception(
+                error: "Proposal Reviewer job was not persisted"
+              )} do
       reviewing
     end
   end
@@ -332,7 +337,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp apply_review(proposal_id, decision_id) do
     with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false),
          {:ok, decision} <- Cases.review_decision_by_proposal(proposal_id, authorize?: false),
-         true <- decision.id == decision_id || {:error, "ReviewDecision does not match Proposal"} do
+         true <- decision.id == decision_id || invalid("ReviewDecision does not match Proposal") do
       Ash.transact([Case, ResolutionRun, Proposal, Approval, ReviewDecision], fn ->
         with :ok <- CaseAdmissionLock.acquire(),
              {:ok, incident} <- lock_case(source.case_id),
@@ -372,12 +377,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
         with :ok <- valid_context(proposal, incident, run),
              true <-
                decision.proposal_digest == proposal.proposal_digest ||
-                 {:error, "ReviewDecision Proposal digest changed"} do
+                 invalid("ReviewDecision Proposal digest changed") do
           case decision.verdict do
             :approved ->
               if decision.purpose_assessment == proposal.purpose,
                 do: approve_review(proposal, decision, incident, run),
-                else: {:error, "Reviewer purpose assessment does not authorize this Proposal"}
+                else: invalid("Reviewer purpose assessment does not authorize this Proposal")
 
             :rejected ->
               reject_review(proposal, decision, incident, run)
@@ -393,7 +398,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   end
 
   defp apply_review_locked(_proposal, _decision, _incident, _run),
-    do: {:error, "Proposal is not awaiting Reviewer decision"}
+    do: invalid("Proposal is not awaiting Reviewer decision")
 
   defp supersede_context(proposal_id) do
     with {:ok, source} <- Cases.get_proposal(proposal_id, authorize?: false) do
@@ -418,7 +423,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
                      ) do
                 supersede_locked(proposal, incident, run)
               else
-                {:ok, _operation} -> {:error, "Proposal already has an accepted Operation"}
+                {:ok, _operation} -> invalid("Proposal already has an accepted Operation")
                 {:error, _error} = error -> error
               end
 
@@ -426,7 +431,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
               proposal
 
             true ->
-              {:error, "Proposal context is still current"}
+              invalid("Proposal context is still current")
           end
         end
       end)
@@ -438,7 +443,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
     with true <-
            incident.pending_intent["proposal_id"] == proposal.id ||
-             {:error, "Case pending decision changed"},
+             invalid("Case pending decision changed"),
          {:ok, invalidated} <- transition(proposal, :invalidated),
          {:ok, _cleared} <- handoff(incident, invalidated, :clear),
          {:ok, started} <-
@@ -518,7 +523,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
        do: proposal
 
   defp fail_review_delivery_locked(_proposal, _incident, _run, _category, _reason),
-    do: {:error, "Proposal is not awaiting Reviewer delivery"}
+    do: invalid("Proposal is not awaiting Reviewer delivery")
 
   defp reviewer_recovery("budget_exhausted"),
     do: "Review the Case AI usage limit and resume the Case"
@@ -716,20 +721,20 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp valid_context(proposal, incident, run) do
     cond do
       incident.status != :running or incident.cancel_requested ->
-        {:error, "Case resolution is not running"}
+        invalid("Case resolution is not running")
 
       run.status != :running ->
-        {:error, "ResolutionRun is not running"}
+        invalid("ResolutionRun is not running")
 
       proposal.case_generation != run.generation ->
-        {:error, "Proposal Case generation changed"}
+        invalid("Proposal Case generation changed")
 
       proposal.authority_mode != incident.authority_mode or
           proposal.authority_mode != run.authority_mode ->
-        {:error, "Proposal authority mode changed"}
+        invalid("Proposal authority mode changed")
 
       DateTime.compare(DateTime.utc_now(), proposal.expires_at) != :lt ->
-        {:error, "Proposal has expired"}
+        invalid("Proposal has expired")
 
       true ->
         :ok
@@ -752,14 +757,14 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
        when mode in [:ask, :auto],
        do: :ok
 
-  defp human_decidable(_proposal), do: {:error, "Proposal is not awaiting a human decision"}
+  defp human_decidable(_proposal), do: invalid("Proposal is not awaiting a human decision")
 
   defp available_pending(pending, _proposal_id) when map_size(pending) == 0, do: :ok
 
   defp available_pending(%{"proposal_id" => proposal_id}, proposal_id), do: :ok
 
   defp available_pending(_pending, _proposal_id),
-    do: {:error, "Case has another pending decision"}
+    do: invalid("Case has another pending decision")
 
   defp replay_human(approval, proposal, arguments, actor) do
     if approval.source == :human and approval.actor_id == actor.id and
@@ -768,23 +773,24 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
          approval.reason == arguments.reason do
       schedule_if_authorized(proposal)
     else
-      {:error, "Proposal already has a different decision"}
+      invalid("Proposal already has a different decision")
     end
   end
 
   defp current_owner(%{current_owner_id: owner_id}) when is_binary(owner_id),
     do: current_actor(%{id: owner_id})
 
-  defp current_owner(_incident), do: {:error, "Case has no operational owner"}
+  defp current_owner(_incident), do: invalid("Case has no operational owner")
 
   defp current_actor(%{id: actor_id}) do
     case Accounts.get_user(actor_id, authorize?: false) do
       {:ok, %{role: role} = actor} when role in [:admin, :operator] -> {:ok, actor}
-      _unavailable -> {:error, "Actor cannot authorize a Proposal"}
+      {:ok, _unavailable} -> invalid("Actor cannot authorize a Proposal")
+      {:error, _error} = error -> error
     end
   end
 
-  defp current_actor(_actor), do: {:error, "Actor cannot authorize a Proposal"}
+  defp current_actor(_actor), do: invalid("Actor cannot authorize a Proposal")
 
   defp lock_case(id) do
     Case
@@ -829,7 +835,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     |> Ash.read_one(authorize?: false)
   end
 
-  defp required({:ok, nil}, message), do: {:error, message}
+  defp required({:ok, nil}, message), do: invalid(message)
   defp required(result, _message), do: result
 
   defp schedule_if_authorized(%{status: :authorized} = proposal) do
@@ -841,17 +847,33 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
   defp schedule_acceptance(proposal) do
     case Opsonde.Cases.Operation.AcceptanceWorker.new(%{"proposal_id" => proposal.id})
          |> Oban.insert() do
-      {:ok, %Oban.Job{id: id}} when is_integer(id) -> :ok
-      {:ok, _unpersisted} -> {:error, "Operation acceptance job was not persisted"}
-      {:error, _error} = error -> error
+      {:ok, %Oban.Job{id: id}} when is_integer(id) ->
+        :ok
+
+      {:ok, _unpersisted} ->
+        {:error,
+         Ash.Error.Unknown.UnknownError.exception(
+           error: "Operation acceptance job was not persisted"
+         )}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
   defp schedule_expiration(proposal) do
     case proposal |> ProposalExpirationWorker.job() |> Oban.insert() do
-      {:ok, %Oban.Job{id: id}} when is_integer(id) -> :ok
-      {:ok, _unpersisted} -> {:error, "Proposal expiration job was not persisted"}
-      {:error, _error} = error -> error
+      {:ok, %Oban.Job{id: id}} when is_integer(id) ->
+        :ok
+
+      {:ok, _unpersisted} ->
+        {:error,
+         Ash.Error.Unknown.UnknownError.exception(
+           error: "Proposal expiration job was not persisted"
+         )}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -860,8 +882,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
 
   defp find_error(%RequestError{} = error), do: error
 
-  defp find_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_error/1)
+  defp find_error(%{errors: [error]}), do: find_error(error)
 
   defp find_error(_error), do: nil
 
@@ -870,4 +891,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Authority do
     |> Opsonde.Cases.Proposal.ReviewWorker.new()
     |> Oban.insert()
   end
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

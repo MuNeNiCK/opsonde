@@ -79,16 +79,19 @@ defmodule Opsonde.Cases.Turn.Actions.Complete do
   defp validate_retry(%{status: :started, revision: revision}, revision, _digest), do: :ok
 
   defp validate_retry(%{status: :started}, _revision, _digest),
-    do: {:error, "Turn revision changed"}
+    do: invalid("Turn revision changed")
 
   defp validate_retry(%{status: :completed, result_digest: digest}, _revision, digest), do: :ok
 
   defp validate_retry(%{status: :completed}, _revision, _digest),
-    do: {:error, "Turn was already completed with a different result"}
+    do: invalid("Turn was already completed with a different result")
 
   defp result_digest(result, progress_kind) do
     Jason.encode!(%{"progress_kind" => progress_kind, "result" => result})
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

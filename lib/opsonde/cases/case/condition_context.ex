@@ -9,7 +9,12 @@ defmodule Opsonde.Cases.Case.ConditionContext do
   def current_conditions(%{trigger_kind: :signal} = incident) do
     with {:ok, memberships} <-
            Cases.active_conditions_for_case(incident.id, authorize?: false),
-         true <- memberships != [] || {:error, "Signal Case has no active Conditions"} do
+         true <-
+           memberships != [] ||
+             {:error,
+              Ash.Error.Changes.InvalidChanges.exception(
+                message: "Signal Case has no active Conditions"
+              )} do
       Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
         case Signals.get_condition(membership.condition_id, authorize?: false) do
           {:ok, condition} ->
@@ -83,7 +88,7 @@ defmodule Opsonde.Cases.Case.ConditionContext do
 
         {:ok, {conditions, proof_ids}}
 
-      {:error, "Relevant Target effect is not complete"} ->
+      {:error, %ConditionRecovery.EffectIncomplete{}} ->
         {:ok, {conditions, []}}
 
       {:error, _error} = error ->

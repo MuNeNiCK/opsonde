@@ -21,7 +21,7 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
 
         {:error, error} ->
           cond do
-            exception_failure?(error) -> {:error, error}
+            unexpected_failure?(error) -> {:error, error}
             file_route?(turn_id) -> {:error, error}
             rejected_target_selection?(turn_id, error) -> reconsider_target_selection(turn_id)
             true -> require_attention(turn_id, error)
@@ -53,17 +53,14 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
     end
   end
 
-  defp exception_failure?(%Ash.Error.Framework{}), do: true
+  defp unexpected_failure?(%Ash.Error.Unknown{}), do: true
+  defp unexpected_failure?(%Ash.Error.Framework{}), do: true
 
-  defp exception_failure?(%Ash.Error.Unknown{errors: errors}),
-    do: Enum.any?(errors, &exception_failure?/1)
+  defp unexpected_failure?(%{errors: errors}) when is_list(errors),
+    do: Enum.any?(errors, &unexpected_failure?/1)
 
-  # Splode converts an unrecognized exception with Exception.format(:error, error).
-  # Intentional action rejections are plain strings in the same Ash error class.
-  defp exception_failure?(%Ash.Error.Unknown.UnknownError{error: "** (" <> _exception}),
-    do: true
-
-  defp exception_failure?(_error), do: false
+  defp unexpected_failure?(%{class: class}) when class in [:unknown, :framework], do: true
+  defp unexpected_failure?(_error), do: false
 
   defp route_file_turn(turn) do
     with {:ok, superseded?} <- superseded_by_split?(turn) do
@@ -211,13 +208,16 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
         {:ok, :split}
 
       {:error, error} ->
-        if rejected_split?(error),
+        if not unexpected_failure?(error) and rejected_split?(error),
           do: locked_continuation(turn, &continue_after_rejected_split/1),
           else: {:error, error}
     end
   end
 
-  defp route_case_split(_incident, _turn), do: {:error, "Only Signal Cases can be split"}
+  defp route_case_split(_incident, _turn),
+    do:
+      {:error,
+       Ash.Error.Changes.InvalidChanges.exception(message: "Only Signal Cases can be split")}
 
   defp rejected_split?(%Ash.Error.Invalid{errors: errors}),
     do: Enum.any?(errors, &rejected_split?/1)
@@ -259,8 +259,13 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
   defp reconsider_target_selection(turn_id) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
       case locked_continuation(turn, &continue_after_rejected_target_selection/1) do
-        {:ok, _result} -> :ok
-        {:error, error} -> require_attention(turn_id, error)
+        {:ok, _result} ->
+          :ok
+
+        {:error, error} ->
+          if unexpected_failure?(error),
+            do: {:error, error},
+            else: require_attention(turn_id, error)
       end
     end
   end
@@ -362,7 +367,10 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
             ],
        do: {:ok, type}
 
-  defp decision_type(_turn), do: {:error, :malformed_decision}
+  defp decision_type(_turn),
+    do:
+      {:error,
+       Ash.Error.Changes.InvalidChanges.exception(message: "Resolver decision is malformed")}
 
   defp require_attention(turn_id, route_error) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),

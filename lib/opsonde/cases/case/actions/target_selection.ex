@@ -143,17 +143,14 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
 
   defp load_evidence(ids) do
     Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, items} ->
-      case Cases.get_evidence(id, authorize?: false) do
-        {:ok, evidence} ->
+      case Cases.get_evidence(id, authorize?: false, not_found_error?: false) do
+        {:ok, %Evidence{} = evidence} ->
           {:cont, {:ok, [evidence | items]}}
 
-        {:error, %Ash.Error.Unknown{}} = error ->
+        {:error, _error} = error ->
           {:halt, error}
 
-        {:error, %Ash.Error.Framework{}} = error ->
-          {:halt, error}
-
-        {:error, _error} ->
+        {:ok, nil} ->
           {:halt, invalid_input("Target selection evidence is unavailable", :evidence_ids)}
       end
     end)
@@ -203,18 +200,15 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
          target_id,
          _target_revision
        ) do
-    case Signals.get_condition(condition_id, authorize?: false) do
+    case Signals.get_condition(condition_id, authorize?: false, not_found_error?: false) do
+      {:ok, nil} ->
+        {:ok, false}
+
       {:ok, condition} ->
         {:ok, condition.revision == condition_revision and condition.target_id == target_id}
 
-      {:error, %Ash.Error.Unknown{}} = error ->
+      {:error, _error} = error ->
         error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _unavailable} ->
-        {:ok, false}
     end
   end
 

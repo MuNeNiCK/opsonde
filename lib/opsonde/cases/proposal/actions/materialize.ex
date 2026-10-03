@@ -73,7 +73,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp current_conditions(incident, turn_id) do
     case ConditionContext.current?(incident, turn_id) do
       {:ok, true} -> :ok
-      {:ok, false} -> {:error, "Completed Resolver Turn Conditions changed"}
+      {:ok, false} -> invalid("Completed Resolver Turn Conditions changed")
       {:error, _error} = error -> error
     end
   end
@@ -87,7 +87,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
            intent
          ) do
       {:ok, true} -> :ok
-      {:ok, false} -> {:error, "Proposal affected Conditions changed"}
+      {:ok, false} -> invalid("Proposal affected Conditions changed")
       {:error, _error} = error -> error
     end
   end
@@ -118,11 +118,11 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
          result_digest: result_digest
        }}
     else
-      {:error, "Completed Turn contains a malformed Proposal"}
+      invalid("Completed Turn contains a malformed Proposal")
     end
   end
 
-  defp proposal_data(_turn), do: {:error, "Completed Turn does not contain a Proposal"}
+  defp proposal_data(_turn), do: invalid("Completed Turn does not contain a Proposal")
 
   defp valid_intent?(intent, request_tool, verification_intent, verification_tool) do
     values = [
@@ -194,11 +194,12 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
   defp current_actor(%{current_owner_id: owner_id}) when is_binary(owner_id) do
     case Accounts.get_user(owner_id, authorize?: false) do
       {:ok, %{role: role} = actor} when role in [:admin, :operator] -> {:ok, actor}
-      _unavailable -> {:error, "Case owner cannot authorize a Proposal"}
+      {:ok, _unavailable} -> invalid("Case owner cannot authorize a Proposal")
+      {:error, _error} = error -> error
     end
   end
 
-  defp current_actor(_incident), do: {:error, "Case has no Proposal owner"}
+  defp current_actor(_incident), do: invalid("Case has no Proposal owner")
 
   defp valid_evidence(purpose, ids, incident, run)
        when is_list(ids) and (purpose == :investigation or ids != []) do
@@ -211,23 +212,17 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
               {:error, _error} = error -> {:halt, error}
             end
 
-          {:error, %Ash.Error.Unknown{}} = error ->
+          {:error, _error} = error ->
             {:halt, error}
-
-          {:error, %Ash.Error.Framework{}} = error ->
-            {:halt, error}
-
-          _unavailable ->
-            {:halt, {:error, "Proposal cites unavailable Evidence"}}
         end
       end)
     else
-      {:error, "Proposal Evidence identities contain duplicates"}
+      invalid("Proposal Evidence identities contain duplicates")
     end
   end
 
   defp valid_evidence(_purpose, _ids, _incident, _run),
-    do: {:error, "Proposal must cite Evidence"}
+    do: invalid("Proposal must cite Evidence")
 
   defp target_request(intent, incident, operation_id, operation_key) do
     %Request{
@@ -354,7 +349,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
          proposal.resolver_identity["source_result_digest"] == turn.result_digest do
       proposal
     else
-      {:error, "Proposal source Turn was already materialized with different input"}
+      invalid("Proposal source Turn was already materialized with different input")
     end
   end
 
@@ -392,19 +387,22 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
     |> Ash.read_one(authorize?: false)
   end
 
-  defp required({:ok, nil}, message), do: {:error, message}
+  defp required({:ok, nil}, message), do: invalid(message)
   defp required(result, _message), do: result
 
   defp ensure_running(%{status: :running, cancel_requested: false}, %{status: :running} = run) do
     if DateTime.compare(DateTime.utc_now(), run.deadline_at) == :lt,
       do: :ok,
-      else: {:error, "ResolutionRun deadline has elapsed"}
+      else: invalid("ResolutionRun deadline has elapsed")
   end
 
   defp ensure_running(%{cancel_requested: true}, _run),
-    do: {:error, "Case cancellation was requested"}
+    do: invalid("Case cancellation was requested")
 
-  defp ensure_running(_incident, _run), do: {:error, "Case resolution is not running"}
+  defp ensure_running(_incident, _run), do: invalid("Case resolution is not running")
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 
   defp map(value) when is_map(value), do: value
   defp map(_value), do: %{}
@@ -413,8 +411,7 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
 
   defp find_error(%RequestError{} = error), do: error
 
-  defp find_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_error/1)
+  defp find_error(%{errors: [error]}), do: find_error(error)
 
   defp find_error(_error), do: nil
 end

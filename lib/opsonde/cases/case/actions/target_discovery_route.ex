@@ -96,7 +96,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
   end
 
   defp route(_turn, _incident, _run, _intent),
-    do: {:error, "Completed Turn does not contain a Target discovery decision"}
+    do: invalid("Completed Turn does not contain a Target discovery decision")
 
   defp continue_after_search(_turn, _reason, %{status: :exhausted} = result), do: {:ok, result}
 
@@ -167,7 +167,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
        do: :ok
 
   defp available_pending_turn(_current, _source_turn_id),
-    do: {:error, "Case already has another pending decision"}
+    do: invalid("Case already has another pending decision")
 
   defp action_value({:ok, value}), do: value
   defp action_value({:error, _error} = error), do: error
@@ -180,7 +180,10 @@ defmodule Opsonde.Cases.Case.Actions.TargetDiscoveryRoute do
        do: :ok
 
   defp completed_decision(_turn),
-    do: {:error, "Target discovery requires a completed Resolver decision"}
+    do: invalid("Target discovery requires a completed Resolver decision")
 
   defp route_key(turn, kind), do: "resolver-route:#{turn.id}:#{kind}"
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

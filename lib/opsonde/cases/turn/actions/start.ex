@@ -36,7 +36,12 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
                  authorize?: false
                ),
              {:ok, job} <- enqueue(turn.id),
-             true <- is_integer(job.id) || {:error, "Resolver job was not persisted"} do
+             true <-
+               is_integer(job.id) ||
+                 {:error,
+                  Ash.Error.Unknown.UnknownError.exception(
+                    error: "Resolver job was not persisted"
+                  )} do
           {:ok, turn}
         end
       end,
@@ -45,7 +50,7 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
                Cases.turn_by_idempotency(run.id, arguments.idempotency_key, authorize?: false),
              true <-
                turn.intent == arguments.intent ||
-                 {:error, "Turn idempotency key was already used with a different intent"} do
+                 invalid("Turn idempotency key was already used with a different intent") do
           {:ok, turn}
         end
       end
@@ -57,4 +62,7 @@ defmodule Opsonde.Cases.Turn.Actions.Start do
     |> Opsonde.Cases.Turn.ResolverWorker.new()
     |> Oban.insert()
   end
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

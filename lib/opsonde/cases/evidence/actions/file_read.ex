@@ -44,14 +44,14 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
            true <-
              (turn.status == :completed and turn.result["outcome"] == "decision" and
                 get_in(turn.result, ["intent", "type"]) == "file_read") ||
-               {:error, "Turn has no file-read decision"},
+               invalid("Turn has no file-read decision"),
            {:ok, {incident, run, actor}} <- current_context(turn.case_id, turn.resolution_run_id),
            {:ok, true} <- ConditionContext.current?(incident, turn.id),
            intent <- turn.result["intent"],
            :ok <- valid_range(intent["reference"], intent["offset"], intent["length"], incident),
            true <-
              AI.valid_resolver_reason?(intent["reason"]) ||
-               {:error, "File-read reason is invalid"},
+               invalid("File-read reason is invalid"),
            {:ok, source} <- source(intent, incident, run),
            {:ok, existing} <-
              Cases.evidence_by_idempotency(incident.id, "file-read:#{turn.id}",
@@ -69,7 +69,7 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
           existing: existing
         }
       else
-        {:ok, false} -> {:error, "File-read Condition context changed"}
+        {:ok, false} -> invalid("File-read Condition context changed")
         error -> error
       end
     end)
@@ -137,13 +137,13 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
 
   defp file_source_snapshot(%{id: id, case_id: case_id}) do
     with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false),
-         true <- evidence.case_id == case_id || {:error, "File source belongs to another Case"},
+         true <- evidence.case_id == case_id || invalid("File source belongs to another Case"),
          {:ok, {incident, _run, actor}} <-
            current_context(case_id, evidence.resolution_run_id),
          content <- evidence.content,
          true <-
            (evidence.kind == "file_read" and content["status"] == "available") ||
-             {:error, "File contents were not obtained"},
+             invalid("File contents were not obtained"),
          :ok <-
            valid_range(
              content["reference"],
@@ -154,34 +154,34 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
          reference <- content["reference"],
          {:ok, current_reference} <-
            Targets.artifact_reference(reference["id"], reference["target_id"], actor: actor),
-         true <- current_reference == reference || {:error, "File reference changed"},
+         true <- current_reference == reference || invalid("File reference changed"),
          {:ok, source} <- original_source(evidence, reference, MapSet.new(), 0),
          true <-
            content["source_observed_at"] == DateTime.to_iso8601(source.observed_at) ||
-             {:error, "File observation time does not match its source"},
+             invalid("File observation time does not match its source"),
          do: source
   end
 
   defp original_source(_evidence, _reference, _seen, depth) when depth >= 32,
-    do: {:error, "File source lineage exceeds the evidence bound"}
+    do: invalid("File source lineage exceeds the evidence bound")
 
   defp original_source(%{kind: "file_read"} = evidence, reference, seen, depth) do
     content = evidence.content
 
     with true <-
            (not MapSet.member?(seen, evidence.id) and content["status"] == "available" and
-              content["reference"] == reference) || {:error, "File source lineage is invalid"},
+              content["reference"] == reference) || invalid("File source lineage is invalid"),
          {:ok, source} <- Cases.get_evidence(content["source_evidence_id"], authorize?: false),
          true <-
            (source.case_id == evidence.case_id and
               source.content["target_id"] == reference["target_id"] and
               FileReference.present_in?(source.content, reference)) ||
-             {:error, "File reference is absent from its original source"},
+             invalid("File reference is absent from its original source"),
          {:ok, original} <-
            original_source(source, reference, MapSet.put(seen, evidence.id), depth + 1),
          true <-
            content["source_observed_at"] == DateTime.to_iso8601(original.observed_at) ||
-             {:error, "File observation time changed in its lineage"},
+             invalid("File observation time changed in its lineage"),
          do: {:ok, original}
   end
 
@@ -189,18 +189,18 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
        when kind in ["observation", "target_verification"], do: {:ok, evidence}
 
   defp original_source(_evidence, _reference, _seen, _depth),
-    do: {:error, "File has no native Target observation source"}
+    do: invalid("File has no native Target observation source")
 
   defp read_snapshot(id, case_id) do
     Ash.transact([Case, ResolutionRun, Evidence], fn ->
       with {:ok, evidence} <- Cases.get_evidence(id, authorize?: false),
            true <-
              (evidence.kind == "file_read" and evidence.case_id == case_id) ||
-               {:error, "File-read Evidence does not belong to this Case"},
+               invalid("File-read Evidence does not belong to this Case"),
            {:ok, {incident, run, actor}} <- current_context(case_id, evidence.resolution_run_id),
            true <-
              evidence.content["status"] in ["available", "unavailable"] ||
-               {:error, "File-read Evidence status is invalid"},
+               invalid("File-read Evidence status is invalid"),
            intent <- receipt_intent(evidence.content),
            :ok <- valid_range(intent["reference"], intent["offset"], intent["length"], incident),
            {:ok, source} <- source(intent, incident, run) do
@@ -307,7 +307,7 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
          receipt_intent(existing.content) ==
            Map.take(intent, ~w(reference offset length source_evidence_id reason)),
        do: :ok,
-       else: {:error, "File-read receipt does not match the source decision"}
+       else: invalid("File-read receipt does not match the source decision")
   end
 
   defp source(intent, incident, run) do
@@ -315,7 +315,7 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
          :ok <- Citation.validate(source, incident, run),
          true <-
            FileReference.present_in?(source.content, intent["reference"]) ||
-             {:error, "File reference is not present in the cited Case Evidence"},
+             invalid("File reference is not present in the cited Case Evidence"),
          do: {:ok, source}
   end
 
@@ -326,7 +326,7 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
               incident.selected_target_id == snapshot.incident.selected_target_id and
               incident.selected_target_revision == snapshot.incident.selected_target_revision and
               actor.role_version == snapshot.actor.role_version) ||
-             {:error, "File-read authority or Target changed"},
+             invalid("File-read authority or Target changed"),
          do: :ok
   end
 
@@ -339,19 +339,19 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
            |> Ash.read_one(authorize?: false, not_found_error?: true),
          true <-
            (incident.status == :running and not incident.cancel_requested) ||
-             {:error, "Case is not running"},
+             invalid("Case is not running"),
          {:ok, run} <- Cases.get_resolution_run(run_id, authorize?: false),
          true <-
            (run.case_id == incident.id and run.active and run.status == :running and
               DateTime.compare(DateTime.utc_now(), run.deadline_at) == :lt) ||
-             {:error, "File-read ResolutionRun is not current"},
+             invalid("File-read ResolutionRun is not current"),
          {:ok, actor} <- Accounts.get_user(incident.current_owner_id, authorize?: false),
          true <-
-           actor.role in [:admin, :operator] || {:error, "Case owner cannot read file contents"},
+           actor.role in [:admin, :operator] || invalid("Case owner cannot read file contents"),
          {:ok, target} <- Targets.get_target(incident.selected_target_id, authorize?: false),
          true <-
            (target.active and target.revision == incident.selected_target_revision) ||
-             {:error, "File-read Target changed"},
+             invalid("File-read Target changed"),
          do: {:ok, {incident, run, actor}}
   end
 
@@ -360,6 +360,9 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
          is_integer(offset) and offset >= 0 and offset <= reference["size_bytes"] and
          is_integer(length) and length in 1..AI.file_read_bytes(),
        do: :ok,
-       else: {:error, "File-read reference, Target or range is invalid"}
+       else: invalid("File-read reference, Target or range is invalid")
   end
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

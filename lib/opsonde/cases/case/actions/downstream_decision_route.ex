@@ -119,7 +119,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
              existing.data["result_digest"] == turn.result_digest do
           incident
         else
-          {:error, "Recovery Review request was already used with different input"}
+          invalid("Recovery Review request was already used with different input")
         end
       else
         case review_retry_gate(incident, intent) do
@@ -194,7 +194,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            %{"turn_id" => turn.id}
            |> Opsonde.Cases.Turn.RecoveryReviewWorker.new()
            |> Oban.insert(),
-         true <- is_integer(job.id) || {:error, "Recovery Reviewer job was not persisted"} do
+         true <-
+           is_integer(job.id) ||
+             {:error,
+              Ash.Error.Unknown.UnknownError.exception(
+                error: "Recovery Reviewer job was not persisted"
+              )} do
       updated
     end
   end
@@ -216,14 +221,14 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               is_binary(event.data["ai_invocation_id"]) and
               is_binary(event.data["provider_id"]) and
               is_binary(event.data["invocation_key"])) ||
-             {:error, "Recovery Review did not approve this exact conclusion"},
+             invalid("Recovery Review did not approve this exact conclusion"),
          true <-
            CaseSymptom.valid_assessment?(
              event.data["desired_outcome_assessment"],
              CaseSymptom.current(incident),
              intent["desired_outcome_claims"],
              :approved
-           ) || {:error, "Recovery Review did not assess this desired outcome"},
+           ) || invalid("Recovery Review did not assess this desired outcome"),
          {:ok, invocation} <-
            Cases.ai_invocation_by_idempotency(event.data["invocation_key"],
              authorize?: false,
@@ -238,7 +243,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
               invocation.assignment_id == event.data["assignment_id"] and
               invocation.result_digest ==
                 Opsonde.Cases.AIInvocation.request_digest(event.data)) ||
-             {:error, "Recovery Reviewer invocation is unavailable"},
+             invalid("Recovery Reviewer invocation is unavailable"),
          {:ok, assignment} <-
            Providers.load_current_ai_usage_role_assignment(
              invocation.assignment_id,
@@ -294,7 +299,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            %{"case_id" => resolved.id, "case_revision" => resolved.revision}
            |> GenerationWorker.new()
            |> Oban.insert(),
-         true <- is_integer(job.id) || {:error, "Report generation job was not persisted"} do
+         true <-
+           is_integer(job.id) ||
+             {:error,
+              Ash.Error.Unknown.UnknownError.exception(
+                error: "Report generation job was not persisted"
+              )} do
       {:ok, resolved}
     end
   end
@@ -303,7 +313,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
          true <-
            ConditionRecovery.ready_for_review?(assessments) ||
-             {:error, "Signal Conditions require current observations and Resolver assessment"} do
+             invalid("Signal Conditions require current observations and Resolver assessment") do
       :ok
     end
   end
@@ -404,7 +414,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          event.data == event_data(turn, intent, pending) do
       incident
     else
-      {:error, "Resolver decision route was already used with different input"}
+      invalid("Resolver decision route was already used with different input")
     end
   end
 
@@ -419,7 +429,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          event.resolution_run_id == turn.resolution_run_id and event.data == expected do
       incident
     else
-      {:error, "Resolver decision route was already used with different input"}
+      invalid("Resolver decision route was already used with different input")
     end
   end
 
@@ -432,7 +442,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        do: {:ok, intent}
 
   defp downstream_intent(_turn),
-    do: {:error, "Completed Turn does not contain a downstream Resolver decision"}
+    do: invalid("Completed Turn does not contain a downstream Resolver decision")
 
   defp validate_intent(%{"type" => "proposal"}, _turn, _incident, _run), do: :ok
 
@@ -473,7 +483,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        do: valid_reason(reason)
 
   defp validate_intent(_intent, _turn, _incident, _run),
-    do: {:error, "Downstream Resolver decision is malformed"}
+    do: invalid("Downstream Resolver decision is malformed")
 
   defp valid_desired_outcome_claims([], _evidence_ids, %{trigger_kind: :signal}, _run), do: :ok
 
@@ -493,20 +503,21 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
              CaseSymptom.current(incident),
              evidence_ids,
              evidence
-           ) || {:error, "Recovery conclusion lacks a current Case symptom claim"},
+           ) || invalid("Recovery conclusion lacks a current Case symptom claim"),
          :ok <- verify_claim_evidence(evidence, incident, run) do
       :ok
     end
   end
 
   defp valid_desired_outcome_claims(_claims, _evidence_ids, _incident, _run),
-    do: {:error, "Recovery conclusion has unexpected desired outcome claims"}
+    do: invalid("Recovery conclusion has unexpected desired outcome claims")
 
   defp fetch_claim_evidence(ids, case_id) do
     Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, items} ->
-      case Cases.get_evidence(id, authorize?: false) do
+      case Cases.get_evidence(id, authorize?: false, not_found_error?: false) do
         {:ok, %{case_id: ^case_id} = item} -> {:cont, {:ok, [item | items]}}
-        _unavailable -> {:halt, {:error, "Recovery conclusion cites unavailable Case Evidence"}}
+        {:error, _error} = error -> {:halt, error}
+        _unavailable -> {:halt, invalid("Recovery conclusion cites unavailable Case Evidence")}
       end
     end)
   end
@@ -529,7 +540,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
                  do: verify_claim_evidence([source], incident, run)
 
           _other ->
-            {:error, "Recovery conclusion cites unsupported Case Evidence"}
+            invalid("Recovery conclusion cites unsupported Case Evidence")
         end
 
       case result do
@@ -542,7 +553,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp valid_reason(reason) do
     if Opsonde.Providers.AI.valid_resolver_reason?(reason),
       do: :ok,
-      else: {:error, "Downstream Resolver decision is malformed"}
+      else: invalid("Downstream Resolver decision is malformed")
   end
 
   defp valid_recovery_state(%{trigger_kind: :signal}), do: :ok
@@ -551,7 +562,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     do: :ok
 
   defp valid_recovery_state(_incident),
-    do: {:error, "Monitoring source has not confirmed recovery"}
+    do: invalid("Monitoring source has not confirmed recovery")
 
   defp valid_fresh_verification(
          evidence_ids,
@@ -563,12 +574,12 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     with {:ok, assessments} <- ConditionRecovery.assess_current(incident),
          true <-
            ConditionRecovery.ready_for_review?(assessments) ||
-             {:error, "Signal Conditions require current observations and Resolver assessment"},
-         true <- is_list(claims) || {:error, "Recovery conclusion lacks Condition claims"},
+             invalid("Signal Conditions require current observations and Resolver assessment"),
+         true <- is_list(claims) || invalid("Recovery conclusion lacks Condition claims"),
          expected <- Map.new(assessments, &{&1.condition_id, &1}),
          true <-
            length(claims) == map_size(expected) ||
-             {:error, "Recovery conclusion omits a Condition"},
+             invalid("Recovery conclusion omits a Condition"),
          true <-
            Enum.all?(claims, fn claim ->
              is_map(claim) and
@@ -582,10 +593,10 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
                      claim["evidence_id"] in evidence_ids and
                      Opsonde.Providers.AI.valid_resolver_reason?(claim["reason"])
                end
-           end) || {:error, "Recovery conclusion cites a changed Condition"},
+           end) || invalid("Recovery conclusion cites a changed Condition"),
          true <-
            MapSet.new(Enum.map(claims, & &1["condition_id"])) == MapSet.new(Map.keys(expected)) ||
-             {:error, "Recovery conclusion contains duplicate Condition claims"} do
+             invalid("Recovery conclusion contains duplicate Condition claims") do
       :ok
     end
   end
@@ -602,11 +613,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   end
 
   defp valid_fresh_verification(_evidence_ids, _claims, _turn, _incident, _run),
-    do: {:error, "Recovery conclusion has unexpected Condition claims"}
+    do: invalid("Recovery conclusion has unexpected Condition claims")
 
   defp validate_current_verification(evidence_ids, evidence_id, operation_id, incident, run) do
     if evidence_id in evidence_ids do
-      case Cases.get_evidence(evidence_id, authorize?: false) do
+      case Cases.get_evidence(evidence_id, authorize?: false, not_found_error?: false) do
         {:ok,
          %{
            case_id: case_id,
@@ -618,18 +629,27 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
         when case_id == incident.id and run_id == run.id ->
           :ok
 
-        _unavailable ->
-          {:error, "Recovery conclusion lacks the current verified Target Evidence"}
+        {:error, _error} = error ->
+          error
+
+        {:ok, _unavailable} ->
+          invalid("Recovery conclusion lacks the current verified Target Evidence")
       end
     else
-      {:error, "Recovery conclusion omits the current verification Evidence"}
+      invalid("Recovery conclusion omits the current verification Evidence")
     end
   end
 
   defp validate_continuity_verification(evidence_ids, incident, run) do
     case validate_target_continuity_verification(evidence_ids, incident) do
-      :ok -> :ok
-      {:error, _error} -> validate_fresh_observation(evidence_ids, incident, run)
+      :ok ->
+        :ok
+
+      {:error, %Ash.Error.Changes.InvalidChanges{}} ->
+        validate_fresh_observation(evidence_ids, incident, run)
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -640,11 +660,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
            Enum.find(candidates, &(&1.content["target_id"] == incident.selected_target_id)),
          true <-
            latest.id in evidence_ids ||
-             {:error, "Recovery conclusion omits the latest verified Target Evidence"},
+             invalid("Recovery conclusion omits the latest verified Target Evidence"),
          :ok <- valid_continuity_evidence(latest, incident) do
       :ok
     else
-      nil -> {:error, "Recovery conclusion lacks verified Target Evidence"}
+      nil -> invalid("Recovery conclusion lacks verified Target Evidence")
       {:error, _error} = error -> error
     end
   end
@@ -652,18 +672,22 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
   defp validate_fresh_observation(evidence_ids, incident, run) do
     Enum.reduce_while(
       evidence_ids,
-      {:error, "Recovery conclusion lacks fresh Target Evidence"},
+      invalid("Recovery conclusion lacks fresh Target Evidence"),
       fn
         evidence_id, _result ->
-          case Cases.get_evidence(evidence_id, authorize?: false) do
-            {:ok, evidence} ->
+          case Cases.get_evidence(evidence_id, authorize?: false, not_found_error?: false) do
+            {:ok, %Evidence{} = evidence} ->
               case valid_fresh_observation(evidence, incident, run) do
                 :ok -> {:halt, :ok}
-                {:error, _error} = error -> {:cont, error}
+                {:error, %Ash.Error.Changes.InvalidChanges{}} = error -> {:cont, error}
+                {:error, _error} = error -> {:halt, error}
               end
 
-            {:error, _error} ->
-              {:cont, {:error, "Recovery conclusion cites unavailable Target Evidence"}}
+            {:ok, nil} ->
+              {:cont, invalid("Recovery conclusion cites unavailable Target Evidence")}
+
+            {:error, _error} = error ->
+              {:halt, error}
           end
       end
     )
@@ -707,17 +731,18 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
             purpose: :investigation,
             status: :applied,
             dispatch_started_at: %DateTime{} = dispatch_started_at
-          }} <- Cases.get_operation(operation_id, authorize?: false) do
+          }} <- Cases.get_operation(operation_id, authorize?: false, not_found_error?: false) do
       if DateTime.compare(dispatch_started_at, baseline) in [:eq, :gt],
         do: :ok,
-        else: {:error, "Recovery conclusion cites an earlier Target observation"}
+        else: invalid("Recovery conclusion cites an earlier Target observation")
     else
-      _stale -> {:error, "Recovery conclusion cites stale Target observation"}
+      {:error, _error} = error -> error
+      _stale -> invalid("Recovery conclusion cites stale Target observation")
     end
   end
 
   defp valid_fresh_observation(_evidence, _incident, _run),
-    do: {:error, "Recovery conclusion lacks fresh Target Evidence"}
+    do: invalid("Recovery conclusion lacks fresh Target Evidence")
 
   defp valid_continuity_evidence(
          %{
@@ -732,7 +757,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          },
          %{id: case_id, selected_target_id: target_id, selected_target_revision: target_revision}
        ) do
-    case Cases.get_operation(operation_id, authorize?: false) do
+    case Cases.get_operation(operation_id, authorize?: false, not_found_error?: false) do
       {:ok,
        %{
          case_id: ^case_id,
@@ -742,20 +767,24 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        }} ->
         :ok
 
-      _unavailable ->
-        {:error, "Recovery conclusion cites stale Target verification"}
+      {:error, _error} = error ->
+        error
+
+      {:ok, _unavailable} ->
+        invalid("Recovery conclusion cites stale Target verification")
     end
   end
 
   defp valid_continuity_evidence(_evidence, _incident),
-    do: {:error, "Recovery conclusion lacks verified Target Evidence"}
+    do: invalid("Recovery conclusion lacks verified Target Evidence")
 
   defp valid_case_evidence(ids, case_id) do
     with :ok <- unique_ids(ids) do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
-        case Cases.get_evidence(id, authorize?: false) do
+        case Cases.get_evidence(id, authorize?: false, not_found_error?: false) do
           {:ok, %{case_id: ^case_id}} -> {:cont, :ok}
-          _unavailable -> {:halt, {:error, "Resolver decision cites unavailable Evidence"}}
+          {:error, _error} = error -> {:halt, error}
+          _unavailable -> {:halt, invalid("Resolver decision cites unavailable Evidence")}
         end
       end)
     end
@@ -766,11 +795,11 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
          length(ids) == MapSet.size(MapSet.new(ids)) do
       :ok
     else
-      {:error, "Resolver decision Evidence identities are invalid"}
+      invalid("Resolver decision Evidence identities are invalid")
     end
   end
 
-  defp unique_ids(_ids), do: {:error, "Resolver decision Evidence identities are invalid"}
+  defp unique_ids(_ids), do: invalid("Resolver decision Evidence identities are invalid")
 
   defp lock_case(id) do
     Case
@@ -799,15 +828,15 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     |> required("Resolver Turn is unavailable")
   end
 
-  defp required({:ok, nil}, message), do: {:error, message}
+  defp required({:ok, nil}, message), do: invalid(message)
   defp required(result, _message), do: result
 
   defp ensure_running(%{status: :running, cancel_requested: false}, %{status: :running}), do: :ok
 
   defp ensure_running(%{cancel_requested: true}, _run),
-    do: {:error, "Case cancellation was requested"}
+    do: invalid("Case cancellation was requested")
 
-  defp ensure_running(_incident, _run), do: {:error, "Case resolution is not running"}
+  defp ensure_running(_incident, _run), do: invalid("Case resolution is not running")
 
   defp available_pending_intent(current, _pending, _turn) when map_size(current) == 0, do: :ok
   defp available_pending_intent(pending, pending, _turn), do: :ok
@@ -825,7 +854,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
        do: :ok
 
   defp available_pending_intent(_current, _pending, _turn),
-    do: {:error, "Case already has another pending decision"}
+    do: invalid("Case already has another pending decision")
 
   defp existing_event(case_id, key) do
     Cases.case_event_by_idempotency(case_id, key,
@@ -853,26 +882,33 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
     }
   end
 
-  defp resolved_replay(source_turn) do
-    with {:ok, %{"type" => "recovery_conclusion"} = intent} <- downstream_intent(source_turn),
-         {:ok, event} <- existing_event(source_turn.case_id, route_key(source_turn)) do
+  defp resolved_replay(
+         %{
+           status: :completed,
+           result_digest: digest,
+           result: %{
+             "outcome" => "decision",
+             "intent" => %{"type" => "recovery_conclusion"} = intent
+           }
+         } = source_turn
+       )
+       when is_binary(digest) do
+    with {:ok, event} <- existing_event(source_turn.case_id, route_key(source_turn)) do
       case event do
         %CaseEvent{event_type: "case_resolved", data: data} ->
           if Map.drop(data, ["recovery_review_event_id"]) ==
                resolved_event_data(source_turn, intent) and
                is_binary(data["recovery_review_event_id"]),
              do: Cases.get_case(source_turn.case_id, authorize?: false),
-             else: {:error, "Recovery conclusion was already resolved with different input"}
+             else: invalid("Recovery conclusion was already resolved with different input")
 
         _other ->
           :continue
       end
-    else
-      {:ok, _other_intent} -> :continue
-      {:error, "Completed Turn does not contain a downstream Resolver decision"} -> :continue
-      {:error, _error} = error -> error
     end
   end
+
+  defp resolved_replay(_turn), do: :continue
 
   defp pending_intent(action, turn),
     do: %{"action" => action, "source_turn_id" => turn.id}
@@ -884,4 +920,7 @@ defmodule Opsonde.Cases.Case.Actions.DownstreamDecisionRoute do
 
   defp action_value({:ok, value}), do: value
   defp action_value({:error, _error} = error), do: error
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

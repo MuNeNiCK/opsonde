@@ -2835,7 +2835,7 @@ defmodule Opsonde.OperationDeliveryTest do
       DateTime.add(second.accepted_at, -1, :microsecond)
     )
 
-    assert {:error, "Relevant Target effect is not complete"} =
+    assert {:error, %ConditionRecovery.EffectIncomplete{}} =
              ConditionRecovery.assess_current(incident)
 
     assert :ok =

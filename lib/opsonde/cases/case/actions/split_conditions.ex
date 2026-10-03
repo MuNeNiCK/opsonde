@@ -76,7 +76,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     with :ok <- eligible_case(parent, args),
          {:ok, run} <- lock_active_run(parent.id),
          {:ok, dispatch} <- Cases.case_dispatch(parent.id, authorize?: false),
-         true <- dispatch.state == :sent || {:error, "Case has not dispatched its first Turn"},
+         true <- dispatch.state == :sent || invalid("Case has not dispatched its first Turn"),
          :ok <- quiescent(parent, run),
          {:ok, members} <- Cases.active_conditions_for_case(parent.id, authorize?: false),
          :ok <- exact_members(parent, members, args),
@@ -133,8 +133,8 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
            turn.result,
          true <- turn.result["condition_revisions"] == args.expected_conditions,
          true <- intent["condition_ids"] == args.condition_ids and intent["reason"] == args.reason,
-         true <- cited_group?(intent["evidence_ids"], moved, parent.id),
-         true <- cited_group?(intent["remaining_evidence_ids"], remaining, parent.id) do
+         {:ok, true} <- cited_group(intent["evidence_ids"], moved, parent.id),
+         {:ok, true} <- cited_group(intent["remaining_evidence_ids"], remaining, parent.id) do
       :ok
     else
       {:error, _error} = error ->
@@ -152,25 +152,28 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
   defp validate_resolver_split(_parent, _run, _args, _moved, _remaining), do: :ok
 
-  defp cited_group?(ids, conditions, case_id) when is_list(ids) and ids != [] do
-    Enum.any?(ids, fn id ->
-      case Cases.get_evidence(id, authorize?: false) do
+  defp cited_group(ids, conditions, case_id) when is_list(ids) and ids != [] do
+    Enum.reduce_while(ids, {:ok, false}, fn id, result ->
+      case Cases.get_evidence(id, authorize?: false, not_found_error?: false) do
         {:ok, evidence} ->
-          evidence.case_id == case_id and
-            evidence.kind in ["observation", "target_verification"] and
-            evidence.content["status"] in ["applied", "verified"] and
-            Enum.any?(conditions, fn condition ->
-              condition.target_id == evidence.content["target_id"] and
-                DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt
-            end)
+          valid? =
+            not is_nil(evidence) and evidence.case_id == case_id and
+              evidence.kind in ["observation", "target_verification"] and
+              evidence.content["status"] in ["applied", "verified"] and
+              Enum.any?(conditions, fn condition ->
+                condition.target_id == evidence.content["target_id"] and
+                  DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt
+              end)
 
-        _missing ->
-          false
+          if valid?, do: {:halt, {:ok, true}}, else: {:cont, result}
+
+        {:error, _error} = error ->
+          {:halt, error}
       end
     end)
   end
 
-  defp cited_group?(_ids, _conditions, _case_id), do: false
+  defp cited_group(_ids, _conditions, _case_id), do: {:ok, false}
 
   defp eligible_case(parent, args) do
     cond do
@@ -178,7 +181,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
         {:error, Ash.Error.Changes.StaleRecord.exception(resource: Case, field: :revision)}
 
       parent.trigger_kind != :signal or parent.status != :running or parent.cancel_requested ->
-        {:error, "Only a running Signal Case can be split"}
+        invalid("Only a running Signal Case can be split")
 
       true ->
         :ok
@@ -188,10 +191,10 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   defp quiescent(parent, run) do
     with true <-
            DateTime.compare(DateTime.utc_now(), run.deadline_at) == :lt ||
-             {:error, "Case deadline has elapsed"},
+             invalid("Case deadline has elapsed"),
          :ok <- pending_decision_quiescent(parent),
          {:ok, started} <- Cases.started_turns_for_run(run.id, authorize?: false),
-         true <- started == [] || {:error, "Resolver Turn is still running"},
+         true <- started == [] || invalid("Resolver Turn is still running"),
          :ok <- quiescent_operations(parent.id),
          :ok <- quiescent_proposals(parent.id),
          :ok <- no_rows(AIInvocation, parent.id, [:dispatching]) do
@@ -222,7 +225,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
             {:cont, :ok}
 
           {:ok, _operation} ->
-            {:halt, {:error, "Case has an unsettled Proposal or Target operation"}}
+            {:halt, invalid("Case has an unsettled Proposal or Target operation")}
 
           {:error, _error} = error ->
             {:halt, error}
@@ -240,12 +243,12 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
           is_binary(pending["turn_id"]) ->
         case Cases.get_turn(pending["turn_id"], authorize?: false) do
           {:ok, %{case_id: ^case_id, status: :completed}} -> :ok
-          {:ok, _turn} -> {:error, "Case has another pending decision"}
+          {:ok, _turn} -> invalid("Case has another pending decision")
           {:error, _error} = error -> error
         end
 
       true ->
-        {:error, "Case has another pending decision"}
+        invalid("Case has another pending decision")
     end
   end
 
@@ -260,13 +263,13 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
     case Ash.read_one(query, authorize?: false) do
       {:ok, nil} -> :ok
-      {:ok, _row} -> {:error, "Case has an unsettled Proposal or Target operation"}
+      {:ok, _row} -> invalid("Case has an unsettled Proposal or Target operation")
       {:error, _error} = error -> error
     end
   end
 
   defp exact_members(parent, members, args) do
-    with true <- length(members) >= 2 || {:error, "Case needs at least two Conditions"},
+    with true <- length(members) >= 2 || invalid("Case needs at least two Conditions"),
          {:ok, expected} <- normalize_expected(args.expected_conditions),
          {:ok, current} <- ConditionContext.current_condition_revisions(parent),
          true <-
@@ -292,9 +295,9 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
 
       if Enum.uniq_by(normalized, & &1["id"]) == normalized,
         do: {:ok, normalized},
-        else: {:error, "Condition snapshot contains duplicate IDs"}
+        else: invalid("Condition snapshot contains duplicate IDs")
     else
-      {:error, "Condition snapshot is invalid"}
+      invalid("Condition snapshot is invalid")
     end
   end
 
@@ -306,7 +309,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
          Enum.all?(ids, &Map.has_key?(by_id, &1)) do
       {:ok, Enum.map(ids, &Map.fetch!(by_id, &1))}
     else
-      {:error, "Split must move a nonempty proper subset of current Conditions"}
+      invalid("Split must move a nonempty proper subset of current Conditions")
     end
   end
 
@@ -333,7 +336,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
   defp load_selected_target(id) do
     case Targets.get_target(id, authorize?: false) do
       {:ok, %{active: true} = target} -> {:ok, target}
-      {:ok, _target} -> {:error, "Split Target is inactive"}
+      {:ok, _target} -> invalid("Split Target is inactive")
       {:error, _error} = error -> error
     end
   end
@@ -356,7 +359,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
          Map.fetch!(run, maximum) >= Map.fetch!(run, counter)
        end),
        do: {:ok, allocations},
-       else: {:error, "Resolution budget counters exceed their limits"}
+       else: invalid("Resolution budget counters exceed their limits")
   end
 
   defp create_child(parent, run, dispatch, selected_target, recovery_baseline, limits) do
@@ -451,11 +454,11 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
              DateTime.compare(evidence.observed_at, condition.current_occurred_at) == :eq do
           {:ok, evidence}
         else
-          {:error, "Current Signal Evidence does not match the Condition"}
+          invalid("Current Signal Evidence does not match the Condition")
         end
 
       {:ok, nil} ->
-        {:error, "Current Signal Evidence is unavailable"}
+        invalid("Current Signal Evidence is unavailable")
 
       {:error, _error} = error ->
         error
@@ -648,7 +651,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
            ),
          true <-
            started.status in [:charged, :duplicate] ||
-             {:error, "Split reassessment exhausted its Resolver budget"},
+             invalid("Split reassessment exhausted its Resolver budget"),
          {:ok, current} <- Cases.get_case(incident.id, authorize?: false),
          {:ok, _updated} <-
            Cases.record_case_pending_intent(
@@ -680,7 +683,7 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
     |> case do
-      {:ok, nil} -> {:error, "Active ResolutionRun is unavailable"}
+      {:ok, nil} -> invalid("Active ResolutionRun is unavailable")
       result -> result
     end
   end
@@ -692,8 +695,11 @@ defmodule Opsonde.Cases.Case.Actions.SplitConditions do
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
     |> case do
-      {:ok, nil} -> {:error, "Case is unavailable"}
+      {:ok, nil} -> invalid("Case is unavailable")
       result -> result
     end
   end
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

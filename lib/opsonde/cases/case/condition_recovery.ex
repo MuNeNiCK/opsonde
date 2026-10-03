@@ -3,6 +3,14 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   alias Opsonde.{Cases, Signals, Targets}
 
+  defmodule EffectIncomplete do
+    @moduledoc false
+    use Splode.Error, class: :invalid, fields: []
+
+    @impl true
+    def message(_error), do: "Relevant Target effect is not complete"
+  end
+
   @max_evidence 256
   @max_lineage_depth 32
   @max_citations_per_condition 3
@@ -10,7 +18,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident, exclude_operation_id \\ nil) do
     with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
-         true <- memberships != [] || {:error, "Signal Case has no active Conditions"},
+         true <- memberships != [] || invalid("Signal Case has no active Conditions"),
          {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, exclude_operation_id),
          {:ok, evidence} <-
            Cases.condition_assessment_evidence(
@@ -19,7 +27,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
              authorize?: false
            ),
          true <-
-           length(evidence) <= @max_evidence || {:error, "Condition evidence window is full"} do
+           length(evidence) <= @max_evidence || invalid("Condition evidence window is full") do
       Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
         with {:ok, condition} <- Signals.get_condition(membership.condition_id, authorize?: false),
              {:ok, baseline} <- condition_baseline(incident, condition.id, effects),
@@ -61,7 +69,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     inherited = inherited_baseline(incident)
 
     with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
-         true <- length(operations) < 100 || {:error, "Operation history exceeds recovery bound"} do
+         true <- length(operations) < 100 || invalid("Operation history exceeds recovery bound") do
       operations
       |> Enum.filter(&affects_recovery?/1)
       |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
@@ -74,7 +82,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           {:ok, if(DateTime.compare(at, inherited) == :gt, do: at, else: inherited)}
 
         _other ->
-          {:error, "Latest Target effect is not complete"}
+          invalid("Latest Target effect is not complete")
       end
     end
   end
@@ -279,21 +287,21 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          if(DateTime.compare(completed_at, inherited) == :gt, do: completed_at, else: inherited)}
 
       _other ->
-        {:error, "Relevant Target effect is not complete"}
+        {:error, EffectIncomplete.exception([])}
     end
   end
 
   defp lineage_effects(_incident, _seen, depth, _exclude_operation_id)
        when depth >= @max_lineage_depth,
-       do: {:error, "Case split lineage exceeds recovery bound"}
+       do: invalid("Case split lineage exceeds recovery bound")
 
   defp lineage_effects(incident, seen, depth, exclude_operation_id) do
     if MapSet.member?(seen, incident.id) do
-      {:error, "Case split lineage contains a cycle"}
+      invalid("Case split lineage contains a cycle")
     else
       with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
            true <-
-             length(operations) < 100 || {:error, "Operation history exceeds recovery bound"},
+             length(operations) < 100 || invalid("Operation history exceeds recovery bound"),
            {:ok, effects} <- scoped_effects(operations, exclude_operation_id),
            {:ok, parent_effects} <-
              parent_effects(
@@ -331,7 +339,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           {:halt, error}
 
         _invalid ->
-          {:halt, {:error, "Effect Condition scope is unavailable"}}
+          {:halt, invalid("Effect Condition scope is unavailable")}
       end
     end)
   end
@@ -449,4 +457,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp valid_operation_evidence(_evidence, _condition, _revision), do: {:ok, false}
+
+  defp invalid(message),
+    do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
 end

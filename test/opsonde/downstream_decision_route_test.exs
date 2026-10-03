@@ -176,7 +176,7 @@ defmodule Opsonde.DownstreamDecisionRouteTest do
     malformed_turn =
       completed_turn!(malformed_case, malformed_run, "malformed", malformed, :proposal)
 
-    assert {:error, _error} =
+    assert {:error, %Ash.Error.Invalid{}} =
              Cases.route_downstream_decision(malformed_turn.id, authorize?: false)
 
     assert Cases.get_case!(malformed_case.id, authorize?: false).pending_intent == %{}
