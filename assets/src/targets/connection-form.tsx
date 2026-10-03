@@ -132,7 +132,11 @@ export function TargetConnectionForm({
       if (value(form, "expected_uuid")) configuration.expected_uuid = value(form, "expected_uuid");
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "ipmi") {
-      configuration = {};
+      configuration = {
+        privilege_level: Number(value(form, "privilege_level")),
+        cipher_suite:
+          value(form, "cipher_suite") === "auto" ? "auto" : Number(value(form, "cipher_suite")),
+      };
       credentials = { username: value(form, "username"), password: value(form, "password") };
     } else if (family === "kubernetes") {
       configuration = value(form, "namespace") ? { namespace: value(form, "namespace") } : {};
@@ -381,9 +385,39 @@ function IPMIFields() {
         name="password"
         type="password"
         autoComplete="off"
-        maxLength={16}
+        maxLength={20}
         required
       />
+      <div className="space-y-2">
+        <Label htmlFor="target-ipmi-privilege">{t("targets.ipmiPrivilege")}</Label>
+        <FormSelect
+          id="target-ipmi-privilege"
+          name="privilege_level"
+          defaultValue="4"
+          options={[
+            { value: "1", label: "Callback" },
+            { value: "2", label: "User" },
+            { value: "3", label: "Operator" },
+            { value: "4", label: "Administrator" },
+            { value: "5", label: "OEM" },
+          ]}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="target-ipmi-cipher">{t("targets.ipmiCipher")}</Label>
+        <FormSelect
+          id="target-ipmi-cipher"
+          name="cipher_suite"
+          defaultValue="auto"
+          options={[
+            { value: "auto", label: t("targets.ipmiCipherAuto") },
+            ...Array.from({ length: 18 }, (_, index) => ({
+              value: String(index),
+              label: String(index),
+            })),
+          ]}
+        />
+      </div>
     </>
   );
 }

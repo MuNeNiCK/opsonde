@@ -6,6 +6,88 @@ defmodule Opsonde.Targets.IPMIRequestTest do
 
   @endpoint "ipmi://127.0.0.1:623"
 
+  test "IPMI connection options preserve SDK password, privilege and cipher choices" do
+    credentials = %{"username" => "fixture", "password" => "12345678901234567890"}
+
+    for adapter <- [
+          IPMI,
+          Opsonde.Targets.Profiles.HPEILO.IPMI,
+          Opsonde.Targets.Profiles.DellIDRAC.IPMI
+        ],
+        privilege <- 1..5,
+        cipher <- ["auto" | Enum.to_list(0..17)] do
+      assert {:ok, _state} =
+               adapter.build(
+                 %{"privilege_level" => privilege, "cipher_suite" => cipher},
+                 credentials
+               )
+    end
+
+    for configuration <- [
+          %{"privilege_level" => 0},
+          %{"privilege_level" => 6},
+          %{"privilege_level" => "2"},
+          %{"cipher_suite" => 18},
+          %{"cipher_suite" => 255},
+          %{"cipher_suite" => "3"}
+        ] do
+      assert {:error, :invalid_configuration} = IPMI.build(configuration, credentials)
+    end
+
+    for credentials <- [
+          %{credentials | "username" => String.duplicate("a", 17)},
+          %{credentials | "password" => String.duplicate("a", 21)},
+          %{credentials | "username" => "fi\0xture"},
+          %{credentials | "password" => "fi\0xture"}
+        ] do
+      assert {:error, :invalid_configuration} = IPMI.build(%{}, credentials)
+    end
+  end
+
+  test "native IPMI rejects malformed credentials and session options before sending" do
+    alias Opsonde.Transports.IPMI, as: Transport
+    {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    on_exit(fn -> :gen_udp.close(socket) end)
+    {:ok, port} = :inet.port(socket)
+    session = %{username: "fixture", password: "fixture", privilege_level: 2, cipher_suite: 3}
+
+    command = %{
+      netfn: 6,
+      command: 1,
+      data: [],
+      lun: 0,
+      target_address: 32,
+      target_channel: 0,
+      transit_address: 0,
+      transit_channel: 0
+    }
+
+    console = %{
+      instance: 1,
+      flags: 0xC6,
+      generate_break: false,
+      input: [],
+      read_ms: 0,
+      max_output_bytes: 64
+    }
+
+    for invalid <- [
+          %{session | username: String.duplicate("a", 17)},
+          %{session | password: String.duplicate("a", 21)},
+          %{session | password: "fi\0xture"},
+          %{session | privilege_level: 0},
+          %{session | cipher_suite: 18}
+        ] do
+      assert {:error, "invalid_request"} =
+               Transport.exchange_command("127.0.0.1:#{port}", invalid, 100, command, %{})
+
+      assert {:error, "invalid_request"} =
+               Transport.exchange_console("127.0.0.1:#{port}", invalid, 100, console, %{})
+    end
+
+    assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+  end
+
   @tag ipmi_sol: true
   test "SOL exchange uses the existing exact IPMI effect authority for all profiles" do
     for adapter <- [

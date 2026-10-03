@@ -15,7 +15,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defmodule State do
     @moduledoc false
-    @enforce_keys [:user, :password, :timeout]
+    @enforce_keys [:user, :password, :timeout, :privilege, :cipher]
     @derive {Inspect, except: [:password]}
     defstruct @enforce_keys ++ [:endpoint, :host, :port]
   end
@@ -36,17 +36,27 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   @impl Opsonde.Providers.Adapter
   def build(configuration, credentials) when is_map(configuration) and is_map(credentials) do
-    with true <- Enum.all?(Map.keys(configuration), &(&1 == "timeout_ms")),
+    with true <-
+           Enum.all?(
+             Map.keys(configuration),
+             &(&1 in ~w(timeout_ms privilege_level cipher_suite))
+           ),
          true <- Enum.sort(Map.keys(credentials)) == ["password", "username"],
-         {:ok, user} <- short_secret(credentials["username"]),
-         {:ok, password} <- short_secret(credentials["password"]),
+         {:ok, user} <- secret(credentials["username"], 16),
+         {:ok, password} <- secret(credentials["password"], 20),
+         privilege when is_integer(privilege) and privilege in 1..5 <-
+           Map.get(configuration, "privilege_level", 4),
+         cipher when cipher == "auto" or (is_integer(cipher) and cipher in 0..17) <-
+           Map.get(configuration, "cipher_suite", "auto"),
          timeout when is_integer(timeout) and timeout in 100..30_000 <-
            Map.get(configuration, "timeout_ms", 3_000) do
       {:ok,
        %State{
          user: user,
          password: password,
-         timeout: timeout
+         timeout: timeout,
+         privilege: privilege,
+         cipher: if(cipher == "auto", do: 255, else: cipher)
        }}
     else
       _ -> {:error, :invalid_configuration}
@@ -421,8 +431,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          true <- remaining > 0 do
       case IPMI.exchange_console(
              address,
-             state.user,
-             state.password,
+             session(state),
              remaining,
              exchange,
              invocation
@@ -574,8 +583,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   defp method_command(state, address, request, timeout, invocation) do
     case IPMI.exchange_command(
            address,
-           state.user,
-           state.password,
+           session(state),
            timeout,
            request,
            invocation
@@ -665,10 +673,20 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defp endpoint(_value), do: {:error, :invalid_endpoint}
 
-  defp short_secret(value) when is_binary(value) and byte_size(value) in 1..16,
-    do: {:ok, value}
+  defp session(state),
+    do: %{
+      username: state.user,
+      password: state.password,
+      privilege_level: state.privilege,
+      cipher_suite: state.cipher
+    }
 
-  defp short_secret(_value), do: {:error, :invalid_secret}
+  defp secret(value, limit)
+       when is_binary(value) and byte_size(value) >= 1 and byte_size(value) <= limit do
+    if String.contains?(value, <<0>>), do: {:error, :invalid_secret}, else: {:ok, value}
+  end
+
+  defp secret(_value, _limit), do: {:error, :invalid_secret}
 
   defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
     if callback.(), do: {:error, :cancelled, "IPMI request was cancelled"}, else: :ok

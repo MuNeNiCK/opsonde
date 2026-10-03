@@ -106,7 +106,11 @@ test("named controller profile uses the published IPMI form and exact Provider i
     "ipmi://controller.example:623",
   );
   await user.type(screen.getByRole("textbox", { name: "Username" }), "operator");
-  await user.type(screen.getByLabelText("Password"), "test-secret");
+  await user.type(screen.getByLabelText("Password"), "12345678901234567890");
+  await user.click(screen.getByRole("combobox", { name: "IPMI privilege level" }));
+  await user.click(screen.getByRole("option", { name: "User" }));
+  await user.click(screen.getByRole("combobox", { name: "Cipher suite" }));
+  await user.click(screen.getByRole("option", { name: "17" }));
   await user.click(screen.getByRole("button", { name: "Add Target connection" }));
   await waitFor(() => expect(screen.getByText("Connection saved")).toBeTruthy());
   expect(calls).toEqual([
@@ -118,8 +122,8 @@ test("named controller profile uses the published IPMI form and exact Provider i
             name: "rack-controller",
             kind: "target",
             adapter_type: "hpe-ilo-ipmi",
-            configuration: {},
-            credentials: { username: "operator", password: "test-secret" },
+            configuration: { privilege_level: 2, cipher_suite: 17 },
+            credentials: { username: "operator", password: "12345678901234567890" },
           },
         },
       },

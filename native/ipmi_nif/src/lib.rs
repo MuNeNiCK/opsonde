@@ -110,6 +110,30 @@ struct SolResult {
 }
 
 #[derive(rustler::NifMap)]
+struct Session {
+    username: String,
+    password: String,
+    privilege_level: u8,
+    cipher_suite: u8,
+}
+
+fn credentials(session: &Session) -> Result<(CString, CString), &'static str> {
+    if session.username.is_empty()
+        || session.username.len() > 16
+        || session.password.is_empty()
+        || session.password.len() > 20
+        || !(1..=5).contains(&session.privilege_level)
+        || (session.cipher_suite > 17 && session.cipher_suite != 255)
+    {
+        return Err("invalid_request");
+    }
+    Ok((
+        CString::new(session.username.as_str()).map_err(|_| "invalid_request")?,
+        CString::new(session.password.as_str()).map_err(|_| "invalid_request")?,
+    ))
+}
+
+#[derive(rustler::NifMap)]
 struct Request {
     netfn: u8,
     command: u8,
@@ -140,6 +164,8 @@ extern "C" {
         port: u16,
         user: *const c_char,
         password: *const c_char,
+        privilege: u8,
+        cipher: u8,
         timeout_ms: u64,
         request: *const SolExchange,
         output: *mut u8,
@@ -152,6 +178,8 @@ extern "C" {
         port: u16,
         user: *const c_char,
         password: *const c_char,
+        privilege: u8,
+        cipher: u8,
         timeout_ms: u64,
         request: *const Command,
         completion: *mut u8,
@@ -165,8 +193,7 @@ extern "C" {
 #[rustler::nif(schedule = "DirtyIo")]
 fn send_command(
     address: String,
-    username: String,
-    password: String,
+    session: Session,
     timeout_ms: u64,
     request: Request,
     token: rustler::ResourceArc<Cancellation>,
@@ -178,17 +205,12 @@ fn send_command(
         || request.lun > 3
         || request.target_channel > 15
         || request.transit_channel > 15
-        || username.is_empty()
-        || username.len() > 16
-        || password.is_empty()
-        || password.len() > 16
     {
         return Err("invalid_request");
     }
     let target: SocketAddr = address.parse().map_err(|_| "invalid_request")?;
     let host = CString::new(target.ip().to_string()).unwrap();
-    let user = CString::new(username).map_err(|_| "invalid_request")?;
-    let password = CString::new(password).map_err(|_| "invalid_request")?;
+    let (user, password) = credentials(&session)?;
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     let _guard = acquire(deadline, &token)?;
     let remaining = deadline
@@ -217,6 +239,8 @@ fn send_command(
             target.port(),
             user.as_ptr(),
             password.as_ptr(),
+            session.privilege_level,
+            session.cipher_suite,
             remaining,
             &command,
             &mut completion,
@@ -241,8 +265,7 @@ fn send_command(
 #[rustler::nif(schedule = "DirtyIo")]
 fn sol_exchange(
     address: String,
-    username: String,
-    password: String,
+    session: Session,
     timeout_ms: u64,
     request: SolRequest,
     token: rustler::ResourceArc<Cancellation>,
@@ -252,17 +275,12 @@ fn sol_exchange(
         || request.input.len() > 2048
         || !(1..=30_000).contains(&request.max_output_bytes)
         || request.read_ms as u64 >= timeout_ms
-        || username.is_empty()
-        || username.len() > 16
-        || password.is_empty()
-        || password.len() > 16
     {
         return Err("invalid_request");
     }
     let target: SocketAddr = address.parse().map_err(|_| "invalid_request")?;
     let host = CString::new(target.ip().to_string()).unwrap();
-    let user = CString::new(username).map_err(|_| "invalid_request")?;
-    let password = CString::new(password).map_err(|_| "invalid_request")?;
+    let (user, password) = credentials(&session)?;
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     let _guard = acquire(deadline, &token)?;
     let remaining = deadline
@@ -297,6 +315,8 @@ fn sol_exchange(
             target.port(),
             user.as_ptr(),
             password.as_ptr(),
+            session.privilege_level,
+            session.cipher_suite,
             remaining,
             &exchange,
             output.as_mut_ptr(),

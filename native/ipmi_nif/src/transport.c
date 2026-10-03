@@ -130,7 +130,8 @@ void __wrap_printbuf(const uint8_t *data, int length, const char *label) {
 }
 
 static struct ipmi_intf *session(const char *host, uint16_t port, const char *user,
-                                  const char *password, uint64_t timeout_ms) {
+                                  const char *password, uint8_t privilege,
+                                  uint8_t cipher, uint64_t timeout_ms) {
     struct ipmi_intf *intf = ipmi_intf_load("lanplus");
     if (!intf) return NULL;
     intf->my_addr = intf->target_addr = 0x20;
@@ -140,9 +141,9 @@ static struct ipmi_intf *session(const char *host, uint16_t port, const char *us
     ipmi_intf_session_set_username(intf, (char *)user);
     ipmi_intf_session_set_password(intf, (char *)password);
     ipmi_intf_session_set_port(intf, port);
-    ipmi_intf_session_set_privlvl(intf, 4);
+    ipmi_intf_session_set_privlvl(intf, privilege);
     ipmi_intf_session_set_lookupbit(intf, 0x10);
-    ipmi_intf_session_set_cipher_suite_id(intf, IPMI_LANPLUS_CIPHER_SUITE_3);
+    ipmi_intf_session_set_cipher_suite_id(intf, cipher);
     ipmi_intf_session_set_retry(intf, 1);
     ipmi_intf_session_set_timeout(intf, (timeout_ms + 999) / 1000);
     return intf;
@@ -156,7 +157,8 @@ static void close_session(struct ipmi_intf *intf) {
 }
 
 int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
-                        const char *password, uint64_t timeout_ms,
+                        const char *password, uint8_t privilege, uint8_t cipher,
+                        uint64_t timeout_ms,
                         const struct command *command, uint8_t *completion,
                         uint8_t *data, uint32_t *length,
                         int (*check)(const void *), const void *context) {
@@ -164,7 +166,7 @@ int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
     effect_active = effect_attempted = authentication_failed = 0;
     cancel_check = check;
     cancel_context = context;
-    struct ipmi_intf *intf = session(host, port, user, password, timeout_ms);
+    struct ipmi_intf *intf = session(host, port, user, password, privilege, cipher, timeout_ms);
     if (!intf) { cancel_check = NULL; return 1; }
     int status = 2;
     if (!cancelled() && intf->open(intf) >= 0 && !cancelled() && now_us() < deadline) {
@@ -246,7 +248,8 @@ static struct ipmi_rs *sol_control(struct ipmi_intf *intf, uint8_t command,
 }
 
 int opsonde_ipmi_sol(const char *host, uint16_t port, const char *user,
-                     const char *password, uint64_t timeout_ms,
+                     const char *password, uint8_t privilege, uint8_t cipher,
+                     uint64_t timeout_ms,
                      const struct sol_exchange *exchange, uint8_t *output,
                      struct sol_outcome *outcome,
                      int (*check)(const void *), const void *context) {
@@ -264,7 +267,7 @@ int opsonde_ipmi_sol(const char *host, uint16_t port, const char *user,
     int status = 2, activated = 0, payload_route = 0;
     struct sockaddr_storage control_peer = {0};
     socklen_t control_peer_length = sizeof(control_peer);
-    struct ipmi_intf *intf = session(host, port, user, password, 1000);
+    struct ipmi_intf *intf = session(host, port, user, password, privilege, cipher, 1000);
     if (!intf) { cancel_check = NULL; return 1; }
     if (cancelled()) { status = 6; goto done; }
     if (intf->open(intf) < 0) goto done;

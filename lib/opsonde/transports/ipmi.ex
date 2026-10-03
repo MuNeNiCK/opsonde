@@ -3,18 +3,18 @@ defmodule Opsonde.Transports.IPMI do
 
   use Rustler, otp_app: :opsonde, crate: :ipmi_nif
 
-  def send_command(_address, _username, _password, _timeout_ms, _request, _token),
+  def send_command(_address, _session, _timeout_ms, _request, _token),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  def exchange_command(address, username, password, timeout, request, invocation) do
+  def exchange_command(address, session, timeout, request, invocation) do
     exchange(invocation, fn cancellation ->
-      send_command(address, username, password, timeout, request, cancellation)
+      send_command(address, session, timeout, request, cancellation)
     end)
   end
 
-  def exchange_console(address, username, password, timeout, request, invocation) do
+  def exchange_console(address, session, timeout, request, invocation) do
     case exchange(invocation, fn cancellation ->
-           sol_exchange(address, username, password, timeout, request, cancellation)
+           sol_exchange(address, session, timeout, request, cancellation)
          end) do
       {:ok, result} ->
         {status, reason} =
@@ -62,6 +62,6 @@ defmodule Opsonde.Transports.IPMI do
   def cancellation_token, do: :erlang.nif_error(:nif_not_loaded)
   def cancel(_token), do: :erlang.nif_error(:nif_not_loaded)
 
-  def sol_exchange(_address, _username, _password, _timeout_ms, _request, _token),
+  def sol_exchange(_address, _session, _timeout_ms, _request, _token),
     do: :erlang.nif_error(:nif_not_loaded)
 end
