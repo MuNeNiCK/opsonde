@@ -686,12 +686,15 @@ defmodule Opsonde.Providers.AI do
     def unwrap(_error), do: nil
 
     # Ash may select Invalid/Forbidden as the outer class of a mixed error.
+    # Another action error alongside AI accounting must keep its original cause.
     def context_failure?(%__MODULE__{}), do: false
     def context_failure?(%Ash.Error.Unknown{} = error), do: is_nil(unwrap(error))
     def context_failure?(%Ash.Error.Framework{}), do: true
 
-    def context_failure?(%{errors: errors}) when is_list(errors),
-      do: Enum.any?(errors, &context_failure?/1)
+    def context_failure?(%{errors: errors} = error) when is_list(errors),
+      do:
+        Enum.any?(errors, &context_failure?/1) or
+          (not is_nil(find(error)) and Enum.any?(errors, &is_nil(find(&1))))
 
     def context_failure?(%{class: class}) when class in [:unknown, :framework], do: true
     def context_failure?(_error), do: false
@@ -777,7 +780,7 @@ defmodule Opsonde.Providers.AI do
            | :rate_limited
            | :cancelled
            | :invalid_output, String.t()}
-          | {:error, Ash.Error.Unknown.t()}
+          | {:error, Ash.Error.t()}
 
   @type metered_adapter_error ::
           {:error, :invalid_output | :failed, String.t(), Usage.t()}

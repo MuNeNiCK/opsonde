@@ -1064,31 +1064,50 @@ defmodule Opsonde.AI.ReqLLMTest do
       |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
-    set_mode(context.agent, {:sleep, 500})
+    for fault <- [:storage, :classified_storage, :invalid_read] do
+      set_mode(context.agent, {:sleep, 500})
 
-    cancelled? = fn ->
-      if requests(context.agent) == [] do
-        false
-      else
-        {:error, error} =
-          Opsonde.Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
+      cancelled? = fn ->
+        if requests(context.agent) == [] do
+          false
+        else
+          if fault == :invalid_read do
+            {:error, invalid} = Providers.get_provider("invalid-context-id", authorize?: false)
+            raise invalid
+          else
+            {:error, cause} =
+              Opsonde.Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
 
-        raise error
+            if fault == :classified_storage do
+              {:error, invalid} = Providers.get_provider("invalid-context-id", authorize?: false)
+              raise Ash.Error.to_error_class([invalid, cause])
+            else
+              raise cause
+            end
+          end
+        end
       end
+
+      assert {:error, error} =
+               Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+                 actor: admin
+               )
+
+      assert AI.Error.context_failure?(error)
+
+      if fault == :invalid_read do
+        assert Exception.message(error) =~ "id"
+      else
+        assert Exception.message(error) =~ "invocation_context_unavailable"
+      end
+
+      if fault != :storage, do: assert(match?(%Ash.Error.Invalid{}, error))
+      assert %AI.Error{category: :failed, dispatched?: true} = AI.Error.find(error)
+      assert length(requests(context.agent)) == 1
+
+      assert %{amount: 65_536, usage: nil, dispatched?: true} =
+               Opsonde.Cases.AIInvocation.failure_accounting(error, 65_536)
     end
-
-    assert {:error, error} =
-             Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
-               actor: admin
-             )
-
-    assert AI.Error.context_failure?(error)
-    assert Exception.message(error) =~ "invocation_context_unavailable"
-    assert %AI.Error{category: :failed, dispatched?: true} = AI.Error.find(error)
-    assert length(requests(context.agent)) == 1
-
-    assert %{amount: 65_536, usage: nil, dispatched?: true} =
-             Opsonde.Cases.AIInvocation.failure_accounting(error, 65_536)
 
     set_mode(context.agent, {:decision, handoff()})
 

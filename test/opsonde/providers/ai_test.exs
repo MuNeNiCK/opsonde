@@ -57,6 +57,14 @@ defmodule Opsonde.Providers.AITest do
       assert %Ash.Error.Invalid{} = classified
       assert AI.Error.context_failure?(classified)
 
+      read_failure = Ash.Error.to_error_class([native, hd(invalid.errors)])
+      assert %Ash.Error.Invalid{} = read_failure
+      assert AI.Error.context_failure?(read_failure)
+      assert AI.Error.unwrap(read_failure) == nil
+
+      assert %{amount: 34, usage: %AI.Usage{}, dispatched?: true} =
+               Opsonde.Cases.AIInvocation.failure_accounting(read_failure, 65_536)
+
       assert %{amount: 34, usage: %AI.Usage{}, dispatched?: true} =
                Opsonde.Cases.AIInvocation.failure_accounting(mixed, 65_536)
 
