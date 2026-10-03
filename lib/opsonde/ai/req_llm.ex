@@ -1052,179 +1052,23 @@ defmodule Opsonde.AI.ReqLLM do
 
     path = diagnostic_schema_path(result, schema, errors)
 
-    log_schema_shape(result, schema, path, errors)
+    log_schema_rejection(result, path, errors)
     schema_invalid_output(path)
   end
 
-  defp schema_error_output(_errors, result, schema) do
-    log_schema_shape(result, schema, nil, [])
+  defp schema_error_output(_errors, result, _schema) do
+    log_schema_rejection(result, nil, [])
     schema_invalid_output(nil)
   end
 
-  defp log_schema_shape(result, schema, path, errors) do
-    value = diagnostic_object(result)
-    intent = if is_map(value["intent"]), do: value["intent"], else: %{}
-
-    known_intent_keys =
-      ~w(type purpose action delay_seconds evidence_ids affected_conditions candidate_ref file_ref offset length target_id relationship_id query required_input condition_claims verification expected_result_json)
-
-    intent_type =
-      if intent["type"] in @resolver_intent_types,
-        do: intent["type"],
-        else: "other"
-
-    keys =
-      intent
-      |> Map.keys()
-      |> Enum.filter(&(&1 in known_intent_keys))
-      |> Enum.sort()
-      |> Enum.join(",")
-
-    root_properties = Map.get(schema, "properties", %{})
-    root_extra = Enum.count(Map.keys(value), &(not Map.has_key?(root_properties, &1)))
-    intent_extra = Enum.count(Map.keys(intent), &(&1 not in known_intent_keys))
-
-    group_count =
-      if is_list(value["condition_groups"]), do: length(value["condition_groups"]), else: -1
-
-    error_kinds = schema_error_kinds(errors)
-    missing_fields = schema_missing_fields(errors)
-    offered_tools = schema_tool_ids(schema)
-    action_tool = get_in(intent, ["action", "tool_id"])
-    verification_tool = get_in(intent, ["verification", "tool_id"])
-    variant = selected_intent_variant(schema, intent, intent_type)
-    invalid_fields = invalid_schema_fields(intent, variant)
-    rejected_citation_ids = rejected_citation_ids(intent, variant)
-
-    reason_codepoints =
-      if is_binary(value["reason"]), do: String.length(value["reason"]), else: -1
-
-    verdict =
-      if value["verdict"] in ~w(approved rejected needs_human),
-        do: value["verdict"],
-        else: "other"
-
-    action_fields =
-      invalid_tool_fields(intent["action"], get_in(variant || %{}, ["properties", "action"]))
-
-    verification_fields =
-      invalid_tool_fields(
-        intent["verification"],
-        get_in(variant || %{}, ["properties", "verification"])
-      )
-
-    action_shape = tool_shape(intent["action"], get_in(variant || %{}, ["properties", "action"]))
-
-    verification_shape =
-      tool_shape(intent["verification"], get_in(variant || %{}, ["properties", "verification"]))
-
-    action_parameters_shape =
-      nested_tool_shape(
-        intent["action"],
-        get_in(variant || %{}, ["properties", "action"]),
-        "parameters_json"
-      )
-
-    action_selectors_shape =
-      nested_tool_shape(
-        intent["action"],
-        get_in(variant || %{}, ["properties", "action"]),
-        "selectors_json"
-      )
+  defp log_schema_rejection(result, path, errors) do
+    bytes = if is_binary(result.raw), do: byte_size(result.raw), else: "unknown"
 
     Logger.warning(
-      "AI object schema mismatch source=#{result.source} path=#{known_schema_path(path)} " <>
-        "intent=#{intent_type} intent_allowed=#{intent_type in schema_intent_types(schema)} " <>
-        "intent_keys=#{keys} action_tool_allowed=#{action_tool in offered_tools} " <>
-        "verification_tool_allowed=#{verification_tool in offered_tools} root_extra=#{root_extra} " <>
-        "intent_extra=#{intent_extra} root_reason=#{Map.has_key?(value, "reason")} " <>
-        "condition_groups=#{group_count} error_kinds=#{error_kinds} missing_fields=#{missing_fields} " <>
-        "invalid_fields=#{invalid_fields} action_fields=#{action_fields} " <>
-        "verification_fields=#{verification_fields} action_shape=#{action_shape} " <>
-        "action_parameters_shape=#{action_parameters_shape} action_selectors_shape=#{action_selectors_shape} " <>
-        "verification_shape=#{verification_shape} rejected_citation_ids=#{rejected_citation_ids} " <>
-        "reason_codepoints=#{reason_codepoints} verdict=#{verdict}"
+      "AI object schema mismatch source=#{result.source} category=schema_validation " <>
+        "path=#{known_schema_path(path)} bytes=#{bytes} errors=#{length(errors)}"
     )
   end
-
-  defp tool_shape(value, schema) when is_map(value) do
-    tool_id = Map.get(value, "tool_id")
-
-    selected =
-      schema
-      |> intent_variants()
-      |> Enum.find(&(tool_id in (get_in(&1, ["properties", "tool_id", "enum"]) || [])))
-
-    allowed = Map.get(selected || %{}, "properties", %{})
-    required = Map.get(selected || %{}, "required", [])
-
-    known =
-      ~w(tool_id selectors_json parameters_json expected_result_json operation capability target_id access_method_id provider_id)
-
-    keys =
-      value
-      |> Map.keys()
-      |> Enum.filter(&(&1 in known))
-      |> Enum.sort()
-      |> Enum.join(",")
-
-    tool_class =
-      cond do
-        is_nil(tool_id) -> "missing"
-        not is_binary(tool_id) -> "non_string"
-        is_map(selected) -> "offered"
-        true -> "unoffered"
-      end
-
-    extra =
-      if is_map(selected),
-        do: Enum.count(Map.keys(value), &(!Map.has_key?(allowed, &1))),
-        else: -1
-
-    missing = if is_map(selected), do: Enum.count(required, &(!Map.has_key?(value, &1))), else: -1
-
-    "#{tool_class}:#{keys}:extra#{extra}:missing#{missing}"
-  end
-
-  defp tool_shape(nil, _schema), do: "absent"
-  defp tool_shape(_value, _schema), do: "non_map"
-
-  defp nested_tool_shape(value, _schema, field) when is_map(value) do
-    case Map.get(value, field) do
-      encoded when is_binary(encoded) and byte_size(encoded) <= @max_output_bytes ->
-        case Jason.decode(encoded) do
-          {:ok, %{} = decoded} -> "object:fields#{map_size(decoded)}"
-          {:ok, _other} -> "non_object_json"
-          {:error, _error} -> "invalid_json"
-        end
-
-      nil ->
-        "absent"
-
-      _other ->
-        "invalid_encoding"
-    end
-  end
-
-  defp nested_tool_shape(_value, _schema, _field), do: "unavailable"
-
-  defp rejected_citation_ids(%{"evidence_ids" => ids}, variant) when is_list(ids) do
-    allowed = get_in(variant || %{}, ["properties", "evidence_ids", "items", "enum"])
-
-    if is_list(allowed) do
-      ids
-      |> Enum.filter(fn id ->
-        is_binary(id) and id not in allowed and
-          String.match?(id, ~r/\A[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\z/)
-      end)
-      |> Enum.take(3)
-      |> Enum.join(",")
-    else
-      ""
-    end
-  end
-
-  defp rejected_citation_ids(_intent, _variant), do: ""
 
   defp invalid_tool_fields(%{"tool_id" => tool_id} = value, schema) when is_binary(tool_id) do
     schema
@@ -1373,53 +1217,6 @@ defmodule Opsonde.AI.ReqLLM do
       %{message: message} when is_binary(message) -> schema_error_path(message)
       _error -> nil
     end)
-  end
-
-  defp schema_tool_ids(%{"properties" => %{"tool_id" => %{"enum" => ids}}} = schema)
-       when is_list(ids) do
-    ids ++ Enum.flat_map(Map.values(schema), &schema_tool_ids/1)
-  end
-
-  defp schema_tool_ids(value) when is_map(value),
-    do: Enum.flat_map(Map.values(value), &schema_tool_ids/1)
-
-  defp schema_tool_ids(value) when is_list(value), do: Enum.flat_map(value, &schema_tool_ids/1)
-  defp schema_tool_ids(_value), do: []
-
-  defp schema_error_kinds(errors) do
-    errors
-    |> Enum.flat_map(fn
-      %{message: message} when is_binary(message) ->
-        Regex.scan(~r/kind: :([A-Za-z_]+)/, message, capture: :all_but_first)
-        |> List.flatten()
-
-      _error ->
-        []
-    end)
-    |> Enum.filter(
-      &(&1 in ~w(anyOf required type properties additionalProperties enum minItems maxItems))
-    )
-    |> Enum.uniq()
-    |> Enum.sort()
-    |> Enum.join(",")
-  end
-
-  defp schema_missing_fields(errors) do
-    errors
-    |> Enum.flat_map(fn
-      %{message: message} when is_binary(message) ->
-        Regex.scan(~r/property '([A-Za-z_]+)' is required/, message, capture: :all_but_first)
-        |> List.flatten()
-
-      _error ->
-        []
-    end)
-    |> Enum.filter(
-      &(&1 in ~w(reason intent type purpose action delay_seconds evidence_ids affected_conditions verification expected_result_json condition_groups condition_assessments condition_ids assessment revision evidence_id evidence_ids status tool_id selectors_json parameters_json required_input))
-    )
-    |> Enum.uniq()
-    |> Enum.sort()
-    |> Enum.join(",")
   end
 
   defp diagnostic_object(%{value: %{} = value}), do: value

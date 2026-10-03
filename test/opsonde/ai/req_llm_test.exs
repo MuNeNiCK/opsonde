@@ -1507,7 +1507,7 @@ defmodule Opsonde.AI.ReqLLMTest do
            end)
   end
 
-  test "schema rejection logs only bounded structural diagnostics", context do
+  test "schema rejection logs bounded failure metadata without response contents", context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {
@@ -1522,14 +1522,16 @@ defmodule Opsonde.AI.ReqLLMTest do
       end)
 
     assert output =~ "AI object schema mismatch"
-    assert output =~ "intent=handoff"
-    assert output =~ "root_extra=1"
-    assert output =~ "action_shape=absent"
+    assert output =~ "category=schema_validation"
+    assert output =~ "path="
+    assert output =~ "bytes="
+    assert output =~ "errors="
     refute output =~ "test-secret"
     refute output =~ "unexpected_private_key"
   end
 
-  test "nested proposal diagnostics expose keys but no untrusted values", context do
+  test "nested proposal rejection logs metadata without tool names or untrusted values",
+       context do
     state = state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"})
 
     set_mode(context.agent, {
@@ -1543,7 +1545,8 @@ defmodule Opsonde.AI.ReqLLMTest do
                  Adapter.resolve(state, resolver_request(), %{})
       end)
 
-    assert output =~ "action_shape=unoffered:tool_id"
+    assert output =~ "category=schema_validation"
+    assert output =~ "path=intent"
     refute output =~ "test-secret"
     refute output =~ "unexpected_private_key"
   end
