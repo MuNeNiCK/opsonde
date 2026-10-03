@@ -5053,7 +5053,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
   @tag owned_context_read_fault: true
   test "a changed Recovery Reviewer assignment after claim sends no recovery review", context do
-    {_incident, run, turn, _evidence} =
+    {incident, run, turn, _evidence} =
       recovery_conclusion!(context, "recovery-assignment-changed")
 
     Cases.route_downstream_decision!(turn.id, authorize?: false)
@@ -5061,24 +5061,25 @@ defmodule Opsonde.OperationDeliveryTest do
     prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
     changed = :atomics.new(1, [])
 
-    Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
-      ai_invocation: %{
-        test_pid: self(),
-        cancelled?: fn ->
-          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
-            do:
-              Opsonde.TestAIUsage.configure!(
-                context.reviewer_provider.id,
-                :reviewer,
-                11,
-                context.admin
-              )
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+                     do:
+                       Opsonde.TestAIUsage.configure!(
+                         context.reviewer_provider.id,
+                         :reviewer,
+                         11,
+                         context.admin
+                       )
 
-          false
-        end,
-        respond: fn _request -> flunk("obsolete recovery assignment dispatched AI") end
-      }
-    )
+                   false
+                 end,
+                 respond: fn _request -> flunk("obsolete recovery assignment dispatched AI") end
+               }
+             )
 
     refute_receive {:review_recovery, _, _}
 
@@ -5086,6 +5087,17 @@ defmodule Opsonde.OperationDeliveryTest do
              Cases.list_ai_invocations!(authorize?: false)
              |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
 
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == before_units
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    assert pending["action"] == "resolve_turn"
+    refute pending["turn_id"] == turn.id
+    successor = Cases.get_turn!(pending["turn_id"], authorize?: false)
+    assert successor.intent["source"] == "recovery_review_context_changed"
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
+    refute_receive {:review_recovery, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent == pending
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == before_units
   end
 

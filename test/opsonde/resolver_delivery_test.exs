@@ -232,22 +232,28 @@ defmodule Opsonde.ResolverDeliveryTest do
 
   @tag owned_context_read_fault: true
   test "a changed Resolver assignment after claim sends no AI request", context do
-    {_incident, run, turn} = turn!("resolver-assignment-changed", context.operator)
+    {incident, run, turn} = turn!("resolver-assignment-changed", context.operator)
     changed = :atomics.new(1, [])
 
-    ResolverDelivery.run(turn.id,
-      ai_invocation: %{
-        test_pid: self(),
-        cancelled?: fn ->
-          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
-            Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 11, context.admin)
-          end
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                     Opsonde.TestAIUsage.configure!(
+                       context.provider.id,
+                       :resolver,
+                       11,
+                       context.admin
+                     )
+                   end
 
-          false
-        end,
-        respond: fn _request -> flunk("obsolete Resolver assignment dispatched AI") end
-      }
-    )
+                   false
+                 end,
+                 respond: fn _request -> flunk("obsolete Resolver assignment dispatched AI") end
+               }
+             )
 
     refute_receive {:resolve, _, _}
 
@@ -255,6 +261,37 @@ defmodule Opsonde.ResolverDeliveryTest do
              Cases.list_ai_invocations!(authorize?: false)
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent["action"] ==
+             "resolve_turn"
+
+    next_id = Cases.get_case!(incident.id, authorize?: false).pending_intent["turn_id"]
+    refute next_id == turn.id
+
+    assert :ok =
+             ResolverDelivery.run(next_id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.TargetSearch{
+                        query: "linux-01 disk errors",
+                        reason: "Find the affected registered Target"
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:resolve, _, _}
+    assert :ok = ResolverDelivery.run(turn.id)
+    assert :ok = ResolverDelivery.run(next_id)
+    refute_receive {:resolve, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == 2
   end
 
   @tag owned_context_read_fault: true
@@ -290,6 +327,76 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     assert Cases.list_ai_invocations!(authorize?: false) == []
     assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+  end
+
+  @tag changed_context_save_failure: true
+  test "failed successor persistence rolls back Resolver settlement and preserves the dispatch marker",
+       context do
+    {incident, run, turn} = turn!("resolver-context-save-failure", context.operator)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_context_successor() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.event_type = 'turn_started' THEN
+        RAISE EXCEPTION 'injected context successor persistence failure';
+      END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_context_successor BEFORE INSERT ON case_events
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_context_successor();
+    """)
+
+    changed = :atomics.new(1, [])
+
+    try do
+      assert {:error, error} =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+                       do:
+                         Opsonde.TestAIUsage.configure!(
+                           context.provider.id,
+                           :resolver,
+                           11,
+                           context.admin
+                         )
+
+                     false
+                   end,
+                   respond: fn _request -> flunk("obsolete Resolver dispatched AI") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "injected context successor persistence failure"
+    after
+      Repo.query!("DROP TRIGGER reject_context_successor ON case_events")
+    end
+
+    refute_receive {:resolve, _, _}
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    assert [%{status: :dispatching, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert [only_turn] = Cases.list_turns!(authorize?: false)
+    assert only_turn.id == turn.id
+
+    assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    refute_receive {:resolve, _, _}
+
+    assert [%{status: :unknown, category: "response_unknown"} = unknown] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             unknown.reserved_units
   end
 
   @tag owned_context_read_fault: true
@@ -1229,14 +1336,16 @@ defmodule Opsonde.ResolverDeliveryTest do
         )
       end)
 
-    assert_receive {:resolve, _, _request}
-    assert_receive :resolver_remote_started
+    assert_receive {:resolve, _, _request}, 2_000
+    assert_receive :resolver_remote_started, 2_000
 
     assert nil == Task.shutdown(task, :brutal_kill)
 
     [dispatching] = Cases.list_ai_invocations!(authorize?: false)
     assert dispatching.status == :dispatching
     assert dispatching.reserved_units == 65_536
+
+    Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 11, context.admin)
 
     assert :ok =
              ResolverDelivery.run(turn.id,

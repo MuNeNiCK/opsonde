@@ -38,7 +38,52 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
          {:ok, request, context} <- ResolverProjection.build(turn.id, selection) do
       resolve(turn, selection, request, context, opts)
     else
-      {:error, error} -> handle_failure(turn, error)
+      {:error, error} -> handle_admission_failure(turn, error)
+    end
+  end
+
+  defp handle_admission_failure(turn, error) do
+    if match?(%AI.Error{category: :unavailable}, AI.Error.unwrap(error)) do
+      Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
+        with :ok <- CaseAdmissionLock.acquire(),
+             {:ok, invocations} <-
+               Cases.list_ai_invocations(
+                 query: [
+                   filter: [
+                     case_id: turn.case_id,
+                     resolution_run_id: turn.resolution_run_id,
+                     turn_id: turn.id,
+                     role: :resolver,
+                     status: [in: [:dispatching, :unknown]]
+                   ],
+                   sort: [dispatch_started_at: :asc],
+                   limit: 1
+                 ],
+                 authorize?: false
+               ) do
+          case invocations do
+            [%{status: :dispatching} = invocation] ->
+              with {:ok, unknown} <-
+                     record_invocation(invocation, :unknown,
+                       category: "response_unknown",
+                       failure_code: "response_unknown"
+                     ),
+                   do: handle_interruption(turn, unknown)
+
+            [unknown] ->
+              handle_interruption(turn, unknown)
+
+            [] ->
+              handle_failure(turn, error)
+          end
+        end
+      end)
+      |> case do
+        {:ok, result} -> result
+        {:error, _cause} = failure -> failure
+      end
+    else
+      handle_failure(turn, error)
     end
   end
 
@@ -58,7 +103,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         end
 
       {:error, error} ->
-        case resolver_context_current(request) do
+        case Cases.invocation_context_current(context, authorize?: false) do
           {:ok, true} -> handle_failure(turn, error)
           {:ok, false} -> retry_changed_context(turn)
           {:error, cause} -> {:error, Ash.Error.to_error_class([error, cause])}
@@ -89,8 +134,35 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
             {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
           end
         else
-          handle_failure(turn, error, claim.invocation)
+          handle_dispatch_failure(turn, error, claim)
         end
+    end
+  end
+
+  defp handle_dispatch_failure(turn, error, claim) do
+    if match?(%AI.Error{category: :cancelled}, AI.Error.unwrap(error)) do
+      case Cases.invocation_context_current(claim.invocation_context, authorize?: false) do
+        {:ok, false} ->
+          Ash.transact([AIInvocation, Case, ResolutionRun, Turn, CaseEvent], fn ->
+            with :ok <- CaseAdmissionLock.acquire(),
+                 {:ok, _settled} <-
+                   settle_failed_usage(turn, claim.invocation, "context_changed", error) do
+              retry_changed_context(turn)
+            end
+          end)
+          |> case do
+            {:ok, result} -> result
+            {:error, _cause} = failed -> failed
+          end
+
+        {:ok, true} ->
+          handle_failure(turn, error, claim.invocation)
+
+        {:error, cause} ->
+          {:error, Ash.Error.to_error_class([error, cause])}
+      end
+    else
+      handle_failure(turn, error, claim.invocation)
     end
   end
 
@@ -255,12 +327,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     end
   end
 
-  defp resolver_context_current(request) do
-    with {:ok, incident} <- Cases.get_case(request.case_id, authorize?: false),
-         do: resolver_context_matches(incident, request, false)
-  end
-
-  defp resolver_context_matches(incident, request, check_assessment? \\ true) do
+  defp resolver_context_matches(incident, request) do
     if case_context_matches?(incident, request) do
       case ConditionContext.current_conditions(incident) do
         {:ok, conditions} ->
@@ -278,7 +345,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
               ConditionContext.projected_alert_state(incident, conditions) ==
                 request.alert_state
 
-          if same_conditions? and check_assessment? do
+          if same_conditions? do
             case ConditionContext.current_condition_context(incident) do
               {:ok, {assessed, _proof_ids}} -> {:ok, assessed == request.conditions}
               {:error, _cause} = error -> error

@@ -21,7 +21,12 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       if event do
         apply_result(turn, event)
       else
-        deliver(turn, opts)
+        with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
+          if incident.status == :running and not incident.cancel_requested and
+               incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id},
+             do: deliver(turn, opts),
+             else: :ok
+        end
       end
     end
   end
@@ -182,7 +187,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
             {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
           end
         else
-          settle_failure(turn, claim.invocation, error, opts)
+          settle_dispatch_failure(turn, claim, error, opts)
         end
     end
   end
@@ -276,17 +281,33 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     end
   end
 
-  defp settle_failure(turn, invocation, error, opts) do
+  defp settle_dispatch_failure(turn, claim, error, opts) do
+    if match?(%AI.Error{category: :cancelled}, AI.Error.unwrap(error)) do
+      case Cases.invocation_context_current(claim.invocation_context, authorize?: false) do
+        {:ok, false} -> settle_failure(turn, claim.invocation, error, opts, "context_changed")
+        {:ok, true} -> settle_failure(turn, claim.invocation, error, opts)
+        {:error, cause} -> {:error, Ash.Error.to_error_class([error, cause])}
+      end
+    else
+      settle_failure(turn, claim.invocation, error, opts)
+    end
+  end
+
+  defp settle_failure(turn, invocation, error, opts, changed_category \\ nil) do
     accounting = AIInvocation.failure_accounting(error, invocation.reserved_units)
     ai_error = accounting.ai_error
     usage = accounting.usage
 
-    category = if match?(%AI.Error{}, ai_error), do: to_string(ai_error.category), else: "failed"
+    category =
+      changed_category ||
+        if(match?(%AI.Error{}, ai_error), do: to_string(ai_error.category), else: "failed")
+
     code = if match?(%AI.Error{}, ai_error), do: ai_error.failure_code
 
     with {:ok, _result} <-
-           Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent], fn ->
-             with {:ok, _charged} <- charge(turn, accounting.amount, "failure:#{invocation.id}"),
+           Ash.transact([AIInvocation, Case, ResolutionRun, CaseEvent, Turn], fn ->
+             with :ok <- CaseAdmissionLock.acquire(),
+                  {:ok, _charged} <- charge(turn, accounting.amount, "failure:#{invocation.id}"),
                   {:ok, recorded} <-
                     Cases.record_ai_invocation_outcome(
                       invocation,
@@ -302,14 +323,29 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
                       },
                       authorize?: false
                     ) do
-               recorded
+               if category == "context_changed" do
+                 with :ok <-
+                        reconsider_recovery(
+                          turn,
+                          "Recovery inputs changed during review",
+                          "context_changed"
+                        ),
+                      do: recorded
+               else
+                 recorded
+               end
              end
            end) do
-      if category == "invalid_output" and delivery_attempt(opts) < 2 and
-           delivery_attempt(opts) < max_delivery_attempts(opts) do
-        {:error, "Recovery Reviewer output was invalid on attempt #{delivery_attempt(opts)}"}
-      else
-        attention(turn, "Recovery Reviewer failed", category)
+      cond do
+        category == "context_changed" ->
+          :ok
+
+        category == "invalid_output" and delivery_attempt(opts) < 2 and
+            delivery_attempt(opts) < max_delivery_attempts(opts) ->
+          {:error, "Recovery Reviewer output was invalid on attempt #{delivery_attempt(opts)}"}
+
+        true ->
+          attention(turn, "Recovery Reviewer failed", category)
       end
     end
   end
@@ -405,7 +441,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
          {:ok, _selection} <- current_selection(selection) do
       if incident.status == :running and
            incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id} do
-        reconsider_rejected_recovery(turn, reason)
+        reconsider_recovery(turn, reason, "rejected")
       else
         :ok
       end
@@ -425,14 +461,18 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
   defp apply_current_result(turn, _event),
     do: attention(turn, "Recovery Review is invalid", "No valid Reviewer verdict")
 
-  defp reconsider_rejected_recovery(turn, reason) do
-    with {:ok, result} <-
+  defp reconsider_recovery(turn, reason, origin) do
+    with {:ok, current} <- Cases.get_case(turn.case_id, authorize?: false),
+         true <-
+           current.status == :running and not current.cancel_requested and
+             current.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id},
+         {:ok, result} <-
            Cases.start_turn(
              turn.case_id,
              turn.resolution_run_id,
-             "recovery-review-rejected:#{turn.id}",
+             "recovery-review-#{origin}:#{turn.id}",
              %{
-               "source" => "recovery_review_rejected",
+               "source" => "recovery_review_#{origin}",
                "source_turn_id" => turn.id,
                "review_reason" => reason,
                "objective" => "Reassess recovery using evidence relevant to each symptom"
@@ -465,6 +505,9 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         %{status: :exhausted} ->
           :ok
       end
+    else
+      false -> :ok
+      {:error, _cause} = failure -> failure
     end
   end
 

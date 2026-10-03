@@ -54,6 +54,27 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
+  defp replay_or_persist_failure(proposal, error, opts) do
+    if AI.Error.context_failure?(error) do
+      {:error, error}
+    else
+      with {:ok, invocation} <-
+             Cases.ai_invocation_by_idempotency(
+               "reviewer:#{proposal.id}:attempt:#{delivery_attempt(opts)}",
+               authorize?: false,
+               not_found_error?: false
+             ) do
+        case invocation do
+          %{status: :failed, category: "context_changed"} ->
+            replay_terminal_failure(proposal, invocation, opts)
+
+          _other ->
+            persist_failure(proposal, error, nil, opts)
+        end
+      end
+    end
+  end
+
   defp deliver(proposal, selection, retry_context, opts) do
     with {:ok, current} <- current_selection(selection),
          {:ok, request, context} <- ReviewProjection.build(proposal.id, current, retry_context),
@@ -63,7 +84,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       dispatch(proposal, current, request, claim, opts)
     else
       {:error, :context_changed} -> supersede_changed_context(proposal)
-      {:error, error} -> persist_failure(proposal, error, nil, opts)
+      {:error, error} -> replay_or_persist_failure(proposal, error, opts)
     end
   end
 
@@ -102,7 +123,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
             {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
           end
         else
-          persist_failure(proposal, error, claim.invocation, opts)
+          persist_dispatch_failure(proposal, error, claim, opts)
         end
     end
   end
@@ -405,11 +426,36 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   defp store_decision(attrs),
     do: Cases.create_review_decision_record(attrs, authorize?: false)
 
-  defp persist_failure(proposal, error, invocation, opts) do
+  defp persist_dispatch_failure(proposal, error, claim, opts) do
+    if match?(%AI.Error{category: :cancelled}, AI.Error.unwrap(error)) do
+      with {:ok, current?} <-
+             Cases.invocation_context_current(claim.invocation_context, authorize?: false),
+           {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
+           {:ok, proposal_current?} <- review_context_current(proposal, incident) do
+        if not current? and proposal_current? do
+          persist_failure(
+            proposal,
+            error,
+            claim.invocation,
+            opts,
+            {"context_changed", "Reviewer input changed during delivery"}
+          )
+        else
+          persist_failure(proposal, error, claim.invocation, opts)
+        end
+      else
+        {:error, cause} -> {:error, Ash.Error.to_error_class([error, cause])}
+      end
+    else
+      persist_failure(proposal, error, claim.invocation, opts)
+    end
+  end
+
+  defp persist_failure(proposal, error, invocation, opts, classification \\ nil) do
     if is_nil(invocation) and AI.Error.context_failure?(error) do
       {:error, error}
     else
-      {category, reason} = failure(error)
+      {category, reason} = classification || failure(error)
 
       with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
         cond do
@@ -595,7 +641,15 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   end
 
   defp retryable_failure?(category),
-    do: category in ["timeout", "unreachable", "rate_limited", "failed", "invalid_output"]
+    do:
+      category in [
+        "timeout",
+        "unreachable",
+        "rate_limited",
+        "failed",
+        "invalid_output",
+        "context_changed"
+      ]
 
   defp retry_available?(opts), do: delivery_attempt(opts) < max_delivery_attempts(opts)
 

@@ -2004,36 +2004,89 @@ defmodule Opsonde.ProposalAuthorityTest do
   @tag owned_context_read_fault: true
   test "a changed Reviewer assignment after claim sends no proposal review", context do
     configure_mode!(:auto, context.admin)
-    {_incident, run, proposal} = proposal!("review-assignment-changed", context)
+    {incident, run, proposal} = proposal!("review-assignment-changed", context)
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
     changed = :atomics.new(1, [])
 
-    ReviewDelivery.run(reviewing.id,
-      ai_invocation: %{
-        test_pid: self(),
-        cancelled?: fn ->
-          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
-            do:
-              Opsonde.TestAIUsage.configure!(
-                context.reviewer_provider.id,
-                :reviewer,
-                11,
-                context.admin
-              )
+    assert {:error, _retry} =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+                     do:
+                       Opsonde.TestAIUsage.configure!(
+                         context.reviewer_provider.id,
+                         :reviewer,
+                         11,
+                         context.admin
+                       )
 
-          false
-        end,
-        respond: fn _request -> flunk("obsolete Reviewer assignment dispatched AI") end
-      }
-    )
+                   false
+                 end,
+                 respond: fn _request -> flunk("obsolete Reviewer assignment dispatched AI") end
+               }
+             )
 
     refute_receive {:review, _, _}
 
-    assert [%{dispatch_confirmed: false, usage_reported: false}] =
+    assert [%{dispatch_confirmed: false, usage_reported: false, category: "context_changed"}] =
              Cases.list_ai_invocations!(authorize?: false)
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
     refute Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE ai_usage_role_assignments RENAME COLUMN priority TO unavailable_priority"
+    )
+
+    try do
+      assert {:error, error} =
+               ReviewDelivery.run(reviewing.id, delivery_attempt: 1, max_delivery_attempts: 3)
+
+      assert Exception.message(error) =~ "priority"
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE ai_usage_role_assignments RENAME COLUMN unavailable_priority TO priority"
+      )
+    end
+
+    assert {:error, _retry} =
+             ReviewDelivery.run(reviewing.id, delivery_attempt: 1, max_delivery_attempts: 3)
+
+    refute_receive {:review, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 2,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
+                      verdict: :rejected,
+                      reason: "The current Reviewer rejected the proposal",
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, _, _}
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :rejected
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
+    assert :ok = ReviewDelivery.run(reviewing.id, delivery_attempt: 1, max_delivery_attempts: 3)
+    assert :ok = ReviewDelivery.run(reviewing.id, delivery_attempt: 2, max_delivery_attempts: 3)
+    refute_receive {:review, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 5
   end
 
   @tag owned_context_read_fault: true
