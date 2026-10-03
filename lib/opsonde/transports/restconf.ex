@@ -235,6 +235,8 @@ defmodule Opsonde.Transports.RESTCONF do
       run_http(state, endpoint, path, operation, invocation, phase, deadline)
     else
       {:error, _category, _message} = error -> error
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Opsonde.Providers.Target.BeforeSendError{}} = error -> error
     end
   end
 
@@ -294,6 +296,8 @@ defmodule Opsonde.Transports.RESTCONF do
     else
       {:ok, %{status: 401}} -> {:error, :authentication, "RESTCONF authentication failed"}
       {:error, category, message} when is_atom(category) -> {:error, category, message}
+      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %Opsonde.Providers.Target.BeforeSendError{}} = error -> error
       _ -> {:error, :failed, "RESTCONF root discovery is invalid"}
     end
   rescue
@@ -415,6 +419,9 @@ defmodule Opsonde.Transports.RESTCONF do
 
   defp normalize({:error, :retryable, message}, phase),
     do: {:error, failure(phase, :unreachable), message}
+
+  defp normalize({:error, %Ash.Error.Unknown{}} = error, _phase), do: error
+  defp normalize({:error, %Opsonde.Providers.Target.BeforeSendError{}} = error, _phase), do: error
 
   defp normalize({:error, category, message}, phase),
     do: {:error, failure(phase, category), message}

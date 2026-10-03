@@ -345,6 +345,9 @@ defmodule Opsonde.Transports.Kubernetes do
 
   defp normalize({:error, category, message}, _phase), do: {:error, category, message}
 
+  defp normalize({:error, %Ash.Error.Unknown{}} = error, _phase), do: error
+  defp normalize({:error, %Opsonde.Providers.Target.BeforeSendError{}} = error, _phase), do: error
+
   defp normalize({:error, _error}, :effect),
     do: {:error, :unknown_after_dispatch, "Kubernetes effect result is unknown"}
 

@@ -53,6 +53,11 @@ defmodule Opsonde.Targets.RESTCONFTest do
     defp route(%{request_path: "/custom/api"} = conn, _agent, _body),
       do: json(conn, %{"ietf-restconf:restconf" => %{}})
 
+    defp route(%{request_path: "/custom/api/data/acme:idle"} = conn, _agent, _body) do
+      Process.sleep(300)
+      json(conn, %{"acme:status" => "ready"})
+    end
+
     defp route(%{request_path: "/custom/api/data/acme:binary"} = conn, _agent, body) do
       bytes = if conn.method == "GET", do: <<255, 0, 1, 2, 255>>, else: body
 
@@ -202,6 +207,99 @@ defmodule Opsonde.Targets.RESTCONFTest do
   end
 
   for adapter <- ["restconf", "ios-xe-restconf"] do
+    @tag adapter_type: adapter, protocol_context_fault: true
+    test "#{adapter} retains a context read fault after one native request", context do
+      for {action, type, capability, operation, method} <- [
+            {&Providers.target_observe/4, Target.ObservationRequest, "request.restconf.observe",
+             "request.observe", "GET"},
+            {&Providers.target_effect/4, Target.EffectRequest, "request.restconf.effect",
+             "request.execute", "PATCH"},
+            {&Providers.target_verify/4, Target.VerificationRequest, "request.restconf.observe",
+             "request.observe", "GET"}
+          ] do
+        resource_requests = fn ->
+          Agent.get(context.agent, fn state ->
+            Enum.count(state.requests, &(&1.path == "/custom/api/data/acme:idle"))
+          end)
+        end
+
+        before_requests = resource_requests.()
+
+        input =
+          request(context, type, capability, operation, %{
+            "method" => method,
+            "path" => "/data/acme:idle"
+          })
+
+        cancelled? = fn ->
+          if resource_requests.() != before_requests do
+            {:error, cause} =
+              Opsonde.Repo.query("SELECT restconf_context_unavailable", [], mode: :savepoint)
+
+            raise cause
+          else
+            false
+          end
+        end
+
+        assert {:error, error} =
+                 action.(context.provider.id, input, %{cancelled?: cancelled?},
+                   actor: context.admin,
+                   authorize?: false
+                 )
+
+        assert Exception.message(error) =~ "restconf_context_unavailable"
+        assert Target.Error.context_failure?(error)
+        assert is_nil(Target.BeforeSendError.unwrap(error))
+
+        assert resource_requests.() == before_requests + 1
+      end
+    end
+
+    @tag adapter_type: adapter, protocol_context_fault: true
+    test "#{adapter} retains context read failures during root discovery", context do
+      Agent.update(context.agent, &%{&1 | discovery_delay: 300})
+      before_requests = Agent.get(context.agent, &length(&1.requests))
+
+      input =
+        request(context, Target.EffectRequest, "request.restconf.effect", "request.execute", %{
+          "method" => "PATCH",
+          "path" => "/data/acme:idle",
+          "body" => "{}"
+        })
+
+      callback = fn ->
+        if Agent.get(context.agent, &length(&1.requests)) > before_requests do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT restconf_discovery_context_unavailable", [],
+              mode: :savepoint
+            )
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               Providers.target_effect(context.provider.id, input, %{cancelled?: callback},
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "restconf_discovery_context_unavailable"
+      assert Target.Error.context_failure?(error)
+
+      assert [wire] =
+               Agent.get(
+                 context.agent,
+                 &Enum.take(&1.requests, length(&1.requests) - before_requests)
+               )
+
+      assert wire.path == "/.well-known/host-meta"
+      assert wire.method == "GET"
+    end
+
     @tag adapter_type: adapter
     test "checked #{adapter} preserves arbitrary binary files and media", context do
       parameters = %{

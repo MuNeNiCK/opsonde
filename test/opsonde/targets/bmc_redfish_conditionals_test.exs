@@ -40,6 +40,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       json(conn, 200, %{"@odata.id" => "/redfish/v1/", "RedfishVersion" => "1.16.0"})
     end
 
+    defp route(%{request_path: "/redfish/v1/Oem/ContextProbe"} = conn, _agent) do
+      Process.sleep(300)
+      json(conn, 200, %{"Id" => "context-probe"})
+    end
+
     defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Bundle/content"} = conn, _agent) do
       conn
       |> put_resp_content_type("application/octet-stream")
@@ -150,9 +155,10 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       end
     end
 
-    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Pages"} = conn, _agent) do
+    defp route(%{method: "GET", request_path: "/redfish/v1/Oem/Pages"} = conn, agent) do
       case conn.query_string do
         "page=2" ->
+          Process.sleep(Agent.get(agent, &Map.get(&1, :page_delay_ms, 0)))
           json(conn, 200, %{"Members" => [%{"Id" => "second"}]})
 
         "" ->
@@ -316,6 +322,137 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       |> put_resp_content_type("application/json")
       |> send_resp(status, Jason.encode!(value))
     end
+  end
+
+  @tag protocol_context_fault: true
+  test "checked Redfish Method retains context read failures after dispatch", context do
+    resource_requests = fn ->
+      Agent.get(
+        context.agent,
+        &Enum.count(&1.paths, fn path -> path == "/redfish/v1/Oem/ContextProbe" end)
+      )
+    end
+
+    for {kind, verb, dispatch} <- [
+          {:observation, "GET", &Targets.dispatch_target_observation/3},
+          {:effect, "PATCH", &Targets.dispatch_target_effect/3},
+          {:verification, "GET", &Targets.dispatch_target_verification/3},
+          {:task_observation, "GET", &Targets.dispatch_target_observation/3}
+        ] do
+      parameters = %{"method" => verb, "uri" => "/redfish/v1/Oem/ContextProbe"}
+      parameters = if kind == :effect, do: Map.put(parameters, "body", %{}), else: parameters
+      reference = Ecto.UUID.generate()
+
+      input =
+        if kind == :task_observation do
+          file_request(context, :observation, %{"result_reference" => reference})
+          |> Map.put(:operation, "task.observe")
+        else
+          file_request(context, kind, parameters)
+        end
+
+      clearance =
+        input
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      before_requests = resource_requests.()
+
+      callback = fn ->
+        if resource_requests.() > before_requests do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT redfish_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      invocation = %{
+        cancelled?: callback,
+        result_reference_reader: fn ^reference ->
+          {:ok, %{"kind" => "redfish_task_monitor", "uri" => "/redfish/v1/Oem/ContextProbe"}}
+        end
+      }
+
+      assert {:error, error} =
+               dispatch.(clearance, invocation,
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "redfish_context_unavailable"
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+      assert resource_requests.() == before_requests + 1
+    end
+  end
+
+  @tag protocol_context_fault: true
+  test "checked Redfish Method retains context read failure on a following page", context do
+    Agent.update(context.agent, &Map.put(&1, :page_delay_ms, 300))
+
+    page_requests = fn ->
+      Agent.get(
+        context.agent,
+        &Enum.count(&1.paths, fn path -> path == "/redfish/v1/Oem/Pages" end)
+      )
+    end
+
+    before_requests = page_requests.()
+
+    clearance =
+      file_request(context, :observation, %{"method" => "GET", "uri" => "/redfish/v1/Oem/Pages"})
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    callback = fn ->
+      if page_requests.() >= before_requests + 2 do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT redfish_page_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_observation(clearance, %{cancelled?: callback},
+               actor: context.operator
+             )
+
+    assert Exception.message(error) =~ "redfish_page_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert page_requests.() == before_requests + 2
+  end
+
+  test "checked Redfish verification reads generic resources and compares supplied facts",
+       context do
+    input =
+      file_request(context, :verification, %{
+        "method" => "GET",
+        "uri" => "/redfish/v1/Oem/Property"
+      })
+
+    before_writes = Agent.get(context.agent, & &1.writes)
+
+    for {expected, status} <- [
+          {%{}, :unknown},
+          {%{"response" => %{"Name" => "original"}}, :verified},
+          {%{"response" => %{"Name" => "different"}}, :not_verified}
+        ] do
+      clearance =
+        %{input | expected: expected}
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      assert %Target.Verification{
+               status: ^status,
+               facts: %{"response" => %{"Name" => "original"}}
+             } =
+               Targets.dispatch_target_verification!(clearance, %{}, actor: context.operator)
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == before_writes
   end
 
   test "checked Redfish Method returns exact binary file content without JSON decoding",

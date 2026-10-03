@@ -109,6 +109,16 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     end
 
     defp route(
+           %{request_path: "/apis/example.com/v1/namespaces/#{@namespace}/widgets/context-probe"} =
+             conn,
+           _agent,
+           _request
+         ) do
+      Process.sleep(300)
+      json(conn, 200, %{"kind" => "Widget", "spec" => %{"mode" => "active"}})
+    end
+
+    defp route(
            %{method: "GET", request_path: "/api/v1/namespaces/other/pods"} = conn,
            _agent,
            _request
@@ -523,6 +533,59 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       agent: agent,
       endpoint: endpoint
     }
+  end
+
+  @tag protocol_context_fault: true
+  test "checked Kubernetes Method retains context read failures after dispatch", context do
+    path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets/context-probe"
+
+    resource_requests = fn ->
+      Enum.count(requests(context), &(&1.path == path))
+    end
+
+    for {kind, verb, capability, operation, dispatch} <- [
+          {:observation, "GET", "request.kubernetes.observe", "request.observe",
+           &Targets.dispatch_target_observation/3},
+          {:effect, "PATCH", "request.kubernetes.effect", "request.execute",
+           &Targets.dispatch_target_effect/3},
+          {:verification, "GET", "request.kubernetes.observe", "request.observe",
+           &Targets.dispatch_target_verification/3}
+        ] do
+      parameters = %{"method" => verb, "path" => path}
+
+      parameters =
+        if kind == :effect,
+          do: Map.put(parameters, "body", ~s({"spec":{"mode":"active"}})),
+          else: parameters
+
+      clearance =
+        target_request(context, kind, capability, operation, %{}, parameters)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      before_requests = resource_requests.()
+
+      callback = fn ->
+        if resource_requests.() > before_requests do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT kubernetes_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "kubernetes_context_unavailable"
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+      assert resource_requests.() == before_requests + 1
+    end
   end
 
   test "checked API requests publish full binary content without JSON or UTF8 decoding",

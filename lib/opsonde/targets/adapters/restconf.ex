@@ -128,6 +128,7 @@ defmodule Opsonde.Targets.Adapters.RESTCONF do
     else
       false -> {:error, :failed, "RESTCONF observation request is invalid"}
       {:error, _category, _message} = error -> read_error(error)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -172,6 +173,9 @@ defmodule Opsonde.Targets.Adapters.RESTCONF do
 
         {:error, _category, message} ->
           {:error, :failed, message}
+
+        {:error, _cause} = error ->
+          error
       end
     else
       _ -> {:error, :failed, "RESTCONF effect request is invalid"}

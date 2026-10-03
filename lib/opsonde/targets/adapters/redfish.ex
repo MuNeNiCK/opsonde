@@ -246,6 +246,32 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Target
+  def verify(%State{} = state, %{capability: @method_read} = request, invocation) do
+    with {:ok, observation} <- observe(state, request, invocation) do
+      status =
+        cond do
+          request.expected == %{} ->
+            :unknown
+
+          Enum.all?(request.expected, fn {key, value} ->
+            Map.fetch(observation.facts, key) == {:ok, value}
+          end) ->
+            :verified
+
+          true ->
+            :not_verified
+        end
+
+      {:ok,
+       %Target.Verification{
+         status: status,
+         facts: observation.facts,
+         observed_at: observation.observed_at,
+         evidence: observation.evidence
+       }}
+    end
+  end
+
   def verify(%State{} = state, request, invocation) do
     with true <- request.connection.endpoint == state.endpoint,
          true <- PowerControl.inspect_request?(request),
@@ -294,6 +320,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
        }}
     else
       {:error, %Target.BeforeSendError{}} = error -> error
+      {:error, %Ash.Error.Unknown{}} = error -> error
       {:error, category, message} -> read_error(category, message)
     end
   end
@@ -543,6 +570,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
        }}
     else
       {:error, %Target.BeforeSendError{}} = error -> error
+      {:error, %Ash.Error.Unknown{}} = error -> error
       _ -> {:error, :failed, "Redfish task progress is unavailable"}
     end
   end
@@ -580,6 +608,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       end)
     else
       {:error, %Target.BeforeSendError{}} = error -> error
+      {:error, %Ash.Error.Unknown{}} = error -> error
       {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
     end
@@ -705,6 +734,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
      }}
   end
 
+  defp effect_response(_state, {:error, %Ash.Error.Unknown{}} = error, _reference, _details),
+    do: error
+
+  defp effect_response(_state, {:error, %Target.BeforeSendError{}} = error, _reference, _details),
+    do: error
+
   defp effect_response(_state, {:error, _category, message}, _reference, _details),
     do: {:error, :failed, message}
 
@@ -750,6 +785,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
       {:error, _category, _message} = error ->
         error
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Target.BeforeSendError{}} = error ->
+        error
     end
   end
 
@@ -788,6 +829,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
           )
         else
           {:error, _category, _message} = error -> error
+          {:error, %Ash.Error.Unknown{}} = error -> error
+          {:error, %Target.BeforeSendError{}} = error -> error
           _ -> {:error, :failed, "Redfish collection pagination is invalid"}
         end
 
@@ -1054,6 +1097,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
       {:error, category, message} ->
         {:error, category, message}
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
+
+      {:error, %Target.BeforeSendError{}} = error ->
+        error
     end
   rescue
     _ -> {:error, :transport, "Redfish request failed"}
