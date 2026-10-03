@@ -1324,6 +1324,96 @@ defmodule Opsonde.ProposalAuthorityTest do
     refute_receive {:effect, _, _}
   end
 
+  @tag reviewer_condition_before_send: true
+  test "a built-in Reviewer Condition read fault retries without sending or changing authority",
+       context do
+    {incident, run, proposal, _signal_provider} = signal_proposal!(context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    original_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    injected = :atomics.new(1, [])
+
+    try do
+      assert {:error, error} =
+               ReviewDelivery.run(reviewing.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(injected, 1, 0, 1) == :ok do
+                       Repo.query!(
+                         "ALTER TABLE conditions RENAME COLUMN subject_key TO unavailable_subject_key"
+                       )
+                     end
+
+                     false
+                   end,
+                   respond: fn _ -> flunk("unreadable Conditions were sent to Reviewer AI") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "subject_key"
+    after
+      if :atomics.get(injected, 1) == 1 do
+        Repo.query!("ALTER TABLE conditions RENAME COLUMN unavailable_subject_key TO subject_key")
+      end
+    end
+
+    refute_receive {:review, _, _}
+
+    assert [%{status: :queued, dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             original_run.ai_usage_units
+  end
+
+  @tag reviewer_condition_before_send: true
+  test "a changed Condition before Reviewer send supersedes stale authority without charging AI",
+       context do
+    {incident, run, proposal, signal_provider} = signal_proposal!(context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    original_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    injected = :atomics.new(1, [])
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(injected, 1, 0, 1) == :ok do
+                     ingest_authority_signal!(
+                       signal_provider,
+                       context.target.name,
+                       "review-recovered",
+                       :recovered,
+                       DateTime.utc_now()
+                     )
+                   end
+
+                   false
+                 end,
+                 respond: fn _ -> flunk("changed Conditions were sent to Reviewer AI") end
+               }
+             )
+
+    refute_receive {:review, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :invalidated
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    assert [%{status: :failed, dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             original_run.ai_usage_units
+
+    assert :ok = ReviewDelivery.run(reviewing.id)
+    refute_receive {:review, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
   for {read_fault?, schema_error?} <- [{false, false}, {true, false}, {true, true}] do
     @tag paid_proposal_context_read_fault: read_fault?,
          condition_read_fault: read_fault?,
@@ -1331,50 +1421,7 @@ defmodule Opsonde.ProposalAuthorityTest do
          schema_error: schema_error?
     test "paid Proposal Review handles #{if read_fault?, do: "unavailable", else: "changed"} Conditions with #{if schema_error?, do: "schema error", else: "approval"} without applying stale authority",
          context do
-      configure_mode!(:auto, context.admin)
-      enable_signal_automation!(context.admin)
-
-      signal_provider =
-        Providers.create_provider!(
-          "authority-native-monitor",
-          :signal,
-          "fixture-signal",
-          %{"source" => "authority-native"},
-          %{"secret" => "authority-native-secret"},
-          actor: context.admin
-        )
-        |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
-        |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
-
-      Targets.create_external_identity!(
-        context.target.id,
-        "authority-native",
-        "hostname",
-        context.target.name,
-        actor: context.admin
-      )
-
-      fired_at = DateTime.add(DateTime.utc_now(), -10, :second)
-
-      ingest_authority_signal!(
-        signal_provider,
-        context.target.name,
-        "review-firing",
-        :firing,
-        fired_at
-      )
-
-      [incident] = Cases.list_cases!(actor: context.admin)
-      assert %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
-      run = Cases.active_resolution_run!(incident.id, authorize?: false)
-      [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
-      [source_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
-
-      {_incident, _run, proposal} =
-        proposal_for_case!(incident, "native-review", context, :effect, nil,
-          started: started,
-          evidence: source_evidence
-        )
+      {incident, run, proposal, signal_provider} = signal_proposal!(context)
 
       reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
 
@@ -2473,6 +2520,53 @@ defmodule Opsonde.ProposalAuthorityTest do
       end
 
     proposal_for_case!(incident, suffix, context, request_kind, reason)
+  end
+
+  defp signal_proposal!(context) do
+    configure_mode!(:auto, context.admin)
+    enable_signal_automation!(context.admin)
+
+    signal_provider =
+      Providers.create_provider!(
+        "authority-native-monitor",
+        :signal,
+        "fixture-signal",
+        %{"source" => "authority-native"},
+        %{"secret" => "authority-native-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    Targets.create_external_identity!(
+      context.target.id,
+      "authority-native",
+      "hostname",
+      context.target.name,
+      actor: context.admin
+    )
+
+    ingest_authority_signal!(
+      signal_provider,
+      context.target.name,
+      "review-firing",
+      :firing,
+      DateTime.add(DateTime.utc_now(), -10, :second)
+    )
+
+    [incident] = Cases.list_cases!(actor: context.admin)
+    %{status: :sent} = Cases.send_initial_case_turn!(incident.id, authorize?: false)
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    [started] = Cases.started_turns_for_run!(run.id, authorize?: false)
+    [source_evidence] = Cases.signal_context_evidence!(incident.id, authorize?: false)
+
+    {incident, run, proposal} =
+      proposal_for_case!(incident, "native-review", context, :effect, nil,
+        started: started,
+        evidence: source_evidence
+      )
+
+    {incident, run, proposal, signal_provider}
   end
 
   defp ingest_authority_signal!(

@@ -19,10 +19,14 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
 
   def run(proposal_id, opts \\ []) do
     with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false) do
-      case existing_decision(proposal.id) do
-        {:ok, %ReviewDecision{} = decision} -> apply(decision)
-        {:ok, nil} -> select_and_deliver(proposal, opts)
-        {:error, _error} = error -> error
+      if proposal.status == :invalidated do
+        :ok
+      else
+        case existing_decision(proposal.id) do
+          {:ok, %ReviewDecision{} = decision} -> apply(decision)
+          {:ok, nil} -> select_and_deliver(proposal, opts)
+          {:error, _error} = error -> error
+        end
       end
     end
   end
@@ -125,8 +129,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     Ash.transact([AIInvocation, Case, Proposal], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, current_case} <- Cases.get_case(incident.id, authorize?: false),
-           {:ok, true} <- review_context_current(proposal),
-           {:ok, true} <- ConditionContext.current?(current_case, proposal.source_turn_id) do
+           {:ok, true} <- review_context_current(proposal, current_case) do
         do_claim_invocation(proposal, current_case, selection, request, delivery_attempt)
       else
         {:ok, false} -> {:error, :context_changed}
@@ -563,7 +566,18 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   defp replay_terminal_failure(_proposal, _invocation, _opts),
     do: {:error, "Reviewer AI invocation is already terminal"}
 
-  defp stop_delivery(proposal, category, reason) do
+  defp stop_delivery(proposal, "cancelled" = category, reason) do
+    with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
+         {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+      if current?,
+        do: fail_delivery(proposal, category, reason),
+        else: supersede_changed_context(proposal)
+    end
+  end
+
+  defp stop_delivery(proposal, category, reason), do: fail_delivery(proposal, category, reason)
+
+  defp fail_delivery(proposal, category, reason) do
     case Cases.fail_proposal_review_delivery(
            proposal.id,
            category,
@@ -611,16 +625,23 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   defp cancelled?(_callback), do: false
 
   defp review_context_current(proposal) do
-    with {:ok, %{status: :running, cancel_requested: false}} <-
-           Cases.get_case(proposal.case_id, authorize?: false),
-         {:ok, %{status: :reviewing, revision: revision}} <-
-           Cases.get_proposal(proposal.id, authorize?: false) do
-      {:ok, revision == proposal.revision}
+    with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
+         do: review_context_current(proposal, incident)
+  end
+
+  defp review_context_current(proposal, %{status: :running, cancel_requested: false} = incident) do
+    with {:ok, %{status: :reviewing, revision: revision}} <-
+           Cases.get_proposal(proposal.id, authorize?: false),
+         {:ok, conditions_current?} <-
+           ConditionContext.current?(incident, proposal.source_turn_id) do
+      {:ok, revision == proposal.revision and conditions_current?}
     else
       {:error, _cause} = error -> error
       _changed -> {:ok, false}
     end
   end
+
+  defp review_context_current(_proposal, _stopped), do: {:ok, false}
 
   defp lock_case(case_id) do
     Case
