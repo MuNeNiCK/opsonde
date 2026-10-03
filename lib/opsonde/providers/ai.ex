@@ -777,6 +777,7 @@ defmodule Opsonde.Providers.AI do
            | :rate_limited
            | :cancelled
            | :invalid_output, String.t()}
+          | {:error, Ash.Error.Unknown.t()}
 
   @type metered_adapter_error ::
           {:error, :invalid_output | :failed, String.t(), Usage.t()}

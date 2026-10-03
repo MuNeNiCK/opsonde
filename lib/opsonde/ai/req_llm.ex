@@ -332,8 +332,30 @@ defmodule Opsonde.AI.ReqLLM do
   end
 
   defp await(task, stream_ref, cancel_stream, cancelled?, deadline) do
+    cancellation = cancelled?(cancelled?)
+
     cond do
-      cancelled?(cancelled?) ->
+      match?({:error, _}, cancellation) ->
+        {:error, cause} = cancellation
+        cancel(cancel_stream)
+
+        case Task.shutdown(task, :brutal_kill) do
+          {:ok, result} ->
+            result
+
+          _stopped ->
+            {:error,
+             Ash.Error.to_error_class([
+               cause,
+               AI.Error.exception(
+                 category: :failed,
+                 message: "AI invocation context check failed",
+                 dispatched?: true
+               )
+             ])}
+        end
+
+      cancellation ->
         cancel(cancel_stream)
         Task.shutdown(task, :brutal_kill)
         {:error, :cancelled, "AI decision was cancelled"}
@@ -2170,9 +2192,9 @@ defmodule Opsonde.AI.ReqLLM do
   defp cancelled?(callback) do
     callback.() == true
   rescue
-    _error -> true
+    error -> {:error, error}
   catch
-    _kind, _reason -> true
+    kind, reason -> {:error, ErlangError.exception(original: {kind, reason})}
   end
 
   defp cancel(nil), do: :ok

@@ -938,6 +938,67 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
   end
 
+  @tag invocation_read_fault: true
+  test "a local read fault during a native AI request retains its cause and dispatch accounting",
+       context do
+    admin =
+      Accounts.bootstrap!(
+        "invocation-read-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    provider =
+      Providers.create_provider!(
+        "invocation-read-ai",
+        :ai,
+        Adapter.type(),
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => context.endpoint <> "/v1"
+        },
+        %{"api_key" => "callback-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    set_mode(context.agent, {:sleep, 500})
+
+    cancelled? = fn ->
+      if requests(context.agent) == [] do
+        false
+      else
+        {:error, error} =
+          Opsonde.Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
+
+        raise error
+      end
+    end
+
+    assert {:error, error} =
+             Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+               actor: admin
+             )
+
+    assert AI.Error.context_failure?(error)
+    assert Exception.message(error) =~ "invocation_context_unavailable"
+    assert %AI.Error{category: :failed, dispatched?: true} = AI.Error.find(error)
+    assert length(requests(context.agent)) == 1
+
+    assert %{amount: 65_536, usage: nil, dispatched?: true} =
+             Opsonde.Cases.AIInvocation.failure_accounting(error, 65_536)
+
+    set_mode(context.agent, {:decision, handoff()})
+
+    assert %{check_status: :passed} =
+             Providers.check_provider!(provider.id, provider.revision, %{}, actor: admin)
+
+    assert length(requests(context.agent)) == 1
+  end
+
   test "plain output requests preserve timeout and cancellation", context do
     state =
       state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, %{

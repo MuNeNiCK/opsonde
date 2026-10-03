@@ -155,7 +155,15 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
             failure_code: failure_code
           )}
 
-  defp normalize_adapter_result(_operation, _result, _credentials),
+  defp normalize_adapter_result(_operation, {:error, %Ash.Error.Unknown{} = error}, credentials) do
+    if AI.Error.context_failure?(error) and match?(%AI.Error{}, AI.Error.find(error)),
+      do: {:error, Redactor.value(error, credentials)},
+      else: invalid_output()
+  end
+
+  defp normalize_adapter_result(_operation, _result, _credentials), do: invalid_output()
+
+  defp invalid_output,
     do:
       {:error,
        AI.Error.exception(
