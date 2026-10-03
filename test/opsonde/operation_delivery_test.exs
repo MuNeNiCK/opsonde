@@ -4659,6 +4659,57 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  @tag recovery_caller_cancellation: true
+  test "Recovery Reviewer honors caller cancellation without sending or charging", context do
+    {incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "recovery-caller-cancellation")
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn -> true end,
+                 respond: fn _request -> flunk("cancelled Recovery Reviewer was sent") end
+               }
+             )
+
+    refute_receive {:review_recovery, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).resolved_at == nil
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units
+
+    [cancelled] =
+      Cases.list_ai_invocations!(authorize?: false)
+      |> Enum.reject(fn invocation ->
+        Enum.any?(before_invocations, &(&1.id == invocation.id))
+      end)
+
+    assert cancelled.role == :reviewer
+    assert cancelled.status == :failed
+    assert cancelled.category == "cancelled"
+    assert cancelled.dispatch_confirmed == false
+    assert cancelled.usage_reported == false
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request -> flunk("cancelled Recovery Reviewer was replayed") end
+               }
+             )
+
+    refute_receive {:review_recovery, _, _}
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == length(before_invocations) + 1
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units
+  end
+
   @tag paid_recovery_context_read_fault: true
   test "a paid Recovery Review is retained when Condition reads fail after its response",
        context do

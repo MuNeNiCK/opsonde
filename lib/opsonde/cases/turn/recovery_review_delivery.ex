@@ -158,10 +158,13 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
   end
 
   defp dispatch(turn, selection, request, %AIInvocationClaim{state: :claimed} = claim, opts) do
+    supplied = Keyword.get(opts, :ai_invocation, %{})
+    supplied_cancelled = Map.get(supplied, :cancelled?)
+
     invocation =
-      opts
-      |> Keyword.get(:ai_invocation, %{})
-      |> Map.put(:cancelled?, fn -> not current?(turn) end)
+      Map.put(supplied, :cancelled?, fn ->
+        (is_function(supplied_cancelled, 0) and supplied_cancelled.()) or not current?(turn)
+      end)
 
     case Providers.ai_review_recovery(selection.provider_id, request, invocation,
            authorize?: false
