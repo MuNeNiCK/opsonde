@@ -190,13 +190,20 @@ defmodule Opsonde.Transports.SSH do
 
   defp run(config, endpoint, cancelled?, operation) when is_function(cancelled?, 0) do
     with {:ok, host, port, fingerprint} <- endpoint(config, endpoint),
-         {:ok, _started} <- Application.ensure_all_started(:ssh) do
-      if cancelled?(cancelled?),
+         {:ok, _started} <- Application.ensure_all_started(:ssh),
+         {:ok, stopped?} <- stop_check(cancelled?) do
+      if stopped?,
         do: {:error, :cancelled, "SSH operation was cancelled"},
         else: run_task(config, host, port, fingerprint, cancelled?, operation)
     else
-      {:error, category, message} -> {:error, category, message}
-      _error -> {:error, :failed, "SSH transport failed"}
+      {:error, category, message} ->
+        {:error, category, message}
+
+      {:error, cause} ->
+        {:error, Opsonde.Providers.Target.BeforeSendError.exception(cause: cause)}
+
+      _error ->
+        {:error, :failed, "SSH transport failed"}
     end
   rescue
     _error -> {:error, :failed, "SSH transport failed"}
@@ -469,18 +476,32 @@ defmodule Opsonde.Transports.SSH do
   end
 
   defp await(task, reference, connection, phase, progress, cancelled?, deadline) do
+    case Task.yield(task, 0) do
+      nil -> await_running(task, reference, connection, phase, progress, cancelled?, deadline)
+      reply -> finish_reply(reply, reference, connection, phase, progress)
+    end
+  end
+
+  defp await_running(task, reference, connection, phase, progress, cancelled?, deadline) do
+    stopped = stop_check(cancelled?)
+
     cond do
-      cancelled?(cancelled?) ->
-        Task.shutdown(task, :brutal_kill)
-        {connection, phase, progress} = latest_state(reference, connection, phase, progress)
-        close(connection)
-        interrupted(cancellation_category(phase), "SSH operation was cancelled", progress)
+      match?({:error, _}, stopped) ->
+        {:error, cause} = stopped
+
+        stop_task(task, reference, connection, phase, progress, fn _phase, latest ->
+          {:error, Opsonde.Providers.Target.Error.context_failure(cause, latest)}
+        end)
+
+      stopped == {:ok, true} ->
+        stop_task(task, reference, connection, phase, progress, fn phase, latest ->
+          interrupted(cancellation_category(phase), "SSH operation was cancelled", latest)
+        end)
 
       System.monotonic_time(:millisecond) >= deadline ->
-        Task.shutdown(task, :brutal_kill)
-        {connection, phase, progress} = latest_state(reference, connection, phase, progress)
-        close(connection)
-        interrupted(timeout_category(phase), "SSH operation timed out", progress)
+        stop_task(task, reference, connection, phase, progress, fn phase, latest ->
+          interrupted(timeout_category(phase), "SSH operation timed out", latest)
+        end)
 
       true ->
         receive do
@@ -494,28 +515,43 @@ defmodule Opsonde.Transports.SSH do
             await(task, reference, connection, phase, latest, cancelled?, deadline)
         after
           @poll_interval ->
-            case Task.yield(task, 0) do
-              {:ok, {:unexpected_failure, message}} ->
-                unexpected_failure(reference, connection, phase, progress, message)
-
-              {:ok, result} ->
-                {_connection, _phase, latest} =
-                  latest_state(reference, connection, phase, progress)
-
-                case result do
-                  {:error, category, message} -> interrupted(category, message, latest)
-                  _ -> result
-                end
-
-              {:exit, _reason} ->
-                unexpected_failure(reference, connection, phase, progress, "SSH transport failed")
-
-              nil ->
-                await(task, reference, connection, phase, progress, cancelled?, deadline)
-            end
+            await(task, reference, connection, phase, progress, cancelled?, deadline)
         end
     end
   end
+
+  defp stop_task(task, reference, connection, phase, progress, stopped) do
+    case Task.shutdown(task, :brutal_kill) do
+      {:ok, _result} = reply ->
+        finish_reply(reply, reference, connection, phase, progress)
+
+      _ ->
+        {connection, phase, progress} = latest_state(reference, connection, phase, progress)
+        close(connection)
+        stopped.(phase, progress)
+    end
+  end
+
+  defp finish_reply(
+         {:ok, {:unexpected_failure, message}},
+         reference,
+         connection,
+         phase,
+         progress
+       ),
+       do: unexpected_failure(reference, connection, phase, progress, message)
+
+  defp finish_reply({:ok, result}, reference, connection, phase, progress) do
+    {_connection, _phase, latest} = latest_state(reference, connection, phase, progress)
+
+    case result do
+      {:error, category, message} -> interrupted(category, message, latest)
+      _ -> result
+    end
+  end
+
+  defp finish_reply({:exit, _reason}, reference, connection, phase, progress),
+    do: unexpected_failure(reference, connection, phase, progress, "SSH transport failed")
 
   def validate_endpoint(%Config{} = config, value) do
     case endpoint(config, value) do
@@ -745,12 +781,12 @@ defmodule Opsonde.Transports.SSH do
 
   defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
-  defp cancelled?(callback) do
-    callback.() == true
+  defp stop_check(callback) do
+    {:ok, callback.() == true}
   rescue
-    _error -> true
+    cause -> {:error, cause}
   catch
-    _kind, _reason -> true
+    kind, reason -> {:error, ErlangError.exception(original: {kind, reason})}
   end
 
   defp close(nil), do: :ok

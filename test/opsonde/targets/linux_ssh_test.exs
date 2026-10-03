@@ -101,6 +101,41 @@ defmodule Opsonde.Targets.LinuxSSHTest do
     })
   end
 
+  @tag profile_context_fault: true
+  test "Linux named operations preserve initial context faults without sending commands",
+       context do
+    for {kind, capability, operation, selectors, parameters, expected, dispatch} <- [
+          {:observation, "observe.identity", "linux.identity.inspect", %{}, %{}, %{},
+           &Targets.dispatch_target_observation/3},
+          {:effect, "effect.service", "linux.service.restart", %{"unit" => "api.service"},
+           %{"expected_definition_sha256" => @definition}, %{},
+           &Targets.dispatch_target_effect/3},
+          {:verification, "observe.service", "linux.service.inspect", %{"unit" => "api.service"},
+           %{}, %{"active_state" => "active"}, &Targets.dispatch_target_verification/3}
+        ] do
+      clearance =
+        target_request(context, kind, capability, operation, selectors, parameters, expected)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      callback = fn ->
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT linux_initial_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+      assert Exception.message(cause) =~ "linux_initial_context_unavailable"
+      assert commands(context) == []
+    end
+  end
+
   test "service operations lock the exact unit while shell Method effects lock the Target",
        context do
     assert ResourceScope.key(

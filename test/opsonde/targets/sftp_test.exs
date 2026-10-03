@@ -530,6 +530,63 @@ defmodule Opsonde.Targets.SFTPTest do
     assert Agent.get(context.agent, & &1.writes) == 2
   end
 
+  @tag sftp_context_fault: true
+  test "SFTP preserves original in-flight context faults across all three ports", context do
+    Agent.update(context.agent, &%{&1 | read_delay: 300, write_delay: 300})
+    file = stage_file(context)
+
+    for {kind, operation, parameters, counter, dispatch} <- [
+          {:effect, "sftp.write_file",
+           %{"path" => "/fault.bin", "body_file" => "payload", "files" => %{"payload" => file}},
+           :writes, &Targets.dispatch_target_effect/3},
+          {:observation, "sftp.read_file",
+           %{
+             "path" => "/download.bin",
+             "response_file" => %{
+               "name" => "fault-read.bin",
+               "media_type" => "application/octet-stream"
+             }
+           }, :reads, &Targets.dispatch_target_observation/3},
+          {:verification, "sftp.read_file",
+           %{
+             "path" => "/download.bin",
+             "response_file" => %{
+               "name" => "fault-verify.bin",
+               "media_type" => "application/octet-stream"
+             }
+           }, :reads, &Targets.dispatch_target_verification/3}
+        ] do
+      before = Agent.get(context.agent, &Map.fetch!(&1, counter))
+
+      clearance =
+        request(context, kind, operation, parameters)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      callback = fn ->
+        if Agent.get(context.agent, &(Map.fetch!(&1, counter) > before)) do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT sftp_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "sftp_context_unavailable"
+      assert Opsonde.Providers.Target.Error.context_failure?(error)
+      assert Agent.get(context.agent, &Map.fetch!(&1, counter)) == before + 1
+    end
+
+    assert File.read!(Path.join(context.directory, "fault.bin")) == @bytes
+  end
+
   test "cancelled or dropped SFTP downloads cannot publish complete files", context do
     parameters = %{
       "path" => "/download.bin",

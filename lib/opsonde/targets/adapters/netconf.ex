@@ -203,6 +203,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
       false -> {:error, :failed, "NETCONF observation request is invalid"}
       {:ok, :effect} -> {:error, :failed, "NETCONF observation is unsafe"}
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -228,6 +229,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
         {:error, category, message, progress} ->
           subscription_error(category, message, progress)
+
+        {:error, _cause} = error ->
+          error
       end
     end
   end
@@ -256,6 +260,9 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
         {:error, category, message, replies} ->
           sequence_error(category, message, replies)
+
+        {:error, _cause} = error ->
+          error
       end
     end
   end
@@ -269,6 +276,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
     else
       false -> {:error, :failed, "NETCONF effect request is invalid"}
       {:error, category, message} -> effect_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -293,6 +301,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
       false -> {:error, :failed, "NETCONF verification request is invalid"}
       {:ok, :effect} -> {:error, :failed, "NETCONF verification is unsafe"}
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 

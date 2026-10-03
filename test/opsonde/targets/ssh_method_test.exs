@@ -288,6 +288,152 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert [{session, <<0, 255>>}, {session, "second"}] = calls
   end
 
+  @tag ssh_context_fault: true
+  test "Linux SSH profile retains original context failure on an arbitrary command", context do
+    {admin, input} =
+      subsystem_request(
+        Map.merge(context, %{
+          provider_type: "linux-ssh",
+          target_kind: "host",
+          target_type: "linux"
+        }),
+        [%{"op" => "close"}]
+      )
+
+    input = %{input | operation: "command.execute", parameters: %{"command" => "slow"}}
+    clearance = Targets.clear_target_request!(input, actor: admin)
+
+    callback = fn ->
+      if "slow" in commands(context) do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT linux_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: admin,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "linux_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert commands(context) == ["slow"]
+  end
+
+  @tag ssh_context_fault: true
+  test "registered SSH Method keeps a completed reply when a concurrent stop check fails",
+       context do
+    {admin, input} = subsystem_request(context, [%{"op" => "close"}])
+    input = %{input | operation: "command.execute", parameters: %{"command" => "ready-reply"}}
+    clearance = Targets.clear_target_request!(input, actor: admin)
+    owner = self()
+
+    callback = fn ->
+      if "ready-reply" in commands(context) do
+        send(owner, :ssh_reply_stop_check)
+        Process.sleep(500)
+
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT ssh_reply_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:ok, %Target.EffectResult{status: :applied, details: details}} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: admin,
+               authorize?: false
+             )
+
+    assert details["stdout"] == %{"encoding" => "utf-8", "value" => "completed"}
+    assert details["exit_status"] == 0
+    assert commands(context) == ["ready-reply"]
+    assert_receive :ssh_reply_stop_check
+  end
+
+  @tag ssh_context_fault: true
+  test "registered SSH Method retains a failed initial stop check without sending a command",
+       context do
+    {admin, input} = subsystem_request(context, [%{"op" => "close"}])
+    input = %{input | operation: "command.execute", parameters: %{"command" => "never-sent"}}
+    clearance = Targets.clear_target_request!(input, actor: admin)
+
+    callback = fn ->
+      {:error, cause} =
+        Opsonde.Repo.query("SELECT ssh_initial_context_unavailable", [], mode: :savepoint)
+
+      raise cause
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: admin,
+               authorize?: false
+             )
+
+    assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+    assert Exception.message(cause) =~ "ssh_initial_context_unavailable"
+    assert commands(context) == []
+    assert Agent.get(context.subsystem_calls, & &1) == []
+  end
+
+  @tag ssh_context_fault: true
+  test "registered SSH Method retains context failure and completed subsystem steps", context do
+    steps = [
+      %{"op" => "send", "data" => Base.encode64(<<0, 255>>)},
+      %{"op" => "receive", "until" => %{"bytes" => 5}},
+      %{"op" => "send", "data" => Base.encode64("silent")},
+      %{"op" => "receive", "until" => %{"bytes" => 10}},
+      %{"op" => "close"}
+    ]
+
+    {admin, input} = subsystem_request(context, steps)
+    clearance = Targets.clear_target_request!(input, actor: admin)
+
+    callback = fn ->
+      if Agent.get(
+           context.subsystem_calls,
+           &Enum.any?(&1, fn {_, bytes} -> bytes == "silent" end)
+         ) do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT ssh_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: admin,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "ssh_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert is_nil(Target.BeforeSendError.unwrap(error))
+    assert %{"bytes_sent" => 8, "steps" => completed} = Target.Error.context_progress(error)
+
+    assert [%{"op" => "send"}, %{"op" => "receive", "data" => data}, %{"op" => "send"}] =
+             completed
+
+    assert Base.decode64!(data) == "first"
+
+    assert Agent.get(context.subsystem_calls, &Enum.reverse/1) |> Enum.map(&elem(&1, 1)) == [
+             <<0, 255>>,
+             "silent"
+           ]
+  end
+
   test "subsystem keeps stderr and ordinary data as separate selected byte streams", context do
     {admin, exact} =
       subsystem_request(context, [
@@ -935,6 +1081,10 @@ defmodule Opsonde.Targets.SSHMethodTest do
         "slow" ->
           Process.sleep(1_000)
           {:ok, "done"}
+
+        "ready-reply" ->
+          Process.sleep(60)
+          {:ok, "completed"}
 
         value ->
           {:ok, "ran:#{value}"}

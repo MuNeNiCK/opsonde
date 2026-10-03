@@ -78,6 +78,9 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
 
       {:error, category, message} ->
         IOSXE.read_error(category, message)
+
+      {:error, _cause} = error ->
+        error
     end
   end
 
@@ -93,6 +96,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
       IOSXE.observation(facts, [evidence(output)])
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -141,6 +145,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
       IOSXE.applied(%{"output" => output})
     else
       {:error, category, message} -> IOSXE.effect_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -175,6 +180,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     else
       false -> {:error, :failed, "CLI verification must be non-mutating"}
       {:error, category, message} -> IOSXE.read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -190,6 +196,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
       IOSXE.verification(facts, expected, [evidence(output)])
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -229,6 +236,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
       {:error, category, message} -> IOSXE.effect_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -248,6 +256,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
       {:error, category, message} -> IOSXE.effect_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -255,6 +264,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     case Transport.shell(state, endpoint, script, cancelled?) do
       {:ok, %Transport.ShellResult{output: output}} -> {:ok, normalize(output)}
       {:error, category, message} -> {:error, category, message}
+      {:error, _cause} = error -> error
     end
   end
 

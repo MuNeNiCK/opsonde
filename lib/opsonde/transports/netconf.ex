@@ -108,9 +108,17 @@ defmodule Opsonde.Transports.NETCONF do
       progress = latest_progress(reference, [])
 
       case result do
-        {:ok, replies} -> {:ok, replies}
-        {:error, category, message, replies} -> {:error, category, message, replies}
-        {:error, category, message} -> {:error, category, message, progress}
+        {:ok, replies} ->
+          {:ok, replies}
+
+        {:error, category, message, replies} ->
+          {:error, category, message, replies}
+
+        {:error, category, message} ->
+          {:error, category, message, progress}
+
+        {:error, error} ->
+          context_error(error, %{"completed" => length(progress), "replies" => progress})
       end
     else
       {:error, :failed, "NETCONF sequence is invalid", []}
@@ -182,6 +190,15 @@ defmodule Opsonde.Transports.NETCONF do
 
         {:error, category, message} ->
           {:error, category, message, progress}
+
+        {:error, error} ->
+          context_error(error, %{
+            "events" => progress.events,
+            "received" => length(progress.events),
+            "replies" => progress.replies,
+            "completed" => length(progress.replies),
+            "subscription_id" => progress.subscription_id
+          })
       end
     else
       _invalid ->
@@ -191,6 +208,12 @@ defmodule Opsonde.Transports.NETCONF do
 
   def subscribe(_config, _endpoint, _body, _follow_ups, _max_events, _wait_ms, _cancelled?),
     do: {:error, :failed, "NETCONF subscription is invalid", empty_subscription_progress()}
+
+  defp context_error(error, progress) do
+    if Opsonde.Providers.Target.Error.context_failure?(error),
+      do: {:error, Opsonde.Providers.Target.Error.context_failure(error, progress)},
+      else: {:error, error}
+  end
 
   defp subscribe_session(channel, framing, body, kind, follow_ups, max_events, wait_ms, reporter) do
     with :ok <- SSH.channel_send(channel, frame(envelope(body), framing)),

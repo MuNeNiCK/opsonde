@@ -426,6 +426,124 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     })
   end
 
+  @tag netconf_context_fault: true
+  test "NETCONF sequence retains completed replies and original context failure", context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | delay_edit_ms: 1_000})
+
+    input =
+      request(context, :effect, "request.netconf.effect", "rpc.sequence", %{}, %{
+        "rpcs" => [
+          "<lock><target><running/></target></lock>",
+          "<edit-config><target><running/></target><config><interfaces><interface><name>Loopback100</name><description>changed</description></interface></interfaces></config></edit-config>"
+        ]
+      })
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    callback = fn ->
+      if Agent.get(context.agent, & &1.edit_received?) do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT netconf_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "netconf_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert %{"completed" => 1, "replies" => [reply]} = Target.Error.context_progress(error)
+    assert reply =~ "<ok/>"
+    assert length(rpcs(context)) == 2
+  end
+
+  @tag netconf_context_fault: true
+  test "NETCONF subscription retains received notifications and original context failure",
+       context do
+    context = generic_netconf_context(context)
+    Agent.update(context.agent, &%{&1 | mode: :hold_after_first_notification})
+
+    input =
+      request(context, :effect, "request.netconf.effect", "rpc.subscribe", %{}, %{
+        "body" =>
+          "<create-subscription xmlns=\"urn:ietf:params:xml:ns:netconf:notification:1.0\"/>",
+        "max_events" => 2,
+        "wait_ms" => 200
+      })
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    callback = fn ->
+      if Agent.get(context.agent, &(&1.notifications_sent > 0)) do
+        Process.sleep(20)
+
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT netconf_subscription_context_unavailable", [],
+            mode: :savepoint
+          )
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "netconf_subscription_context_unavailable"
+    assert %{"received" => 1, "events" => [event]} = Target.Error.context_progress(error)
+    assert event =~ "link-down"
+    assert length(rpcs(context)) == 1
+  end
+
+  @tag netconf_context_fault: true
+  test "IOS XE NETCONF preserves initial context faults through all named ports", context do
+    for {kind, capability, operation, selectors, parameters, expected, dispatch} <- [
+          {:observation, "observe.system", "ios_xe.system.inspect", %{}, %{}, %{},
+           &Targets.dispatch_target_observation/3},
+          {:effect, "effect.interface", "ios_xe.interface.description.set",
+           %{"interface" => "Loopback100"},
+           %{"description" => "changed", "expected_description" => "initial"}, %{},
+           &Targets.dispatch_target_effect/3},
+          {:verification, "observe.interface", "ios_xe.interface.inspect",
+           %{"interface" => "Loopback100"}, %{}, %{"description" => "initial"},
+           &Targets.dispatch_target_verification/3}
+        ] do
+      clearance =
+        request(context, kind, capability, operation, selectors, parameters, expected)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      callback = fn ->
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT netconf_initial_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+      assert Exception.message(cause) =~ "netconf_initial_context_unavailable"
+      assert rpcs(context) == []
+    end
+  end
+
   test "NETCONF keeps the protocol-sized default and explicit output bounds" do
     assert {:ok, %SSH.Config{max_output_bytes: 60_000}} =
              NETCONF.build(configuration_for("ssh://ios-xe.example:830"), credentials())

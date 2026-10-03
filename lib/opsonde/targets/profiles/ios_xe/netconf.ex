@@ -62,6 +62,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
       IOSXE.observation(facts)
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -118,6 +119,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
       IOSXE.verification(facts, expected)
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -156,6 +158,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
       {:error, category, message} -> IOSXE.effect_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 

@@ -395,7 +395,7 @@ defmodule Opsonde.Providers.Target do
 
   defmodule Error do
     @moduledoc false
-    use Splode.Error, class: :unknown, fields: [:category, :message]
+    use Splode.Error, class: :unknown, fields: [:category, :message, :progress]
 
     @impl true
     def message(error), do: error.message
@@ -404,10 +404,14 @@ defmodule Opsonde.Providers.Target do
     def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
     def unwrap(_error), do: nil
 
-    def context_failure(cause) do
+    def context_failure(cause, progress \\ nil) do
       Ash.Error.to_error_class([
         cause,
-        exception(category: :failed, message: "Target invocation context check failed")
+        exception(
+          category: :failed,
+          message: "Target invocation context check failed",
+          progress: progress
+        )
       ])
     end
 
@@ -415,6 +419,13 @@ defmodule Opsonde.Providers.Target do
       do: is_nil(unwrap(error)) and not is_nil(find(error))
 
     def context_failure?(_error), do: false
+
+    def context_progress(%__MODULE__{progress: progress}) when is_map(progress), do: progress
+
+    def context_progress(%{errors: errors}) when is_list(errors),
+      do: Enum.find_value(errors, &context_progress/1)
+
+    def context_progress(_error), do: nil
 
     defp find(%__MODULE__{} = error), do: error
     defp find(%{errors: errors}) when is_list(errors), do: Enum.find_value(errors, &find/1)

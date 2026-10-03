@@ -42,9 +42,17 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
             nil ->
               outcome = unknown("verification_error", "Fresh verification result is unknown")
 
-              if ProviderTarget.Error.context_failure?(error),
-                do: Map.put(outcome, :context_failure, error),
-                else: outcome
+              if ProviderTarget.Error.context_failure?(error) do
+                outcome =
+                  case ProviderTarget.Error.context_progress(error) do
+                    nil -> outcome
+                    progress -> %{outcome | facts: Map.put(outcome.facts, "progress", progress)}
+                  end
+
+                Map.put(outcome, :context_failure, error)
+              else
+                outcome
+              end
 
             unsent ->
               {:error, unsent}

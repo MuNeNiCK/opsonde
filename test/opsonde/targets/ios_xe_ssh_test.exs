@@ -671,6 +671,47 @@ defmodule Opsonde.Targets.IOSXESSHTest do
              Targets.dispatch_target_observation(clearance, %{}, actor: context.operator)
   end
 
+  @tag profile_context_fault: true
+  test "IOS XE SSH keeps original in-flight context faults across all three ports", context do
+    Agent.update(context.agent, &%{&1 | delay_ms: 1_000})
+
+    for {kind, capability, operation, selectors, parameters, dispatch} <- [
+          {:observation, "observe.system", "ios_xe.system.inspect", %{}, %{},
+           &Targets.dispatch_target_observation/3},
+          {:effect, "request.cli.effect", "cli.execute", %{}, %{"commands" => ["show version"]},
+           &Targets.dispatch_target_effect/3},
+          {:verification, "request.cli.observe", "cli.observe", %{},
+           %{"commands" => ["show version"]}, &Targets.dispatch_target_verification/3}
+        ] do
+      Agent.update(context.agent, &%{&1 | scripts: []})
+
+      clearance =
+        request(context, kind, capability, operation, selectors, parameters)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      callback = fn ->
+        if scripts(context) != [] do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT iosxe_ssh_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "iosxe_ssh_context_unavailable"
+      assert Target.Error.context_failure?(error)
+      assert length(scripts(context)) == 1
+    end
+  end
+
   test "SSH route preserves post-dispatch cancellation and connection failures", context do
     Agent.update(context.agent, &%{&1 | delay_ms: 1_000})
     cancel_at = System.monotonic_time(:millisecond) + 200

@@ -113,9 +113,17 @@ defmodule Opsonde.Cases.Operation.Delivery do
   end
 
   defp with_context_failure(outcome, error) do
-    if ProviderTarget.Error.context_failure?(error),
-      do: Map.put(outcome, :context_failure, error),
-      else: outcome
+    if ProviderTarget.Error.context_failure?(error) do
+      outcome =
+        case ProviderTarget.Error.context_progress(error) do
+          nil -> outcome
+          progress -> %{outcome | details: Map.put(outcome.details, "progress", progress)}
+        end
+
+      Map.put(outcome, :context_failure, error)
+    else
+      outcome
+    end
   end
 
   defp persist_and_handoff(operation, %{context_failure: cause} = outcome) do

@@ -127,6 +127,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
        }}
     else
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -199,6 +200,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
        }}
     else
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
       _error -> {:error, :failed, "Linux verification request is invalid"}
     end
   end
@@ -213,6 +215,9 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
 
       {:error, category, message} ->
         {:error, category, message}
+
+      {:error, _cause} = error ->
+        error
     end
   end
 
@@ -257,6 +262,8 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
 
   defp effect_result({:error, _category, message}, _definition_guard?),
     do: {:error, :failed, message}
+
+  defp effect_result({:error, _cause} = error, _definition_guard?), do: error
 
   defp read_error(:cancelled, message), do: {:error, :cancelled, message}
 

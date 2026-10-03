@@ -103,6 +103,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
     else
       {:error, category, _message} = error when category in [:cancelled, :failed] -> error
       {:error, _category, message} -> {:error, :failed, message}
+      {:error, _cause} = error -> error
       _ -> {:error, :failed, "SFTP observation failed"}
     end
   end
@@ -214,6 +215,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
 
   defp effect_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
   defp effect_result({:error, _category, message}), do: {:error, :failed, message}
+  defp effect_result({:error, _cause} = error), do: error
 
   defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled?(_invocation), do: fn -> false end

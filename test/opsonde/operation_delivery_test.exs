@@ -420,11 +420,13 @@ defmodule Opsonde.OperationDeliveryTest do
   @tag inflight_target_read_fault: true
   test "in-flight Target context faults persist terminal outcomes and retain their original cause",
        context do
+    progress = %{"bytes_sent" => 8, "steps" => [%{"op" => "receive", "data" => "Zmlyc3Q="}]}
+
     failed_response = fn ->
       {:error, cause} =
         Repo.query("SELECT inflight_target_context_unavailable", [], mode: :savepoint)
 
-      {:error, Target.Error.context_failure(cause)}
+      {:error, Target.Error.context_failure(cause, progress)}
     end
 
     for kind <- [:effect, :observation] do
@@ -442,6 +444,7 @@ defmodule Opsonde.OperationDeliveryTest do
       terminal = Cases.get_operation!(operation.id, authorize?: false)
       assert terminal.status == if(kind == :effect, do: :unknown, else: :failed)
       assert terminal.dispatch_started_at != nil
+      assert terminal.result_details["progress"] == progress
 
       assert :ok =
                OperationDelivery.run(operation.id,
@@ -479,6 +482,7 @@ defmodule Opsonde.OperationDeliveryTest do
     terminal = Cases.get_verification_attempt!(attempt.id, authorize?: false)
     assert terminal.status == :unknown
     assert terminal.dispatch_started_at != nil
+    assert terminal.facts["progress"] == progress
 
     assert :ok =
              VerificationDelivery.run(attempt.id,
@@ -492,6 +496,8 @@ defmodule Opsonde.OperationDeliveryTest do
   @tag inflight_target_read_fault: true
   test "a failed in-flight fault receipt keeps both causes and never repeats the remote request",
        context do
+    progress = %{"bytes_sent" => 8, "steps" => [%{"op" => "receive", "data" => "Zmlyc3Q="}]}
+
     for kind <- [:operation, :verification] do
       {_incident, _run, proposal} =
         authorized_proposal!("inflight-save-fault-#{kind}", context,
@@ -542,12 +548,13 @@ defmodule Opsonde.OperationDeliveryTest do
                            mode: :savepoint
                          )
 
-                       {:error, Target.Error.context_failure(cause)}
+                       {:error, Target.Error.context_failure(cause, progress)}
                      end)
                  )
 
         assert Exception.message(error) =~ "inflight_target_context_unavailable"
         assert Exception.message(error) =~ "inflight receipt save unavailable"
+        assert Target.Error.context_progress(error) == progress
       after
         Repo.query!("DROP TRIGGER reject_inflight_receipt ON #{table}")
         Repo.query!("DROP FUNCTION pg_temp.reject_inflight_receipt()")
