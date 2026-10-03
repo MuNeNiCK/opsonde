@@ -1,7 +1,6 @@
 defmodule Opsonde.Targets.Adapters.SSH.SFTP do
   @moduledoc false
   alias Opsonde.Providers.Target
-  alias __MODULE__.Session
   @read "request.ssh.observe"
   @write "request.ssh.effect"
   @read_methods %{
@@ -46,7 +45,7 @@ defmodule Opsonde.Targets.Adapters.SSH.SFTP do
               "additionalProperties" => false
             }
           }
-        ] ++ metadata_capabilities() ++ [Session.observation()],
+        ] ++ metadata_capabilities(),
       effects:
         [
           %Target.Operation{
@@ -56,7 +55,7 @@ defmodule Opsonde.Targets.Adapters.SSH.SFTP do
               "Write admitted immutable file bytes to the exact remote path after authority review; existing content is overwritten, interrupted writes remain uncertain and are never automatically replayed",
             input_schema: schema(:write)
           }
-        ] ++ metadata_effects() ++ [Session.effect()]
+        ] ++ metadata_effects()
     }
   end
 
@@ -93,8 +92,6 @@ defmodule Opsonde.Targets.Adapters.SSH.SFTP do
       }
     end)
   end
-
-  def operation(%{operation: "sftp.session"} = request), do: Session.compile(request)
 
   def operation(%{
         capability: capability,

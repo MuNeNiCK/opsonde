@@ -245,7 +245,7 @@ defmodule Opsonde.FileOperationTest do
       |> Enum.find(&(&1.source == "operation" and &1.source_ref == operation.id))
 
     assert evidence.content["parameters"] == parameters
-    assert evidence.content["details"]["facts"] == facts
+    assert evidence.content["facts"] == facts
     assert :ok = Delivery.run(operation.id)
     assert Agent.get(context.agent, & &1.watches) == 1
   end
@@ -325,135 +325,6 @@ defmodule Opsonde.FileOperationTest do
 
     assert observed.status == :unknown
     assert observed.facts["attributes"]["type"] == "directory"
-  end
-
-  for {suffix, save_failure?} <- [
-        {"retains file results and fresh verification", false},
-        {"never replays after outcome publication fails", true}
-      ] do
-    @tag session_save_failure: save_failure?
-    test "Reviewer approved native SFTP session #{suffix}", context do
-      {context, directory} = sftp_context(context)
-      file = stage_file(context)
-      output = %{"name" => "case-session.bin", "media_type" => "application/octet-stream"}
-
-      read_steps = [
-        %{"op" => "open", "handle" => "data", "path" => "/case-session.bin", "flags" => ["read"]},
-        %{"op" => "fstat", "handle" => "data"},
-        %{
-          "op" => "pread",
-          "handle" => "data",
-          "offset" => 0,
-          "length" => 6,
-          "response_file" => output
-        },
-        %{"op" => "close", "handle" => "data"}
-      ]
-
-      parameters = %{
-        "steps" => [
-          %{
-            "op" => "open",
-            "handle" => "data",
-            "path" => "/case-session.bin",
-            "flags" => ["read", "write", "creat"]
-          },
-          %{"op" => "write", "handle" => "data", "body_file" => "payload"},
-          %{
-            "op" => "pread",
-            "handle" => "data",
-            "offset" => 0,
-            "length" => 6,
-            "response_file" => output
-          },
-          %{"op" => "close", "handle" => "data"}
-        ],
-        "files" => %{"payload" => file}
-      }
-
-      proposal =
-        proposal!(context, parameters,
-          capability: "request.ssh.effect",
-          operation: "sftp.session",
-          verification_operation: "sftp.session",
-          verification_parameters: %{"steps" => read_steps},
-          verification_expected: %{}
-        )
-
-      assert proposal.status == :reviewing
-      refute File.exists?(Path.join(directory, "case-session.bin"))
-      approve!(proposal)
-      operation = Cases.accept_operation!(proposal.id, authorize?: false)
-
-      if context.session_save_failure do
-        Opsonde.Repo.query!("""
-        CREATE FUNCTION pg_temp.reject_session_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN
-          IF NEW.status = 'applied' THEN
-            RAISE EXCEPTION 'test session outcome publication unavailable';
-          END IF;
-          RETURN NEW;
-        END
-        $$
-        """)
-
-        Opsonde.Repo.query!("""
-        CREATE TRIGGER reject_session_outcome BEFORE UPDATE ON operations
-        FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_session_outcome()
-        """)
-
-        assert {:error, _} = Delivery.run(operation.id)
-        assert Cases.get_operation!(operation.id, actor: context.operator).status == :dispatching
-        assert File.read!(Path.join(directory, "case-session.bin")) == <<255, 0, 1, 2, 255>>
-
-        received =
-          Targets.page_artifacts!(context.target.id, actor: context.operator).results
-          |> Enum.find(&(&1.request_id == operation.id))
-
-        assert received.status == :ready
-
-        reply =
-          Targets.artifact_reference!(received.id, context.target.id, actor: context.operator)
-
-        assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) ==
-                 <<255, 0, 1, 2, 255>>
-
-        Opsonde.Repo.query!("DROP TRIGGER reject_session_outcome ON operations")
-        File.write!(Path.join(directory, "case-session.bin"), "later independent change")
-        assert :ok = Delivery.run(operation.id)
-        stored = Cases.get_operation!(operation.id, actor: context.operator)
-        assert stored.status == :unknown
-        assert stored.outcome_category == "dispatch_interrupted"
-        assert stored.parameters == parameters
-      else
-        assert :ok = Delivery.run(operation.id)
-        stored = Cases.get_operation!(operation.id, actor: context.operator)
-        assert stored.status == :applied
-        assert stored.parameters == parameters
-        reply = Enum.at(stored.result_details["steps"], 2)["file"]
-
-        assert Targets.read_bound_artifact_chunk!(reply, 0, actor: context.operator) ==
-                 <<255, 0, 1, 2, 255>>
-
-        assert Targets.get_artifact!(reply["id"], actor: context.operator).request_id ==
-                 operation.id
-
-        evidence =
-          Cases.list_evidence!(actor: context.admin)
-          |> Enum.find(&(&1.source == "operation" and &1.source_ref == operation.id))
-
-        assert evidence.content["details"] == stored.result_details
-        verification = Cases.accept_verification!(operation.id, authorize?: false)
-        assert :ok = Opsonde.Cases.VerificationAttempt.Delivery.run(verification.id)
-        observed = Cases.get_verification_attempt!(verification.id, actor: context.operator)
-        assert observed.status == :unknown
-        assert Enum.at(observed.facts["steps"], 1)["attributes"]["size"] == 5
-        File.write!(Path.join(directory, "case-session.bin"), "later independent change")
-      end
-
-      assert :ok = Delivery.run(operation.id)
-      assert File.read!(Path.join(directory, "case-session.bin")) == "later independent change"
-    end
   end
 
   test "Reviewer approved RESTCONF file capture preserves uncertainty without replay", context do

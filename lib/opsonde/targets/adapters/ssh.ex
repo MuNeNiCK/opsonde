@@ -67,7 +67,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
     with {:ok, operation} <- SFTP.operation(request),
          do:
            {:ok,
-            if(operation.kind in [:read, :metadata_read, :directory, :session_read],
+            if(operation.kind in [:read, :metadata_read, :directory],
               do: :observation,
               else: :effect
             )}
@@ -91,7 +91,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
   @impl Opsonde.Providers.Target
   def observe(state, %{operation: "sftp." <> _name} = request, invocation) do
     with {:ok, %{kind: kind} = operation}
-         when kind in [:read, :metadata_read, :directory, :session_read] <-
+         when kind in [:read, :metadata_read, :directory] <-
            SFTP.operation(request),
          {:ok, facts} <- Transport.sftp(state, request.connection.endpoint, operation, invocation) do
       {:ok,
@@ -112,19 +112,13 @@ defmodule Opsonde.Targets.Adapters.SSH do
 
   defp sftp_evidence(%{path: path}), do: %{"source" => "sftp", "path" => path}
 
-  defp sftp_evidence(%{kind: :session_read}),
-    do: %{"source" => "sftp", "operation" => "sftp.session"}
-
   @impl Opsonde.Providers.Target
   def effect(state, %{operation: "sftp." <> _name} = request, invocation) do
-    with {:ok, %{kind: kind} = operation} when kind in [:write, :metadata_write, :session_write] <-
+    with {:ok, %{kind: kind} = operation} when kind in [:write, :metadata_write] <-
            SFTP.operation(request) do
       case Transport.sftp(state, request.connection.endpoint, operation, invocation) do
         {:ok, details} ->
           {:ok, %Target.EffectResult{status: :applied, details: details}}
-
-        {:session_result, status, details} ->
-          {:ok, %Target.EffectResult{status: status, details: details}}
 
         error ->
           effect_result(error)

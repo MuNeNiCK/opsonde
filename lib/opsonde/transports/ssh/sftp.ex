@@ -258,7 +258,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   # These are the attributes carried by OTP's native SFTP codec. Do not present
   # its synthetic inode/device/link defaults as observations from the server.
-  def attributes(file_info() = info) do
+  defp attributes(file_info() = info) do
     @file_info
     |> Keyword.keys()
     |> Enum.zip(Tuple.to_list(info) |> tl())
@@ -328,7 +328,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
          do: write_chunks(pid, handle, tail, limit, deadline)
   end
 
-  def admit_input(operation, invocation) do
+  defp admit_input(operation, invocation) do
     with {:ok, reader} <- reader(operation, invocation),
          :ok <- preflight(operation.file, reader),
          do: {:ok, reader}
@@ -350,20 +350,20 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   defp reader(_operation, _invocation), do: file_error()
 
-  def capture(%{"name" => name, "media_type" => media}, %{file_writer: callback})
-      when is_function(callback, 3) do
+  defp capture(%{"name" => name, "media_type" => media}, %{file_writer: callback})
+       when is_function(callback, 3) do
     case callback.(Ecto.UUID.generate(), name, media) do
       {:ok, %Target.FileWriter{status: :receiving, offset: 0} = writer} -> {:ok, writer}
       _ -> file_error()
     end
   end
 
-  def capture(_output, _invocation), do: file_error()
+  defp capture(_output, _invocation), do: file_error()
   defp file_error, do: {:error, :failed, "SFTP file transfer could not be saved or read"}
 
-  def append_receipt(_writer, <<>>, _offset), do: :ok
+  defp append_receipt(_writer, <<>>, _offset), do: :ok
 
-  def append_receipt(writer, bytes, offset) do
+  defp append_receipt(writer, bytes, offset) do
     count = min(writer.chunk_bytes, byte_size(bytes))
     <<chunk::binary-size(^count), tail::binary>> = bytes
 
@@ -373,7 +373,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
          else: (_ -> file_error())
   end
 
-  def publish(writer, size, reason) do
+  defp publish(writer, size, reason) do
     case writer.complete.(size, nil, reason) do
       {:ok, file} -> {:ok, file}
       {:error, %{category: :cancelled}} -> {:error, :cancelled, "SFTP transfer was cancelled"}
@@ -401,8 +401,8 @@ defmodule Opsonde.Transports.SSH.SFTP do
   defp native(result, _phase), do: result
   defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
-  def active(%{cancelled?: callback}) when is_function(callback, 0),
+  defp active(%{cancelled?: callback}) when is_function(callback, 0),
     do: if(callback.(), do: {:error, :cancelled, "SFTP transfer was cancelled"}, else: :ok)
 
-  def active(_invocation), do: :ok
+  defp active(_invocation), do: :ok
 end

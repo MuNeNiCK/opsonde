@@ -90,19 +90,6 @@ defmodule Opsonde.Transports.SSH do
     run(config, endpoint, cancelled?, fn _connection, _deadline, _parent, _reference -> :ok end)
   end
 
-  def sftp(%Config{} = config, endpoint, %{kind: kind} = operation, invocation)
-      when kind in [:session_read, :session_write] do
-    Opsonde.Transports.SSH.SFTP.Session.request(operation, invocation, fn callback ->
-      subsystem(
-        config,
-        endpoint,
-        "sftp",
-        callback,
-        Map.get(invocation, :cancelled?, fn -> false end)
-      )
-    end)
-  end
-
   def sftp(%Config{} = config, endpoint, operation, invocation) do
     cancel = Map.get(invocation, :cancelled?, fn -> false end)
 
