@@ -1,5 +1,6 @@
 #include <config.h>
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/select.h>
@@ -109,10 +110,7 @@ int __wrap_select(int nfds, fd_set *read, fd_set *write, fd_set *error,
 ssize_t __wrap_send(int fd, const void *buffer, size_t length, int flags) {
     if (cancelled()) { errno = ECANCELED; return -1; }
     if (now_us() >= deadline) { errno = ETIMEDOUT; return -1; }
-    if (effect_active) {
-        if (effect_attempted) { errno = EALREADY; return -1; }
-        effect_attempted = 1;
-    }
+    if (effect_active) effect_attempted = 1;
     return __real_send(fd, buffer, length, flags | MSG_DONTWAIT);
 }
 
@@ -259,7 +257,9 @@ int opsonde_ipmi_sol(const char *host, uint16_t port, const char *user,
     sol_limit = exchange->max_output_bytes;
     sol_result = outcome;
     sol_invalid_output = 0;
-    int status = 2, activated = 0;
+    int status = 2, activated = 0, payload_route = 0;
+    struct sockaddr_storage control_peer = {0};
+    socklen_t control_peer_length = sizeof(control_peer);
     struct ipmi_intf *intf = session(host, port, user, password, 1000);
     if (!intf) { cancel_check = NULL; return 1; }
     if (cancelled()) { status = 6; goto done; }
@@ -281,12 +281,23 @@ int opsonde_ipmi_sol(const char *host, uint16_t port, const char *user,
     memcpy(&activation, response->data, sizeof(activation));
     intf->session->sol_data.max_inbound_payload_size =
         activation.inbound_payload_size[0] | activation.inbound_payload_size[1] << 8;
-    intf->session->sol_data.max_outbound_payload_size =
-        activation.outbound_payload_size[0] | activation.outbound_payload_size[1] << 8;
     intf->session->sol_data.port =
         activation.payload_udp_port[0] | activation.payload_udp_port[1] << 8;
     outcome->payload_port = intf->session->sol_data.port;
-    if (intf->session->sol_data.port != port) { status = 7; goto done; }
+    if (!intf->session->sol_data.port) goto done;
+    if (intf->session->sol_data.port != port) {
+        if (getpeername(intf->fd, (struct sockaddr *)&control_peer,
+                        &control_peer_length) < 0) goto done;
+        struct sockaddr_storage payload_peer = control_peer;
+        if (payload_peer.ss_family == AF_INET)
+            ((struct sockaddr_in *)&payload_peer)->sin_port = htons(outcome->payload_port);
+        else if (payload_peer.ss_family == AF_INET6)
+            ((struct sockaddr_in6 *)&payload_peer)->sin6_port = htons(outcome->payload_port);
+        else goto done;
+        payload_route = 1;
+        if (connect(intf->fd, (struct sockaddr *)&payload_peer, control_peer_length) < 0)
+            goto done;
+    }
     uint32_t chunk = intf->session->sol_data.max_inbound_payload_size;
     if (chunk <= 4) goto done;
     chunk -= 4;
@@ -332,6 +343,12 @@ done:
     if (status == 2 && authentication_failed) status = 4;
     cancel_check = NULL;
     deadline = total_deadline;
+    if (payload_route &&
+        connect(intf->fd, (struct sockaddr *)&control_peer, control_peer_length) < 0) {
+        status = 3;
+        activated = 0;
+        intf->abort = 1;
+    }
     if (activated) {
         struct ipmi_rs *closed = sol_control(intf, IPMI_DEACTIVATE_PAYLOAD, exchange);
         if (closed) {

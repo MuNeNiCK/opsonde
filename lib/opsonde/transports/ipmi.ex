@@ -26,7 +26,6 @@ defmodule Opsonde.Transports.IPMI do
           case result.status do
             0 -> {:applied, nil}
             5 -> {:failed, "BMC rejected SOL activation"}
-            7 -> {:failed, "SDK cannot use the different SOL UDP port requested by the BMC"}
             _ -> {:unknown, "SOL exchange ended without a complete receipt"}
           end
 
