@@ -121,6 +121,50 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     refute log =~ "Missed"
   end
 
+  @tag ai_unsent_retry: true
+  test "public Case history exposes a retrying unsent AI request without reserved charges",
+       context do
+    proposal_setup!(context)
+    incident = open_case!(context.operator_token, "unsent-ai-usage")
+    assert :ok = CaseDispatchWorker.perform(%Oban.Job{args: %{"case_id" => incident["id"]}})
+    [turn] = Cases.list_turns!(actor: context.operator)
+
+    assert {:error, _error} =
+             Opsonde.Cases.Turn.ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   {:error, error} =
+                     Opsonde.Repo.query("SELECT invocation_context_unavailable", [],
+                       mode: :savepoint
+                     )
+
+                   raise error
+                 end,
+                 respond: fn _request -> flunk("unsent request reached the AI adapter") end
+               }
+             )
+
+    refute_receive {:resolve, _, _}
+    usage = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"]
+    assert usage["budget_charged_units"] == 0
+    assert usage["not_dispatched_invocations"] == 1
+    assert usage["unknown_invocations"] == 0
+    assert usage["unknown_reserved_units"] == 0
+    assert usage["pending_reserved_units"] == 0
+
+    assert [
+             %{
+               "status" => "queued",
+               "usage_status" => "not_dispatched",
+               "dispatch_confirmed" => false,
+               "dispatch_started_at" => nil,
+               "input_tokens" => nil,
+               "output_tokens" => nil
+             }
+           ] = get_data!("/api/v1/cases/#{incident["id"]}/ai-invocations", context.viewer_token)
+  end
+
   test "public Case accounting exposes missing post-dispatch usage instead of zero tokens",
        context do
     proposal_setup!(context)

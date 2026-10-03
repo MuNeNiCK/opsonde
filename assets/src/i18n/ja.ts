@@ -355,6 +355,7 @@ const ja = {
           not_dispatched: "未送信",
         },
         resultStatus: {
+          queued: "再試行待ち",
           completed: "完了",
           failed: "失敗",
           unknown: "不明",

@@ -522,6 +522,14 @@ defmodule Opsonde.Cases do
 
       define :create_ai_invocation_record, action: :create_record
 
+      define :retry_unsent_ai_invocation,
+        action: :retry_unsent,
+        args: [:expected_revision, :before_send_failure]
+
+      define :begin_ai_invocation_dispatch,
+        action: :begin_dispatch,
+        args: [:expected_revision, :request_digest, :reserved_units]
+
       define :record_ai_invocation_outcome,
         action: :record_outcome,
         args: [:expected_revision]

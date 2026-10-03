@@ -241,7 +241,7 @@
       "type": "text"
     },
     {
-      "allow_nil?": false,
+      "allow_nil?": true,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -598,7 +598,7 @@
   ],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "1BAFFD65323C58E333D2C19E9B8D7470920A0E960C3DA1069920AB9D83240C77",
+  "hash": "0C12224B5038894BCB4516081A4BC4AE1994E85075D8F334D489AAE62F91ACC0",
   "identities": [
     {
       "all_tenants?": false,

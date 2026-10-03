@@ -1954,6 +1954,141 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :rejected
   end
 
+  @tag ai_unsent_retry: true
+  test "a proposal Reviewer read fault retries its unsent invocation without stopping the Case",
+       context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("review-unsent-read", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_proposal = Cases.get_proposal!(proposal.id, authorize?: false)
+
+    assert {:error, error} =
+             ReviewDelivery.run(reviewing.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   {:error, error} =
+                     Opsonde.Repo.query("SELECT invocation_context_unavailable", [],
+                       mode: :savepoint
+                     )
+
+                   raise error
+                 end,
+                 respond: fn _request -> flunk("unsent Reviewer was called") end
+               }
+             )
+
+    assert Exception.message(error) =~ "invocation_context_unavailable"
+    refute_receive {:review, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_proposal!(proposal.id, authorize?: false) == before_proposal
+
+    assert [%{status: :queued, dispatch_confirmed: false} = unsent] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert unsent.dispatch_started_at == nil
+    assert unsent.usage_reported == false
+
+    assert :ok =
+             ReviewDelivery.run(reviewing.id,
+               delivery_attempt: 2,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
+                      verdict: :approved,
+                      reason: "The exact effect follows the cited evidence",
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, _, _}
+
+    assert [%{id: invocation_id, status: :completed}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert invocation_id == unsent.id
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 5
+
+    assert :ok = ReviewDelivery.run(reviewing.id)
+    refute_receive {:review, _, _}
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 5
+  end
+
+  @tag ai_unsent_retry: true
+  test "the AI retry action rejects sent, metered, unproved and terminal failures", context do
+    {_incident, run, proposal} = proposal!("unsent-proof", context)
+    selection = Providers.select_reviewer_ai!([], authorize?: false)
+
+    invocation =
+      Cases.create_ai_invocation_record!(
+        %{
+          case_id: proposal.case_id,
+          resolution_run_id: run.id,
+          proposal_id: proposal.id,
+          provider_id: selection.provider_id,
+          assignment_id: selection.assignment_id,
+          role: :reviewer,
+          idempotency_key: "unsent-proof",
+          request_digest: Opsonde.Cases.AIInvocation.request_digest(%{}),
+          provider_revision: selection.provider_revision,
+          assignment_revision: selection.assignment_revision,
+          selection_source: selection.source,
+          reserved_units: 65_536,
+          dispatch_started_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+
+    storage = Ash.Error.Unknown.UnknownError.exception(error: "Storage read failed")
+
+    no_send =
+      AI.Error.exception(category: :failed, message: "Local context failed", dispatched?: false)
+
+    proof = Ash.Error.to_error_class([storage, no_send])
+
+    for error <- [
+          no_send,
+          Ash.Error.to_error_class([storage, %{no_send | dispatched?: true}]),
+          Ash.Error.to_error_class([storage, %{no_send | dispatched?: nil}]),
+          Ash.Error.to_error_class([
+            storage,
+            %{no_send | usage: %AI.Usage{input_tokens: 0, output_tokens: 0}}
+          ])
+        ] do
+      assert {:error, _error} =
+               Cases.retry_unsent_ai_invocation(invocation, invocation.revision, error,
+                 authorize?: false
+               )
+    end
+
+    terminal =
+      Cases.record_ai_invocation_outcome!(
+        invocation,
+        invocation.revision,
+        %{status: :unknown, completed_at: DateTime.utc_now()},
+        authorize?: false
+      )
+
+    assert {:error, _error} =
+             Cases.retry_unsent_ai_invocation(terminal, terminal.revision, proof,
+               authorize?: false
+             )
+
+    assert [%{status: :unknown}] = Cases.list_ai_invocations!(authorize?: false)
+  end
+
   test "an interrupted Reviewer dispatch retries without a human approval request",
        context do
     configure_mode!(:auto, context.admin)

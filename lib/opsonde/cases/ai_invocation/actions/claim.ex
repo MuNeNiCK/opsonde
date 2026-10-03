@@ -59,6 +59,26 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
     end
   end
 
+  defp claim(%{status: :queued} = invocation, arguments, run) do
+    selection = [:provider_id, :provider_revision, :assignment_id, :assignment_revision]
+    remaining = run.max_ai_usage_units - run.ai_usage_units
+
+    with true <-
+           Enum.all?(selection, &(Map.fetch!(invocation, &1) == Map.fetch!(arguments, &1))) ||
+             {:error, "Queued AI assignment changed"},
+         true <- remaining > 0 || {:error, "AI usage limit exhausted"},
+         {:ok, invocation} <-
+           Cases.begin_ai_invocation_dispatch(
+             invocation,
+             invocation.revision,
+             arguments.request_digest,
+             min(remaining, @max_reservation),
+             authorize?: false
+           ) do
+      %AIInvocationClaim{state: :claimed, invocation: invocation}
+    end
+  end
+
   defp claim(%{status: :dispatching} = invocation, _arguments, _run) do
     with {:ok, invocation} <-
            Cases.record_ai_invocation_outcome(
@@ -154,7 +174,9 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   defp unresolved_invocation(%{role: :resolver, turn_id: turn_id}) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(turn_id == ^turn_id and role == :resolver and status == :dispatching)
+    |> Ash.Query.filter(
+      turn_id == ^turn_id and role == :resolver and status in [:queued, :dispatching]
+    )
     |> unresolved_invocation()
   end
 
@@ -162,7 +184,9 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
        when is_binary(turn_id) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(turn_id == ^turn_id and role == :reviewer and status == :dispatching)
+    |> Ash.Query.filter(
+      turn_id == ^turn_id and role == :reviewer and status in [:queued, :dispatching]
+    )
     |> unresolved_invocation()
   end
 
@@ -170,7 +194,7 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
        when is_binary(proposal_id) do
     AIInvocation
     |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(proposal_id == ^proposal_id and status == :dispatching)
+    |> Ash.Query.filter(proposal_id == ^proposal_id and status in [:queued, :dispatching])
     |> unresolved_invocation()
   end
 

@@ -161,6 +161,125 @@ defmodule Opsonde.ResolverDeliveryTest do
     refute_receive {:resolve, _, _}
   end
 
+  @tag ai_unsent_retry: true
+  test "a Resolver callback read fault retries the same unsent invocation without changing the decision",
+       context do
+    {incident, run, turn} = turn!("resolver-unsent-read", context.operator)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+
+    assert {:error, error} =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   {:error, error} =
+                     Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
+
+                   raise error
+                 end,
+                 respond: fn _request -> flunk("unsent Resolver was called") end
+               }
+             )
+
+    assert %Ash.Error.Unknown{} = error
+    assert Exception.message(error) =~ "invocation_context_unavailable"
+    refute_receive {:resolve, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+
+    assert [%{status: :queued, dispatch_confirmed: false} = unsent] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert unsent.usage_reported == false
+    assert unsent.dispatch_started_at == nil
+    parent = self()
+
+    retry =
+      Task.async(fn ->
+        ResolverDelivery.run(turn.id,
+          ai_invocation: %{
+            test_pid: parent,
+            respond: fn _request ->
+              {:ok,
+               %AI.ResolverDecision{
+                 intent: %AI.TargetSearch{
+                   query: "linux-01 disk errors",
+                   reason: "Find the affected registered Target"
+                 },
+                 usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+               }}
+            end
+          }
+        )
+      end)
+
+    assert :ok = Task.await(retry, 5_000)
+
+    assert_receive {:resolve, _, _}
+
+    assert [%{id: invocation_id, status: :completed}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert invocation_id == unsent.id
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    assert :ok = ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+    refute_receive {:resolve, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+  end
+
+  @tag ai_unsent_retry: true
+  test "an unsent retry save failure retains the unknown-response marker instead of resending",
+       context do
+    {_incident, run, turn} = turn!("resolver-unsent-save-failure", context.operator)
+
+    try do
+      assert {:error, error} =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     Repo.query!(
+                       "ALTER TABLE ai_invocations RENAME COLUMN dispatch_started_at TO unavailable_dispatch_started_at"
+                     )
+
+                     {:error, error} =
+                       Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
+
+                     raise error
+                   end,
+                   respond: fn _request -> flunk("unsent request was dispatched") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "invocation_context_unavailable"
+      assert Exception.message(error) =~ "dispatch_started_at"
+    after
+      Repo.query!(
+        "ALTER TABLE ai_invocations RENAME COLUMN unavailable_dispatch_started_at TO dispatch_started_at"
+      )
+    end
+
+    refute_receive {:resolve, _, _}
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert [%{status: :dispatching} = interrupted] = Cases.list_ai_invocations!(authorize?: false)
+
+    assert :ok =
+             ResolverWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+    refute_receive {:resolve, _, _}
+
+    assert [%{status: :unknown, id: invocation_id}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert invocation_id == interrupted.id
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             interrupted.reserved_units
+  end
+
   test "result and AI usage commit once after a durable exact assignment", context do
     {incident, run, turn} = turn!("success", context.operator)
 

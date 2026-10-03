@@ -54,7 +54,42 @@ defmodule Opsonde.Cases.AIInvocation do
       ]
 
       change set_attribute(:status, :dispatching)
+      validate present(:dispatch_started_at)
       validate Opsonde.Cases.AIInvocation.Validations.Subject
+    end
+
+    update :retry_unsent do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :before_send_failure, :term, allow_nil?: false, sensitive?: true
+      change set_attribute(:status, :queued)
+      validate Opsonde.Validations.CurrentRevision
+      validate changing(:status, from: :dispatching)
+      validate Opsonde.Cases.AIInvocation.Validations.Unsent
+      change set_attribute(:dispatch_started_at, nil)
+      change set_attribute(:dispatch_confirmed, false)
+      change optimistic_lock(:revision)
+    end
+
+    update :begin_dispatch do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :request_digest, :string,
+        allow_nil?: false,
+        constraints: [min_length: 64, max_length: 64]
+
+      argument :reserved_units, :integer, allow_nil?: false, constraints: [min: 1]
+      change set_attribute(:status, :dispatching)
+      change set_attribute(:request_digest, arg(:request_digest))
+      change set_attribute(:reserved_units, arg(:reserved_units))
+      validate Opsonde.Validations.CurrentRevision
+      validate changing(:status, from: :queued)
+      change set_attribute(:dispatch_started_at, &DateTime.utc_now/0)
+      change set_attribute(:dispatch_confirmed, nil)
+      change optimistic_lock(:revision)
     end
 
     update :record_outcome do
@@ -116,7 +151,15 @@ defmodule Opsonde.Cases.AIInvocation do
       authorize_if actor_attribute_equals(:role, :viewer)
     end
 
-    policy action([:read, :by_idempotency, :create_record, :record_outcome, :claim]) do
+    policy action([
+             :read,
+             :by_idempotency,
+             :create_record,
+             :record_outcome,
+             :retry_unsent,
+             :begin_dispatch,
+             :claim
+           ]) do
       forbid_if always()
     end
   end
@@ -132,7 +175,7 @@ defmodule Opsonde.Cases.AIInvocation do
     attribute :status, :atom,
       allow_nil?: false,
       public?: true,
-      constraints: [one_of: [:dispatching, :completed, :failed, :unknown]]
+      constraints: [one_of: [:queued, :dispatching, :completed, :failed, :unknown]]
 
     attribute :idempotency_key, :string,
       allow_nil?: false,
@@ -164,7 +207,7 @@ defmodule Opsonde.Cases.AIInvocation do
       constraints: [max_length: 200, length_count: :bytes, match: ~r/\A\//, trim?: false]
 
     attribute :result_digest, :string, constraints: [min_length: 64, max_length: 64]
-    attribute :dispatch_started_at, :utc_datetime_usec, allow_nil?: false
+    attribute :dispatch_started_at, :utc_datetime_usec
     attribute :completed_at, :utc_datetime_usec
     attribute :revision, :integer, allow_nil?: false, default: 1, constraints: [min: 1]
     timestamps()
@@ -256,6 +299,11 @@ defmodule Opsonde.Cases.AIInvocation do
     if latest.rejection_path,
       do: Map.put(context, "rejection_path", latest.rejection_path),
       else: context
+  end
+
+  def retryable_unsent?(error) do
+    AI.Error.context_failure?(error) and
+      match?(%AI.Error{dispatched?: false, usage: nil}, AI.Error.find(error))
   end
 
   def failure_accounting(error, reserved_units) do

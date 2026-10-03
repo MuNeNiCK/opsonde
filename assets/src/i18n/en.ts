@@ -360,6 +360,7 @@ const en = {
           not_dispatched: "Not sent",
         },
         resultStatus: {
+          queued: "Awaiting retry",
           completed: "Completed",
           failed: "Failed",
           unknown: "Unknown",

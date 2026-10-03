@@ -4659,6 +4659,91 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  @tag ai_unsent_retry: true
+  test "a Recovery Reviewer read fault retries its unsent invocation without requiring attention",
+       context do
+    {incident, run, turn, _evidence} = recovery_conclusion!(context, "recovery-unsent-read")
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    before_case = Cases.get_case!(incident.id, authorize?: false)
+    before_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    before_turn = Cases.get_turn!(turn.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    assert {:error, error} =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 cancelled?: fn ->
+                   {:error, error} =
+                     Opsonde.Repo.query("SELECT invocation_context_unavailable", [],
+                       mode: :savepoint
+                     )
+
+                   raise error
+                 end,
+                 respond: fn _request -> flunk("unsent Recovery Reviewer was called") end
+               }
+             )
+
+    assert Exception.message(error) =~ "invocation_context_unavailable"
+    refute_receive {:review_recovery, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false) == before_case
+    assert Cases.get_resolution_run!(run.id, authorize?: false) == before_run
+    assert Cases.get_turn!(turn.id, authorize?: false) == before_turn
+
+    [unsent] =
+      Cases.list_ai_invocations!(authorize?: false)
+      |> Enum.reject(fn invocation ->
+        Enum.any?(before_invocations, &(&1.id == invocation.id))
+      end)
+
+    assert unsent.status == :queued
+    assert unsent.dispatch_confirmed == false
+    assert unsent.dispatch_started_at == nil
+    assert unsent.usage_reported == false
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               delivery_attempt: 2,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   assert request.retry_context == nil
+
+                   {:ok,
+                    %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
+                      verdict: :approved,
+                      reason: "The claimed facts support the stated recovery",
+                      desired_outcome_assessment: %{
+                        "symptom_id" => request.case_symptom.id,
+                        "desired_outcome" => request.case_symptom.desired_outcome,
+                        "evidence_ids" => request.conclusion.evidence_ids,
+                        "status" => "supported",
+                        "reason" => "The observed service state satisfies the desired outcome"
+                      },
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review_recovery, _, _}
+    assert Cases.get_case!(incident.id, authorize?: false).status == :resolved
+
+    completed = Enum.find(Cases.list_ai_invocations!(authorize?: false), &(&1.id == unsent.id))
+    assert completed.status == :completed
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 6
+
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
+    refute_receive {:review_recovery, _, _}
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_run.ai_usage_units + 6
+  end
+
   @tag recovery_caller_cancellation: true
   test "Recovery Reviewer honors caller cancellation without sending or charging", context do
     {incident, run, turn, _evidence} =

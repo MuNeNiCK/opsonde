@@ -275,6 +275,14 @@ defmodule OpsondeCLI.CLITest do
             input_tokens: nil,
             output_tokens: nil,
             reserved_units: 65_536
+          },
+          %{
+            status: "queued",
+            usage_status: "not_dispatched",
+            dispatch_confirmed: false,
+            dispatch_started_at: nil,
+            input_tokens: nil,
+            output_tokens: nil
           }
         ],
         page: %{next: nil}
@@ -296,6 +304,14 @@ defmodule OpsondeCLI.CLITest do
                "input_tokens" => nil,
                "output_tokens" => nil,
                "reserved_units" => 65_536
+             },
+             %{
+               "status" => "queued",
+               "usage_status" => "not_dispatched",
+               "dispatch_confirmed" => false,
+               "dispatch_started_at" => nil,
+               "input_tokens" => nil,
+               "output_tokens" => nil
              }
            ] = output["data"]
   end

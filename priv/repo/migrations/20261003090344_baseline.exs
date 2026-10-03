@@ -1936,7 +1936,7 @@ defmodule Opsonde.Repo.Migrations.Baseline do
       add :failure_code, :text
       add :rejection_path, :text
       add :result_digest, :text
-      add :dispatch_started_at, :utc_datetime_usec, null: false
+      add :dispatch_started_at, :utc_datetime_usec
       add :completed_at, :utc_datetime_usec
       add :revision, :bigint, null: false, default: 1
 

@@ -255,7 +255,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       turn_id: nullable_uuid(),
       proposal_id: nullable_uuid(),
       role: enum(~w(resolver reviewer)),
-      status: enum(~w(dispatching completed failed unknown)),
+      status: enum(~w(queued dispatching completed failed unknown)),
       usage_status: enum(~w(reported unknown pending not_dispatched)),
       dispatch_confirmed: %Schema{type: :boolean, nullable: true},
       reserved_units: positive_integer(),
@@ -264,7 +264,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       cached_tokens: nullable_non_negative_integer(),
       reasoning_tokens: nullable_non_negative_integer(),
       finish_reason: nullable_string(40),
-      dispatch_started_at: Schemas.timestamp(),
+      dispatch_started_at: nullable_timestamp(),
       completed_at: nullable_timestamp()
     }
 

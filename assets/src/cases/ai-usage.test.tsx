@@ -13,7 +13,7 @@ test("shows service-reported zero separately from unmeasured calls and budget re
     reported_invocations: 2,
     unknown_invocations: 1,
     pending_invocations: 0,
-    not_dispatched_invocations: 0,
+    not_dispatched_invocations: 1,
     budget_charged_units: 65562,
     unknown_reserved_units: 65536,
     pending_reserved_units: 0,
@@ -39,6 +39,17 @@ test("shows service-reported zero separately from unmeasured calls and budget re
     <CaseAIUsage
       usage={usage}
       invocations={[
+        {
+          ...common,
+          id: "unsent",
+          status: "queued",
+          usage_status: "not_dispatched",
+          dispatch_confirmed: false,
+          dispatch_started_at: null,
+          completed_at: null,
+          input_tokens: null,
+          output_tokens: null,
+        },
         { ...common, id: "zero", usage_status: "reported", input_tokens: 0, output_tokens: 0 },
         {
           ...common,
@@ -58,6 +69,9 @@ test("shows service-reported zero separately from unmeasured calls and budget re
   const unknown = screen.getByRole("row", { name: /Unmeasured/ });
   expect(within(unknown).getAllByText("Unavailable").length).toBeGreaterThanOrEqual(2);
   expect(within(unknown).queryByText("0")).toBeNull();
+  const unsent = screen.getByRole("row", { name: /Awaiting retry/ });
+  expect(within(unsent).getByText("Not sent")).toBeTruthy();
+  expect(within(unsent).queryByText("0")).toBeNull();
   const rows = screen.getAllByRole("row", { name: /Reported/ });
   expect(within(rows[0]!).getAllByText("0")).toHaveLength(2);
   expect(within(rows[1]!).getByText("17")).toBeTruthy();

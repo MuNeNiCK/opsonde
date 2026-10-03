@@ -3007,7 +3007,7 @@ export interface components {
             completed_at: string | null;
             dispatch_confirmed: boolean | null;
             /** Format: date-time */
-            dispatch_started_at: string;
+            dispatch_started_at: string | null;
             finish_reason: string | null;
             /** Format: uuid */
             id: string;
@@ -3024,7 +3024,7 @@ export interface components {
             /** @enum {string} */
             role: "resolver" | "reviewer";
             /** @enum {string} */
-            status: "dispatching" | "completed" | "failed" | "unknown";
+            status: "queued" | "dispatching" | "completed" | "failed" | "unknown";
             /** Format: uuid */
             turn_id: string | null;
             /** @enum {string} */

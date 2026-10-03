@@ -72,7 +72,19 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         accept_decision(turn, selection, request, claim.invocation, decision)
 
       {:error, error} ->
-        handle_failure(turn, error, claim.invocation)
+        if AIInvocation.retryable_unsent?(error) do
+          case Cases.retry_unsent_ai_invocation(
+                 claim.invocation,
+                 claim.invocation.revision,
+                 error,
+                 authorize?: false
+               ) do
+            {:ok, _queued} -> {:error, error}
+            {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
+          end
+        else
+          handle_failure(turn, error, claim.invocation)
+        end
     end
   end
 

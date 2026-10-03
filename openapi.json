@@ -5741,6 +5741,7 @@
           },
           "dispatch_started_at": {
             "format": "date-time",
+            "nullable": true,
             "type": "string"
           },
           "finish_reason": {
@@ -5793,6 +5794,7 @@
           },
           "status": {
             "enum": [
+              "queued",
               "dispatching",
               "completed",
               "failed",

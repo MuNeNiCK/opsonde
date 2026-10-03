@@ -83,7 +83,19 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         end
 
       {:error, error} ->
-        persist_failure(proposal, error, claim.invocation, opts)
+        if AIInvocation.retryable_unsent?(error) do
+          case Cases.retry_unsent_ai_invocation(
+                 claim.invocation,
+                 claim.invocation.revision,
+                 error,
+                 authorize?: false
+               ) do
+            {:ok, _queued} -> {:error, error}
+            {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
+          end
+        else
+          persist_failure(proposal, error, claim.invocation, opts)
+        end
     end
   end
 
