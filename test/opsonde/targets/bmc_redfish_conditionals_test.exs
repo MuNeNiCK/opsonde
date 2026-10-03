@@ -31,6 +31,8 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     end
 
     defp route(%{method: "GET", request_path: "/redfish/v1/Systems"} = conn, agent) do
+      if Agent.get(agent, &Map.get(&1, :delay_power?, false)), do: Process.sleep(300)
+
       if Agent.get(agent, &Map.get(&1, :no_system, false)),
         do: send_resp(conn, 404, ""),
         else: json(conn, 200, %{"Members" => [%{"@odata.id" => @system_path}]})
@@ -108,6 +110,12 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     defp route(%{method: "GET", request_path: @system_path} = conn, agent) do
       state = Agent.get(agent, & &1)
+      reset = %{"target" => @system_path <> "/Actions/ComputerSystem.Reset"}
+
+      reset =
+        if Map.get(state, :action_info?, false),
+          do: Map.put(reset, "@Redfish.ActionInfo", @system_path <> "/ResetActionInfo"),
+          else: Map.put(reset, "ResetType@Redfish.AllowableValues", ["ForceOff", "On"])
 
       conn
       |> put_resp_header("etag", ~s("rev-#{state.revision}"))
@@ -117,11 +125,19 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         "PowerState" => state.power,
         "Name" => state.name,
         "Actions" => %{
-          "#ComputerSystem.Reset" => %{
-            "target" => @system_path <> "/Actions/ComputerSystem.Reset",
-            "ResetType@Redfish.AllowableValues" => ["ForceOff", "On"]
-          }
+          "#ComputerSystem.Reset" => reset
         }
+      })
+    end
+
+    defp route(
+           %{method: "GET", request_path: "/redfish/v1/Systems/1/ResetActionInfo"} = conn,
+           agent
+         ) do
+      if Agent.get(agent, &Map.get(&1, :delay_power?, false)), do: Process.sleep(300)
+
+      json(conn, 200, %{
+        "Parameters" => [%{"Name" => "ResetType", "AllowableValues" => ["ForceOff", "On"]}]
       })
     end
 
@@ -135,6 +151,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       case Jason.decode!(body) do
         %{"ResetType" => "ForceOff"} ->
           Agent.update(agent, &%{&1 | power: "Off", writes: &1.writes + 1})
+          if Agent.get(agent, &Map.get(&1, :delay_power?, false)), do: Process.sleep(300)
           json(conn, 200, %{})
 
         _ ->
@@ -321,6 +338,124 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       conn
       |> put_resp_content_type("application/json")
       |> send_resp(status, Jason.encode!(value))
+    end
+  end
+
+  for {kind, fault_path, fault_mode} <- [
+        {:capabilities, "/redfish/v1/Systems", :raise},
+        {:capabilities, "/redfish/v1/Systems/1/ResetActionInfo", :raise},
+        {:capabilities, "/redfish/v1/Systems", :cancel},
+        {:capabilities, "/redfish/v1/Systems/1/ResetActionInfo", :cancel},
+        {:observation, "/redfish/v1/Systems", :raise},
+        {:verification, "/redfish/v1/Systems", :raise},
+        {:effect, "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset", :raise}
+      ] do
+    @tag power_context_fault: true,
+         power_kind: kind,
+         power_fault_path: fault_path,
+         power_fault_mode: fault_mode
+    test "Redfish #{kind} retains native power #{fault_mode} at #{fault_path}", context do
+      kind = context.power_kind
+
+      method =
+        Targets.update_access_method!(
+          context.method,
+          context.method.revision,
+          %{capabilities: context.method.capabilities ++ ["effect.power"]},
+          actor: context.admin
+        )
+
+      method = Targets.check_access_method!(method.id, method.revision, %{}, actor: context.admin)
+      context = %{context | method: method}
+
+      Agent.update(
+        context.agent,
+        &Map.merge(&1, %{
+          paths: [],
+          delay_power?: true,
+          action_info?: String.ends_with?(context.power_fault_path, "ResetActionInfo")
+        })
+      )
+
+      callback = fn ->
+        fault? =
+          Agent.get(context.agent, fn peer ->
+            if kind == :effect, do: peer.writes > 0, else: context.power_fault_path in peer.paths
+          end)
+
+        if fault? do
+          if context.power_fault_mode == :raise do
+            {:error, cause} =
+              Opsonde.Repo.query("SELECT redfish_power_context_unavailable", [], mode: :savepoint)
+
+            raise cause
+          end
+        end
+
+        fault? and context.power_fault_mode == :cancel
+      end
+
+      invocation = %{cancelled?: callback}
+
+      result =
+        if kind == :capabilities do
+          Providers.target_capabilities(
+            method.provider_id,
+            %Target.CapabilitiesRequest{
+              provider_revision: method.provider_revision,
+              connection: %Target.Connection{endpoint: method.endpoint}
+            },
+            invocation,
+            actor: context.admin
+          )
+        else
+          input =
+            file_request(
+              context,
+              kind,
+              if(kind == :effect, do: %{"observed_power_state" => "on"}, else: %{})
+            )
+
+          input = %{
+            input
+            | capability: if(kind == :effect, do: "effect.power", else: "observe.power"),
+              operation: if(kind == :effect, do: "bmc.power.off", else: "bmc.power.inspect")
+          }
+
+          clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+          dispatch =
+            case kind do
+              :observation -> &Targets.dispatch_target_observation/3
+              :verification -> &Targets.dispatch_target_verification/3
+              :effect -> &Targets.dispatch_target_effect/3
+            end
+
+          dispatch.(clearance, invocation, actor: context.operator, authorize?: false)
+        end
+
+      assert {:error, error} = result
+
+      if context.power_fault_mode == :raise do
+        assert Exception.message(error) =~ "redfish_power_context_unavailable"
+        assert Target.Error.context_failure?(error)
+      else
+        assert Target.Error.unwrap(error).category == :cancelled
+        refute Target.Error.context_failure?(error)
+      end
+
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+
+      if kind == :effect do
+        assert Target.Error.context_progress(error) == %{
+                 "reset_type" => "ForceOff",
+                 "pre_power_state" => "on"
+               }
+      end
+
+      peer = Agent.get(context.agent, & &1)
+      assert Enum.count(peer.paths, &(&1 == "/redfish/v1/Systems")) == 1
+      assert peer.writes == if(kind == :effect, do: 1, else: 0)
     end
   end
 
@@ -1837,6 +1972,27 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       operation: "bmc.power.inspect",
       authorization_digest: "fixture"
     }
+
+    before_paths = Agent.get(context.agent, & &1.paths)
+
+    for {message, callback} <- [
+          {"redfish_initial_power_context_unavailable",
+           fn ->
+             {:error, cause} =
+               Opsonde.Repo.query("SELECT redfish_initial_power_context_unavailable", [],
+                 mode: :savepoint
+               )
+
+             raise cause
+           end},
+          {"redfish_initial_power_throw", fn -> throw(:redfish_initial_power_throw) end}
+        ] do
+      assert {:error, %Target.BeforeSendError{cause: cause}} =
+               Redfish.observe(state, observation, %{cancelled?: callback})
+
+      assert Exception.message(cause) =~ message
+      assert Agent.get(context.agent, & &1.paths) == before_paths
+    end
 
     assert {:ok, %Target.Observation{facts: %{"power_state" => "on"}}} =
              Redfish.observe(state, observation, %{})

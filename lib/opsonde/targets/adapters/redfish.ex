@@ -98,33 +98,39 @@ defmodule Opsonde.Targets.Adapters.Redfish do
   end
 
   @impl Opsonde.Providers.Target
-  def capabilities(state, _invocation) do
-    power = power_capabilities(state)
-
-    {:ok,
-     %Target.Capabilities{
-       observations: power.observations ++ [method_read_operation(), task_read_operation()],
-       effects: power.effects ++ [method_effect_operation()]
-     }}
+  def capabilities(state, invocation) do
+    with {:ok, power} <- power_capabilities(state, invocation) do
+      {:ok,
+       %Target.Capabilities{
+         observations: power.observations ++ [method_read_operation(), task_read_operation()],
+         effects: power.effects ++ [method_effect_operation()]
+       }}
+    end
   end
 
-  defp power_capabilities(state) do
-    with {:ok, system} <- system(state),
+  defp power_capabilities(state, invocation) do
+    with {:ok, system} <- system(state, invocation),
          {:ok, _power} <- power_state(system) do
       capabilities = PowerControl.capabilities()
 
-      effects =
-        case reset_action(state, system) do
-          {:ok, _target, allowed} ->
-            Enum.filter(capabilities.effects, &(@reset_types[&1.operation] in allowed))
+      case reset_action(state, system, invocation) do
+        {:ok, _target, allowed} ->
+          effects = Enum.filter(capabilities.effects, &(@reset_types[&1.operation] in allowed))
+          {:ok, %{capabilities | effects: effects}}
 
-          _ ->
-            []
-        end
+        {:error, _} = error ->
+          error
 
-      %{capabilities | effects: effects}
+        {:error, :cancelled, _} = error ->
+          error
+
+        _ ->
+          {:ok, %{capabilities | effects: []}}
+      end
     else
-      _ -> %Target.Capabilities{observations: [], effects: []}
+      {:error, _} = error -> error
+      {:error, :cancelled, _} = error -> error
+      _ -> {:ok, %Target.Capabilities{observations: [], effects: []}}
     end
   end
 
@@ -178,11 +184,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- PowerControl.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
          :ok <- not_cancelled(invocation),
-         {:ok, system} <- system(state),
+         {:ok, system} <- system(state, invocation),
          {:ok, power} <- power_state(system) do
       {:ok, PowerControl.observation(power, state.expected_uuid, "redfish")}
     else
       false -> {:error, :failed, "Redfish observation request is invalid"}
+      {:error, _} = error -> error
       {:error, category, message} -> read_error(category, message)
     end
   end
@@ -195,14 +202,14 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- request.connection.endpoint == state.endpoint,
          {:ok, intent} <- PowerControl.effect_request(request),
          :ok <- not_cancelled(invocation),
-         {:ok, system} <- system(state),
+         {:ok, system} <- system(state, invocation),
          {:ok, observed} <- power_state(system),
          :ok <- PowerControl.expected_state(intent.expected, observed),
-         {:ok, action_path, allowed} <- reset_action(state, system),
+         {:ok, action_path, allowed} <- reset_action(state, system, invocation),
          reset_type when is_binary(reset_type) <- @reset_types[intent.operation],
          true <- reset_type in allowed,
          :ok <- not_cancelled(invocation) do
-      case request(state, :post, action_path, %{"ResetType" => reset_type}) do
+      case request(state, :post, action_path, %{"ResetType" => reset_type}, [], %{}, invocation) do
         {:ok, status, _headers, _body} when status in [200, 201, 204] ->
           {:ok,
            %Target.EffectResult{
@@ -224,22 +231,40 @@ defmodule Opsonde.Targets.Adapters.Redfish do
                |> maybe_retry_after(protected)
            }}
 
-        {:error, :transport, _message} ->
+        {:error, category, message} when category in [:transport, :cancelled] ->
           {:ok,
            %Target.EffectResult{
              status: :unknown,
              reference: intent.operation,
-             details: %{"reason" => "Redfish reset response was lost after dispatch"}
+             details: %{
+               "reason" =>
+                 if(category == :cancelled,
+                   do: message,
+                   else: "Redfish reset response was lost after dispatch"
+                 )
+             }
            }}
 
         {:error, _category, message} ->
           {:error, :failed, message}
+
+        {:error, %{errors: errors} = cause} when is_list(errors) ->
+          {:error,
+           Target.Error.context_failure(cause, %{
+             "reset_type" => reset_type,
+             "pre_power_state" => observed
+           })}
+
+        {:error, _} = error ->
+          error
 
         _ ->
           {:error, :failed, "Redfish reset was rejected"}
       end
     else
       false -> {:error, :failed, "Redfish reset request or allowed value is invalid"}
+      {:error, _} = error -> error
+      {:error, :cancelled, _} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
       _ -> {:error, :failed, "Redfish reset type is unavailable"}
     end
@@ -276,7 +301,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     with true <- request.connection.endpoint == state.endpoint,
          true <- PowerControl.inspect_request?(request),
          :ok <- not_cancelled(invocation),
-         {:ok, system} <- system(state),
+         {:ok, system} <- system(state, invocation),
          {:ok, power} <- power_state(system) do
       verification =
         PowerControl.verification(power, state.expected_uuid, "redfish", request.expected)
@@ -289,6 +314,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       {:ok, verification}
     else
       false -> {:error, :failed, "Redfish verification request is invalid"}
+      {:error, _} = error -> error
       {:error, category, message} -> read_error(category, message)
     end
   end
@@ -725,7 +751,8 @@ defmodule Opsonde.Targets.Adapters.Redfish do
      }}
   end
 
-  defp effect_response(_state, {:error, :transport, message}, reference, _details) do
+  defp effect_response(_state, {:error, category, message}, reference, _details)
+       when category in [:transport, :cancelled] do
     {:ok,
      %Target.EffectResult{
        status: :unknown,
@@ -934,56 +961,62 @@ defmodule Opsonde.Targets.Adapters.Redfish do
     end
   end
 
-  defp system(%State{system_path: nil}),
+  defp system(%State{system_path: nil}, _invocation),
     do: {:error, :failed, "No Redfish System is selected for power operations"}
 
-  defp system(state) do
+  defp system(state, invocation) do
     with {:ok, 200, collection, _pages, _headers} <-
-           read_api_resource(state, :get, "/redfish/v1/Systems", %{}, %{}),
+           read_api_resource(state, :get, "/redfish/v1/Systems", %{}, invocation),
          members when is_list(members) <- collection["Members"],
          true <- Enum.any?(members, &(&1["@odata.id"] == state.system_path)),
-         {:ok, 200, _headers, system} <- request(state, :get, state.system_path, nil),
+         {:ok, 200, _headers, system} <-
+           request(state, :get, state.system_path, nil, [], %{}, invocation),
          true <- system["@odata.id"] == state.system_path,
          true <- system["UUID"] == state.expected_uuid do
       {:ok, system}
     else
       false -> {:error, :identity, "Redfish System identity does not match the configured host"}
       {:error, _category, _message} = error -> error
+      {:error, _} = error -> error
       _ -> {:error, :failed, "Redfish System response is invalid"}
     end
   end
 
-  defp reset_action(state, system) do
+  defp reset_action(state, system, invocation) do
     with %{"target" => target} = action <- get_in(system, ["Actions", "#ComputerSystem.Reset"]),
          {:ok, path} <- action_path(state, target),
-         {:ok, allowed} <- allowable_values(state, action),
+         {:ok, allowed} <- allowable_values(state, action, invocation),
          true <- Enum.all?(allowed, &is_binary/1) do
       {:ok, path, allowed}
     else
+      {:error, _} = error -> error
+      {:error, :cancelled, _} = error -> error
       _ -> {:error, :failed, "Redfish System does not advertise a usable reset action"}
     end
   end
 
-  defp allowable_values(_state, %{"ResetType@Redfish.AllowableValues" => allowed})
+  defp allowable_values(_state, %{"ResetType@Redfish.AllowableValues" => allowed}, _invocation)
        when is_list(allowed),
        do: {:ok, allowed}
 
-  defp allowable_values(state, %{"@Redfish.ActionInfo" => info_uri}) do
+  defp allowable_values(state, %{"@Redfish.ActionInfo" => info_uri}, invocation) do
     with {:ok, info_path} <- resource_path(state, info_uri),
          true <- String.starts_with?(info_path, state.system_path <> "/"),
          {:ok, 200, _headers, %{"Parameters" => parameters}} <-
-           request(state, :get, info_path, nil),
+           request(state, :get, info_path, nil, [], %{}, invocation),
          true <- is_list(parameters),
          %{"AllowableValues" => allowed} <-
            Enum.find(parameters, &(is_map(&1) and &1["Name"] == "ResetType")),
          true <- is_list(allowed) do
       {:ok, allowed}
     else
+      {:error, _} = error -> error
+      {:error, :cancelled, _} = error -> error
       _ -> {:error, :failed, "Redfish reset ActionInfo is unavailable"}
     end
   end
 
-  defp allowable_values(_state, _action),
+  defp allowable_values(_state, _action, _invocation),
     do: {:error, :failed, "Redfish reset allowable values are unavailable"}
 
   defp action_path(state, target) when is_binary(target) do
@@ -1094,7 +1127,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         {:error, :transport, message}
 
       {:error, :cancelled, _message} ->
-        {:error, :transport, "Redfish response was cancelled after dispatch"}
+        {:error, :cancelled, "Redfish response was cancelled after dispatch"}
 
       {:error, category, message} ->
         {:error, category, message}
@@ -1155,6 +1188,12 @@ defmodule Opsonde.Targets.Adapters.Redfish do
 
   defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
     if callback.(), do: {:error, :cancelled, "Redfish request was cancelled"}, else: :ok
+  rescue
+    cause -> {:error, Target.BeforeSendError.exception(cause: cause)}
+  catch
+    kind, reason ->
+      {:error,
+       Target.BeforeSendError.exception(cause: ErlangError.exception(original: {kind, reason}))}
   end
 
   defp not_cancelled(_invocation), do: :ok
