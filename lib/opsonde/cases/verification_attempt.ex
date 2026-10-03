@@ -99,11 +99,37 @@ defmodule Opsonde.Cases.VerificationAttempt do
       change optimistic_lock(:revision)
     end
 
+    update :retry_unsent do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :before_send_failure, :struct,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [instance_of: Opsonde.Providers.Target.BeforeSendError]
+
+      filter expr(status == :dispatching)
+      validate Opsonde.Validations.CurrentRevision
+      change set_attribute(:status, :queued)
+      change set_attribute(:dispatch_started_at, nil)
+      change optimistic_lock(:revision)
+    end
+
     update :record_no_send do
       accept [:outcome_category, :facts, :provider_evidence, :observed_at, :completed_at]
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
-      filter expr(status == :queued)
+
+      argument :before_send_failure, :struct,
+        sensitive?: true,
+        constraints: [instance_of: Opsonde.Providers.Target.BeforeSendError]
+
+      validate attribute_equals(:status, :queued) do
+        where absent(:before_send_failure)
+      end
+
+      filter expr(status in [:queued, :dispatching])
       validate Opsonde.Validations.CurrentRevision
       validate present(:outcome_category)
       validate present(:observed_at)
@@ -111,6 +137,7 @@ defmodule Opsonde.Cases.VerificationAttempt do
       validate {Opsonde.Validations.BoundedMap, attribute: :facts}
       validate {Opsonde.Validations.BoundedMap, attribute: :provider_evidence}
       change set_attribute(:status, :unknown)
+      change set_attribute(:dispatch_started_at, nil)
       change optimistic_lock(:revision)
     end
 
@@ -141,6 +168,7 @@ defmodule Opsonde.Cases.VerificationAttempt do
              :by_operation,
              :create_record,
              :mark_dispatching,
+             :retry_unsent,
              :record_outcome,
              :record_no_send,
              :accept,

@@ -46,9 +46,10 @@ defmodule Opsonde.Cases.Operation.Delivery do
         )
       end)
 
-    outcome = dispatch_target(operation, clearance, invocation, actor)
-
-    persist_and_handoff(operation, outcome)
+    case dispatch_target(operation, clearance, invocation, actor) do
+      {:error, %ProviderTarget.BeforeSendError{} = error} -> unsent(operation, error)
+      outcome -> persist_and_handoff(operation, outcome)
+    end
   end
 
   defp dispatch_target(%{request_kind: :observation}, clearance, invocation, actor) do
@@ -56,8 +57,14 @@ defmodule Opsonde.Cases.Operation.Delivery do
            actor: actor,
            authorize?: false
          ) do
-      {:ok, %ProviderTarget.Observation{} = result} -> normalize(result)
-      {:error, error} -> failed_observation(error)
+      {:ok, %ProviderTarget.Observation{} = result} ->
+        normalize(result)
+
+      {:error, error} ->
+        case ProviderTarget.BeforeSendError.unwrap(error) do
+          nil -> failed_observation(error)
+          unsent -> {:error, unsent}
+        end
     end
   end
 
@@ -66,8 +73,38 @@ defmodule Opsonde.Cases.Operation.Delivery do
            actor: actor,
            authorize?: false
          ) do
-      {:ok, %ProviderTarget.EffectResult{} = result} -> normalize(result)
-      {:error, _error} -> unknown("dispatch_error", "Target dispatch result is unknown")
+      {:ok, %ProviderTarget.EffectResult{} = result} ->
+        normalize(result)
+
+      {:error, error} ->
+        case ProviderTarget.BeforeSendError.unwrap(error) do
+          nil -> unknown("dispatch_error", "Target dispatch result is unknown")
+          unsent -> {:error, unsent}
+        end
+    end
+  end
+
+  defp unsent(operation, error) do
+    if ProviderTarget.BeforeSendError.retryable?(error) do
+      case Cases.retry_unsent_operation(operation, operation.revision, error, authorize?: false) do
+        {:ok, _queued} -> {:error, error.cause}
+        {:error, save_error} -> {:error, Ash.Error.to_error_class([error.cause, save_error])}
+      end
+    else
+      case Cases.record_operation_no_send(
+             operation,
+             operation.revision,
+             %{
+               before_send_failure: error,
+               outcome_category: "input_unavailable",
+               result_details: %{"message" => "Target request input is unavailable"},
+               completed_at: DateTime.utc_now()
+             },
+             authorize?: false
+           ) do
+        {:ok, terminal} -> handoff(terminal)
+        {:error, save_error} -> {:error, Ash.Error.to_error_class([error.cause, save_error])}
+      end
     end
   end
 

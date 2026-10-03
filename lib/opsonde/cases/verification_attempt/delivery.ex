@@ -37,11 +37,47 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
         {:ok, %ProviderTarget.Verification{} = result} ->
           normalize(result)
 
-        {:error, _error} ->
-          unknown("verification_error", "Fresh verification result is unknown")
+        {:error, error} ->
+          case ProviderTarget.BeforeSendError.unwrap(error) do
+            nil -> unknown("verification_error", "Fresh verification result is unknown")
+            unsent -> {:error, unsent}
+          end
       end
 
-    persist_and_handoff(attempt, outcome)
+    case outcome do
+      {:error, %ProviderTarget.BeforeSendError{} = error} -> unsent(attempt, error)
+      outcome -> persist_and_handoff(attempt, outcome)
+    end
+  end
+
+  defp unsent(attempt, error) do
+    if ProviderTarget.BeforeSendError.retryable?(error) do
+      case Cases.retry_unsent_verification(attempt, attempt.revision, error, authorize?: false) do
+        {:ok, _queued} -> {:error, error.cause}
+        {:error, save_error} -> {:error, Ash.Error.to_error_class([error.cause, save_error])}
+      end
+    else
+      now = DateTime.utc_now()
+
+      case Cases.record_verification_no_send(
+             attempt,
+             attempt.revision,
+             %{
+               before_send_failure: error,
+               outcome_category: "input_unavailable",
+               facts: %{},
+               provider_evidence: %{
+                 "items" => [%{"message" => "Verification input is unavailable"}]
+               },
+               observed_at: now,
+               completed_at: now
+             },
+             authorize?: false
+           ) do
+        {:ok, terminal} -> handoff(terminal)
+        {:error, save_error} -> {:error, Ash.Error.to_error_class([error.cause, save_error])}
+      end
+    end
   end
 
   defp persist_and_handoff(attempt, outcome) do

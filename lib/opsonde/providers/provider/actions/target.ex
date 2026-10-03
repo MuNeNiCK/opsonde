@@ -308,6 +308,14 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp normalize_verification(result, credentials),
     do: normalize_error(result, @read_failures, "Invalid verification result", credentials)
 
+  defp normalize_error(
+         {:error, %Target.BeforeSendError{}} = error,
+         _allowed,
+         _fallback,
+         _credentials
+       ),
+       do: error
+
   defp normalize_error({:error, category, message}, allowed, fallback, credentials)
        when is_binary(message) do
     if category in allowed do

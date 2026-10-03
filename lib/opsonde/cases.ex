@@ -469,6 +469,11 @@ defmodule Opsonde.Cases do
       define :operation_by_proposal, action: :by_proposal, args: [:proposal_id]
       define :create_operation_record, action: :create_record
       define :mark_operation_dispatching, action: :mark_dispatching, args: [:expected_revision]
+
+      define :retry_unsent_operation,
+        action: :retry_unsent,
+        args: [:expected_revision, :before_send_failure]
+
       define :record_operation_outcome, action: :record_outcome, args: [:expected_revision]
       define :record_operation_no_send, action: :record_no_send, args: [:expected_revision]
       define :accept_operation, action: :accept, args: [:proposal_id]
@@ -496,6 +501,11 @@ defmodule Opsonde.Cases do
         args: [:expected_revision]
 
       define :record_verification_outcome, action: :record_outcome, args: [:expected_revision]
+
+      define :retry_unsent_verification,
+        action: :retry_unsent,
+        args: [:expected_revision, :before_send_failure]
+
       define :record_verification_no_send, action: :record_no_send, args: [:expected_revision]
       define :accept_verification, action: :accept, args: [:operation_id]
       define :claim_verification_dispatch, action: :claim_dispatch, args: [:id]

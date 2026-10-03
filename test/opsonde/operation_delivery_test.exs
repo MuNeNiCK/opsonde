@@ -221,6 +221,133 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_operation!(operation.id, authorize?: false).reference == operation.id
   end
 
+  @tag protected_reference_read_fault: true
+  test "a failed local reference read retries verification without repeating the remote write",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("protected-input-fault", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    protected = %{
+      "kind" => "redfish_task_monitor",
+      "uri" => "/vendor/tasks/7?ticket=operation-secret"
+    }
+
+    result = %Target.EffectResult{status: :unknown, protected_reference: protected}
+    assert :ok = OperationDelivery.run(operation.id, target_invocation: invocation({:ok, result}))
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    assert {:error, error} =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   Repo.query!(
+                     "ALTER TABLE access_methods RENAME COLUMN capabilities TO unreadable_capabilities"
+                   )
+
+                   try do
+                     assert {:error, error} = invocation.result_reference_reader.(operation.id)
+                     assert Exception.message(error) =~ "does not exist"
+                     {:error, Target.BeforeSendError.exception(cause: error)}
+                   after
+                     Repo.query!(
+                       "ALTER TABLE access_methods RENAME COLUMN unreadable_capabilities TO capabilities"
+                     )
+                   end
+                 end
+               }
+             )
+
+    assert Exception.message(error) =~ "does not exist"
+    unsent = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert unsent.status == :queued
+    assert unsent.dispatch_started_at == nil
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
+    assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: %{
+                 test_pid: self(),
+                 respond: fn invocation ->
+                   assert {:ok, ^protected} = invocation.result_reference_reader.(operation.id)
+
+                   {:ok,
+                    %Target.Verification{
+                      status: :unknown,
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"task_state" => "Running"}
+                    }}
+                 end
+               }
+             )
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("remote write repeated") end)
+             )
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+  end
+
+  @tag protected_reference_release_fault: true
+  test "failed unsent release retains both errors and prevents an uncertain retry", context do
+    {_incident, _run, proposal} = authorized_proposal!("protected-release-fault", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :unknown}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_unsent_release() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF OLD.status = 'dispatching' AND NEW.status = 'queued' THEN
+        RAISE EXCEPTION 'test unsent release unavailable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_unsent_release BEFORE UPDATE ON verification_attempts
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_unsent_release()
+    """)
+
+    assert {:error, error} =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(fn ->
+                   {:error,
+                    Target.BeforeSendError.exception(
+                      cause: RuntimeError.exception("test input read unavailable")
+                    )}
+                 end)
+             )
+
+    assert Exception.message(error) =~ "test input read unavailable"
+    assert Exception.message(error) =~ "test unsent release unavailable"
+    uncertain = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert uncertain.status == :dispatching
+    assert uncertain.dispatch_started_at != nil
+    Repo.query!("DROP TRIGGER reject_unsent_release ON verification_attempts")
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("uncertain dispatch was repeated") end)
+             )
+
+    recovered = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert recovered.status == :unknown
+    assert recovered.outcome_category == "verification_interrupted"
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
+  end
+
   test "a protected result reader rechecks authority inside the follow-up dispatch", context do
     {incident, _run, proposal} = authorized_proposal!("protected-revocation", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -1277,8 +1404,10 @@ defmodule Opsonde.OperationDeliveryTest do
                authorize?: false
              )
 
-    assert Exception.message(error) =~
-             "from dispatching to failed in action record_no_send"
+    assert %Ash.Error.Invalid{} = error
+    still_dispatching = Cases.get_operation!(dispatching.id, authorize?: false)
+    assert still_dispatching.status == :dispatching
+    assert still_dispatching.dispatch_started_at != nil
 
     applied =
       Cases.record_operation_outcome!(
@@ -5492,6 +5621,11 @@ defmodule Opsonde.OperationDeliveryTest do
                  end
                }
              )
+
+    retried = Cases.get_turn!(retry_turn.id, authorize?: false)
+
+    assert retried.result["outcome"] == "decision",
+           inspect(Map.take(retried.result, ["outcome", "category", "message", "reason"]))
 
     stopped = Cases.route_downstream_decision!(retry_turn.id, authorize?: false)
     assert stopped.status == :needs_attention

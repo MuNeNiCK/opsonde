@@ -43,6 +43,7 @@ defmodule Opsonde.Cases.Operation.Actions.ResultReference do
            loaded.protected_reference do
       {:ok, reference}
     else
+      {:error, _error} = error -> error
       _ -> unavailable()
     end
   end
@@ -65,5 +66,11 @@ defmodule Opsonde.Cases.Operation.Actions.ResultReference do
       source.provider_revision == clearance.provider_revision
   end
 
-  defp unavailable, do: {:error, "Remote result reference is unavailable"}
+  defp unavailable do
+    {:error,
+     Ash.Error.Action.InvalidArgument.exception(
+       field: :reference_id,
+       message: "Remote result reference is unavailable"
+     )}
+  end
 end

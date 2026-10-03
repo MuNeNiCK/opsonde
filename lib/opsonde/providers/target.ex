@@ -401,9 +401,33 @@ defmodule Opsonde.Providers.Target do
     def message(error), do: error.message
   end
 
+  defmodule BeforeSendError do
+    @moduledoc false
+    use Splode.Error, class: :unknown, fields: [:cause]
+    @type t :: %__MODULE__{}
+
+    @impl true
+    def message(_error), do: "Target request was not sent because its local input was unavailable"
+
+    def unwrap(%__MODULE__{} = error), do: error
+    def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
+    def unwrap(_error), do: nil
+
+    def retryable?(%__MODULE__{cause: cause}), do: unexpected?(cause)
+
+    defp unexpected?(%{errors: errors}) when is_list(errors) and errors != [],
+      do: Enum.any?(errors, &unexpected?/1)
+
+    defp unexpected?(%{class: class}) when class in [:invalid, :forbidden], do: false
+    defp unexpected?(_error), do: true
+  end
+
   @type invocation :: map()
-  @type read_error :: {:error, :retryable | :timeout | :failed | :cancelled, String.t()}
-  @type effect_error :: {:error, :failed | :cancelled, String.t()}
+  @type read_error ::
+          {:error, :retryable | :timeout | :failed | :cancelled, String.t()}
+          | {:error, BeforeSendError.t()}
+  @type effect_error ::
+          {:error, :failed | :cancelled, String.t()} | {:error, BeforeSendError.t()}
 
   @callback capabilities(state :: term(), invocation()) ::
               {:ok, Capabilities.t()} | read_error()

@@ -38,7 +38,8 @@ defmodule Opsonde.Cases.Operation do
 
     transitions do
       transition :mark_dispatching, from: :queued, to: :dispatching
-      transition :record_no_send, from: :queued, to: :failed
+      transition :retry_unsent, from: :dispatching, to: :queued
+      transition :record_no_send, from: [:queued, :dispatching], to: :failed
 
       transition :record_outcome,
         from: :dispatching,
@@ -132,6 +133,22 @@ defmodule Opsonde.Cases.Operation do
       change optimistic_lock(:revision)
     end
 
+    update :retry_unsent do
+      accept []
+      require_atomic? false
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :before_send_failure, :struct,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [instance_of: Opsonde.Providers.Target.BeforeSendError]
+
+      validate Opsonde.Validations.CurrentRevision
+      change transition_state(:queued)
+      change set_attribute(:dispatch_started_at, nil)
+      change optimistic_lock(:revision)
+    end
+
     update :record_outcome do
       accept [
         :status,
@@ -161,11 +178,21 @@ defmodule Opsonde.Cases.Operation do
       accept [:outcome_category, :result_details, :completed_at]
       require_atomic? false
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+
+      argument :before_send_failure, :struct,
+        sensitive?: true,
+        constraints: [instance_of: Opsonde.Providers.Target.BeforeSendError]
+
+      validate attribute_equals(:status, :queued) do
+        where absent(:before_send_failure)
+      end
+
       validate Opsonde.Validations.CurrentRevision
       validate present(:completed_at)
       validate present(:outcome_category)
       validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
       change transition_state(:failed)
+      change set_attribute(:dispatch_started_at, nil)
       change optimistic_lock(:revision)
     end
 
@@ -210,6 +237,7 @@ defmodule Opsonde.Cases.Operation do
              :by_proposal,
              :create_record,
              :mark_dispatching,
+             :retry_unsent,
              :record_outcome,
              :record_no_send,
              :accept,

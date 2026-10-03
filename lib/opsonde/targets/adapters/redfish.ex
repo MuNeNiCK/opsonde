@@ -293,6 +293,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          evidence: [evidence]
        }}
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       {:error, category, message} -> read_error(category, message)
     end
   end
@@ -473,11 +474,26 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          {:ok, path} <- RedfishURI.monitor(state.endpoint, uri) do
       {:ok, path, %{"location" => [uri]}}
     else
-      _ -> {:error, :failed, "Redfish result reference is unavailable"}
+      {:error, :invalid_resource_uri} -> unavailable_reference()
+      {:error, error} -> {:error, Target.BeforeSendError.exception(cause: error)}
+      _ -> unavailable_reference()
     end
+  rescue
+    error -> {:error, Target.BeforeSendError.exception(cause: error)}
   end
 
   defp resolve_destination(_state, uri, _invocation) when is_binary(uri), do: {:ok, uri, nil}
+
+  defp unavailable_reference do
+    {:error,
+     Target.BeforeSendError.exception(
+       cause:
+         Ash.Error.Action.InvalidArgument.exception(
+           field: :result_reference,
+           message: "Redfish result reference is unavailable"
+         )
+     )}
+  end
 
   defp destination_evidence(evidence, {:reference, id}),
     do: Map.put(evidence, "result_reference", id)
@@ -526,6 +542,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
          ]
        }}
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       _ -> {:error, :failed, "Redfish task progress is unavailable"}
     end
   end
@@ -562,6 +579,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
         |> redact_task_reference(protected)
       end)
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
     end

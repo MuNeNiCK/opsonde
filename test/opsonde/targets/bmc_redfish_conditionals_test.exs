@@ -907,6 +907,52 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.writes) == 0
   end
 
+  @tag protected_reference_fault: true
+  test "saved monitor input faults retain their cause without sending or retrying HTTP",
+       context do
+    reference = Ecto.UUID.generate()
+
+    cause =
+      Ash.Error.Unknown.exception(errors: [RuntimeError.exception("stored input read failed")])
+
+    paths = Agent.get(context.agent, & &1.paths)
+
+    for {kind, operation, parameters} <- [
+          {:observation, "request.observe",
+           %{"method" => "GET", "result_reference" => reference}},
+          {:observation, "task.observe", %{"result_reference" => reference}},
+          {:effect, "request.execute", %{"method" => "DELETE", "result_reference" => reference}}
+        ] do
+      request = file_request(context, kind, parameters) |> Map.put(:operation, operation)
+      clearance = Targets.clear_target_request!(request, actor: context.operator)
+
+      invocation = %{
+        result_reference_reader: fn ^reference ->
+          send(self(), :input_read)
+          {:error, cause}
+        end
+      }
+
+      result =
+        case kind do
+          :observation ->
+            Targets.dispatch_target_observation(clearance, invocation, actor: context.operator)
+
+          :effect ->
+            Targets.dispatch_target_effect(clearance, invocation,
+              actor: context.operator,
+              authorize?: false
+            )
+        end
+
+      assert {:error, error} = result
+      assert %Target.BeforeSendError{cause: ^cause} = Target.BeforeSendError.unwrap(error)
+      assert_receive :input_read
+      refute_receive :input_read, 0
+      assert Agent.get(context.agent, & &1.paths) == paths
+    end
+  end
+
   test "saved monitor destinations bind the exact native request and fail before sending unavailable references",
        context do
     reference = Ecto.UUID.generate()
@@ -1015,6 +1061,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.paths) == paths
   end
 
+  @tag protected_reference_case: true
   test "a reviewed Case write is followed through its saved monitor without resolving the Case",
        context do
     ai =
@@ -1111,6 +1158,11 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
         })
 
       follow_up = Cases.accept_operation!(observation.id, authorize?: false)
+
+      if http_status == 202 do
+        assert_unsent_reference_retry(context, operation, follow_up)
+      end
+
       assert :ok = Opsonde.Cases.Operation.Delivery.run(follow_up.id)
       result = Cases.get_operation!(follow_up.id, actor: context.operator)
       assert result.status == :applied
@@ -1164,6 +1216,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
 
     assert reference == operation.id
     cancelled = Cases.accept_operation!(cancellation.id, authorize?: false)
+    assert_unsent_reference_retry(context, operation, cancelled)
     assert :ok = Opsonde.Cases.Operation.Delivery.run(cancelled.id)
     cancellation_result = Cases.get_operation!(cancelled.id, actor: context.operator)
 
@@ -1264,6 +1317,40 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert Agent.get(context.agent, & &1.paths) == paths
     assert Agent.get(context.agent, & &1.async_cancels) == 1
 
+    missing_proposal =
+      task_case_proposal!(context, :observation, "task.observe", %{
+        "result_reference" => operation.id
+      })
+
+    missing_operation = Cases.accept_operation!(missing_proposal.id, authorize?: false)
+    source_id = Ecto.UUID.dump!(operation.id)
+
+    %{rows: [[ciphertext]]} =
+      Repo.query!("SELECT encrypted_protected_reference FROM operations WHERE id = $1", [
+        source_id
+      ])
+
+    Repo.query!("UPDATE operations SET encrypted_protected_reference = NULL WHERE id = $1", [
+      source_id
+    ])
+
+    try do
+      assert :ok = Opsonde.Cases.Operation.Delivery.run(missing_operation.id)
+    after
+      Repo.query!("UPDATE operations SET encrypted_protected_reference = $1 WHERE id = $2", [
+        ciphertext,
+        source_id
+      ])
+    end
+
+    missing = Cases.get_operation!(missing_operation.id, actor: context.operator)
+    assert missing.status == :failed
+    assert missing.outcome_category == "input_unavailable"
+    assert missing.dispatch_started_at == nil
+    assert Agent.get(context.agent, & &1.paths) == paths
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(missing_operation.id)
+    assert Agent.get(context.agent, & &1.paths) == paths
+
     proposal =
       task_case_proposal!(context, :observation, "task.observe", %{
         "result_reference" => operation.id
@@ -1285,6 +1372,41 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
     assert denied.status == :failed
     assert denied.outcome_category == "authorization_invalidated"
     assert Agent.get(context.agent, & &1.paths) == paths
+  end
+
+  defp assert_unsent_reference_retry(context, source, follow_up) do
+    paths = Agent.get(context.agent, & &1.paths)
+    ai_invocations = Cases.list_ai_invocations!(authorize?: false)
+    source_id = Ecto.UUID.dump!(source.id)
+
+    %{rows: [[ciphertext]]} =
+      Repo.query!(
+        "SELECT encrypted_protected_reference FROM operations WHERE id = $1",
+        [source_id]
+      )
+
+    Repo.query!(
+      "UPDATE operations SET encrypted_protected_reference = $1 WHERE id = $2",
+      ["invalid encrypted input", source_id]
+    )
+
+    try do
+      assert {:error, error} = Opsonde.Cases.Operation.Delivery.run(follow_up.id)
+      assert Exception.message(error) =~ "non-alphabet"
+    after
+      Repo.query!(
+        "UPDATE operations SET encrypted_protected_reference = $1 WHERE id = $2",
+        [ciphertext, source_id]
+      )
+    end
+
+    unsent = Cases.get_operation!(follow_up.id, actor: context.operator)
+    assert unsent.status == :queued
+    assert unsent.dispatch_started_at == nil
+    assert Agent.get(context.agent, & &1.paths) == paths
+    assert Agent.get(context.agent, & &1.async_writes) == 1
+    assert Cases.list_ai_invocations!(authorize?: false) == ai_invocations
+    refute Jason.encode!(OpsondeWeb.API.V1.WorkflowJSON.operation(unsent)) =~ "private-value"
   end
 
   defp task_case_proposal!(context, kind, operation, parameters) do
