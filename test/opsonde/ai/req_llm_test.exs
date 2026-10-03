@@ -939,6 +939,105 @@ defmodule Opsonde.AI.ReqLLMTest do
   end
 
   @tag invocation_read_fault: true
+  test "a local read fault before each native AI role sends nothing and retains no-send accounting",
+       context do
+    admin =
+      Accounts.bootstrap!(
+        "unsent-read-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    provider =
+      Providers.create_provider!(
+        "unsent-read-ai",
+        :ai,
+        Adapter.type(),
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => context.endpoint <> "/v1"
+        },
+        %{"api_key" => "callback-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    evidence = %AI.Evidence{
+      id: "current-observation",
+      kind: "observation",
+      target_id: "target-1",
+      content: %{"facts" => %{"service_state" => "active"}}
+    }
+
+    symptom_id = String.duplicate("c", 64)
+
+    recovery_request = %AI.RecoveryReviewRequest{
+      provider_revision: provider.revision,
+      session_id: "recovery-reviewer",
+      resolver_session_id: "recovery-resolver",
+      case_id: "case-1",
+      objective: "Restore service health",
+      report_language: :en,
+      conditions: [],
+      case_symptom: %{
+        id: symptom_id,
+        text: "The service is unavailable",
+        desired_outcome: "The service responds"
+      },
+      source_evidence: [],
+      cited_evidence: [evidence],
+      conclusion: %AI.RecoveryConclusion{
+        reason: "The service responded",
+        evidence_ids: [evidence.id],
+        desired_outcome_claims: [
+          %{
+            "symptom_id" => symptom_id,
+            "evidence_id" => evidence.id,
+            "fact_keys" => ["service_state"],
+            "reason" => "The service is active"
+          }
+        ]
+      },
+      budget: budget()
+    }
+
+    cancelled? = fn ->
+      {:error, error} =
+        Opsonde.Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
+
+      raise error
+    end
+
+    for {role, action, request} <- [
+          {:resolve, &Providers.ai_resolve/4, resolver_request()},
+          {:review, &Providers.ai_review/4, review_request()},
+          {:review_recovery, &Providers.ai_review_recovery/4, recovery_request}
+        ] do
+      assert :ok = AI.Validator.validate_request(role, request)
+      set_mode(context.agent, {:decision, handoff()})
+
+      assert {:error, error} =
+               action.(provider.id, request, %{cancelled?: cancelled?}, actor: admin)
+
+      assert AI.Error.context_failure?(error)
+      assert Exception.message(error) =~ "invocation_context_unavailable"
+      assert %AI.Error{category: :failed, dispatched?: false} = AI.Error.find(error)
+      assert requests(context.agent) == []
+
+      assert %{amount: 0, usage: nil, dispatched?: false} =
+               Opsonde.Cases.AIInvocation.failure_accounting(error, 65_536)
+    end
+
+    assert %{check_status: :passed} =
+             Providers.check_provider!(provider.id, provider.revision, %{}, actor: admin)
+
+    assert length(requests(context.agent)) == 1
+  end
+
+  @tag invocation_read_fault: true
   test "a local read fault during a native AI request retains its cause and dispatch accounting",
        context do
     admin =

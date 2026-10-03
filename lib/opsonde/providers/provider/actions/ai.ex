@@ -176,9 +176,21 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
     if cancelled?.(),
       do: {:error, ai_error(:cancelled, "AI decision was cancelled", false)},
       else: :ok
+  rescue
+    error -> callback_failure(error)
+  catch
+    kind, reason -> callback_failure(ErlangError.exception(original: {kind, reason}))
   end
 
   defp ensure_not_cancelled(_invocation), do: :ok
+
+  defp callback_failure(cause),
+    do:
+      {:error,
+       Ash.Error.to_error_class([
+         cause,
+         ai_error(:failed, "AI invocation context check failed", false)
+       ])}
 
   defp ai_error(category, message, dispatched? \\ nil),
     do: AI.Error.exception(category: category, message: message, dispatched?: dispatched?)
