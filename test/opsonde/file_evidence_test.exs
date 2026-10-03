@@ -377,8 +377,10 @@ defmodule Opsonde.FileEvidenceTest do
     other_run = Cases.active_resolution_run!(other.id, authorize?: false)
     {source, reference} = source!(%{context | incident: other, run: other_run})
     turn = turn!(context, source, reference)
-    assert {:error, error} = Cases.capture_file_read(turn.id, authorize?: false)
-    assert Exception.message(error) =~ "not present in the cited Case Evidence"
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             Cases.capture_file_read(turn.id, authorize?: false)
+
     refute Enum.any?(Cases.list_evidence!(actor: context.operator), &(&1.kind == "file_read"))
   end
 

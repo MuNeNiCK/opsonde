@@ -194,7 +194,10 @@ defmodule Opsonde.CaseTargetSelectionTest do
     {incident, run} = open!("invalid-selection", context.operator)
     searched = search!(incident, run, "search-invalid", "linux-01", context.operator)
 
-    assert {:error, _error} =
+    assert {:error,
+            %Ash.Error.Invalid{
+              errors: [%Opsonde.Cases.Case.Actions.TargetSelection.CandidateNotOffered{}]
+            }} =
              Cases.select_case_target(
                incident.id,
                incident.revision,

@@ -1272,11 +1272,12 @@ defmodule Opsonde.SignalIngressTest do
     parent_run = Cases.active_resolution_run!(parent.id, authorize?: false)
     child_run = Cases.active_resolution_run!(child.id, authorize?: false)
 
-    refute Opsonde.Cases.Evidence.Citation.valid?(
-             moved_source,
-             Cases.get_case!(parent.id, authorize?: false),
-             parent_run
-           )
+    assert {:error, %Ash.Error.Changes.InvalidChanges{}} =
+             Opsonde.Cases.Evidence.Citation.validate(
+               moved_source,
+               Cases.get_case!(parent.id, authorize?: false),
+               parent_run
+             )
 
     assert {:error, _stale} =
              Cases.select_case_target(

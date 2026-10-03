@@ -4,7 +4,7 @@ defmodule Opsonde.Cases.Evidence.Citation do
   alias Opsonde.Cases
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
 
-  def valid?(
+  def validate(
         %{
           case_id: case_id,
           kind: "signal_event",
@@ -13,31 +13,33 @@ defmodule Opsonde.Cases.Evidence.Citation do
         %{id: case_id},
         _run
       ) do
-    latest_source_evidence?(evidence, case_id)
+    latest_source_evidence(evidence, case_id)
   end
 
-  def valid?(%{kind: "signal_event"}, _incident, _run), do: false
+  def validate(%{kind: "signal_event"}, _incident, _run), do: unavailable()
 
-  def valid?(%{case_id: case_id, resolution_run_id: run_id}, %{id: case_id}, %{id: run_id}),
-    do: true
+  def validate(%{case_id: case_id, resolution_run_id: run_id}, %{id: case_id}, %{id: run_id}),
+    do: :ok
 
-  def valid?(
+  def validate(
         %{id: evidence_id, case_id: case_id, kind: "observation"},
         %{id: case_id, trigger_kind: :signal} = incident,
         _run
       ) do
     case ConditionRecovery.assess_current(incident) do
       {:ok, assessments} ->
-        Enum.any?(assessments, fn assessment ->
-          assessment.status == :ready_for_review and evidence_id in assessment.evidence_ids
-        end)
+        if Enum.any?(assessments, fn assessment ->
+             assessment.status == :ready_for_review and evidence_id in assessment.evidence_ids
+           end),
+           do: :ok,
+           else: unavailable()
 
-      {:error, _error} ->
-        false
+      {:error, _error} = error ->
+        error
     end
   end
 
-  def valid?(
+  def validate(
         %{
           case_id: case_id,
           kind: "target_verification",
@@ -55,33 +57,37 @@ defmodule Opsonde.Cases.Evidence.Citation do
         },
         _run
       ) do
-    latest_target_evidence?(evidence, case_id, target_id) and
-      verified_operation?(operation_id, case_id, target_id, target_revision)
+    with :ok <- latest_target_evidence(evidence, case_id, target_id),
+         :ok <- verified_operation(operation_id, case_id, target_id, target_revision),
+         do: :ok
   end
 
-  def valid?(_evidence, _incident, _run), do: false
+  def validate(_evidence, _incident, _run), do: unavailable()
 
-  defp latest_source_evidence?(evidence, case_id) do
+  defp latest_source_evidence(evidence, case_id) do
     case Cases.signal_context_evidence(case_id, authorize?: false) do
-      {:ok, candidates} -> Enum.any?(candidates, &(&1.id == evidence.id))
-      _unavailable -> false
+      {:ok, candidates} ->
+        if Enum.any?(candidates, &(&1.id == evidence.id)), do: :ok, else: unavailable()
+
+      {:error, _error} = error ->
+        error
     end
   end
 
-  defp latest_target_evidence?(evidence, case_id, target_id) do
+  defp latest_target_evidence(evidence, case_id, target_id) do
     case Cases.target_continuity_evidence(case_id, authorize?: false) do
       {:ok, candidates} ->
         case Enum.find(candidates, &(&1.content["target_id"] == target_id)) do
-          %{id: id} -> id == evidence.id
-          _unavailable -> false
+          %{id: id} when id == evidence.id -> :ok
+          _unavailable -> unavailable()
         end
 
-      _unavailable ->
-        false
+      {:error, _error} = error ->
+        error
     end
   end
 
-  defp verified_operation?(operation_id, case_id, target_id, target_revision) do
+  defp verified_operation(operation_id, case_id, target_id, target_revision) do
     case Cases.get_operation(operation_id, authorize?: false) do
       {:ok,
        %{
@@ -90,10 +96,20 @@ defmodule Opsonde.Cases.Evidence.Citation do
          target_revision: ^target_revision,
          status: :applied
        }} ->
-        true
+        :ok
 
-      _unavailable ->
-        false
+      {:ok, _unavailable} ->
+        unavailable()
+
+      {:error, _error} = error ->
+        error
     end
   end
+
+  defp unavailable,
+    do:
+      {:error,
+       Ash.Error.Changes.InvalidChanges.exception(
+         message: "Cited evidence is unavailable for this case"
+       )}
 end

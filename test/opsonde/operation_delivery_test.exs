@@ -5213,11 +5213,12 @@ defmodule Opsonde.OperationDeliveryTest do
       Cases.list_turns!(actor: context.admin)
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
-    assert Opsonde.Cases.Evidence.Citation.valid?(
-             evidence,
-             Cases.get_case!(incident.id, authorize?: false),
-             resumed_run
-           )
+    assert :ok =
+             Opsonde.Cases.Evidence.Citation.validate(
+               evidence,
+               Cases.get_case!(incident.id, authorize?: false),
+               resumed_run
+             )
 
     assert :ok =
              ResolverDelivery.run(resumed_turn.id,

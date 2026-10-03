@@ -312,9 +312,9 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
 
   defp source(intent, incident, run) do
     with {:ok, source} <- Cases.get_evidence(intent["source_evidence_id"], authorize?: false),
+         :ok <- Citation.validate(source, incident, run),
          true <-
-           (Citation.valid?(source, incident, run) and
-              FileReference.present_in?(source.content, intent["reference"])) ||
+           FileReference.present_in?(source.content, intent["reference"]) ||
              {:error, "File reference is not present in the cited Case Evidence"},
          do: {:ok, source}
   end

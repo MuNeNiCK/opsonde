@@ -246,12 +246,12 @@ defmodule Opsonde.Cases.Case.Actions.DecisionRoute do
     end
   end
 
-  defp candidate_citation_rejected?(%Ash.Error.Unknown{errors: errors}),
+  defp candidate_citation_rejected?(%Ash.Error.Invalid{errors: errors}),
     do: Enum.any?(errors, &candidate_citation_rejected?/1)
 
-  defp candidate_citation_rejected?(%Ash.Error.Unknown.UnknownError{
-         error: "Target was not offered by the cited candidate evidence"
-       }),
+  defp candidate_citation_rejected?(
+         %Opsonde.Cases.Case.Actions.TargetSelection.CandidateNotOffered{}
+       ),
        do: true
 
   defp candidate_citation_rejected?(_error), do: false

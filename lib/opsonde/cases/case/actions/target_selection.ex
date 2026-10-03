@@ -8,6 +8,14 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Evidence.Citation, as: EvidenceCitation
 
+  defmodule CandidateNotOffered do
+    @moduledoc false
+    use Splode.Error, class: :invalid, fields: []
+
+    @impl true
+    def message(_error), do: "Target was not offered by the cited candidate evidence"
+  end
+
   @impl true
   def run(input, _opts, context) do
     arguments = input.arguments
@@ -80,7 +88,10 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
     if Map.take(event.data, Map.keys(expected)) == expected do
       incident
     else
-      {:error, "Target-selection idempotency key was already used with different input"}
+      invalid_input(
+        "Target-selection idempotency key was already used with different input",
+        :idempotency_key
+      )
     end
   end
 
@@ -102,7 +113,7 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
     |> required("Running ResolutionRun is unavailable")
   end
 
-  defp required({:ok, nil}, message), do: {:error, message}
+  defp required({:ok, nil}, message), do: invalid_input(message)
   defp required(result, _message), do: result
 
   defp existing_event(case_id, key) do
@@ -113,76 +124,112 @@ defmodule Opsonde.Cases.Case.Actions.TargetSelection do
   end
 
   defp expected_revision(%{revision: revision}, revision), do: :ok
-  defp expected_revision(_incident, _revision), do: {:error, "Case revision changed"}
+
+  defp expected_revision(_incident, _revision),
+    do: invalid_input("Case revision changed", :expected_revision)
 
   defp ensure_running(%{cancel_requested: false, status: :running}), do: :ok
-  defp ensure_running(%{cancel_requested: true}), do: {:error, "Case cancellation was requested"}
-  defp ensure_running(_incident), do: {:error, "Case resolution is not running"}
+
+  defp ensure_running(%{cancel_requested: true}),
+    do: invalid_input("Case cancellation was requested")
+
+  defp ensure_running(_incident), do: invalid_input("Case resolution is not running")
 
   defp unique_evidence(ids) do
     if length(ids) == MapSet.size(MapSet.new(ids)),
       do: :ok,
-      else: {:error, "Target selection evidence contains duplicates"}
+      else: invalid_input("Target selection evidence contains duplicates", :evidence_ids)
   end
 
   defp load_evidence(ids) do
     Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, items} ->
       case Cases.get_evidence(id, authorize?: false) do
-        {:ok, evidence} -> {:cont, {:ok, [evidence | items]}}
-        {:error, _error} -> {:halt, {:error, "Target selection evidence is unavailable"}}
+        {:ok, evidence} ->
+          {:cont, {:ok, [evidence | items]}}
+
+        {:error, %Ash.Error.Unknown{}} = error ->
+          {:halt, error}
+
+        {:error, %Ash.Error.Framework{}} = error ->
+          {:halt, error}
+
+        {:error, _error} ->
+          {:halt, invalid_input("Target selection evidence is unavailable", :evidence_ids)}
       end
     end)
   end
 
   defp valid_evidence(evidence, incident, run) do
-    if Enum.all?(evidence, &EvidenceCitation.valid?(&1, incident, run)),
-      do: :ok,
-      else: {:error, "Target selection evidence belongs to another Case or ResolutionRun"}
+    Enum.reduce_while(evidence, :ok, fn item, :ok ->
+      case EvidenceCitation.validate(item, incident, run) do
+        :ok -> {:cont, :ok}
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp offered_candidate(evidence, target_id, target_revision) do
-    offered? =
-      Enum.any?(evidence, fn
-        %{
-          kind: "target_candidates",
-          source: "target_catalog",
-          content: %{"targets" => candidates}
-        }
-        when is_list(candidates) ->
-          Enum.any?(candidates, fn candidate ->
-            candidate["id"] == target_id and candidate["revision"] == target_revision
-          end)
+    Enum.reduce_while(evidence, {:error, CandidateNotOffered.exception([])}, fn item, rejected ->
+      case candidate?(item, target_id, target_revision) do
+        {:ok, true} -> {:halt, :ok}
+        {:ok, false} -> {:cont, rejected}
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+  end
 
-        %{
-          kind: "signal_event",
-          content: %{
-            "current" => true,
-            "condition_id" => condition_id,
-            "condition_revision" => condition_revision
-          }
-        } ->
-          case Signals.get_condition(condition_id, authorize?: false) do
-            {:ok, condition} ->
-              condition.revision == condition_revision and condition.target_id == target_id
+  defp candidate?(
+         %{
+           kind: "target_candidates",
+           source: "target_catalog",
+           content: %{"targets" => candidates}
+         },
+         target_id,
+         target_revision
+       )
+       when is_list(candidates) do
+    {:ok, Enum.any?(candidates, &(&1["id"] == target_id and &1["revision"] == target_revision))}
+  end
 
-            _unavailable ->
-              false
-          end
+  defp candidate?(
+         %{
+           kind: "signal_event",
+           content: %{
+             "current" => true,
+             "condition_id" => condition_id,
+             "condition_revision" => condition_revision
+           }
+         },
+         target_id,
+         _target_revision
+       ) do
+    case Signals.get_condition(condition_id, authorize?: false) do
+      {:ok, condition} ->
+        {:ok, condition.revision == condition_revision and condition.target_id == target_id}
 
-        _other ->
-          false
-      end)
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
 
-    if offered? do
-      :ok
-    else
-      {:error, "Target was not offered by the cited candidate evidence"}
+      {:error, %Ash.Error.Framework{}} = error ->
+        error
+
+      {:error, _unavailable} ->
+        {:ok, false}
     end
   end
 
+  defp candidate?(_other, _target_id, _target_revision), do: {:ok, false}
+
   defp current_target(%{active: true, revision: revision}, revision), do: :ok
-  defp current_target(%{active: false}, _revision), do: {:error, "Selected Target is inactive"}
-  defp current_target(_target, _revision), do: {:error, "Selected Target revision changed"}
+
+  defp current_target(%{active: false}, _revision),
+    do: invalid_input("Selected Target is inactive", :target_id)
+
+  defp current_target(_target, _revision),
+    do: invalid_input("Selected Target revision changed", :target_revision)
+
+  defp invalid_input(message, field \\ :id),
+    do: {:error, Ash.Error.Action.InvalidArgument.exception(field: field, message: message)}
 
   defp create_event(incident, prior, run, actor, key, arguments, event_type) do
     Cases.create_case_event_record(

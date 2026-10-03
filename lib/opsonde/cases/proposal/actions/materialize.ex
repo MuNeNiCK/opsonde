@@ -206,9 +206,10 @@ defmodule Opsonde.Cases.Proposal.Actions.Materialize do
       Enum.reduce_while(ids, :ok, fn id, :ok ->
         case Cases.get_evidence(id, authorize?: false) do
           {:ok, evidence} ->
-            if EvidenceCitation.valid?(evidence, incident, run),
-              do: {:cont, :ok},
-              else: {:halt, {:error, "Proposal cites unavailable Evidence"}}
+            case EvidenceCitation.validate(evidence, incident, run) do
+              :ok -> {:cont, :ok}
+              {:error, _error} = error -> {:halt, error}
+            end
 
           {:error, %Ash.Error.Unknown{}} = error ->
             {:halt, error}
