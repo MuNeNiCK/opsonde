@@ -32,6 +32,10 @@ defmodule Opsonde.Targets.HTTPAPITest do
           status = Agent.get(agent, &Map.get(&1, :status, "ready"))
           conn |> put_resp_header("etag", ~s("rev-1")) |> send_resp(200, status)
 
+        {"GET", "/api/status-race"} ->
+          Process.sleep(60)
+          send_resp(conn, 200, "ready")
+
         {"HEAD", "/api/status"} ->
           send_resp(conn, 200, "")
 
@@ -40,6 +44,23 @@ defmodule Opsonde.Targets.HTTPAPITest do
           etag = get_req_header(conn, "if-match")
           Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [{body, etag} | writes] end))
           conn |> put_resp_header("location", "/api/jobs/1") |> send_resp(202, "pending")
+
+        {"POST", "/api/action-idle"} ->
+          {:ok, body, conn} = read_body(conn)
+          Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
+          send(Agent.get(agent, & &1.observer), {:idle_peer, self()})
+
+          receive do
+            :finish_idle -> send_resp(conn, 200, "")
+          after
+            2_000 -> send_resp(conn, 200, "")
+          end
+
+        {"POST", "/api/action-race"} ->
+          {:ok, body, conn} = read_body(conn)
+          Agent.update(agent, &Map.update!(&1, :writes, fn writes -> [body | writes] end))
+          Process.sleep(60)
+          send_resp(conn, 200, "")
 
         {"POST", "/api/drop"} ->
           Agent.update(agent, &Map.update!(&1, :writes, fn writes -> ["drop" | writes] end))
@@ -283,6 +304,129 @@ defmodule Opsonde.Targets.HTTPAPITest do
              )
 
     assert length(Agent.get(context.agent, & &1.requests)) == length(before_requests) + 1
+  end
+
+  @tag inflight_target_read_fault: true
+  test "a read fault after HTTP dispatch retains its cause without sending the request again",
+       context do
+    read = read_request(context, "GET", "/api/headers-idle")
+    write = write_request(context, "POST", "/api/action-idle", "{}")
+
+    verify = %Target.VerificationRequest{
+      provider_revision: 1,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.endpoint},
+      capability: "request.http.observe",
+      operation: "request.observe",
+      authorization_digest: "fixture",
+      operation_id: "fixture",
+      parameters: %{"method" => "GET", "path" => "/api/headers-idle"}
+    }
+
+    for {action, request} <- [
+          {&Providers.target_observe/4, read},
+          {&Providers.target_effect/4, write},
+          {&Providers.target_verify/4, verify}
+        ] do
+      before_requests = Agent.get(context.agent, & &1.requests)
+
+      cancelled? = fn ->
+        if Agent.get(context.agent, & &1.requests) == before_requests do
+          false
+        else
+          {:error, error} =
+            Opsonde.Repo.query("SELECT inflight_target_context_unavailable", [], mode: :savepoint)
+
+          raise error
+        end
+      end
+
+      assert {:error, error} =
+               action.(context.provider.id, request, %{cancelled?: cancelled?},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "inflight_target_context_unavailable"
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+      assert length(Agent.get(context.agent, & &1.requests)) == length(before_requests) + 1
+      assert_receive {:idle_peer, peer}
+      send(peer, :finish_idle)
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == ["{}"]
+  end
+
+  @tag inflight_target_read_fault: true
+  test "received HTTP facts survive cancellation and a context fault during a slow check",
+       context do
+    read = read_request(context, "GET", "/api/status-race")
+    write = write_request(context, "POST", "/api/action-race", "{}")
+
+    verify = %Target.VerificationRequest{
+      provider_revision: 1,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      connection: %Target.Connection{endpoint: context.endpoint},
+      capability: "request.http.observe",
+      operation: "request.observe",
+      authorization_digest: "fixture",
+      operation_id: "fixture",
+      expected: %{"status" => 200},
+      parameters: %{"method" => "GET", "path" => "/api/status-race"}
+    }
+
+    for stop <- [:cancel, :read_fault],
+        {action, request, expected_status} <- [
+          {&Providers.target_observe/4, read, nil},
+          {&Providers.target_effect/4, write, :applied},
+          {&Providers.target_verify/4, verify, :verified}
+        ] do
+      before_requests = Agent.get(context.agent, & &1.requests)
+
+      cancelled? = fn ->
+        if Agent.get(context.agent, & &1.requests) == before_requests do
+          false
+        else
+          Process.sleep(500)
+
+          case stop do
+            :cancel ->
+              true
+
+            :read_fault ->
+              {:error, error} =
+                Opsonde.Repo.query("SELECT inflight_target_context_unavailable", [],
+                  mode: :savepoint
+                )
+
+              raise error
+          end
+        end
+      end
+
+      assert {:ok, result} =
+               action.(context.provider.id, request, %{cancelled?: cancelled?},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      if expected_status do
+        assert result.status == expected_status
+      else
+        assert result.facts["status"] == 200
+        assert result.facts["body"] == "ready"
+      end
+
+      assert length(Agent.get(context.agent, & &1.requests)) == length(before_requests) + 1
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == ["{}", "{}"]
   end
 
   test "a registered Method check records connection facts separately from operator grants",

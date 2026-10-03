@@ -155,11 +155,11 @@ defmodule Opsonde.Targets.Adapters.HTTP do
              invocation,
              request.parameters["response_file"],
              request.parameters["capture"]
-           ),
-         :ok <- not_cancelled(invocation) do
+           ) do
       {:ok, observation(state.endpoint <> path, response)}
     else
       {:error, _category, _message} = error -> error
+      {:error, _cause} = error -> error
     end
   end
 
@@ -221,10 +221,14 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
         {:error, :failed, _message} = error ->
           error
+
+        {:error, _cause} = error ->
+          error
       end
     else
       {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
+      {:error, _cause} = error -> error
     end
   end
 
@@ -266,6 +270,7 @@ defmodule Opsonde.Targets.Adapters.HTTP do
        }}
     else
       {:error, _category, _message} = error -> error
+      {:error, _cause} = error -> error
     end
   end
 
@@ -588,6 +593,12 @@ defmodule Opsonde.Targets.Adapters.HTTP do
 
   defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
     if callback.(), do: {:error, :cancelled, "HTTP request was cancelled"}, else: :ok
+  rescue
+    cause -> {:error, Target.BeforeSendError.exception(cause: cause)}
+  catch
+    kind, reason ->
+      {:error,
+       Target.BeforeSendError.exception(cause: ErlangError.exception(original: {kind, reason}))}
   end
 
   defp not_cancelled(_invocation), do: :ok

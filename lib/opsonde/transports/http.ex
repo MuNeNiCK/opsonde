@@ -46,6 +46,9 @@ defmodule Opsonde.Transports.HTTP do
         {:error, _category, _message} = error ->
           error
 
+        {:error, %Ash.Error.Unknown{}} = error ->
+          error
+
         _other ->
           response_failure(writer)
       end
@@ -172,12 +175,15 @@ defmodule Opsonde.Transports.HTTP do
     sample_remaining = if capture, do: capture.deadline - System.monotonic_time(:millisecond)
     finished = Task.yield(task, 0)
 
-    cond do
-      not_cancelled(invocation) != :ok ->
-        {:error, :cancelled, "HTTP request was cancelled"}
+    cancellation =
+      if match?({:ok, _}, finished), do: :ok, else: not_cancelled(invocation, true)
 
+    cond do
       match?({:ok, _}, finished) ->
         elem(finished, 1)
+
+      cancellation != :ok ->
+        stop_wire(task, cancellation)
 
       match?({:exit, _}, finished) ->
         response_failure(writer)
@@ -193,7 +199,7 @@ defmodule Opsonde.Transports.HTTP do
         end
 
       remaining <= 0 ->
-        timeout_failure(writer)
+        stop_wire(task, timeout_failure(writer))
 
       true ->
         wait =
@@ -204,6 +210,13 @@ defmodule Opsonde.Transports.HTTP do
           {:exit, _reason} -> response_failure(writer)
           nil -> await_wire(task, deadline, writer, invocation, capture)
         end
+    end
+  end
+
+  defp stop_wire(task, failure) do
+    case Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _stopped -> failure
     end
   end
 
@@ -341,7 +354,7 @@ defmodule Opsonde.Transports.HTTP do
         true -> content_length(response)
       end
 
-    with :ok <- not_cancelled(invocation),
+    with :ok <- not_cancelled(invocation, true),
          {:ok, size} <- expected_size,
          {:ok, hash} <-
            if(method == :head or sample?, do: {:ok, nil}, else: content_digest(response)),
@@ -355,6 +368,7 @@ defmodule Opsonde.Transports.HTTP do
       {:ok, %{response | private: private}}
     else
       {:error, :cancelled, _} = error -> error
+      {:error, %Ash.Error.Unknown{}} = error -> error
       _ -> response_failure(writer)
     end
   end
@@ -421,9 +435,18 @@ defmodule Opsonde.Transports.HTTP do
   defp file_failure_message(writer),
     do: "HTTP response file is incomplete (file " <> writer.id <> ")"
 
-  defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
+  defp not_cancelled(invocation, dispatched? \\ false)
+
+  defp not_cancelled(%{cancelled?: callback}, dispatched?) when is_function(callback, 0) do
     if callback.(), do: {:error, :cancelled, "HTTP request was cancelled"}, else: :ok
+  rescue
+    cause -> context_failure(cause, dispatched?)
+  catch
+    kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), dispatched?)
   end
 
-  defp not_cancelled(_invocation), do: :ok
+  defp not_cancelled(_invocation, _dispatched?), do: :ok
+
+  defp context_failure(cause, true), do: {:error, Target.Error.context_failure(cause)}
+  defp context_failure(cause, false), do: {:error, Target.BeforeSendError.exception(cause: cause)}
 end

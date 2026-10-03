@@ -403,6 +403,22 @@ defmodule Opsonde.Providers.Target do
     def unwrap(%__MODULE__{} = error), do: error
     def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
     def unwrap(_error), do: nil
+
+    def context_failure(cause) do
+      Ash.Error.to_error_class([
+        cause,
+        exception(category: :failed, message: "Target invocation context check failed")
+      ])
+    end
+
+    def context_failure?(%Ash.Error.Unknown{} = error),
+      do: is_nil(unwrap(error)) and not is_nil(find(error))
+
+    def context_failure?(_error), do: false
+
+    defp find(%__MODULE__{} = error), do: error
+    defp find(%{errors: errors}) when is_list(errors), do: Enum.find_value(errors, &find/1)
+    defp find(_error), do: nil
   end
 
   defmodule BeforeSendError do
@@ -430,8 +446,11 @@ defmodule Opsonde.Providers.Target do
   @type read_error ::
           {:error, :retryable | :timeout | :failed | :cancelled, String.t()}
           | {:error, BeforeSendError.t()}
+          | {:error, Ash.Error.Unknown.t()}
   @type effect_error ::
-          {:error, :failed | :cancelled, String.t()} | {:error, BeforeSendError.t()}
+          {:error, :failed | :cancelled, String.t()}
+          | {:error, BeforeSendError.t()}
+          | {:error, Ash.Error.Unknown.t()}
 
   @callback capabilities(state :: term(), invocation()) ::
               {:ok, Capabilities.t()} | read_error()

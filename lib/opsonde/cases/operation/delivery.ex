@@ -62,7 +62,7 @@ defmodule Opsonde.Cases.Operation.Delivery do
 
       {:error, error} ->
         case ProviderTarget.BeforeSendError.unwrap(error) do
-          nil -> failed_observation(error)
+          nil -> with_context_failure(failed_observation(error), error)
           unsent -> {:error, unsent}
         end
     end
@@ -78,8 +78,12 @@ defmodule Opsonde.Cases.Operation.Delivery do
 
       {:error, error} ->
         case ProviderTarget.BeforeSendError.unwrap(error) do
-          nil -> unknown("dispatch_error", "Target dispatch result is unknown")
-          unsent -> {:error, unsent}
+          nil ->
+            unknown("dispatch_error", "Target dispatch result is unknown")
+            |> with_context_failure(error)
+
+          unsent ->
+            {:error, unsent}
         end
     end
   end
@@ -105,6 +109,20 @@ defmodule Opsonde.Cases.Operation.Delivery do
         {:ok, terminal} -> handoff(terminal)
         {:error, save_error} -> {:error, Ash.Error.to_error_class([error.cause, save_error])}
       end
+    end
+  end
+
+  defp with_context_failure(outcome, error) do
+    if ProviderTarget.Error.context_failure?(error),
+      do: Map.put(outcome, :context_failure, error),
+      else: outcome
+  end
+
+  defp persist_and_handoff(operation, %{context_failure: cause} = outcome) do
+    case persist_and_handoff(operation, Map.delete(outcome, :context_failure)) do
+      :ok -> {:error, cause}
+      {:error, error} -> {:error, Ash.Error.to_error_class([cause, error])}
+      other -> other
     end
   end
 

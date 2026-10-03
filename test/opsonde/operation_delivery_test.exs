@@ -417,6 +417,161 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
+  @tag inflight_target_read_fault: true
+  test "in-flight Target context faults persist terminal outcomes and retain their original cause",
+       context do
+    failed_response = fn ->
+      {:error, cause} =
+        Repo.query("SELECT inflight_target_context_unavailable", [], mode: :savepoint)
+
+      {:error, Target.Error.context_failure(cause)}
+    end
+
+    for kind <- [:effect, :observation] do
+      {_incident, _run, proposal} =
+        authorized_proposal!("inflight-context-#{kind}", context, request_kind: kind)
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(failed_response)
+               )
+
+      assert Exception.message(error) =~ "inflight_target_context_unavailable"
+      terminal = Cases.get_operation!(operation.id, authorize?: false)
+      assert terminal.status == if(kind == :effect, do: :unknown, else: :failed)
+      assert terminal.dispatch_started_at != nil
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(fn -> flunk("in-flight request repeated") end)
+               )
+
+      if kind == :effect do
+        assert_receive {:effect, _, _}
+        refute_receive {:effect, _, _}
+      else
+        assert_receive {:observe, _, _}
+        refute_receive {:observe, _, _}
+      end
+    end
+
+    {_incident, _run, proposal} =
+      authorized_proposal!("inflight-verification-context", context, service: "verification-api")
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    assert {:error, error} =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(failed_response)
+             )
+
+    assert Exception.message(error) =~ "inflight_target_context_unavailable"
+    terminal = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert terminal.status == :unknown
+    assert terminal.dispatch_started_at != nil
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("in-flight verification repeated") end)
+             )
+
+    assert_receive {:verify, _, _}
+    refute_receive {:verify, _, _}
+  end
+
+  @tag inflight_target_read_fault: true
+  test "a failed in-flight fault receipt keeps both causes and never repeats the remote request",
+       context do
+    for kind <- [:operation, :verification] do
+      {_incident, _run, proposal} =
+        authorized_proposal!("inflight-save-fault-#{kind}", context,
+          service: "inflight-save-#{kind}"
+        )
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+      {record, delivery, table, get_record} =
+        if kind == :operation do
+          {operation, &OperationDelivery.run/2, "operations", &Cases.get_operation!/2}
+        else
+          assert :ok =
+                   OperationDelivery.run(operation.id,
+                     target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+                   )
+
+          assert_receive {:effect, _, _}
+          attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+          {attempt, &VerificationDelivery.run/2, "verification_attempts",
+           &Cases.get_verification_attempt!/2}
+        end
+
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_inflight_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.status = 'unknown' THEN
+          RAISE EXCEPTION 'inflight receipt save unavailable';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER reject_inflight_receipt BEFORE UPDATE ON #{table}
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_inflight_receipt()
+      """)
+
+      try do
+        assert {:error, error} =
+                 delivery.(record.id,
+                   target_invocation:
+                     invocation(fn ->
+                       {:error, cause} =
+                         Repo.query("SELECT inflight_target_context_unavailable", [],
+                           mode: :savepoint
+                         )
+
+                       {:error, Target.Error.context_failure(cause)}
+                     end)
+                 )
+
+        assert Exception.message(error) =~ "inflight_target_context_unavailable"
+        assert Exception.message(error) =~ "inflight receipt save unavailable"
+      after
+        Repo.query!("DROP TRIGGER reject_inflight_receipt ON #{table}")
+        Repo.query!("DROP FUNCTION pg_temp.reject_inflight_receipt()")
+      end
+
+      assert get_record.(record.id, authorize?: false).status == :dispatching
+
+      assert :ok =
+               delivery.(record.id,
+                 target_invocation: invocation(fn -> flunk("uncertain request replayed") end)
+               )
+
+      assert get_record.(record.id, authorize?: false).status == :unknown
+
+      if kind == :operation do
+        assert_receive {:effect, _, _}
+        refute_receive {:effect, _, _}
+      else
+        assert_receive {:verify, _, _}
+        refute_receive {:verify, _, _}
+      end
+    end
+  end
+
   @tag dispatch_method_read_fault: true
   test "Method storage faults keep unsent Operation and Verification dispatches retryable",
        context do
