@@ -2,7 +2,12 @@ defmodule Opsonde.Providers.Adapter do
   @moduledoc false
 
   @type kind :: :ai | :signal | :target | :inventory | :notification
-  @type check_failure :: :invalid_configuration | :authentication | :unreachable | :capability
+  @type check_failure ::
+          :invalid_configuration
+          | :authentication
+          | :unreachable
+          | :capability
+          | :provider_failure
 
   @callback type() :: String.t()
   @callback kind() :: kind()

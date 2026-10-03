@@ -52,12 +52,12 @@ fn acquire(
             return Err("cancelled");
         }
         if Instant::now() >= deadline {
-            return Err("unreachable");
+            return Err("local_capacity");
         }
         match SDK.try_lock() {
             Ok(guard) => return Ok(guard),
             Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
-            Err(TryLockError::Poisoned(_)) => return Err("unreachable"),
+            Err(TryLockError::Poisoned(_)) => return Err("native_unavailable"),
         }
     }
 }
@@ -195,7 +195,7 @@ fn send_command(
         .saturating_duration_since(Instant::now())
         .as_millis() as u64;
     if remaining == 0 {
-        return Err("unreachable");
+        return Err("local_capacity");
     }
     let command = Command {
         netfn: request.netfn,
@@ -269,7 +269,7 @@ fn sol_exchange(
         .saturating_duration_since(Instant::now())
         .as_millis() as u64;
     if remaining == 0 {
-        return Err("unreachable");
+        return Err("local_capacity");
     }
     let exchange = SolExchange {
         instance: request.instance,

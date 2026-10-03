@@ -2,7 +2,7 @@ defmodule Opsonde.Targets.AccessMethod.Actions.Check do
   use Ash.Resource.Actions.Implementation
 
   alias Opsonde.{Providers, Targets}
-  alias Opsonde.Providers.Target.{Capabilities, CapabilitiesRequest, Connection}
+  alias Opsonde.Providers.Target.{Capabilities, CapabilitiesRequest, Connection, Error}
 
   @impl true
   def run(input, _opts, context) do
@@ -49,6 +49,12 @@ defmodule Opsonde.Targets.AccessMethod.Actions.Check do
   end
 
   defp outcome({:ok, %Capabilities{} = catalog}), do: {:passed, nil, catalog}
+
+  defp outcome({:error, %Error{message: message}}) when is_binary(message),
+    do: {:failed, String.slice(message, 0, 500), nil}
+
+  defp outcome({:error, %Ash.Error.Unknown{errors: [%Error{} = error]}}),
+    do: outcome({:error, error})
 
   defp outcome({:error, _error}),
     do:

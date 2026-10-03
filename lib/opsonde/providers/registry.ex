@@ -4,7 +4,13 @@ defmodule Opsonde.Providers.Registry do
   alias Opsonde.Providers.{Adapter, Target}
 
   @kinds [:ai, :signal, :target, :inventory, :notification]
-  @check_failures [:invalid_configuration, :authentication, :unreachable, :capability]
+  @check_failures [
+    :invalid_configuration,
+    :authentication,
+    :unreachable,
+    :capability,
+    :provider_failure
+  ]
 
   def fetch(type) when is_binary(type) do
     case Enum.filter(adapters(), &(valid?(&1) and &1.type() == type)) do

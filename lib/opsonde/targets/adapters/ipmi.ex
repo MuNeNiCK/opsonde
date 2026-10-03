@@ -62,8 +62,14 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          true <- length(device) >= 11 do
       :ok
     else
-      {:error, :authentication, message} -> {:error, :authentication, message}
-      _ -> {:error, :unreachable, "IPMI BMC check failed"}
+      {:error, :authentication, message} ->
+        {:error, :authentication, message}
+
+      {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
+        {:error, :provider_failure, message}
+
+      _ ->
+        {:error, :unreachable, "IPMI BMC check failed"}
     end
   end
 
@@ -80,13 +86,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   @impl Opsonde.Providers.Target
   def capabilities(state, invocation) do
-    with :ok <- not_cancelled(invocation) do
-      power =
-        case read_power(state, invocation) do
-          {:ok, _power} -> PowerControl.capabilities()
-          _ -> %Target.Capabilities{observations: [], effects: []}
-        end
-
+    with :ok <- not_cancelled(invocation),
+         {:ok, power} <- power_capabilities(state, invocation) do
       effects = Enum.reject(power.effects, &(&1.operation == "bmc.power.cycle"))
 
       {:ok,
@@ -94,6 +95,20 @@ defmodule Opsonde.Targets.Adapters.IPMI do
          observations: power.observations,
          effects: effects ++ [method_effect_operation(), console_operation()]
        }}
+    end
+  end
+
+  defp power_capabilities(state, invocation) do
+    case read_power(state, invocation) do
+      {:ok, _power} ->
+        {:ok, PowerControl.capabilities()}
+
+      {:error, category, message}
+      when category in [:local_capacity, :native_unavailable, :cancelled] ->
+        read_error(category, message)
+
+      _ ->
+        {:ok, %Target.Capabilities{observations: [], effects: []}}
     end
   end
 
@@ -178,13 +193,24 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, :cancelled, _message} = error ->
           error
 
+        {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
+          local_failure(intent.operation, category, message)
+
         {:error, _category, message} ->
           {:error, :failed, message}
       end
     else
-      false -> {:error, :failed, "IPMI endpoint does not match checked Provider"}
-      {:error, :cancelled, _message} = error -> error
-      {:error, _category, message} -> {:error, :failed, message}
+      false ->
+        {:error, :failed, "IPMI endpoint does not match checked Provider"}
+
+      {:error, :cancelled, _message} = error ->
+        error
+
+      {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
+        local_failure(request.operation, category, message)
+
+      {:error, _category, message} ->
+        {:error, :failed, message}
     end
   end
 
@@ -244,6 +270,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
         {:error, :outcome_unknown, _message} ->
           unknown_effect(request.operation, "IPMI command response was lost after dispatch")
+
+        {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
+          local_failure(request.operation, category, message)
 
         {:error, _category, message} ->
           {:error, :failed, message}
@@ -428,6 +457,10 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, "authentication"} ->
           {:error, :failed, "IPMI authentication failed"}
 
+        {:error, category} when category in ["local_capacity", "native_unavailable"] ->
+          {:error, kind, message} = local_error(category)
+          local_failure(request.operation, kind, message)
+
         _ ->
           {:error, :failed, "IPMI SOL connection failed before dispatch"}
       end
@@ -466,6 +499,26 @@ defmodule Opsonde.Targets.Adapters.IPMI do
        status: :unknown,
        reference: reference,
        details: %{"reason" => reason}
+     }}
+  end
+
+  defp local_error("local_capacity"),
+    do: {:error, :local_capacity, "IPMI local execution wait expired before dispatch"}
+
+  defp local_error("native_unavailable"),
+    do:
+      {:error, :native_unavailable, "IPMI local native transport is unavailable before dispatch"}
+
+  defp local_failure(reference, category, message) do
+    {:ok,
+     %Target.EffectResult{
+       status: :failed,
+       reference: reference,
+       details: %{
+         "provider_category" => Atom.to_string(category),
+         "dispatched" => false,
+         "reason" => message
+       }
      }}
   end
 
@@ -547,6 +600,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       {:error, "invalid_request"} ->
         {:error, :failed, "IPMI command is invalid"}
 
+      {:error, category} when category in ["local_capacity", "native_unavailable"] ->
+        local_error(category)
+
       _ ->
         {:error, :unreachable, "IPMI BMC is unreachable"}
     end
@@ -621,6 +677,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   defp not_cancelled(_invocation), do: :ok
 
   defp read_error(:unreachable, message), do: {:error, :retryable, message}
+  defp read_error(:local_capacity, message), do: {:error, :retryable, message}
+  defp read_error(:native_unavailable, message), do: {:error, :failed, message}
   defp read_error(:outcome_unknown, message), do: {:error, :timeout, message}
   defp read_error(:cancelled, message), do: {:error, :cancelled, message}
   defp read_error(_category, message), do: {:error, :failed, message}
