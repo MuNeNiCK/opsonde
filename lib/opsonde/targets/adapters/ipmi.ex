@@ -117,6 +117,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       when category in [:local_capacity, :native_unavailable, :cancelled] ->
         read_error(category, message)
 
+      {:error, _cause} = error ->
+        error
+
       _ ->
         {:ok, %Target.Capabilities{observations: [], effects: []}}
     end
@@ -161,6 +164,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     else
       false -> {:error, :failed, "IPMI observation request is invalid"}
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -208,6 +212,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
         {:error, _category, message} ->
           {:error, :failed, message}
+
+        {:error, %Target.BeforeSendError{}} = error ->
+          error
+
+        {:error, %Ash.Error.Unknown{}} = error ->
+          error
       end
     else
       false ->
@@ -221,6 +231,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
       {:error, _category, message} ->
         {:error, :failed, message}
+
+      {:error, _cause} = error ->
+        error
     end
   end
 
@@ -241,6 +254,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     else
       false -> {:error, :failed, "IPMI verification request is invalid"}
       {:error, category, message} -> read_error(category, message)
+      {:error, _cause} = error -> error
     end
   end
 
@@ -281,6 +295,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, :outcome_unknown, _message} ->
           unknown_effect(request.operation, "IPMI command response was lost after dispatch")
 
+        {:error, %Target.BeforeSendError{}} = error ->
+          error
+
+        {:error, %Ash.Error.Unknown{}} = error ->
+          error
+
         {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
           local_failure(request.operation, category, message)
 
@@ -290,6 +310,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     else
       {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
+      {:error, _cause} = error -> error
     end
   end
 
@@ -466,6 +487,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, "authentication"} ->
           {:error, :failed, "IPMI authentication failed"}
 
+        {:error, %Target.BeforeSendError{}} = error ->
+          error
+
+        {:error, %Ash.Error.Unknown{}} = error ->
+          error
+
         {:error, category} when category in ["local_capacity", "native_unavailable"] ->
           {:error, kind, message} = local_error(category)
           local_failure(request.operation, kind, message)
@@ -476,6 +503,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     else
       false -> {:error, :failed, "IPMI SOL connection deadline expired"}
       {:error, _, _} = error -> error
+      {:error, _cause} = error -> error
     end
   end
 
@@ -558,6 +586,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       {:ok, 0, _response} -> {:error, :failed, "IPMI BMC returned no power state"}
       {:ok, _completion, _response} -> {:error, :failed, "IPMI BMC rejected chassis status"}
       {:error, _category, _message} = error -> error
+      {:error, _cause} = error -> error
     end
   end
 
@@ -577,6 +606,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     else
       false -> {:error, :unreachable, "IPMI connection deadline expired"}
       {:error, _, _} = error -> error
+      {:error, _cause} = error -> error
     end
   end
 
@@ -610,6 +640,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
       {:error, category} when category in ["local_capacity", "native_unavailable"] ->
         local_error(category)
+
+      {:error, %Target.BeforeSendError{}} = error ->
+        error
+
+      {:error, %Ash.Error.Unknown{}} = error ->
+        error
 
       _ ->
         {:error, :unreachable, "IPMI BMC is unreachable"}
@@ -690,6 +726,10 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
     if callback.(), do: {:error, :cancelled, "IPMI request was cancelled"}, else: :ok
+  rescue
+    cause -> {:error, Target.BeforeSendError.exception(cause: cause)}
+  catch
+    kind, reason -> {:error, Target.BeforeSendError.exception(cause: {kind, reason})}
   end
 
   defp not_cancelled(_invocation), do: :ok

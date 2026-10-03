@@ -138,6 +138,110 @@ defmodule Opsonde.Targets.IPMIRequestTest do
   end
 
   @tag ipmi_deadline: true
+  test "IPMI authentication context failure retains its cause and releases the next request" do
+    for {action, type, capability, operation, parameters} <- [
+          {&IPMI.effect/3, Target.EffectRequest, "request.ipmi.effect", "command.execute",
+           %{"netfn" => 6, "command" => 1}},
+          {&IPMI.effect/3, Target.EffectRequest, "request.ipmi.effect", "console.exchange",
+           %{"input_hex" => "0d"}},
+          {&IPMI.observe/3, Target.ObservationRequest, "observe.power", "bmc.power.inspect", %{}},
+          {&IPMI.verify/3, Target.VerificationRequest, "observe.power", "bmc.power.inspect", %{}},
+          {fn state, _request, invocation -> IPMI.capabilities(state, invocation) end,
+           Target.ObservationRequest, "observe.power", "bmc.power.inspect", %{}}
+        ] do
+      {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      on_exit(fn -> :gen_udp.close(socket) end)
+      {:ok, port} = :inet.port(socket)
+
+      {:ok, state} =
+        IPMI.build(%{"timeout_ms" => 3000}, %{"username" => "fixture", "password" => "fixture"})
+
+      {:ok, state} =
+        IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+
+      failure = :atomics.new(1, [])
+      cause = RuntimeError.exception("IPMI invocation context read failed")
+
+      input =
+        request(parameters)
+        |> Map.from_struct()
+        |> Map.take(Map.keys(struct(type)))
+        |> Map.put(:connection, %Target.Connection{endpoint: state.endpoint})
+        |> Map.put(:capability, capability)
+        |> Map.put(:operation, operation)
+        |> then(&struct!(type, &1))
+
+      parent = self()
+
+      waiting =
+        Task.async(fn ->
+          result =
+            try do
+              action.(state, input, %{
+                cancelled?: fn ->
+                  if :atomics.get(failure, 1) == 1, do: raise(cause), else: false
+                end
+              })
+            rescue
+              error -> {:error, error}
+            end
+
+          send(parent, {:ipmi_context_result, self(), result})
+
+          receive do
+            :release -> result
+          after
+            5000 -> result
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(waiting.pid), do: Process.exit(waiting.pid, :kill) end)
+
+      assert {:ok, {_address, _port, _handshake}} = :gen_udp.recv(socket, 0, 1000)
+      :atomics.put(failure, 1, 1)
+      caller = waiting.pid
+      assert_receive {:ipmi_context_result, ^caller, {:error, error}}, 1000
+      assert %Target.BeforeSendError{cause: ^cause} = Target.BeforeSendError.unwrap(error)
+      assert Target.BeforeSendError.retryable?(error)
+
+      assert {:error, :unreachable, _} =
+               IPMI.check(%{state | timeout: 100}, %{"endpoint" => state.endpoint})
+
+      assert {:ok, {_address, _port, _next_handshake}} = :gen_udp.recv(socket, 0, 100)
+      send(caller, :release)
+      assert {:error, ^error} = Task.await(waiting, 1000)
+    end
+  end
+
+  @tag ipmi_deadline: true
+  test "IPMI context failure before exchange sends no authentication request" do
+    {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    on_exit(fn -> :gen_udp.close(socket) end)
+    {:ok, port} = :inet.port(socket)
+    {:ok, state} = IPMI.build(%{}, %{"username" => "fixture", "password" => "fixture"})
+
+    {:ok, state} =
+      IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+
+    input = %{
+      request(%{"netfn" => 6, "command" => 1})
+      | connection: %Target.Connection{endpoint: state.endpoint}
+    }
+
+    cause = RuntimeError.exception("IPMI pre-exchange context read failed")
+
+    for {callback, expected_cause} <- [
+          {fn -> raise cause end, cause},
+          {fn -> throw(:unavailable_context) end, {:throw, :unavailable_context}}
+        ] do
+      assert {:error, %Target.BeforeSendError{cause: ^expected_cause}} =
+               IPMI.effect(state, input, %{cancelled?: callback})
+
+      assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+    end
+  end
+
+  @tag ipmi_deadline: true
   test "IPMI authentication cancellation stops the request and permits the next request" do
     for {operation, parameters} <- [
           {"console.exchange", %{"input_hex" => "0d"}},

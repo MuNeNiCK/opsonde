@@ -45,9 +45,7 @@ defmodule Opsonde.Transports.IPMI do
   end
 
   defp await_exchange(task, cancellation, cancelled?) do
-    if cancelled?.(), do: cancel(cancellation)
-
-    case Task.yield(task, 20) do
+    case Task.yield(task, 0) do
       {:ok, result} ->
         result
 
@@ -55,7 +53,61 @@ defmodule Opsonde.Transports.IPMI do
         {:error, "outcome_unknown"}
 
       nil ->
-        await_exchange(task, cancellation, cancelled?)
+        case stop_check(cancelled?) do
+          {:ok, false} ->
+            case Task.yield(task, 20) do
+              nil -> await_exchange(task, cancellation, cancelled?)
+              {:ok, result} -> result
+              {:exit, _} -> {:error, "outcome_unknown"}
+            end
+
+          {:ok, true} ->
+            cancel(cancellation)
+            await_stopped(task, nil)
+
+          {:error, cause} ->
+            case Task.yield(task, 0) do
+              {:ok, result} ->
+                result
+
+              {:exit, _} ->
+                {:error, Opsonde.Providers.Target.Error.context_failure(cause)}
+
+              nil ->
+                cancel(cancellation)
+                await_stopped(task, cause)
+            end
+        end
+    end
+  end
+
+  defp stop_check(callback) do
+    {:ok, callback.() not in [false, nil]}
+  rescue
+    cause -> {:error, cause}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp await_stopped(task, cause) do
+    case Task.yield(task, 20) do
+      nil ->
+        await_stopped(task, cause)
+
+      {:ok, result} when is_nil(cause) ->
+        result
+
+      {:ok, {:error, "cancelled"}} ->
+        {:error, Opsonde.Providers.Target.BeforeSendError.exception(cause: cause)}
+
+      {:ok, {:ok, _receipt} = result} ->
+        result
+
+      _ when is_nil(cause) ->
+        {:error, "outcome_unknown"}
+
+      _ ->
+        {:error, Opsonde.Providers.Target.Error.context_failure(cause)}
     end
   end
 
