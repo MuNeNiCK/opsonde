@@ -237,7 +237,7 @@ defmodule Opsonde.Cases.AIInvocation do
   end
 
   def rejection_path(error) do
-    case find_ai_error(error) do
+    case AI.Error.find(error) do
       %AI.Error{failure_path: path} when is_binary(path) -> path
       _other -> nil
     end
@@ -259,7 +259,7 @@ defmodule Opsonde.Cases.AIInvocation do
   end
 
   def failure_accounting(error, reserved_units) do
-    ai_error = find_ai_error(error)
+    ai_error = AI.Error.find(error)
 
     usage =
       case ai_error do
@@ -282,11 +282,4 @@ defmodule Opsonde.Cases.AIInvocation do
 
   def failure_accounting(nil, dispatched?, _reserved_units),
     do: %{amount: 0, usage: nil, dispatched?: dispatched?}
-
-  defp find_ai_error(%AI.Error{} = error), do: error
-
-  defp find_ai_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_ai_error/1)
-
-  defp find_ai_error(_error), do: nil
 end

@@ -698,14 +698,8 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
-  defp find_error(%AI.Error{} = error), do: error
-
   defp find_error(:review_context_incomplete), do: :review_context_incomplete
-
-  defp find_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_error/1)
-
-  defp find_error(error), do: error
+  defp find_error(error), do: AI.Error.unwrap(error)
 
   defp result_digest(attrs) do
     attrs

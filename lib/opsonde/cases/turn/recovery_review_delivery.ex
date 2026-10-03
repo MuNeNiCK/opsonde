@@ -41,11 +41,10 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
            claim(turn, incident, selection, request, delivery_attempt(opts)) do
       dispatch(turn, selection, request, claim, opts)
     else
-      {:error, %Ash.Error.Unknown{errors: [%AI.Error{}]} = error} ->
-        attention(turn, "Recovery Reviewer is unavailable", error)
-
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
+      {:error, %Ash.Error.Unknown{} = failure} = error ->
+        if AI.Error.unwrap(failure),
+          do: attention(turn, "Recovery Reviewer is unavailable", failure),
+          else: error
 
       {:error, %Ash.Error.Framework{}} = error ->
         error

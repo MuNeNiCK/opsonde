@@ -19,6 +19,35 @@ defmodule Opsonde.Providers.AITest do
     %{admin: admin, operator: operator, provider: provider}
   end
 
+  test "mixed errors preserve AI usage without classifying the whole error as an AI failure" do
+    native =
+      AI.Error.exception(
+        category: :invalid_output,
+        message: "Decision was invalid",
+        usage: %AI.Usage{input_tokens: 23, output_tokens: 11},
+        dispatched?: true,
+        failure_path: "/intent"
+      )
+
+    nested = Ash.Error.Unknown.exception(errors: [Ash.Error.Unknown.exception(errors: [native])])
+    assert AI.Error.unwrap(native) == native
+    assert AI.Error.unwrap(nested) == native
+
+    storage = Ash.Error.Unknown.UnknownError.exception(error: "Database temporarily unavailable")
+
+    for errors <- [[storage, nested], [nested, storage]] do
+      mixed = Ash.Error.Unknown.exception(errors: errors)
+      assert AI.Error.unwrap(mixed) == nil
+
+      assert %{amount: 34, usage: %AI.Usage{}, dispatched?: true} =
+               Opsonde.Cases.AIInvocation.failure_accounting(mixed, 65_536)
+
+      assert Opsonde.Cases.AIInvocation.rejection_path(mixed) == "/intent"
+    end
+
+    assert AI.Error.unwrap(Ash.Error.Framework.exception(errors: [native])) == nil
+  end
+
   test "an effect on a firing Condition survives a recovered peer but stale or foreign claims do not" do
     conditions = [
       %AI.Condition{

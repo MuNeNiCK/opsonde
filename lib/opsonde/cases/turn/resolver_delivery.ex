@@ -669,7 +669,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp handle_failure(turn, error, invocation \\ nil) do
     if is_nil(invocation) and
          (is_struct(error, Ash.Error.Unknown) or is_struct(error, Ash.Error.Framework)) and
-         not is_struct(find_error(error), AI.Error) do
+         not is_struct(AI.Error.unwrap(error), AI.Error) do
       {:error, error}
     else
       with {:ok, cancelled?} <- case_cancelled?(turn.case_id) do
@@ -948,7 +948,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp failure(error) do
-    case find_error(error) do
+    case AI.Error.unwrap(error) do
       %AI.Error{category: category} -> {to_string(category), public_failure(category)}
       _error -> {"failed", "Resolver delivery failed"}
     end
@@ -964,15 +964,8 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp public_failure(:unavailable), do: "Resolver AI is unavailable"
   defp public_failure(_category), do: "Resolver delivery failed"
 
-  defp find_error(%AI.Error{} = error), do: error
-
-  defp find_error(%{errors: errors}) when is_list(errors),
-    do: Enum.find_value(errors, &find_error/1)
-
-  defp find_error(error), do: error
-
   defp rejection_code(error) do
-    case find_error(error) do
+    case AI.Error.unwrap(error) do
       %AI.Error{category: :invalid_output, failure_code: code} when is_binary(code) -> code
       %AI.Error{category: :invalid_output} -> "invalid_output"
       _error -> nil

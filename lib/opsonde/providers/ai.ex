@@ -678,6 +678,17 @@ defmodule Opsonde.Providers.AI do
 
     @impl true
     def message(error), do: error.message
+
+    # Delivery may handle an AI failure only when the whole error is that failure.
+    # A storage failure alongside it must keep its durable retry semantics.
+    def unwrap(%__MODULE__{} = error), do: error
+    def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
+    def unwrap(_error), do: nil
+
+    # Accounting preserves known native usage even when another failure is present.
+    def find(%__MODULE__{} = error), do: error
+    def find(%{errors: errors}) when is_list(errors), do: Enum.find_value(errors, &find/1)
+    def find(_error), do: nil
   end
 
   def file_read_options(%ResolverRequest{} = request) do
