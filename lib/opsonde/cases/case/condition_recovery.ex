@@ -130,6 +130,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       case evidence do
         %{
           kind: "observation",
+          source: "operation",
           source_ref: operation_id,
           content: %{"status" => "applied", "facts" => facts}
         }
@@ -153,6 +154,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
         %{
           kind: "target_verification",
+          source: "verification",
           content: %{"status" => "verified", "operation_id" => operation_id}
         } ->
           with {:ok, %{} = operation} <-
@@ -377,6 +379,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <- DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt,
          true <-
            evidence.kind == "observation" and
+             evidence.source == "operation" and
              evidence.content["target_id"] == condition.target_id and
              evidence.content["status"] == "failed",
          {:ok, %{} = operation} <-
@@ -400,7 +403,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp valid_operation_evidence(
-         %{kind: "observation", content: content} = evidence,
+         %{kind: "observation", source: "operation", content: content} = evidence,
          condition,
          revision
        ) do
@@ -423,7 +426,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp valid_operation_evidence(
-         %{kind: "target_verification", content: content} = evidence,
+         %{kind: "target_verification", source: "verification", content: content} = evidence,
          condition,
          revision
        ) do
