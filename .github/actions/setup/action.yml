@@ -1,0 +1,37 @@
+name: Set up Opsonde tools
+description: Install CI tools using the versions owned by the root Dockerfile
+inputs:
+  cli:
+    description: Install Burrito build tools instead of Web build tools
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Read tool versions
+      id: versions
+      shell: bash
+      env:
+        CLI: ${{ inputs.cli }}
+      run: |
+        image=$(sed -n 's/^ARG ELIXIR_IMAGE=hexpm\/elixir://p' Dockerfile)
+        [[ "$image" =~ ^([0-9.]+)-erlang-([0-9.]+)- ]]
+        elixir=${BASH_REMATCH[1]}
+        otp=${BASH_REMATCH[2]}
+        if [[ "$CLI" == "true" ]]; then
+          # The locked Burrito 1.5.0 compiler requires this Zig version.
+          extra="zig 0.15.2"
+        else
+          image=$(sed -n 's/^ARG NODE_IMAGE=node://p' Dockerfile)
+          [[ "$image" =~ ^([0-9.]+)- ]]
+          extra="node ${BASH_REMATCH[1]}"
+        fi
+        {
+          echo 'tools<<OPSONDE_TOOLS'
+          echo "erlang $otp"
+          echo "elixir $elixir-otp-${otp%%.*}"
+          echo "$extra"
+          echo OPSONDE_TOOLS
+        } >> "$GITHUB_OUTPUT"
+    - uses: jdx/mise-action@v3
+      with:
+        tool_versions: ${{ steps.versions.outputs.tools }}

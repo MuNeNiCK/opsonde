@@ -27,7 +27,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v3
+      - uses: ./.github/actions/setup
       - name: Install Rust toolchain
         run: rustup toolchain install 1.98.0 --profile minimal
       - name: Install dependencies
@@ -43,6 +43,13 @@ jobs:
           mix ash.codegen --check
           mix precommit
           cargo fmt --manifest-path native/ipmi_nif/Cargo.toml --check
+      - name: Verify CLI composition
+        env:
+          MIX_ENV: cli
+        run: |
+          mix compile --warnings-as-errors
+          mix run --no-halt -- --help > cli-help.txt
+          grep -q '^Usage:' cli-help.txt
 
   version:
     runs-on: ubuntu-24.04
@@ -70,20 +77,21 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v3
-      - name: Install Rust toolchain
-        run: rustup toolchain install 1.98.0 --profile minimal
-
+      - uses: ./.github/actions/setup
+        with:
+          cli: "true"
       - name: Build CLI artifacts
         env:
-          MIX_ENV: prod
+          MIX_ENV: cli
           VERSION: ${{ needs.version.outputs.value }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full curl autoconf automake libtool pkg-config libssl-dev
-          mix deps.get --only prod
+          sudo apt-get install -y p7zip-full
+          mix deps.get --only cli
           for target in linux_x86_64 linux_aarch64 macos_x86_64 macos_aarch64 windows_x86_64; do
             BURRITO_TARGET=${target} mix release opsonde --overwrite
+            test ! -e "_build/cli/rel/opsonde/lib/opsonde-${VERSION}/priv"
+            test ! -e "_build/cli/rel/opsonde/lib/opsonde-${VERSION}/include"
           done
           for path in burrito_out/opsonde_*; do
             target=${path#burrito_out/opsonde_}

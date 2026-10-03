@@ -7,16 +7,12 @@ defmodule Opsonde.Application do
 
   @impl true
   def start(_type, _args) do
-    children = if standalone_cli?(), do: cli_children(), else: server_children()
+    children = server_children()
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Opsonde.Supervisor]
     Supervisor.start_link(children, opts)
-  end
-
-  defp cli_children do
-    [{Task, fn -> System.halt(OpsondeCLI.CLI.run(Burrito.Util.Args.argv())) end}]
   end
 
   defp server_children do
@@ -32,8 +28,6 @@ defmodule Opsonde.Application do
       OpsondeWeb.Endpoint
     ]
   end
-
-  defp standalone_cli?, do: Burrito.Util.running_standalone?()
 
   # Tell Phoenix to update the endpoint configuration
   # whenever the application is updated.

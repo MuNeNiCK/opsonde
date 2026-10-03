@@ -7,13 +7,13 @@ defmodule Opsonde.MixProject do
       version: "0.1.1",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
-      start_permanent: Mix.env() == :prod,
-      default_release: :opsonde_server,
-      releases: releases(),
+      start_permanent: Mix.env() in [:prod, :cli],
+      default_release: if(Mix.env() == :cli, do: :opsonde, else: :opsonde_server),
+      releases: releases(Mix.env()),
       aliases: aliases(),
       deps: deps(),
       usage_rules: usage_rules(),
-      listeners: [Phoenix.CodeReloader],
+      listeners: if(Mix.env() == :cli, do: [], else: [Phoenix.CodeReloader]),
       consolidate_protocols: Mix.env() != :dev
     ]
   end
@@ -22,10 +22,11 @@ defmodule Opsonde.MixProject do
   #
   # Type `mix help compile.app` for more information.
   def application do
-    [
-      mod: {Opsonde.Application, []},
-      extra_applications: [:logger, :runtime_tools, :ssh]
-    ]
+    if Mix.env() == :cli do
+      [mod: {OpsondeCLI.Application, []}, extra_applications: [:logger]]
+    else
+      [mod: {Opsonde.Application, []}, extra_applications: [:logger, :runtime_tools, :ssh]]
+    end
   end
 
   def cli do
@@ -36,6 +37,7 @@ defmodule Opsonde.MixProject do
 
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(:cli), do: ["lib/opsonde_cli"]
   defp elixirc_paths(_), do: ["lib"]
 
   defp usage_rules do
@@ -57,10 +59,15 @@ defmodule Opsonde.MixProject do
   #
   # Type `mix help deps` for examples and options.
   defp deps do
+    client = [{:req, "~> 0.7"}, {:jason, "~> 1.2"}, {:burrito, "== 1.5.0"}]
+
+    if Mix.env() == :cli, do: client, else: client ++ server_deps()
+  end
+
+  defp server_deps do
     [
       {:ash_state_machine, "~> 0.2.13"},
       {:req_llm, "~> 1.24"},
-      {:req, "~> 0.7"},
       {:finch, "~> 0.23.0"},
       {:mint, "~> 1.10.2"},
       {:mint_web_socket, "~> 1.0.6"},
@@ -93,20 +100,17 @@ defmodule Opsonde.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
-      {:jason, "~> 1.2"},
       {:server_sent_events, "~> 1.1.0"},
       {:nimble_csv, "~> 1.3"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"},
-      {:burrito, "== 1.5.0"}
+      {:bandit, "~> 1.5"}
     ]
   end
 
-  defp releases do
+  defp releases(:cli) do
     [
-      opsonde_server: [],
       opsonde: [
-        steps: [:assemble, &Burrito.wrap/1],
+        steps: [:assemble, &remove_server_assets/1, &Burrito.wrap/1],
         burrito: [
           targets: [
             linux_x86_64: [os: :linux, cpu: :x86_64],
@@ -118,6 +122,18 @@ defmodule Opsonde.MixProject do
         ]
       ]
     ]
+  end
+
+  defp releases(_env), do: [opsonde_server: []]
+
+  defp remove_server_assets(release) do
+    version = release.applications |> Map.fetch!(:opsonde) |> Keyword.fetch!(:vsn)
+    app = Path.join([release.path, "lib", "opsonde-#{version}"])
+
+    # Mix copies the project's priv/include even when only CLI sources compile.
+    # Remove those server assets from the assembled copy, never from the project.
+    for directory <- ["priv", "include"], do: File.rm_rf!(Path.join(app, directory))
+    release
   end
 
   # Aliases are shortcuts or tasks specific to the current project.

@@ -28,7 +28,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v3
+      - uses: ./.github/actions/setup
       - name: Install Rust toolchain
         run: rustup toolchain install 1.98.0 --profile minimal
       - name: Install dependencies
@@ -45,3 +45,10 @@ jobs:
           mix precommit
           corepack pnpm --dir assets exec vp test
           cargo fmt --manifest-path native/ipmi_nif/Cargo.toml --check
+      - name: Verify CLI composition
+        env:
+          MIX_ENV: cli
+        run: |
+          mix compile --warnings-as-errors
+          mix run --no-halt -- --help > cli-help.txt
+          grep -q '^Usage:' cli-help.txt

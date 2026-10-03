@@ -25,7 +25,8 @@ defmodule OpsondeCLI.FileTransfer do
   end
 
   defp download_file(client, path, file, chunk_size, destination, context) do
-    temporary = destination <> ".part-" <> Ecto.UUID.generate()
+    temporary =
+      destination <> ".part-" <> Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
 
     with {:ok, io} <- local(File.open(temporary, [:write, :binary, :exclusive]), context) do
       try do
