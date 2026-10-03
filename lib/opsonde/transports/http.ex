@@ -321,14 +321,9 @@ defmodule Opsonde.Transports.HTTP do
     end
   end
 
-  defp append_response(_writer, offset, <<>>), do: offset
-
   defp append_response(writer, offset, bytes) do
-    size = min(byte_size(bytes), writer.chunk_bytes)
-    <<chunk::binary-size(^size), rest::binary>> = bytes
-
-    case writer.append.(offset, chunk) do
-      {:ok, next} when next == offset + size -> append_response(writer, next, rest)
+    case Target.FileWriter.append(writer, offset, bytes) do
+      {:ok, next} -> next
       _ -> throw({:http_file_failure, file_failure_message(writer)})
     end
   end

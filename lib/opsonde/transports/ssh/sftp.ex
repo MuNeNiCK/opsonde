@@ -18,13 +18,13 @@ defmodule Opsonde.Transports.SSH.SFTP do
            end),
          :ok <- active(invocation),
          bytes <- Jason.encode!(result["entries"]),
-         :ok <- append_receipt(writer, bytes, 0),
+         {:ok, size} <- append_receipt(writer, bytes),
          reason <-
            Map.fetch!(
              %{"eof" => :eof, "entry_limit" => :entry_limit, "byte_limit" => :byte_limit},
              result["completion_reason"]
            ),
-         {:ok, file} <- publish(writer, byte_size(bytes), reason),
+         {:ok, file} <- publish(writer, size, reason),
          do:
            {:ok,
             %{
@@ -288,8 +288,7 @@ defmodule Opsonde.Transports.SSH.SFTP do
         {:ok, offset}
 
       {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 ->
-        with {:ok, next} <- writer.append.(offset, bytes),
-             true <- next == offset + byte_size(bytes),
+        with {:ok, next} <- Target.FileWriter.append(writer, offset, bytes),
              do: download(pid, handle, writer, deadline, next),
              else: (_ -> file_error())
 
@@ -361,16 +360,11 @@ defmodule Opsonde.Transports.SSH.SFTP do
   defp capture(_output, _invocation), do: file_error()
   defp file_error, do: {:error, :failed, "SFTP file transfer could not be saved or read"}
 
-  defp append_receipt(_writer, <<>>, _offset), do: :ok
-
-  defp append_receipt(writer, bytes, offset) do
-    count = min(writer.chunk_bytes, byte_size(bytes))
-    <<chunk::binary-size(^count), tail::binary>> = bytes
-
-    with {:ok, next} <- writer.append.(offset, chunk),
-         true <- next == offset + count,
-         do: append_receipt(writer, tail, next),
-         else: (_ -> file_error())
+  defp append_receipt(writer, bytes) do
+    case Target.FileWriter.append(writer, 0, bytes) do
+      {:ok, offset} -> {:ok, offset}
+      _ -> file_error()
+    end
   end
 
   defp publish(writer, size, reason) do

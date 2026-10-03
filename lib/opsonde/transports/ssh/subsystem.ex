@@ -223,7 +223,7 @@ defmodule Opsonde.Transports.SSH.Subsystem do
   defp flush_count(buffer, _), do: byte_size(buffer)
 
   defp append_file(state, stream, writer, offset, bytes, rest) do
-    with :ok <- append_chunks(writer, offset, bytes) do
+    with {:ok, _next_offset} <- Target.FileWriter.append(writer, offset, bytes) do
       next = %{
         state
         | buffers: Map.put(state.buffers, stream, rest),
@@ -232,18 +232,9 @@ defmodule Opsonde.Transports.SSH.Subsystem do
 
       report(next)
       {:ok, next}
+    else
+      _ -> file_error()
     end
-  end
-
-  defp append_chunks(_, _, <<>>), do: :ok
-
-  defp append_chunks(writer, offset, bytes) do
-    count = min(writer.chunk_bytes, byte_size(bytes))
-    <<chunk::binary-size(^count), tail::binary>> = bytes
-
-    with {:ok, next} when next == offset + count <- writer.append.(offset, chunk),
-         do: append_chunks(writer, next, tail),
-         else: (_ -> file_error())
   end
 
   defp complete_file(writer, size, reason) do

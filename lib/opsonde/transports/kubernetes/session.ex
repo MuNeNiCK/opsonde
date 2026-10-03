@@ -346,16 +346,11 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp store_frame(nil, _, bytes, state),
     do: if(state.inline_received + byte_size(bytes) <= state.inline_limit, do: :ok, else: :error)
 
-  defp store_frame(_, _, <<>>, _), do: :ok
-
   defp store_frame(writer, offset, bytes, state) do
-    count = min(writer.chunk_bytes, byte_size(bytes))
-    <<chunk::binary-size(^count), rest::binary>> = bytes
-
-    with :ok <- not_cancelled(state.invocation),
-         {:ok, next} when next == offset + count <- writer.append.(offset, chunk),
-         do: store_frame(writer, next, rest, state),
-         else: (_ -> :error)
+    case Target.FileWriter.append(writer, offset, bytes, fn -> not_cancelled(state.invocation) end) do
+      {:ok, _next} -> :ok
+      _ -> :error
+    end
   end
 
   defp receive_frames(state) do

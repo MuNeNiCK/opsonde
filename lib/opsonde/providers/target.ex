@@ -186,6 +186,33 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:id, :status, :offset, :chunk_bytes, :append, :complete, :read, :abort]
     defstruct @enforce_keys
 
+    def append(writer, offset, bytes, checkpoint \\ fn -> :ok end)
+
+    def append(%__MODULE__{}, offset, <<>>, _checkpoint) when is_integer(offset) and offset >= 0,
+      do: {:ok, offset}
+
+    def append(
+          %__MODULE__{chunk_bytes: limit, append: callback} = writer,
+          offset,
+          bytes,
+          checkpoint
+        )
+        when is_integer(limit) and limit > 0 and is_integer(offset) and offset >= 0 and
+               is_binary(bytes) and is_function(callback, 2) and is_function(checkpoint, 0) do
+      count = min(limit, byte_size(bytes))
+      <<chunk::binary-size(^count), rest::binary>> = bytes
+
+      with :ok <- checkpoint.(),
+           {:ok, next} when next == offset + count <- callback.(offset, chunk) do
+        append(writer, next, rest, checkpoint)
+      else
+        {:error, error} -> {:error, error}
+        _ -> {:error, :invalid_chunk_ack}
+      end
+    end
+
+    def append(_writer, _offset, _bytes, _checkpoint), do: {:error, :invalid_chunk}
+
     def stream(%{"size_bytes" => size}, reader)
         when is_integer(size) and size >= 0 and is_function(reader, 1) do
       Stream.unfold(0, fn offset ->
