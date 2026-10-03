@@ -23,6 +23,7 @@ defmodule Opsonde.Transports.RESTCONF do
 
   defmodule Notifications do
     @moduledoc false
+    alias Opsonde.Providers.Target
     @max_summary_bytes 1_048_576
 
     def read(response, reader) do
@@ -62,8 +63,17 @@ defmodule Opsonde.Transports.RESTCONF do
       {:file_read_error, %{category: :cancelled}} ->
         {:error, :cancelled, "RESTCONF notification reading was cancelled"}
 
-      {:file_read_error, _} ->
-        {:error, :failed, "RESTCONF notification file is unavailable"}
+      {:file_read_error, cause} ->
+        if Target.Error.context_failure?(cause) do
+          {:error,
+           Target.Error.context_failure(cause, %{
+             "http_status" => response.status,
+             "file" => response.file,
+             "completion_reason" => response.completion_reason
+           })}
+        else
+          {:error, :failed, "RESTCONF notification file is unavailable"}
+        end
     end
 
     defp unavailable(reason),

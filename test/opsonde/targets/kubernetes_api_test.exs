@@ -614,6 +614,83 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     )
   end
 
+  for mode <- [:raise, :throw] do
+    @tag completed_watch_read_fault: true, watch_read_fault_mode: mode
+    test "a completed watch retains its file and the #{mode} read fault", context do
+      bytes =
+        "{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"opaque-9\"}}}\n"
+
+      Agent.update(context.agent, &Map.put(&1, :watch_body, bytes))
+      path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets"
+
+      clearance =
+        target_request(
+          context,
+          :observation,
+          "request.kubernetes.observe",
+          "request.observe",
+          %{},
+          %{
+            "method" => "GET",
+            "path" => path,
+            "query" => %{"watch" => "true"},
+            "capture" => %{"duration_ms" => 500, "max_bytes" => 4_096, "max_events" => 10},
+            "response_file" => %{
+              "name" => "watch-read-fault.jsonl",
+              "media_type" => "application/json"
+            }
+          }
+        )
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      callback = fn ->
+        receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+        if Enum.any?(receipts, &(&1.status == :ready)) do
+          if context.watch_read_fault_mode == :throw, do: throw(:watch_file_context_throw)
+
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT watch_file_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      before = Enum.count(requests(context), &(&1.path == path))
+
+      assert {:error, error} =
+               Targets.dispatch_target_observation(clearance, %{cancelled?: callback},
+                 actor: context.operator
+               )
+
+      message =
+        if context.watch_read_fault_mode == :throw,
+          do: "watch_file_context_throw",
+          else: "watch_file_context_unavailable"
+
+      assert Exception.message(error) =~ message
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+
+      assert %{"http_status" => 200, "file" => file, "completion_reason" => "eof"} =
+               Target.Error.context_progress(error)
+
+      assert file["size_bytes"] == byte_size(bytes)
+
+      received =
+        Target.FileWriter.stream(file, fn offset ->
+          Targets.read_bound_artifact_chunk(file, offset, actor: context.operator)
+        end)
+        |> Enum.to_list()
+        |> IO.iodata_to_binary()
+
+      assert received == bytes
+      assert Enum.count(requests(context), &(&1.path == path)) == before + 1
+    end
+  end
+
   test "checked API watches preserve exact built-in and CRD streams without an implicit list",
        context do
     bytes =

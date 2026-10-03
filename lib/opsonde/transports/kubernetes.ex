@@ -13,6 +13,7 @@ defmodule Opsonde.Transports.Kubernetes do
 
   defmodule Watch do
     @moduledoc false
+    alias Opsonde.Providers.Target
     @max_frame_bytes 1_048_576
 
     # Interpret a completed bounded file through the supplied receipt reader.
@@ -103,8 +104,17 @@ defmodule Opsonde.Transports.Kubernetes do
       {:file_read_error, %{category: :cancelled}} ->
         {:error, :cancelled, "Kubernetes watch file reading was cancelled"}
 
-      {:file_read_error, _} ->
-        {:error, :failed, "Kubernetes watch file is unavailable"}
+      {:file_read_error, cause} ->
+        if Target.Error.context_failure?(cause) do
+          {:error,
+           Target.Error.context_failure(cause, %{
+             "http_status" => response.status,
+             "file" => response.file,
+             "completion_reason" => response.completion_reason
+           })}
+        else
+          {:error, :failed, "Kubernetes watch file is unavailable"}
+        end
     end
 
     defp bounded_frame({:data, bytes}, previous) do

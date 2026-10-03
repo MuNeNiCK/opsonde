@@ -1127,6 +1127,74 @@ defmodule Opsonde.Targets.RESTCONFTest do
              )
   end
 
+  for mode <- [:raise, :throw] do
+    @tag completed_notification_read_fault: true, notification_read_fault_mode: mode
+    test "completed notifications retain their file and the #{mode} read fault", context do
+      bytes = "id: opaque-9\ndata: notification\n\n"
+      Agent.update(context.agent, &Map.put(&1, :stream_body, bytes))
+
+      clearance =
+        native_request(context, :observation, stream_parameters(context))
+        |> Targets.clear_target_request!(actor: context.admin)
+
+      callback = fn ->
+        receipts = Targets.page_artifacts!(context.target.id, actor: context.admin).results
+
+        if Enum.any?(receipts, &(&1.status == :ready)) do
+          if context.notification_read_fault_mode == :throw,
+            do: throw(:notification_file_context_throw)
+
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT notification_file_context_unavailable", [],
+              mode: :savepoint
+            )
+
+          raise cause
+        end
+
+        false
+      end
+
+      count = fn ->
+        Agent.get(
+          context.agent,
+          &Enum.count(&1.requests, fn request -> request.path == "/streams/NETCONF" end)
+        )
+      end
+
+      before = count.()
+
+      assert {:error, error} =
+               Targets.dispatch_target_observation(clearance, %{cancelled?: callback},
+                 actor: context.admin
+               )
+
+      message =
+        if context.notification_read_fault_mode == :throw,
+          do: "notification_file_context_throw",
+          else: "notification_file_context_unavailable"
+
+      assert Exception.message(error) =~ message
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+
+      assert %{"http_status" => 200, "file" => file, "completion_reason" => "duration_limit"} =
+               Target.Error.context_progress(error)
+
+      assert file["size_bytes"] == byte_size(bytes)
+
+      received =
+        Target.FileWriter.stream(file, fn offset ->
+          Targets.read_bound_artifact_chunk(file, offset, actor: context.admin)
+        end)
+        |> Enum.to_list()
+        |> IO.iodata_to_binary()
+
+      assert received == bytes
+      assert count.() == before + 1
+    end
+  end
+
   defp stream_parameters(context),
     do: %{
       "method" => "GET",
