@@ -144,17 +144,16 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
         %OperationClaim{state: :claimed, operation: claimed, actor: actor, clearance: clearance}
       end
     else
-      {:error, error}
-      when is_struct(error, Ash.Error.Invalid) or
-             is_struct(error, Ash.Error.Forbidden) or is_struct(error, RequestError) ->
-        terminal_no_send(
-          operation,
-          "authorization_invalidated",
-          "Operation authorization changed before dispatch"
-        )
-
-      {:error, _error} = error ->
-        error
+      {:error, error} = failure ->
+        if RequestError.expected?(error) do
+          terminal_no_send(
+            operation,
+            "authorization_invalidated",
+            "Operation authorization changed before dispatch"
+          )
+        else
+          failure
+        end
     end
   end
 

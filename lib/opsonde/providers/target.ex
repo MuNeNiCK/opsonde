@@ -399,6 +399,10 @@ defmodule Opsonde.Providers.Target do
 
     @impl true
     def message(error), do: error.message
+
+    def unwrap(%__MODULE__{} = error), do: error
+    def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
+    def unwrap(_error), do: nil
   end
 
   defmodule BeforeSendError do

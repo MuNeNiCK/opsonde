@@ -57,6 +57,40 @@ defmodule Opsonde.TargetRequestTest do
     refute_receive {:effect, _, _}
   end
 
+  @tag request_method_read_fault: true
+  test "Target clearance distinguishes a Method storage fault from a stale Method", context do
+    input =
+      request(context.linux, context.ssh, :observation, :auto,
+        capability: "observe.command",
+        operation: "filesystem.read"
+      )
+
+    Repo.query!(
+      "ALTER TABLE access_methods RENAME COLUMN capabilities TO unavailable_capabilities"
+    )
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               Targets.clear_target_request(input, actor: context.operator)
+
+      assert Exception.message(error) =~ "does not exist"
+      denied = RequestError.exception(category: :forbidden, message: "denied")
+      invalid = Ash.Error.Action.InvalidArgument.exception(field: :request, message: "invalid")
+      assert RequestError.expected?(Ash.Error.to_error_class(denied))
+      assert RequestError.expected?(Ash.Error.to_error_class(invalid))
+      refute RequestError.expected?(Ash.Error.to_error_class([denied, error]))
+      refute RequestError.expected?(Ash.Error.to_error_class([invalid, error]))
+    after
+      Repo.query!(
+        "ALTER TABLE access_methods RENAME COLUMN unavailable_capabilities TO capabilities"
+      )
+    end
+
+    assert %Clearance{} = Targets.clear_target_request!(input, actor: context.operator)
+    refute_receive {:observe, _, _}
+    refute_receive {:effect, _, _}
+  end
+
   test "cleared request dispatches the exact registered Method snapshot",
        context do
     other = create_target!(context.admin, "linux-02", "host", "linux")

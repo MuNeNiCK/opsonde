@@ -348,6 +348,75 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
   end
 
+  @tag dispatch_method_read_fault: true
+  test "Method storage faults keep unsent Operation and Verification dispatches retryable",
+       context do
+    {_incident, _run, proposal} = authorized_proposal!("dispatch-method-fault", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    Repo.query!(
+      "ALTER TABLE access_methods RENAME COLUMN capabilities TO unreadable_capabilities"
+    )
+
+    try do
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(fn -> flunk("unsent operation ran") end)
+               )
+
+      assert Exception.message(error) =~ "does not exist"
+    after
+      Repo.query!(
+        "ALTER TABLE access_methods RENAME COLUMN unreadable_capabilities TO capabilities"
+      )
+    end
+
+    unsent = Cases.get_operation!(operation.id, authorize?: false)
+    assert unsent.status == :queued
+    assert unsent.dispatch_started_at == nil
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+    Repo.query!(
+      "ALTER TABLE access_methods RENAME COLUMN capabilities TO unreadable_capabilities"
+    )
+
+    try do
+      assert {:error, error} =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation(fn -> flunk("unsent verification ran") end)
+               )
+
+      assert Exception.message(error) =~ "does not exist"
+    after
+      Repo.query!(
+        "ALTER TABLE access_methods RENAME COLUMN unreadable_capabilities TO capabilities"
+      )
+    end
+
+    unsent_attempt = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+    assert unsent_attempt.status == :queued
+    assert unsent_attempt.dispatch_started_at == nil
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok, %Target.Verification{status: :verified, observed_at: DateTime.utc_now()}}
+                 )
+             )
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("original effect repeated") end)
+             )
+  end
+
   test "a protected result reader rechecks authority inside the follow-up dispatch", context do
     {incident, _run, proposal} = authorized_proposal!("protected-revocation", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)

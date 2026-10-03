@@ -69,8 +69,10 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       {:error, %RequestError{} = error} ->
         {:error, error}
 
-      {:error, _error} ->
-        {:error, request_error(:stale_context, "Target request context is unavailable")}
+      {:error, error} = failure ->
+        if RequestError.expected?(error),
+          do: {:error, request_error(:stale_context, "Target request context is unavailable")},
+          else: failure
     end
   end
 
@@ -97,8 +99,12 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
         {:error,
          request_error(:denied, "Target request kind does not match Method classification")}
 
-      {:error, _error} ->
-        {:error, request_error(:denied, "Target Method request is invalid or unsupported")}
+      {:error, error} = failure ->
+        if RequestError.expected?(error) or
+             match?(%ProviderTarget.Error{category: :failed}, ProviderTarget.Error.unwrap(error)),
+           do:
+             {:error, request_error(:denied, "Target Method request is invalid or unsupported")},
+           else: failure
     end
   end
 

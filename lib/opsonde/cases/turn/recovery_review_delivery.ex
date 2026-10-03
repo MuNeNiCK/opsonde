@@ -372,14 +372,17 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       {:ok, _resolved} ->
         :ok
 
-      {:error, %Ash.Error.Invalid{} = error} ->
-        attention(turn, "Recovery Review could not be applied", error)
+      {:error, error} = failure ->
+        cond do
+          AI.Error.context_failure?(error) ->
+            failure
 
-      {:error, %Ash.Error.Forbidden{} = error} ->
-        attention(turn, "Recovery Review could not be applied", error)
+          is_struct(error, Ash.Error.Invalid) or is_struct(error, Ash.Error.Forbidden) ->
+            attention(turn, "Recovery Review could not be applied", error)
 
-      {:error, _error} = error ->
-        error
+          true ->
+            failure
+        end
     end
   end
 

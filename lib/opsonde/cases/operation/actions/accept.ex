@@ -6,7 +6,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
   alias Opsonde.Cases.{Operation, Proposal}
   alias Opsonde.Cases.ResolutionRun.Budget, as: Budget
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
-  alias Opsonde.Targets.TargetRequest.Clearance
+  alias Opsonde.Targets.TargetRequest.{Clearance, RequestError}
 
   @impl true
   def run(input, _opts, _context) do
@@ -41,13 +41,13 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
         {:ok, operation}
 
       {:ok, %{status: :exhausted}} ->
-        {:error, "Target request budget exhausted"}
+        invalid_input("Target request budget exhausted")
 
       {:error, error} ->
-        if condition_context_changed?(error) do
+        if RequestError.expected?(error) and condition_context_changed?(error) do
           with {:ok, _invalidated} <-
                  Cases.supersede_proposal_context(proposal.id, authorize?: false) do
-            {:error, "Proposal Conditions changed before Operation acceptance"}
+            invalid_input("Proposal Conditions changed before Operation acceptance")
           end
         else
           {:error, error}
@@ -69,7 +69,12 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
          :ok <- exact_provider(clearance, proposal),
          {:ok, operation} <- create(proposal, approval, actor, clearance),
          {:ok, job} <- enqueue(operation),
-         true <- is_integer(job.id) || {:error, "Operation dispatch job was not persisted"} do
+         true <-
+           is_integer(job.id) ||
+             {:error,
+              Ash.Error.Unknown.UnknownError.exception(
+                error: "Operation dispatch job was not persisted"
+              )} do
       {:ok, operation}
     end
   end
@@ -195,8 +200,17 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
 
   defp required_existing(proposal_id) do
     case existing(proposal_id) do
-      {:ok, %Operation{} = operation} -> {:ok, operation}
-      _missing -> {:error, "Effect budget ledger exists without its Operation"}
+      {:ok, %Operation{} = operation} ->
+        {:ok, operation}
+
+      {:ok, nil} ->
+        {:error,
+         Ash.Error.Unknown.UnknownError.exception(
+           error: "Effect budget ledger exists without its Operation"
+         )}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -217,7 +231,7 @@ defmodule Opsonde.Cases.Operation.Actions.Accept do
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
     |> case do
-      {:ok, nil} -> {:error, "Operation input is unavailable"}
+      {:ok, nil} -> invalid_input("Operation input is unavailable")
       result -> result
     end
   end
