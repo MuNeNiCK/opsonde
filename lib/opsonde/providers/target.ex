@@ -206,8 +206,20 @@ defmodule Opsonde.Providers.Target do
            {:ok, next} when next == offset + count <- callback.(offset, chunk) do
         append(writer, next, rest, checkpoint)
       else
-        {:error, error} -> {:error, error}
-        _ -> {:error, :invalid_chunk_ack}
+        {:error, error} ->
+          if Opsonde.Providers.Target.Error.context_failure?(error) do
+            {:error,
+             Opsonde.Providers.Target.Error.context_failure(error, %{
+               "receiving_file_id" => writer.id,
+               "received_bytes" => offset,
+               "pending_chunk_bytes" => byte_size(bytes)
+             })}
+          else
+            {:error, error}
+          end
+
+        _ ->
+          {:error, :invalid_chunk_ack}
       end
     end
 
@@ -406,15 +418,25 @@ defmodule Opsonde.Providers.Target do
     def unwrap(_error), do: nil
 
     def context_failure(cause, progress \\ nil) do
-      Ash.Error.to_error_class([
-        cause,
-        exception(
-          category: :failed,
-          message: @context_failure_message,
-          progress: progress
-        )
-      ])
+      if find(cause) do
+        error = Ash.Error.to_error_class(cause)
+        %{error | errors: Enum.map(error.errors, &enrich_progress(&1, progress))}
+      else
+        Ash.Error.to_error_class([
+          cause,
+          exception(category: :failed, message: @context_failure_message, progress: progress)
+        ])
+      end
     end
+
+    defp enrich_progress(
+           %__MODULE__{category: :failed, message: @context_failure_message} = error,
+           progress
+         )
+         when is_map(progress),
+         do: %{error | progress: Map.merge(error.progress || %{}, progress)}
+
+    defp enrich_progress(error, _progress), do: error
 
     def context_failure?(%{errors: errors} = error) when is_list(errors),
       do: not is_nil(find(error))

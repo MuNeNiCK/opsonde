@@ -109,9 +109,17 @@ defmodule Opsonde.Transports.HTTP do
   rescue
     _error -> response_failure(writer)
   catch
-    {:http_file_failure, _message} -> response_failure(writer)
-    :http_cancelled -> {:error, :cancelled, "HTTP request was cancelled"}
-    _kind, _reason -> response_failure(writer)
+    {:http_file_failure, cause, progress} ->
+      {:error, Target.Error.context_failure(cause, progress)}
+
+    {:http_file_failure, _message} ->
+      response_failure(writer)
+
+    :http_cancelled ->
+      {:error, :cancelled, "HTTP request was cancelled"}
+
+    _kind, _reason ->
+      response_failure(writer)
   end
 
   # Public Req preparation and Finch streaming APIs retain synchronous
@@ -240,7 +248,7 @@ defmodule Opsonde.Transports.HTTP do
 
   defp wire_body({:file, label, reference}, headers, %{file_reader: reader} = invocation)
        when is_function(reader, 2) do
-    case reader.(label, 0) do
+    case prepare_file(fn -> reader.(label, 0) end) do
       {:ok, first} when is_binary(first) ->
         size = reference["size_bytes"]
 
@@ -250,8 +258,13 @@ defmodule Opsonde.Transports.HTTP do
               nil
 
             {offset, chunk} ->
-              if not_cancelled(invocation) != :ok, do: throw(:http_cancelled)
-              chunk = if is_nil(chunk), do: read_file_chunk(reader, label, offset), else: chunk
+              progress = %{"input_file_id" => reference["id"], "input_bytes_supplied" => offset}
+              check_file_context(invocation, progress)
+
+              chunk =
+                if is_nil(chunk),
+                  do: read_file_chunk(reader, label, offset, progress),
+                  else: chunk
 
               if byte_size(chunk) == 0 or offset + byte_size(chunk) > size,
                 do: throw({:http_file_failure, "HTTP input file could not be read"})
@@ -266,6 +279,12 @@ defmodule Opsonde.Transports.HTTP do
 
         {:ok, stream, headers}
 
+      {:error, %Target.BeforeSendError{}} = error ->
+        error
+
+      {:error, cause} ->
+        context_failure(cause, false)
+
       _ ->
         {:error, :failed, "HTTP input file could not be read"}
     end
@@ -276,19 +295,33 @@ defmodule Opsonde.Transports.HTTP do
 
   defp wire_body(body, headers, _invocation), do: {:ok, body, headers}
 
-  defp read_file_chunk(reader, label, offset) do
+  defp read_file_chunk(reader, label, offset, progress) do
     case reader.(label, offset) do
       {:ok, chunk} when is_binary(chunk) -> chunk
+      {:error, cause} -> throw({:http_file_failure, cause, progress})
       _ -> throw({:http_file_failure, "HTTP input file could not be read"})
     end
+  rescue
+    cause -> throw({:http_file_failure, cause, progress})
+  catch
+    :throw, {:http_file_failure, _, _} = failure ->
+      throw(failure)
+
+    :throw, {:http_file_failure, _} = failure ->
+      throw(failure)
+
+    kind, reason ->
+      throw({:http_file_failure, ErlangError.exception(original: {kind, reason}), progress})
   end
 
   defp response_writer(nil, _invocation), do: {:ok, nil}
 
   defp response_writer(%{"name" => name, "media_type" => media}, %{file_writer: callback})
        when is_function(callback, 3) do
-    case callback.(Ecto.UUID.generate(), name, media) do
+    case prepare_file(fn -> callback.(Ecto.UUID.generate(), name, media) end) do
       {:ok, %Target.FileWriter{status: :receiving, offset: 0} = writer} -> {:ok, writer}
+      {:error, %Target.BeforeSendError{}} = error -> error
+      {:error, cause} -> context_failure(cause, false)
       _ -> {:error, :failed, "HTTP response file could not be opened"}
     end
   end
@@ -297,7 +330,6 @@ defmodule Opsonde.Transports.HTTP do
     do: {:error, :failed, "HTTP response file writer is unavailable"}
 
   defp collect_response({:data, bytes}, {request, response}, writer, invocation, capture) do
-    if not_cancelled(invocation) != :ok, do: throw(:http_cancelled)
     offset = Map.get(response.private, :opsonde_received_bytes, 0)
 
     bytes =
@@ -310,7 +342,15 @@ defmodule Opsonde.Transports.HTTP do
         do: request.private[:opsonde_data_limiter].(bytes, response),
         else: {bytes, response}
 
-    offset = append_response(writer, offset, bytes)
+    progress = %{
+      "http_status" => response.status,
+      "receiving_file_id" => writer.id,
+      "received_bytes" => offset,
+      "pending_chunk_bytes" => byte_size(bytes)
+    }
+
+    check_file_context(invocation, progress)
+    offset = append_response(writer, offset, bytes, progress)
 
     response = %{
       response
@@ -334,11 +374,45 @@ defmodule Opsonde.Transports.HTTP do
     end
   end
 
-  defp append_response(writer, offset, bytes) do
+  defp append_response(writer, offset, bytes, progress) do
     case Target.FileWriter.append(writer, offset, bytes) do
-      {:ok, next} -> next
-      _ -> throw({:http_file_failure, file_failure_message(writer)})
+      {:ok, next} ->
+        next
+
+      {:error, cause} ->
+        progress = Map.merge(progress, Target.Error.context_progress(cause) || %{})
+        throw({:http_file_failure, cause, progress})
+
+      _ ->
+        throw({:http_file_failure, file_failure_message(writer)})
     end
+  rescue
+    cause -> throw({:http_file_failure, cause, progress})
+  catch
+    :throw, {:http_file_failure, _, _} = failure ->
+      throw(failure)
+
+    :throw, {:http_file_failure, _} = failure ->
+      throw(failure)
+
+    kind, reason ->
+      throw({:http_file_failure, ErlangError.exception(original: {kind, reason}), progress})
+  end
+
+  defp check_file_context(invocation, progress) do
+    case not_cancelled(invocation, true) do
+      :ok -> :ok
+      {:error, cause} -> throw({:http_file_failure, cause, progress})
+      _ -> throw(:http_cancelled)
+    end
+  end
+
+  defp prepare_file(callback) do
+    callback.()
+  rescue
+    cause -> context_failure(cause, false)
+  catch
+    kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), false)
   end
 
   defp complete_response(response, nil, _invocation, _method), do: {:ok, response}

@@ -983,6 +983,132 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert Agent.get(context.agent, & &1.writes) == [<<255, 0, 1, 2, 255>>]
   end
 
+  @tag http_input_fault: true
+  test "HTTP file reader faults distinguish local preparation from a started stream", context do
+    upload =
+      Targets.begin_artifact!(
+        context.target.id,
+        "reader.bin",
+        "application/octet-stream",
+        3,
+        Base.encode16(:crypto.hash(:sha256, <<1, 2, 3>>), case: :lower),
+        "reader-fault",
+        actor: context.operator
+      )
+
+    Targets.append_artifact_chunk!(upload.id, 0, <<1, 2, 3>>, actor: context.operator)
+    Targets.complete_artifact!(upload.id, actor: context.operator)
+    reference = Targets.artifact_reference!(upload.id, context.target.id, actor: context.operator)
+    request = write_request(context, "PUT", "/api/binary", nil)
+
+    request = %{
+      request
+      | files: %{"payload" => reference},
+        parameters: %{"method" => "PUT", "path" => "/api/binary", "body_file" => "payload"}
+    }
+
+    for phase <- [:initial, :stream], mode <- [:return, :raise, :throw] do
+      before_requests = Agent.get(context.agent, & &1.requests)
+
+      reader = fn "payload", offset ->
+        if phase == :stream and offset == 0 do
+          {:ok, <<1, 2>>}
+        else
+          if mode == :throw, do: throw(:http_input_context_throw)
+
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT http_input_context_unavailable", [], mode: :savepoint)
+
+          if mode == :raise, do: raise(cause), else: {:error, cause}
+        end
+      end
+
+      assert {:error, error} =
+               Providers.target_effect(
+                 context.method.provider_id,
+                 request,
+                 %{file_reader: reader},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      expected_message =
+        if mode == :throw, do: "http_input_context_throw", else: "http_input_context_unavailable"
+
+      if phase == :initial do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ expected_message
+        assert Agent.get(context.agent, & &1.requests) == before_requests
+      else
+        assert Exception.message(error) =~ expected_message
+        assert Target.Error.context_failure?(error)
+        assert is_nil(Target.BeforeSendError.unwrap(error))
+
+        assert Target.Error.context_progress(error) == %{
+                 "input_file_id" => reference["id"],
+                 "input_bytes_supplied" => 2
+               }
+      end
+    end
+
+    assert Agent.get(context.agent, & &1.writes) == []
+  end
+
+  @tag http_collector_fault: true
+  test "a file collector context fault retains received status and pending bytes", context do
+    owner = self()
+
+    for mode <- [:raise, :throw] do
+      before_writes = Agent.get(context.agent, &length(&1.writes))
+
+      callback = fn ->
+        if self() != owner and Agent.get(context.agent, &length(&1.writes)) > before_writes do
+          send(owner, :http_collector_context_checked)
+          if mode == :throw, do: throw(:http_collector_context_throw)
+
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT http_collector_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               cleared_http(context, "PUT", "/api/binary", %{
+                 "body" => "plain-body",
+                 "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
+               })
+               |> Targets.dispatch_target_effect(%{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      expected_message =
+        if mode == :throw,
+          do: "http_collector_context_throw",
+          else: "http_collector_context_unavailable"
+
+      assert Exception.message(error) =~ expected_message
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+
+      assert %{
+               "http_status" => 200,
+               "receiving_file_id" => id,
+               "received_bytes" => 0,
+               "pending_chunk_bytes" => 3
+             } = Target.Error.context_progress(error)
+
+      receipt = Targets.get_artifact!(id, actor: context.operator)
+      assert receipt.status == :receiving
+      assert receipt.received_bytes == 0
+      assert Agent.get(context.agent, &length(&1.writes)) == before_writes + 1
+      assert_receive :http_collector_context_checked
+    end
+  end
+
   test "a response that contradicts its content digest is not published", context do
     Agent.update(
       context.agent,
@@ -1577,44 +1703,98 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert result.details["reason"] =~ receipt.id
   end
 
-  @tag file_publication_fault: true
-  test "failed result publication cannot report a successful effect or repeat the write",
-       context do
-    # A real PostgreSQL failure at the publication boundary; assertions use public actions.
-    Opsonde.Repo.query!("""
-    CREATE FUNCTION pg_temp.reject_http_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.status = 'ready' THEN RAISE EXCEPTION 'injected file publication failure'; END IF;
-      RETURN NEW;
-    END $$;
-    """)
+  for phase <- [:begin, :append, :later_append, :complete] do
+    @tag file_publication_fault: true, http_file_fault_phase: phase
+    test "HTTP #{phase} file failure retains cause and known transfer facts",
+         context do
+      phase = context.http_file_fault_phase
 
-    Opsonde.Repo.query!(
-      "CREATE TRIGGER reject_http_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_http_file_ready()"
-    )
+      if phase == :later_append do
+        previous_limits = Application.get_env(:opsonde, :artifact_limits)
 
-    assert {:error, error} =
-             cleared_http(context, "PUT", "/api/binary", %{
-               "body" => "plain-body",
-               "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
-             })
-             |> Targets.dispatch_target_effect(%{}, actor: context.operator, authorize?: false)
+        Application.put_env(
+          :opsonde,
+          :artifact_limits,
+          Map.put(previous_limits || %{}, :chunk_bytes, 2)
+        )
 
-    assert Exception.message(error) =~ "injected file publication failure"
-    assert Agent.get(context.agent, & &1.writes) == ["plain-body"]
-    [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
-    assert receipt.status == :receiving
-    assert receipt.received_bytes == 3
-    assert receipt.completion_reason == nil
+        on_exit(fn -> restore_limits(previous_limits) end)
+      end
 
-    assert Target.Error.context_progress(error) == %{
-             "http_status" => 200,
-             "receiving_file_id" => receipt.id,
-             "received_bytes" => 3
-           }
+      condition =
+        case phase do
+          :begin -> "TRUE"
+          :append -> "NEW.received_bytes <> OLD.received_bytes"
+          :later_append -> "NEW.received_bytes > 2"
+          :complete -> "NEW.status = 'ready'"
+        end
 
-    assert {:error, _} =
-             Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+      event = if phase == :begin, do: "INSERT", else: "UPDATE"
+      # A real PostgreSQL failure at the publication boundary; assertions use public actions.
+      Opsonde.Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_http_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{condition} THEN RAISE EXCEPTION 'injected file publication failure'; END IF;
+        RETURN NEW;
+      END $$;
+      """)
+
+      Opsonde.Repo.query!(
+        "CREATE TRIGGER reject_http_file_ready BEFORE #{event} ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_http_file_ready()"
+      )
+
+      assert {:error, error} =
+               cleared_http(context, "PUT", "/api/binary", %{
+                 "body" => "plain-body",
+                 "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
+               })
+               |> Targets.dispatch_target_effect(%{}, actor: context.operator, authorize?: false)
+
+      if phase == :begin do
+        assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+        assert Exception.message(cause) =~ "injected file publication failure"
+        assert Agent.get(context.agent, & &1.writes) == []
+
+        assert Agent.get(context.agent, & &1.requests)
+               |> Enum.count(&(&1 == {"PUT", "/api/binary"})) == 0
+      else
+        assert Exception.message(error) =~ "injected file publication failure"
+        assert Agent.get(context.agent, & &1.writes) == ["plain-body"]
+        [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+        assert receipt.status == :receiving
+
+        received =
+          case phase do
+            :append -> 0
+            :later_append -> 2
+            :complete -> 3
+          end
+
+        assert receipt.received_bytes == received
+        assert receipt.completion_reason == nil
+
+        expected = %{
+          "http_status" => 200,
+          "receiving_file_id" => receipt.id,
+          "received_bytes" => received
+        }
+
+        expected =
+          if phase == :append, do: Map.put(expected, "pending_chunk_bytes", 3), else: expected
+
+        expected =
+          if phase == :later_append,
+            do: Map.put(expected, "pending_chunk_bytes", 1),
+            else: expected
+
+        assert Target.Error.context_progress(error) == expected
+
+        assert {:error, _} =
+                 Targets.artifact_reference(receipt.id, context.target.id,
+                   actor: context.operator
+                 )
+      end
+    end
   end
 
   defp read_file(context, file) do

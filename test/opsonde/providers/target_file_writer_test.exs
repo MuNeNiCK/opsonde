@@ -2,6 +2,7 @@ defmodule Opsonde.Providers.TargetFileWriterTest do
   use ExUnit.Case, async: true
 
   alias Opsonde.Providers.Target.FileWriter
+  alias Opsonde.Providers.Target
 
   test "one append preserves exact offsets and bytes across storage chunks" do
     owner = self()
@@ -53,6 +54,34 @@ defmodule Opsonde.Providers.TargetFileWriterTest do
       assert_receive {:append, 0, <<1, 2>>}
       refute_receive {:append, _, _}
     end
+  end
+
+  test "a marked fault retains confirmed chunks when a later append fails" do
+    cause = RuntimeError.exception("storage unavailable")
+
+    output =
+      writer(fn
+        0, <<1, 2>> -> {:ok, 2}
+        2, <<3>> -> {:error, Target.Error.context_failure(cause)}
+      end)
+
+    assert {:error, error} = FileWriter.append(output, 0, <<1, 2, 3>>)
+    assert Exception.message(error) =~ "storage unavailable"
+
+    assert Target.Error.context_progress(error) == %{
+             "receiving_file_id" => "writer",
+             "received_bytes" => 2,
+             "pending_chunk_bytes" => 1
+           }
+
+    enriched = Target.Error.context_failure(error, %{"http_status" => 200})
+
+    assert Target.Error.context_progress(enriched) == %{
+             "http_status" => 200,
+             "receiving_file_id" => "writer",
+             "received_bytes" => 2,
+             "pending_chunk_bytes" => 1
+           }
   end
 
   defp writer(append) do
