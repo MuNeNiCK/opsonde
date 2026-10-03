@@ -802,6 +802,7 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.active_conditions_for_case!(first.id, authorize?: false)) == 2
   end
 
+  @tag condition_read_frequency: true
   test "PoE and twenty AP stay together when a coincident core Condition is split",
        context do
     enable_signal_automation!(context.admin)
@@ -860,11 +861,58 @@ defmodule Opsonde.SignalIngressTest do
       source: :assignment
     }
 
-    assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(turn.id, selection)
+    handler = {__MODULE__, make_ref()}
+    Process.put(:condition_context_read_count, 0)
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:opsonde, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if Process.get(:count_condition_context_reads) and
+               String.contains?(metadata.query, "FROM \"conditions\"") do
+            Process.put(
+              :condition_context_read_count,
+              Process.get(:condition_context_read_count) + 1
+            )
+          end
+        end,
+        nil
+      )
+
+    request =
+      try do
+        Process.put(:count_condition_context_reads, true)
+        assert {:ok, request} = ResolverProjection.build(turn.id, selection)
+        request
+      after
+        Process.put(:count_condition_context_reads, false)
+        :telemetry.detach(handler)
+      end
+
+    assert Process.get(:condition_context_read_count) <= 4
     assert length(request.conditions) == 22
     assert request.conditions |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 22
+    assert Enum.all?(request.conditions, &(&1.state == :firing and &1.revision == 1))
+
+    assert request.conditions |> Enum.map(& &1.target_id) |> Enum.sort() ==
+             targets |> Map.values() |> Enum.sort()
+
     assert Enum.count(request.evidence, &(&1.kind == "signal_event")) == 22
     assert Enum.all?(request.evidence, &is_binary(&1.content["condition_id"]))
+
+    Repo.query!("ALTER TABLE conditions RENAME COLUMN predicate TO unavailable_predicate")
+
+    try do
+      assert {:error, error} = ResolverProjection.build(turn.id, selection)
+      assert AI.Error.context_failure?(error)
+      assert Exception.message(error) =~ "does not exist"
+    after
+      Repo.query!("ALTER TABLE conditions RENAME COLUMN unavailable_predicate TO predicate")
+    end
+
+    assert {:ok, retried_request} = ResolverProjection.build(turn.id, selection)
+    assert retried_request.conditions == request.conditions
 
     completed =
       Cases.complete_turn!(

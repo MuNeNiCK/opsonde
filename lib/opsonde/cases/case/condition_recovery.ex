@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.Case.ConditionRecovery do
   @moduledoc false
 
-  alias Opsonde.{Cases, Signals, Targets}
+  alias Opsonde.{Cases, Targets}
 
   defmodule EffectIncomplete do
     @moduledoc false
@@ -17,7 +17,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident, exclude_operation_id \\ nil) do
-    with {:ok, memberships} <- Cases.active_conditions_for_case(incident.id, authorize?: false),
+    with {:ok, memberships} <-
+           Cases.active_conditions_for_case(incident.id, authorize?: false, load: [:condition]),
          true <- memberships != [] || invalid("Signal Case has no active Conditions"),
          {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, exclude_operation_id),
          {:ok, evidence} <-
@@ -29,7 +30,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <-
            length(evidence) <= @max_evidence || invalid("Condition evidence window is full") do
       Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
-        with {:ok, condition} <- Signals.get_condition(membership.condition_id, authorize?: false),
+        with condition <- membership.condition,
              {:ok, baseline} <- condition_baseline(incident, condition.id, effects),
              {:ok, assessment} <- assess_condition(condition, evidence, baseline) do
           {:cont, {:ok, [assessment | collected]}}

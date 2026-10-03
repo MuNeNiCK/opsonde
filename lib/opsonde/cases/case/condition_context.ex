@@ -1,46 +1,36 @@
 defmodule Opsonde.Cases.Case.ConditionContext do
   @moduledoc false
 
-  alias Opsonde.{Cases, Signals, Targets}
+  alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Providers.AI
   alias Opsonde.Targets.ResourceScope
 
   def current_conditions(%{trigger_kind: :signal} = incident) do
     with {:ok, memberships} <-
-           Cases.active_conditions_for_case(incident.id, authorize?: false),
+           Cases.active_conditions_for_case(incident.id, authorize?: false, load: [:condition]),
          true <-
            memberships != [] ||
              {:error,
               Ash.Error.Changes.InvalidChanges.exception(
                 message: "Signal Case has no active Conditions"
               )} do
-      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
-        case Signals.get_condition(membership.condition_id, authorize?: false) do
-          {:ok, condition} ->
-            item = %AI.Condition{
-              id: condition.id,
-              revision: condition.revision,
-              occurrence: condition.occurrence,
-              predicate: condition.predicate,
-              subject_key: condition.subject_key,
-              subject_ref: condition.subject_ref,
-              state: condition.state,
-              target_id: condition.target_id,
-              current_occurred_at_us:
-                DateTime.to_unix(condition.current_occurred_at, :microsecond)
-            }
+      conditions =
+        Enum.map(memberships, fn %{condition: condition} ->
+          %AI.Condition{
+            id: condition.id,
+            revision: condition.revision,
+            occurrence: condition.occurrence,
+            predicate: condition.predicate,
+            subject_key: condition.subject_key,
+            subject_ref: condition.subject_ref,
+            state: condition.state,
+            target_id: condition.target_id,
+            current_occurred_at_us: DateTime.to_unix(condition.current_occurred_at, :microsecond)
+          }
+        end)
 
-            {:cont, {:ok, [item | collected]}}
-
-          {:error, _error} = error ->
-            {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, collected} -> {:ok, Enum.reverse(collected)}
-        error -> error
-      end
+      {:ok, conditions}
     end
   end
 
