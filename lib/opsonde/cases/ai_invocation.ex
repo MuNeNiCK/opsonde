@@ -185,7 +185,7 @@ defmodule Opsonde.Cases.AIInvocation do
               expr(
                 cond do
                   status == :dispatching -> :pending
-                  usage_reported or input_tokens > 0 or output_tokens > 0 -> :reported
+                  usage_reported -> :reported
                   dispatch_confirmed == false -> :not_dispatched
                   true -> :unknown
                 end
