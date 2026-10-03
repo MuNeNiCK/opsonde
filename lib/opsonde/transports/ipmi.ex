@@ -3,25 +3,20 @@ defmodule Opsonde.Transports.IPMI do
 
   use Rustler, otp_app: :opsonde, crate: :ipmi_nif
 
-  def send_command(_address, _username, _password, _timeout_ms, _request),
+  def send_command(_address, _username, _password, _timeout_ms, _request, _token),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  def exchange_console(address, username, password, timeout, request, invocation) do
-    cancellation = cancellation_token()
-
-    task =
-      Task.async(fn ->
-        sol_exchange(address, username, password, timeout, request, cancellation)
-      end)
-
-    await_console(task, cancellation, Map.get(invocation, :cancelled?, fn -> false end))
+  def exchange_command(address, username, password, timeout, request, invocation) do
+    exchange(invocation, fn cancellation ->
+      send_command(address, username, password, timeout, request, cancellation)
+    end)
   end
 
-  defp await_console(task, cancellation, cancelled?) do
-    if cancelled?.(), do: cancel(cancellation)
-
-    case Task.yield(task, 20) do
-      {:ok, {:ok, result}} ->
+  def exchange_console(address, username, password, timeout, request, invocation) do
+    case exchange(invocation, fn cancellation ->
+           sol_exchange(address, username, password, timeout, request, cancellation)
+         end) do
+      {:ok, result} ->
         {status, reason} =
           case result.status do
             0 -> {:applied, nil}
@@ -29,22 +24,38 @@ defmodule Opsonde.Transports.IPMI do
             _ -> {:unknown, "SOL exchange ended without a complete receipt"}
           end
 
-        public =
-          %{result | status: status}
-          |> Map.put(:reason, reason)
-          |> Map.update!(:activation_completion, &if(&1 < 0, do: nil, else: &1))
-          |> Map.update!(:deactivation_completion, &if(&1 < 0, do: nil, else: &1))
+        {:ok,
+         %{result | status: status}
+         |> Map.put(:reason, reason)
+         |> Map.update!(:activation_completion, &if(&1 < 0, do: nil, else: &1))
+         |> Map.update!(:deactivation_completion, &if(&1 < 0, do: nil, else: &1))}
 
-        {:ok, public}
+      {:error, "outcome_unknown"} ->
+        {:ok, %{status: :unknown, output: [], reason: "SOL exchange interrupted"}}
 
+      result ->
+        result
+    end
+  end
+
+  defp exchange(invocation, native_call) do
+    cancellation = cancellation_token()
+    task = Task.async(fn -> native_call.(cancellation) end)
+    await_exchange(task, cancellation, Map.get(invocation, :cancelled?, fn -> false end))
+  end
+
+  defp await_exchange(task, cancellation, cancelled?) do
+    if cancelled?.(), do: cancel(cancellation)
+
+    case Task.yield(task, 20) do
       {:ok, result} ->
         result
 
       {:exit, _} ->
-        {:ok, %{status: :unknown, output: [], reason: "SOL exchange interrupted"}}
+        {:error, "outcome_unknown"}
 
       nil ->
-        await_console(task, cancellation, cancelled?)
+        await_exchange(task, cancellation, cancelled?)
     end
   end
 

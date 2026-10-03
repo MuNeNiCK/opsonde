@@ -56,40 +56,80 @@ defmodule Opsonde.Targets.IPMIRequestTest do
   end
 
   @tag ipmi_deadline: true
-  test "SOL cancellation interrupts native authentication without retaining the SDK session" do
-    {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
-    on_exit(fn -> :gen_udp.close(socket) end)
-    {:ok, port} = :inet.port(socket)
-    credentials = %{"username" => "fixture", "password" => "fixture"}
-    {:ok, state} = IPMI.build(%{"timeout_ms" => 3000}, credentials)
+  test "IPMI authentication cancellation stops the request and permits the next request" do
+    for {operation, parameters} <- [
+          {"console.exchange", %{"input_hex" => "0d"}},
+          {"command.execute", %{"netfn" => 6, "command" => 1}}
+        ] do
+      {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      on_exit(fn -> :gen_udp.close(socket) end)
+      {:ok, port} = :inet.port(socket)
+      credentials = %{"username" => "fixture", "password" => "fixture"}
+      {:ok, state} = IPMI.build(%{"timeout_ms" => 3000}, credentials)
 
-    {:ok, state} =
-      IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+      {:ok, state} =
+        IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
 
-    cancellation = :atomics.new(1, [])
+      cancellation = :atomics.new(1, [])
 
-    effect = %{
-      request(%{"input_hex" => "0d"})
-      | connection: %Target.Connection{endpoint: state.endpoint},
-        operation: "console.exchange"
-    }
+      effect = %{
+        request(parameters)
+        | connection: %Target.Connection{endpoint: state.endpoint},
+          operation: operation
+      }
 
-    waiting =
-      Task.async(fn ->
-        IPMI.effect(state, effect, %{cancelled?: fn -> :atomics.get(cancellation, 1) == 1 end})
-      end)
+      waiting =
+        Task.async(fn ->
+          IPMI.effect(state, effect, %{cancelled?: fn -> :atomics.get(cancellation, 1) == 1 end})
+        end)
 
-    assert {:ok, {_address, _port, _handshake}} = :gen_udp.recv(socket, 0, 1000)
-    started = System.monotonic_time(:millisecond)
-    :atomics.put(cancellation, 1, 1)
-    assert {:error, :cancelled, _} = Task.await(waiting, 1000)
-    assert System.monotonic_time(:millisecond) - started < 500
-    assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+      assert {:ok, {_address, _port, _handshake}} = :gen_udp.recv(socket, 0, 1000)
+      started = System.monotonic_time(:millisecond)
+      :atomics.put(cancellation, 1, 1)
+      assert {:error, :cancelled, _} = Task.await(waiting, 1000)
+      assert System.monotonic_time(:millisecond) - started < 500
+      assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
 
-    assert {:error, :unreachable, _} =
-             IPMI.check(%{state | timeout: 100}, %{"endpoint" => state.endpoint})
+      assert {:error, :unreachable, _} =
+               IPMI.check(%{state | timeout: 100}, %{"endpoint" => state.endpoint})
 
-    assert {:ok, {_address, _port, _next_handshake}} = :gen_udp.recv(socket, 0, 100)
+      assert {:ok, {_address, _port, _next_handshake}} = :gen_udp.recv(socket, 0, 100)
+    end
+  end
+
+  @tag ipmi_deadline: true
+  test "IPMI caller termination stops authentication and permits the next request" do
+    for {operation, parameters} <- [
+          {"console.exchange", %{"input_hex" => "0d"}},
+          {"command.execute", %{"netfn" => 6, "command" => 1}}
+        ] do
+      {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      on_exit(fn -> :gen_udp.close(socket) end)
+      {:ok, port} = :inet.port(socket)
+
+      {:ok, state} =
+        IPMI.build(%{"timeout_ms" => 3000}, %{"username" => "fixture", "password" => "fixture"})
+
+      {:ok, state} =
+        IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+
+      effect = %{
+        request(parameters)
+        | connection: %Target.Connection{endpoint: state.endpoint},
+          operation: operation
+      }
+
+      {caller, monitor} = spawn_monitor(fn -> IPMI.effect(state, effect, %{}) end)
+      assert {:ok, {_address, _port, _handshake}} = :gen_udp.recv(socket, 0, 1000)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}
+
+      assert {:error, :unreachable, _} =
+               IPMI.check(%{state | timeout: 200}, %{"endpoint" => state.endpoint})
+
+      assert {:ok, {_address, _port, _next_handshake}} = :gen_udp.recv(socket, 0, 100)
+      assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+    end
   end
 
   @tag ipmi_deadline: true

@@ -45,10 +45,10 @@ extern "C" fn cancelled(context: *const c_void) -> i32 {
 
 fn acquire(
     deadline: Instant,
-    cancellation: Option<&Cancellation>,
+    cancellation: &Cancellation,
 ) -> Result<MutexGuard<'static, ()>, &'static str> {
     loop {
-        if cancellation.is_some_and(|token| token.0.load(Ordering::Acquire)) {
+        if cancellation.0.load(Ordering::Acquire) {
             return Err("cancelled");
         }
         if Instant::now() >= deadline {
@@ -157,6 +157,8 @@ extern "C" {
         completion: *mut u8,
         data: *mut u8,
         length: *mut u32,
+        cancelled: extern "C" fn(*const c_void) -> i32,
+        cancellation: *const c_void,
     ) -> i32;
 }
 
@@ -167,6 +169,7 @@ fn send_command(
     password: String,
     timeout_ms: u64,
     request: Request,
+    token: rustler::ResourceArc<Cancellation>,
 ) -> Result<(u8, Vec<u8>), &'static str> {
     if !(1..=30_000).contains(&timeout_ms)
         || request.netfn > 62
@@ -187,7 +190,7 @@ fn send_command(
     let user = CString::new(username).map_err(|_| "invalid_request")?;
     let password = CString::new(password).map_err(|_| "invalid_request")?;
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let _guard = acquire(deadline, None)?;
+    let _guard = acquire(deadline, &token)?;
     let remaining = deadline
         .saturating_duration_since(Instant::now())
         .as_millis() as u64;
@@ -219,6 +222,8 @@ fn send_command(
             &mut completion,
             data.as_mut_ptr(),
             &mut length,
+            cancelled,
+            &*token as *const Cancellation as *const c_void,
         )
     };
     match status {
@@ -228,6 +233,7 @@ fn send_command(
         }
         3 => Err("outcome_unknown"),
         4 => Err("authentication"),
+        6 => Err("cancelled"),
         _ => Err("unreachable"),
     }
 }
@@ -258,7 +264,7 @@ fn sol_exchange(
     let user = CString::new(username).map_err(|_| "invalid_request")?;
     let password = CString::new(password).map_err(|_| "invalid_request")?;
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let _guard = acquire(deadline, Some(&token))?;
+    let _guard = acquire(deadline, &token)?;
     let remaining = deadline
         .saturating_duration_since(Instant::now())
         .as_millis() as u64;

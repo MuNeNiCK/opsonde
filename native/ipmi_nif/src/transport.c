@@ -158,14 +158,16 @@ static void close_session(struct ipmi_intf *intf) {
 int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
                         const char *password, uint64_t timeout_ms,
                         const struct command *command, uint8_t *completion,
-                        uint8_t *data, uint32_t *length) {
+                        uint8_t *data, uint32_t *length,
+                        int (*check)(const void *), const void *context) {
     deadline = now_us() + timeout_ms * 1000;
     effect_active = effect_attempted = authentication_failed = 0;
-    cancel_check = NULL;
+    cancel_check = check;
+    cancel_context = context;
     struct ipmi_intf *intf = session(host, port, user, password, timeout_ms);
-    if (!intf) return 1;
+    if (!intf) { cancel_check = NULL; return 1; }
     int status = 2;
-    if (intf->open(intf) >= 0 && now_us() < deadline) {
+    if (!cancelled() && intf->open(intf) >= 0 && !cancelled() && now_us() < deadline) {
         struct ipmi_rq request = {0};
         request.msg.netfn = command->netfn;
         request.msg.cmd = command->command;
@@ -188,6 +190,8 @@ int opsonde_ipmi_command(const char *host, uint16_t port, const char *user,
             status = 0;
         }
     }
+    if (status == 2 && cancelled()) status = 6;
+    cancel_check = NULL;
     close_session(intf);
     return status == 2 && authentication_failed ? 4 : status;
 }

@@ -58,7 +58,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   @impl Opsonde.Providers.Adapter
   def check(%State{} = state, %{"endpoint" => endpoint}) do
     with {:ok, state} <- bind_connection(state, %Target.Connection{endpoint: endpoint}),
-         {:ok, 0, device} <- command(state, 0x06, 0x01, []),
+         {:ok, 0, device} <- command(state, 0x06, 0x01, [], %{}),
          true <- length(device) >= 11 do
       :ok
     else
@@ -82,7 +82,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   def capabilities(state, invocation) do
     with :ok <- not_cancelled(invocation) do
       power =
-        case read_power(state) do
+        case read_power(state, invocation) do
           {:ok, _power} -> PowerControl.capabilities()
           _ -> %Target.Capabilities{observations: [], effects: []}
         end
@@ -131,7 +131,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     with true <- PowerControl.inspect_request?(request),
          true <- request.connection.endpoint == state.endpoint,
          :ok <- not_cancelled(invocation),
-         {:ok, power} <- read_power(state) do
+         {:ok, power} <- read_power(state, invocation) do
       {:ok, PowerControl.observation(power, state.endpoint, "ipmi")}
     else
       false -> {:error, :failed, "IPMI observation request is invalid"}
@@ -150,7 +150,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     with true <- request.connection.endpoint == state.endpoint,
          {:ok, intent} <- PowerControl.effect_request(request),
          :ok <- not_cancelled(invocation),
-         {:ok, observed} <- read_power(state),
+         {:ok, observed} <- read_power(state, invocation),
          :ok <- PowerControl.expected_state(intent.expected, observed),
          :ok <- not_cancelled(invocation) do
       data =
@@ -160,7 +160,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
           "bmc.power.reset" -> [3]
         end
 
-      case command(state, 0x00, 0x02, data) do
+      case command(state, 0x00, 0x02, data, invocation) do
         {:ok, 0, _response} ->
           {:ok,
            %Target.EffectResult{
@@ -175,11 +175,15 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, :outcome_unknown, _message} ->
           unknown_effect(intent.operation, "IPMI chassis control response was lost")
 
+        {:error, :cancelled, _message} = error ->
+          error
+
         {:error, _category, message} ->
           {:error, :failed, message}
       end
     else
       false -> {:error, :failed, "IPMI endpoint does not match checked Provider"}
+      {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
     end
   end
@@ -189,7 +193,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     with true <- request.connection.endpoint == state.endpoint,
          true <- PowerControl.inspect_request?(request),
          :ok <- not_cancelled(invocation),
-         {:ok, power} <- read_power(state) do
+         {:ok, power} <- read_power(state, invocation) do
       verification = PowerControl.verification(power, state.endpoint, "ipmi", request.expected)
 
       verification =
@@ -213,7 +217,7 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   defp method_effect(state, request, invocation) do
     with {:ok, command, include_response?} <- method_request(state, request),
          :ok <- not_cancelled(invocation) do
-      case command(state, command) do
+      case command(state, command, invocation) do
         {:ok, completion, response} ->
           details =
             command
@@ -234,6 +238,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
              reference: request.operation,
              details: details
            }}
+
+        {:error, :cancelled, _message} = error ->
+          error
 
         {:error, :outcome_unknown, _message} ->
           unknown_effect(request.operation, "IPMI command response was lost after dispatch")
@@ -483,8 +490,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         response |> :erlang.list_to_binary() |> Base.encode16(case: :lower)
       )
 
-  defp read_power(state) do
-    case command(state, 0x00, 0x01, []) do
+  defp read_power(state, invocation) do
+    case command(state, 0x00, 0x01, [], invocation) do
       {:ok, 0, [status | _rest]} -> {:ok, if(Bitwise.band(status, 1) == 1, do: "on", else: "off")}
       {:ok, 0, _response} -> {:error, :failed, "IPMI BMC returned no power state"}
       {:ok, _completion, _response} -> {:error, :failed, "IPMI BMC rejected chassis status"}
@@ -492,31 +499,33 @@ defmodule Opsonde.Targets.Adapters.IPMI do
     end
   end
 
-  defp command(state, netfn, opcode, data) do
+  defp command(state, netfn, opcode, data, invocation) do
     {:ok, routing} = routing(%{})
-    command(state, Map.merge(routing, %{netfn: netfn, command: opcode, data: data}))
+    command(state, Map.merge(routing, %{netfn: netfn, command: opcode, data: data}), invocation)
   end
 
-  defp command(state, request) do
+  defp command(state, request, invocation) do
     started = System.monotonic_time(:millisecond)
 
-    with {:ok, address} <- resolve_address(state.host, state.port, state.timeout),
+    with :ok <- not_cancelled(invocation),
+         {:ok, address} <- resolve_address(state.host, state.port, state.timeout),
          remaining = state.timeout - (System.monotonic_time(:millisecond) - started),
          true <- remaining > 0 do
-      method_command(state, address, request, remaining)
+      method_command(state, address, request, remaining, invocation)
     else
       false -> {:error, :unreachable, "IPMI connection deadline expired"}
       {:error, _, _} = error -> error
     end
   end
 
-  defp method_command(state, address, request, timeout) do
-    case IPMI.send_command(
+  defp method_command(state, address, request, timeout, invocation) do
+    case IPMI.exchange_command(
            address,
            state.user,
            state.password,
            timeout,
-           request
+           request,
+           invocation
          ) do
       {:ok, {completion, response}}
       when is_integer(completion) and completion in 0..255 and is_list(response) and
@@ -525,6 +534,9 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
       {:error, "authentication"} ->
         {:error, :authentication, "IPMI authentication failed"}
+
+      {:error, "cancelled"} ->
+        {:error, :cancelled, "IPMI command was cancelled before dispatch"}
 
       {:error, "outcome_unknown"} ->
         {:error, :outcome_unknown, "IPMI command response was lost"}
