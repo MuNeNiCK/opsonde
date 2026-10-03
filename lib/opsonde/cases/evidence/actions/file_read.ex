@@ -230,10 +230,22 @@ defmodule Opsonde.Cases.Evidence.Actions.FileRead do
       end
 
     case result do
-      {:ok, result} -> {:ok, result}
-      {:error, %Ash.Error.Invalid{}} -> {:ok, :unavailable}
-      {:error, %Ash.Error.Forbidden{}} -> {:ok, :unavailable}
-      error -> error
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, %Ash.Error.Invalid{errors: [%type{}]}}
+      when type in [
+             Ash.Error.Query.NotFound,
+             Ash.Error.Changes.InvalidAttribute,
+             Ash.Error.Action.InvalidArgument
+           ] ->
+        {:ok, :unavailable}
+
+      {:error, %Ash.Error.Forbidden{errors: [%Ash.Error.Forbidden.Policy{}]}} ->
+        {:ok, :unavailable}
+
+      error ->
+        error
     end
   end
 

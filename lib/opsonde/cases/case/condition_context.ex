@@ -196,17 +196,18 @@ defmodule Opsonde.Cases.Case.ConditionContext do
     target_id = action_value(action, :target_id)
 
     with true <- map_size(claim) == 4 and is_binary(condition.target_id),
-         {:ok, relation} <-
+         {:ok, %{} = relation} <-
            Targets.load_relationship_for_traversal(
              claim["relationship_id"],
              claim["relationship_revision"],
-             authorize?: false
+             authorize?: false,
+             not_found_error?: false
            ),
          true <-
            Enum.sort([relation.source_target_id, relation.destination_target_id]) ==
              Enum.sort([condition.target_id, target_id]),
          {:ok, %{active: true, revision: condition_revision}} <-
-           Targets.get_target(condition.target_id, authorize?: false),
+           Targets.get_target(condition.target_id, authorize?: false, not_found_error?: false),
          true <-
            scope_matches?(evidence_ids, false, fn id ->
              symptom_observation?(
@@ -222,28 +223,28 @@ defmodule Opsonde.Cases.Case.ConditionContext do
            end) do
       true
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _unavailable -> false
     end
   end
 
   defp effect_target_observation?(evidence_id, incident, condition, action) do
     with true <- same_resource_scope?(evidence_id, action, incident.id),
-         {:ok, evidence} <- Cases.get_evidence(evidence_id, authorize?: false) do
+         {:ok, %{} = evidence} <-
+           Cases.get_evidence(evidence_id, authorize?: false, not_found_error?: false) do
       DateTime.to_unix(evidence.observed_at, :microsecond) >=
         condition.current_occurred_at_us and
         DateTime.compare(evidence.observed_at, ConditionRecovery.inherited_baseline(incident)) !=
           :lt
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _unavailable -> false
     end
   end
 
   defp symptom_observation?(evidence_id, incident, condition, target_revision) do
-    with {:ok, evidence} <- Cases.get_evidence(evidence_id, authorize?: false),
+    with {:ok, %{} = evidence} <-
+           Cases.get_evidence(evidence_id, authorize?: false, not_found_error?: false),
          true <-
            evidence.case_id == incident.id and evidence.kind == "observation" and
              evidence.source == "operation",
@@ -254,7 +255,8 @@ defmodule Opsonde.Cases.Case.ConditionContext do
          true <-
            DateTime.compare(evidence.observed_at, ConditionRecovery.inherited_baseline(incident)) !=
              :lt,
-         {:ok, observation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
+         {:ok, %{} = observation} <-
+           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
          true <-
            observation.case_id == incident.id and
              observation.purpose == :investigation and
@@ -270,30 +272,35 @@ defmodule Opsonde.Cases.Case.ConditionContext do
                 evidence_id in condition.failed_observation_ids) do
       true
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _unavailable -> false
     end
   end
 
   defp same_resource_scope?(evidence_id, action, case_id) do
-    with {:ok, evidence} <- Cases.get_evidence(evidence_id, authorize?: false),
+    with {:ok, %{} = evidence} <-
+           Cases.get_evidence(evidence_id, authorize?: false, not_found_error?: false),
          true <-
            evidence.case_id == case_id and evidence.kind == "observation" and
              evidence.source == "operation",
-         {:ok, observation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
+         {:ok, %{} = observation} <-
+           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
          true <- observation.purpose == :investigation and observation.status == :applied,
          true <- observation.case_id == case_id,
          true <- observation.target_id == action_value(action, :target_id),
          true <- observation.target_revision == action_value(action, :target_revision),
          true <-
            evidence.content["status"] == "applied",
-         {:ok, action_method} <-
+         {:ok, %{} = action_method} <-
            Opsonde.Targets.get_access_method(action_value(action, :access_method_id),
-             authorize?: false
+             authorize?: false,
+             not_found_error?: false
            ),
-         {:ok, observation_method} <-
-           Opsonde.Targets.get_access_method(observation.access_method_id, authorize?: false) do
+         {:ok, %{} = observation_method} <-
+           Opsonde.Targets.get_access_method(observation.access_method_id,
+             authorize?: false,
+             not_found_error?: false
+           ) do
       ResourceScope.key(
         action_method,
         action_value(action, :capability),
@@ -307,8 +314,7 @@ defmodule Opsonde.Cases.Case.ConditionContext do
           observation.selectors
         )
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _other -> false
     end
   end

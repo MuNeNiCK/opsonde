@@ -97,14 +97,11 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           {:ok, Enum.map(candidates, & &1.id)}
         end
 
-      {:error, %Ash.Error.Unknown{}} = error ->
-        error
-
-      {:error, %Ash.Error.Framework{}} = error ->
-        error
-
-      {:error, _unavailable} ->
+      {:error, %Ash.Error.Changes.InvalidChanges{}} ->
         {:ok, []}
+
+      {:error, _error} = error ->
+        error
     end
   end
 
@@ -120,9 +117,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     if is_binary(evidence.content["value"]) do
       case Cases.file_read_source(evidence.id, incident.id, authorize?: false) do
         {:ok, source} -> manual_candidate(source, incident, run, target, baseline)
-        {:error, %Ash.Error.Unknown{}} = error -> error
-        {:error, %Ash.Error.Framework{}} = error -> error
-        {:error, _unavailable} -> {:ok, false}
+        {:error, error} -> unavailable_source(error)
       end
     else
       {:ok, false}
@@ -139,8 +134,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           content: %{"status" => "applied", "facts" => facts}
         }
         when is_map(facts) and map_size(facts) > 0 ->
-          case Cases.get_operation(operation_id, authorize?: false) do
-            {:ok, operation} ->
+          case Cases.get_operation(operation_id, authorize?: false, not_found_error?: false) do
+            {:ok, %{} = operation} ->
               {:ok,
                evidence.resolution_run_id == run.id and operation.case_id == incident.id and
                  operation.resolution_run_id == run.id and
@@ -149,10 +144,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
                  is_struct(operation.dispatch_started_at, DateTime) and
                  DateTime.compare(operation.dispatch_started_at, baseline) != :lt}
 
-            {:error, %Ash.Error.Unknown{}} = error ->
-              error
-
-            {:error, %Ash.Error.Framework{}} = error ->
+            {:error, _error} = error ->
               error
 
             _other ->
@@ -163,9 +155,13 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
           kind: "target_verification",
           content: %{"status" => "verified", "operation_id" => operation_id}
         } ->
-          with {:ok, operation} <- Cases.get_operation(operation_id, authorize?: false),
-               {:ok, attempt} <-
-                 Cases.verification_attempt_by_operation(operation_id, authorize?: false) do
+          with {:ok, %{} = operation} <-
+                 Cases.get_operation(operation_id, authorize?: false, not_found_error?: false),
+               {:ok, %{} = attempt} <-
+                 Cases.verification_attempt_by_operation(operation_id,
+                   authorize?: false,
+                   not_found_error?: false
+                 ) do
             {:ok,
              operation.case_id == incident.id and operation.target_id == target.id and
                operation.target_revision == target.revision and
@@ -173,8 +169,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
                attempt.status == :verified and attempt.case_id == incident.id and
                attempt.observed_at == evidence.observed_at}
           else
-            {:error, %Ash.Error.Unknown{}} = error -> error
-            {:error, %Ash.Error.Framework{}} = error -> error
+            {:error, _error} = error -> error
             _other -> {:ok, false}
           end
 
@@ -195,9 +190,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   defp current_evidence(%{kind: "file_read"} = evidence, condition, baseline, target_revision) do
     case Cases.file_read_source(evidence.id, evidence.case_id, authorize?: false) do
       {:ok, source} -> current_evidence(source, condition, baseline, target_revision)
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
-      {:error, _unavailable} -> {:ok, false}
+      {:error, error} -> unavailable_source(error)
     end
   end
 
@@ -221,7 +214,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
         {:ok, result(condition, :unmapped_target)}
 
       true ->
-        case Targets.get_target(condition.target_id, authorize?: false) do
+        case Targets.get_target(condition.target_id, authorize?: false, not_found_error?: false) do
           {:ok, %{active: true, revision: revision}} ->
             with {:ok, failed_evidence} <-
                    select_evidence(
@@ -254,10 +247,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
                end}
             end
 
-          {:error, %Ash.Error.Unknown{}} = error ->
-            error
-
-          {:error, %Ash.Error.Framework{}} = error ->
+          {:error, _error} = error ->
             error
 
           _other ->
@@ -389,7 +379,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
            evidence.kind == "observation" and
              evidence.content["target_id"] == condition.target_id and
              evidence.content["status"] == "failed",
-         {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
+         {:ok, %{} = operation} <-
+           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
          true <- operation.id == evidence.source_ref and operation.case_id == evidence.case_id,
          true <-
            operation.purpose == :investigation and operation.status == :failed and
@@ -403,8 +394,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
              operation.selectors == evidence.content["selectors"] do
       {:ok, true}
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _invalid -> {:ok, false}
     end
   end
@@ -416,7 +406,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
        ) do
     with true <- content["status"] == "applied",
          true <- content["target_id"] == condition.target_id,
-         {:ok, operation} <- Cases.get_operation(evidence.source_ref, authorize?: false),
+         {:ok, %{} = operation} <-
+           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
          true <- operation.purpose == :investigation and operation.status == :applied,
          true <- operation.case_id == evidence.case_id and operation.id == evidence.source_ref,
          true <-
@@ -426,8 +417,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          true <- operation.selectors == content["selectors"] do
       {:ok, true}
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _other -> {:ok, false}
     end
   end
@@ -438,20 +428,26 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          revision
        ) do
     with true <- content["status"] == "verified" and content["target_id"] == condition.target_id,
-         {:ok, operation} <- Cases.get_operation(content["operation_id"], authorize?: false),
+         {:ok, %{} = operation} <-
+           Cases.get_operation(content["operation_id"],
+             authorize?: false,
+             not_found_error?: false
+           ),
          true <- operation.purpose == :remediation and operation.status == :applied,
          true <-
            operation.case_id == evidence.case_id and operation.target_id == condition.target_id,
          true <- operation.target_revision == revision,
-         {:ok, attempt} <-
-           Cases.verification_attempt_by_operation(operation.id, authorize?: false),
+         {:ok, %{} = attempt} <-
+           Cases.verification_attempt_by_operation(operation.id,
+             authorize?: false,
+             not_found_error?: false
+           ),
          true <- attempt.status == :verified and attempt.target_id == condition.target_id,
          true <-
            attempt.target_revision == revision and attempt.observed_at == evidence.observed_at do
       {:ok, true}
     else
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      {:error, %Ash.Error.Framework{}} = error -> error
+      {:error, _error} = error -> error
       _other -> {:ok, false}
     end
   end
@@ -460,4 +456,18 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   defp invalid(message),
     do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
+
+  defp unavailable_source(%Ash.Error.Invalid{errors: [%type{}]})
+       when type in [
+              Ash.Error.Changes.InvalidChanges,
+              Ash.Error.Changes.InvalidAttribute,
+              Ash.Error.Query.NotFound,
+              Ash.Error.Action.InvalidArgument
+            ],
+       do: {:ok, false}
+
+  defp unavailable_source(%Ash.Error.Forbidden{errors: [%Ash.Error.Forbidden.Policy{}]}),
+    do: {:ok, false}
+
+  defp unavailable_source(error), do: {:error, error}
 end
