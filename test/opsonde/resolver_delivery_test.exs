@@ -231,6 +231,68 @@ defmodule Opsonde.ResolverDeliveryTest do
   end
 
   @tag owned_context_read_fault: true
+  test "a changed Resolver assignment after claim sends no AI request", context do
+    {_incident, run, turn} = turn!("resolver-assignment-changed", context.operator)
+    changed = :atomics.new(1, [])
+
+    ResolverDelivery.run(turn.id,
+      ai_invocation: %{
+        test_pid: self(),
+        cancelled?: fn ->
+          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+            Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 11, context.admin)
+          end
+
+          false
+        end,
+        respond: fn _request -> flunk("obsolete Resolver assignment dispatched AI") end
+      }
+    )
+
+    refute_receive {:resolve, _, _}
+
+    assert [%{dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+  end
+
+  @tag owned_context_read_fault: true
+  test "a projected Resolver assignment cannot be rebased by claim", context do
+    {_incident, _run, turn} = turn!("resolver-projected-assignment", context.operator)
+    selection = Providers.select_resolver_ai!(authorize?: false)
+
+    assert {:ok, request, projected} =
+             Opsonde.Cases.Turn.ResolverProjection.build(turn.id, selection)
+
+    Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 11, context.admin)
+
+    assert {:error, _changed} =
+             Cases.claim_ai_invocation(
+               :resolver,
+               turn.case_id,
+               projected.case_revision,
+               turn.resolution_run_id,
+               turn.id,
+               turn.revision,
+               nil,
+               nil,
+               selection.provider_id,
+               selection.assignment_id,
+               selection.provider_revision,
+               selection.assignment_revision,
+               selection.source,
+               Opsonde.Cases.AIInvocation.request_digest(request),
+               nil,
+               %{invocation_context: projected},
+               authorize?: false
+             )
+
+    assert Cases.list_ai_invocations!(authorize?: false) == []
+    assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+  end
+
+  @tag owned_context_read_fault: true
   test "a built-in Resolver Case read fault remains an unsent retry", context do
     {incident, run, turn} = turn!("owned-resolver-context-read", context.operator)
     original_run = Cases.get_resolution_run!(run.id, authorize?: false)

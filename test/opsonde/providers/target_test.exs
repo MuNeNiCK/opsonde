@@ -286,7 +286,9 @@ defmodule Opsonde.Providers.TargetTest do
                authorize?: false
              )
 
-    assert target_error(error).category == :cancelled
+    assert %Target.BeforeSendError{cause: %Target.Error{category: :cancelled}} =
+             Target.BeforeSendError.unwrap(error)
+
     refute_receive {:observe, _, _}
 
     stale_request = observation_request(context.provider.revision + 1, 1)

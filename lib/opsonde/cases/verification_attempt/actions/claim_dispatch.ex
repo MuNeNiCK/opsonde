@@ -6,6 +6,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   alias Opsonde.Targets.TargetRequest.{Request, RequestError}
   alias Opsonde.Cases.{Case, ResolutionRun, VerificationAttempt}
   alias Opsonde.Cases.VerificationAttempt.Claim, as: VerificationClaim
+  alias Opsonde.Cases.Case.{AdmissionLock, ConditionContext, InvocationContext}
 
   @terminal [:verified, :not_verified, :unknown]
 
@@ -13,7 +14,8 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   def run(input, _opts, _context) do
     with {:ok, source} <- Cases.get_verification_attempt(input.arguments.id, authorize?: false) do
       Ash.transact([Case, ResolutionRun, VerificationAttempt], fn ->
-        with {:ok, incident} <- lock(Case, source.case_id),
+        with :ok <- AdmissionLock.acquire(),
+             {:ok, incident} <- lock(Case, source.case_id),
              {:ok, run} <- lock(ResolutionRun, source.resolution_run_id),
              {:ok, attempt} <- lock(VerificationAttempt, source.id) do
           claim(attempt, incident, run)
@@ -25,7 +27,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   defp claim(%{status: :queued} = attempt, incident, run) do
     if incident.status == :running and not incident.cancel_requested and run.active and
          run.status == :running and run.generation == attempt.case_generation do
-      claim_authorized(attempt)
+      claim_authorized(attempt, incident, run)
     else
       terminal_no_send(attempt, "cancelled_before_verification", %{
         "message" => "Case stopped before fresh verification was dispatched"
@@ -59,10 +61,11 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
   defp claim(%{status: status} = attempt, _incident, _run) when status in @terminal,
     do: %VerificationClaim{state: :terminal, attempt: attempt}
 
-  defp claim_authorized(attempt) do
+  defp claim_authorized(attempt, incident, run) do
     with {:ok, actor} <- current_actor(attempt),
          {:ok, clearance} <- Targets.clear_target_request(request(attempt), actor: actor),
-         :ok <- exact_clearance(clearance, attempt) do
+         :ok <- exact_clearance(clearance, attempt),
+         {:ok, conditions} <- ConditionContext.current_conditions(incident) do
       with {:ok, claimed} <-
              Cases.mark_verification_dispatching(
                attempt,
@@ -70,7 +73,23 @@ defmodule Opsonde.Cases.VerificationAttempt.Actions.ClaimDispatch do
                %{dispatch_started_at: DateTime.utc_now()},
                authorize?: false
              ) do
-        %VerificationClaim{state: :claimed, attempt: claimed, actor: actor, clearance: clearance}
+        context =
+          InvocationContext.project(
+            incident,
+            run,
+            {:verification, claimed.id, claimed.revision, claimed.status},
+            conditions,
+            nil,
+            [clearance]
+          )
+
+        %VerificationClaim{
+          state: :claimed,
+          attempt: claimed,
+          actor: actor,
+          clearance: clearance,
+          invocation_context: context
+        }
       end
     else
       {:error, error} = failure ->

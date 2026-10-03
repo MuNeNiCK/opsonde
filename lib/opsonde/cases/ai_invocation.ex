@@ -140,6 +140,10 @@ defmodule Opsonde.Cases.AIInvocation do
 
       argument :delivery_attempt, :integer, constraints: [min: 1]
 
+      argument :invocation_context, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Cases.Case.InvocationContext]
+
       run Opsonde.Cases.AIInvocation.Actions.Claim
     end
   end

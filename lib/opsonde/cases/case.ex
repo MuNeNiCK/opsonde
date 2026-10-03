@@ -35,6 +35,16 @@ defmodule Opsonde.Cases.Case do
   actions do
     defaults [:read]
 
+    action :invocation_context_current, :boolean do
+      transaction? false
+
+      argument :invocation_context, :struct,
+        allow_nil?: false,
+        constraints: [instance_of: Opsonde.Cases.Case.InvocationContext]
+
+      run Opsonde.Cases.Case.Actions.InvocationContextCurrent
+    end
+
     read :report_period do
       pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 100
       argument :from, :utc_datetime_usec, allow_nil?: false
@@ -699,6 +709,7 @@ defmodule Opsonde.Cases.Case do
 
     policy action([
              :by_trigger,
+             :invocation_context_current,
              :active_by_trigger,
              :unresolved_signals_without_target,
              :create_record,

@@ -11,6 +11,7 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.InvocationContext
 
   alias Opsonde.Cases.Operation.Claim, as: OperationClaim
 
@@ -88,11 +89,11 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     end
   end
 
-  defp claim_after_conflict(operation, _incident, _run, :clear) do
+  defp claim_after_conflict(operation, incident, run, :clear) do
     if DateTime.compare(DateTime.utc_now(), operation.not_before) == :lt do
       %OperationClaim{state: :deferred, operation: operation}
     else
-      claim_authorized(operation)
+      claim_authorized(operation, incident, run)
     end
   end
 
@@ -130,10 +131,11 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
     end
   end
 
-  defp claim_authorized(operation) do
+  defp claim_authorized(operation, incident, run) do
     with {:ok, actor} <- current_actor(operation),
          {:ok, clearance} <- Targets.clear_target_request(request(operation), actor: actor),
-         :ok <- exact_clearance(clearance, operation) do
+         :ok <- exact_clearance(clearance, operation),
+         {:ok, conditions} <- ConditionContext.current_conditions(incident) do
       with {:ok, claimed} <-
              Cases.mark_operation_dispatching(
                operation,
@@ -141,7 +143,23 @@ defmodule Opsonde.Cases.Operation.Actions.ClaimDispatch do
                %{dispatch_started_at: DateTime.utc_now()},
                authorize?: false
              ) do
-        %OperationClaim{state: :claimed, operation: claimed, actor: actor, clearance: clearance}
+        context =
+          InvocationContext.project(
+            incident,
+            run,
+            {:operation, claimed.id, claimed.revision, claimed.status},
+            conditions,
+            nil,
+            [clearance]
+          )
+
+        %OperationClaim{
+          state: :claimed,
+          operation: claimed,
+          actor: actor,
+          clearance: clearance,
+          invocation_context: context
+        }
       end
     else
       {:error, error} = failure ->

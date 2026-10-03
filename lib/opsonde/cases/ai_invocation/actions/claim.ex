@@ -15,13 +15,15 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   }
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
+  alias Opsonde.Cases.Case.AdmissionLock
 
   @impl true
   def run(input, _opts, _context) do
     arguments = input.arguments
 
     Ash.transact([AIInvocation, Case, Proposal, ResolutionRun, Turn], fn ->
-      with {:ok, incident} <- lock(Case, arguments.case_id),
+      with :ok <- AdmissionLock.acquire(),
+           {:ok, incident} <- lock(Case, arguments.case_id),
            {:ok, run} <- lock(ResolutionRun, arguments.resolution_run_id),
            :ok <- current_context(arguments, incident, run),
            {:ok, existing} <- invocation(arguments) do
@@ -52,7 +54,11 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
       }
 
       with {:ok, invocation} <- Cases.create_ai_invocation_record(attrs, authorize?: false) do
-        %AIInvocationClaim{state: :claimed, invocation: invocation}
+        %AIInvocationClaim{
+          state: :claimed,
+          invocation: invocation,
+          invocation_context: arguments.invocation_context
+        }
       end
     else
       {:error, "AI usage limit exhausted"}
@@ -75,7 +81,11 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
              min(remaining, @max_reservation),
              authorize?: false
            ) do
-      %AIInvocationClaim{state: :claimed, invocation: invocation}
+      %AIInvocationClaim{
+        state: :claimed,
+        invocation: invocation,
+        invocation_context: arguments.invocation_context
+      }
     end
   end
 
@@ -110,9 +120,42 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
          true <-
            (run.case_id == incident.id and run.active and run.status == :running) ||
              {:error, "ResolutionRun AI context changed"},
-         :ok <- subject_context(arguments, incident.id, run.id) do
+         :ok <- subject_context(arguments, incident.id, run.id),
+         :ok <- bound_context(arguments),
+         {:ok, true} <-
+           Cases.invocation_context_current(arguments.invocation_context,
+             authorize?: false
+           ) do
       :ok
+    else
+      {:ok, false} -> {:error, "Case AI context changed"}
+      other -> other
     end
+  end
+
+  defp bound_context(arguments) do
+    context = arguments.invocation_context
+
+    subject =
+      if arguments.proposal_id,
+        do: {:proposal, arguments.proposal_id, arguments.expected_proposal_revision, :reviewing},
+        else:
+          {:turn, arguments.turn_id, arguments.expected_turn_revision,
+           if(arguments.role == :resolver, do: :started, else: :completed)}
+
+    selection = context.selection
+
+    if context.case_id == arguments.case_id and
+         context.case_revision == arguments.expected_case_revision and
+         context.resolution_run_id == arguments.resolution_run_id and
+         context.subject == subject and not is_nil(selection) and
+         selection.role == arguments.role and selection.source == arguments.selection_source and
+         selection.provider_id == arguments.provider_id and
+         selection.provider_revision == arguments.provider_revision and
+         selection.assignment_id == arguments.assignment_id and
+         selection.assignment_revision == arguments.assignment_revision,
+       do: :ok,
+       else: {:error, "AI invocation context is not bound to its subject and assignment"}
   end
 
   defp subject_context(%{role: :resolver} = arguments, case_id, run_id)

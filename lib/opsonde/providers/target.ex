@@ -463,11 +463,17 @@ defmodule Opsonde.Providers.Target do
     @type t :: %__MODULE__{}
 
     @impl true
+    def message(%{cause: %Opsonde.Providers.Target.Error{category: :cancelled}}),
+      do: "Target request was cancelled before dispatch"
+
     def message(_error), do: "Target request was not sent because its local input was unavailable"
 
     def unwrap(%__MODULE__{} = error), do: error
     def unwrap(%Ash.Error.Unknown{errors: [error]}), do: unwrap(error)
     def unwrap(_error), do: nil
+
+    def retryable?(%__MODULE__{cause: %Opsonde.Providers.Target.Error{category: :cancelled}}),
+      do: false
 
     def retryable?(%__MODULE__{cause: cause}), do: unexpected?(cause)
 

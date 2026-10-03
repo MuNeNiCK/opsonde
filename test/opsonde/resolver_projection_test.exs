@@ -90,7 +90,7 @@ defmodule Opsonde.ResolverProjectionTest do
     capabilities = %Target.Capabilities{observations: [], effects: []}
     checked_catalog!(context, capabilities)
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert request.operating_instructions == "Do not modify root"
@@ -152,7 +152,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     context = checked_catalog!(context, capabilities)
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert request.case_id == incident.id
@@ -223,7 +223,7 @@ defmodule Opsonde.ResolverProjectionTest do
     capabilities = %Target.Capabilities{observations: [], effects: []}
     context = checked_catalog!(context, capabilities)
 
-    assert {:ok, unavailable} =
+    assert {:ok, unavailable, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: id}] = unavailable.target_relations
@@ -243,7 +243,7 @@ defmodule Opsonde.ResolverProjectionTest do
     )
     |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: context.admin))
 
-    assert {:ok, available} =
+    assert {:ok, available, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: ^id}] = available.target_relations
@@ -280,7 +280,7 @@ defmodule Opsonde.ResolverProjectionTest do
     capabilities = %Target.Capabilities{observations: [], effects: []}
     checked_catalog!(context, capabilities)
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.TargetRelation{id: id, revision: revision}] = request.target_relations
@@ -325,7 +325,7 @@ defmodule Opsonde.ResolverProjectionTest do
     capabilities = %Target.Capabilities{observations: [observation], effects: [effect]}
     context = checked_catalog!(context, capabilities)
 
-    assert {:ok, before_observation} =
+    assert {:ok, before_observation, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert [%AI.ObservationTool{id: observation_tool_id}] =
@@ -354,7 +354,7 @@ defmodule Opsonde.ResolverProjectionTest do
         authorize?: false
       )
 
-    assert {:ok, after_observation} =
+    assert {:ok, after_observation, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert [_observation_request, %AI.ProposalTool{} = proposal] =
@@ -382,7 +382,7 @@ defmodule Opsonde.ResolverProjectionTest do
       authorize?: false
     )
 
-    assert {:ok, after_verification} =
+    assert {:ok, after_verification, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     refute Enum.any?(after_verification.proposal_tools, &(&1.operation == "service.restart"))
@@ -405,7 +405,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, searched.run, "preselection-turn")
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert is_nil(request.selected_target_id)
@@ -439,7 +439,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, run, "bounded-turn")
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     limits = AI.resolver_disclosure_limits()
@@ -537,7 +537,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, run, "compact-evidence-turn")
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     projected_applied = Enum.find(request.evidence, &(&1.id == applied.id))
@@ -579,7 +579,7 @@ defmodule Opsonde.ResolverProjectionTest do
         authorize?: false
       )
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     assert request.retry_context == %{
@@ -680,7 +680,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, searched.run, "multi-source-turn")
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     signal_evidence = Enum.filter(request.evidence, &(&1.kind == "signal_event"))
@@ -735,7 +735,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     started = start!(incident, run, "repeated-observation-turn")
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
 
     evidence_ids = Enum.map(request.evidence, & &1.id)
@@ -752,7 +752,7 @@ defmodule Opsonde.ResolverProjectionTest do
       actor: context.admin
     )
 
-    assert {:ok, method_request} =
+    assert {:ok, method_request, _context} =
              ResolverProjection.build(method_turn.value.id, selection())
 
     assert method_request.observation_tools == []
@@ -778,7 +778,7 @@ defmodule Opsonde.ResolverProjectionTest do
 
     Providers.disable_provider!(context.provider, context.provider.revision, actor: context.admin)
 
-    assert {:ok, provider_request} =
+    assert {:ok, provider_request, _context} =
              ResolverProjection.build(provider_turn.value.id, selection())
 
     assert provider_request.observation_tools == []

@@ -56,10 +56,10 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
 
   defp deliver(proposal, selection, retry_context, opts) do
     with {:ok, current} <- current_selection(selection),
-         {:ok, request} <- ReviewProjection.build(proposal.id, current, retry_context),
+         {:ok, request, context} <- ReviewProjection.build(proposal.id, current, retry_context),
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, claim} <-
-           claim_invocation(proposal, incident, current, request, delivery_attempt(opts)) do
+           claim_invocation(proposal, incident, current, request, context, delivery_attempt(opts)) do
       dispatch(proposal, current, request, claim, opts)
     else
       {:error, :context_changed} -> supersede_changed_context(proposal)
@@ -68,7 +68,11 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   end
 
   defp dispatch(proposal, selection, request, %AIInvocationClaim{state: :claimed} = claim, opts) do
-    invocation = invocation(proposal, Keyword.get(opts, :ai_invocation, %{}))
+    invocation =
+      Opsonde.Cases.Case.InvocationContext.invocation(
+        claim.invocation_context,
+        Keyword.get(opts, :ai_invocation, %{})
+      )
 
     case Providers.ai_review(selection.provider_id, request, invocation, authorize?: false) do
       {:ok, decision} ->
@@ -125,12 +129,12 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
-  defp claim_invocation(proposal, incident, selection, request, delivery_attempt) do
+  defp claim_invocation(proposal, incident, selection, request, context, delivery_attempt) do
     Ash.transact([AIInvocation, Case, Proposal], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, current_case} <- Cases.get_case(incident.id, authorize?: false),
            {:ok, true} <- review_context_current(proposal, current_case) do
-        do_claim_invocation(proposal, current_case, selection, request, delivery_attempt)
+        do_claim_invocation(proposal, context, selection, request, delivery_attempt)
       else
         {:ok, false} -> {:error, :context_changed}
         other -> other
@@ -143,11 +147,11 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
-  defp do_claim_invocation(proposal, incident, selection, request, delivery_attempt) do
+  defp do_claim_invocation(proposal, context, selection, request, delivery_attempt) do
     Cases.claim_ai_invocation(
       :reviewer,
       proposal.case_id,
-      incident.revision,
+      context.case_revision,
       proposal.resolution_run_id,
       nil,
       nil,
@@ -162,6 +166,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         {request, delivery_attempt, selection.provider_id, selection.assignment_id}
       ),
       delivery_attempt,
+      %{invocation_context: context},
       authorize?: false
     )
   end
@@ -607,26 +612,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       {:ok, %ReviewDecision{} = stored} -> {:ok, stored}
       _missing -> {:error, error}
     end
-  end
-
-  defp invocation(proposal, supplied) do
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
-    Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or
-        case review_context_current(proposal) do
-          {:ok, current?} -> not current?
-          {:error, cause} -> raise Ash.Error.to_error_class(cause)
-        end
-    end)
-  end
-
-  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
-  defp cancelled?(_callback), do: false
-
-  defp review_context_current(proposal) do
-    with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
-         do: review_context_current(proposal, incident)
   end
 
   defp review_context_current(proposal, %{status: :running, cancel_requested: false} = incident) do

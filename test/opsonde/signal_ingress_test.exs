@@ -883,7 +883,7 @@ defmodule Opsonde.SignalIngressTest do
     request =
       try do
         Process.put(:count_condition_context_reads, true)
-        assert {:ok, request} = ResolverProjection.build(turn.id, selection)
+        assert {:ok, request, _context} = ResolverProjection.build(turn.id, selection)
         request
       after
         Process.put(:count_condition_context_reads, false)
@@ -911,7 +911,7 @@ defmodule Opsonde.SignalIngressTest do
       Repo.query!("ALTER TABLE conditions RENAME COLUMN unavailable_predicate TO predicate")
     end
 
-    assert {:ok, retried_request} = ResolverProjection.build(turn.id, selection)
+    assert {:ok, retried_request, _context} = ResolverProjection.build(turn.id, selection)
     assert retried_request.conditions == request.conditions
 
     completed =
@@ -1027,7 +1027,7 @@ defmodule Opsonde.SignalIngressTest do
       source: :assignment
     }
 
-    assert {:ok, request} = ResolverProjection.build(turn.id, selection)
+    assert {:ok, request, _context} = ResolverProjection.build(turn.id, selection)
 
     assert MapSet.new(Enum.map(request.target_candidates, & &1.id)) ==
              MapSet.new(

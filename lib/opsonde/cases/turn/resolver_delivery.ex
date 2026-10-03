@@ -11,6 +11,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   alias Opsonde.Cases.Case.AdmissionLock, as: CaseAdmissionLock
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.InvocationContext
 
   alias Opsonde.Cases.AIInvocation.Claim, as: AIInvocationClaim
   alias Opsonde.Cases.ResolutionRun.BudgetResult
@@ -34,15 +35,15 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   defp deliver(turn, opts) do
     with {:ok, selection} <- assigned_selection(turn),
          {:ok, selection} <- current_selection(selection),
-         {:ok, request} <- ResolverProjection.build(turn.id, selection) do
-      resolve(turn, selection, request, opts)
+         {:ok, request, context} <- ResolverProjection.build(turn.id, selection) do
+      resolve(turn, selection, request, context, opts)
     else
       {:error, error} -> handle_failure(turn, error)
     end
   end
 
-  defp resolve(turn, selection, request, opts) do
-    case claim_invocation(turn, selection, request) do
+  defp resolve(turn, selection, request, context, opts) do
+    case claim_invocation(turn, selection, request, context) do
       {:ok, %AIInvocationClaim{state: :claimed} = claim} ->
         dispatch(turn, selection, request, claim, opts)
 
@@ -67,7 +68,10 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   defp dispatch(turn, selection, request, claim, opts) do
     ai_invocation =
-      resolver_invocation(request, Keyword.get(opts, :ai_invocation, %{}))
+      InvocationContext.invocation(
+        claim.invocation_context,
+        Keyword.get(opts, :ai_invocation, %{})
+      )
 
     case Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false) do
       {:ok, decision} ->
@@ -113,13 +117,13 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     end
   end
 
-  defp claim_invocation(turn, selection, request) do
+  defp claim_invocation(turn, selection, request, context) do
     with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, true} <- resolver_context_matches(incident, request) do
       Cases.claim_ai_invocation(
         :resolver,
         turn.case_id,
-        incident.revision,
+        context.case_revision,
         turn.resolution_run_id,
         turn.id,
         turn.revision,
@@ -132,6 +136,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         selection.source,
         AIInvocation.request_digest(request),
         nil,
+        %{invocation_context: context},
         authorize?: false
       )
     else
@@ -250,18 +255,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
     end
   end
 
-  defp resolver_invocation(request, supplied) do
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
-    Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or
-        case resolver_context_current(request) do
-          {:ok, current?} -> not current?
-          {:error, cause} -> raise Ash.Error.to_error_class(cause)
-        end
-    end)
-  end
-
   defp resolver_context_current(request) do
     with {:ok, incident} <- Cases.get_case(request.case_id, authorize?: false),
          do: resolver_context_matches(incident, request, false)
@@ -357,9 +350,6 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
       {:error, error} -> if(turn_completed?(turn.id), do: :ok, else: {:error, error})
     end
   end
-
-  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
-  defp cancelled?(_callback), do: false
 
   defp case_cancelled?(case_id) do
     case Cases.get_case(case_id, authorize?: false) do

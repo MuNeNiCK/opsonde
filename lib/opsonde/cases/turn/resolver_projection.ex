@@ -3,6 +3,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
   alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.InvocationContext
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.Turn.TraversalBoundary, as: TraversalBoundary
@@ -12,7 +13,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
   @diagnostic_text_limit 2_000
 
   @spec build(String.t(), AI.Selection.t()) ::
-          {:ok, AI.ResolverRequest.t()} | {:error, term()}
+          {:ok, AI.ResolverRequest.t(), InvocationContext.t()} | {:error, term()}
   def build(turn_id, %AI.Selection{role: :resolver} = selection) do
     with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
          {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
@@ -55,7 +56,17 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
            ),
          :ok <- requested_file_visible(request, turn),
          :ok <- AI.Validator.validate_request(:resolve, request) do
-      {:ok, request}
+      context =
+        InvocationContext.project(
+          incident,
+          run,
+          {:turn, turn.id, turn.revision, turn.status},
+          conditions,
+          selection,
+          request.observation_tools ++ request.proposal_tools
+        )
+
+      {:ok, request, context}
     end
   end
 

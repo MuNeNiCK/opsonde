@@ -21,8 +21,20 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
     end
   end
 
-  defp dispatch(%VerificationClaim{attempt: attempt, actor: actor, clearance: clearance}, opts) do
-    invocation = invocation(attempt.case_id, Keyword.get(opts, :target_invocation, %{}))
+  defp dispatch(
+         %VerificationClaim{
+           attempt: attempt,
+           actor: actor,
+           clearance: clearance,
+           invocation_context: context
+         },
+         opts
+       ) do
+    invocation =
+      Opsonde.Cases.Case.InvocationContext.invocation(
+        context,
+        Keyword.get(opts, :target_invocation, %{})
+      )
 
     invocation =
       Map.put(invocation, :result_reference_reader, fn reference ->
@@ -231,24 +243,5 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
       "target_id" => attempt.target_id,
       "access_method_id" => attempt.access_method_id
     }
-  end
-
-  defp invocation(case_id, supplied) do
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
-    Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or case_stopped?(case_id)
-    end)
-  end
-
-  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
-  defp cancelled?(_callback), do: false
-
-  defp case_stopped?(case_id) do
-    case Cases.get_case(case_id, authorize?: false) do
-      {:ok, %{status: :running, cancel_requested: false}} -> false
-      {:error, cause} -> raise Ash.Error.to_error_class(cause)
-      _stopped -> true
-    end
   end
 end

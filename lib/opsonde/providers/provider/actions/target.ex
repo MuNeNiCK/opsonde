@@ -17,7 +17,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   def run(input, opts, _context) do
     invocation = input.arguments.invocation
 
-    with :ok <- ensure_not_cancelled(invocation),
+    with :ok <- ensure_before_send(invocation),
          {:ok, provider} <- load_provider(input.arguments),
          {:ok, adapter} <- fetch_target_adapter(provider.adapter_type),
          {:ok, state} <- build_state(adapter, provider),
@@ -433,6 +433,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp positive_integer?(value), do: is_integer(value) and value > 0
   defp nonempty_binary?(value), do: is_binary(value) and byte_size(value) > 0
+
+  defp ensure_before_send(invocation) do
+    case ensure_not_cancelled(invocation) do
+      {:error, %Target.Error{category: :cancelled} = cause} ->
+        {:error, Target.BeforeSendError.exception(cause: cause)}
+
+      other ->
+        other
+    end
+  end
 
   defp ensure_not_cancelled(%{cancelled?: cancelled?}) when is_function(cancelled?, 0) do
     if cancelled?.() do

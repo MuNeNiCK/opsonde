@@ -48,7 +48,8 @@ defmodule Opsonde.Cases.Case.Changes.OperationHandoff do
   defp result_pending(changeset, operation) do
     with {:ok, proposal} <- Cases.get_proposal(operation.proposal_id, authorize?: false),
          true <-
-           operation.purpose == :investigation or
+           (operation.status == :failed and is_nil(operation.dispatch_started_at)) or
+             operation.purpose == :investigation or
              (proposal.verification_intent == %{} and proposal.verification_tool == %{}),
          {:ok, source} <- Cases.get_turn(arg(changeset, :source_turn_id), authorize?: false),
          true <- source.id == proposal.source_turn_id,

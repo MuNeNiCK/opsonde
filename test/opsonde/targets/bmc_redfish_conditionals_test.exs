@@ -2329,7 +2329,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       source: :assignment
     }
 
-    assert {:ok, projection} =
+    assert {:ok, projection, _context} =
              Opsonde.Cases.Turn.ResolverProjection.build(turn.value.id, selection)
 
     assert Enum.any?(

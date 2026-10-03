@@ -4,6 +4,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
   alias Opsonde.Cases
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.InvocationContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
   alias Opsonde.Providers.AI
@@ -49,8 +50,21 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
       }
 
       case AI.Validator.validate_request(:review_recovery, request) do
-        :ok -> {:ok, request}
-        {:error, _error} = error -> error
+        :ok ->
+          context =
+            InvocationContext.project(
+              incident,
+              run,
+              {:turn, turn.id, turn.revision, turn.status},
+              conditions,
+              selection,
+              []
+            )
+
+          {:ok, request, context}
+
+        {:error, _error} = error ->
+          error
       end
     end
   end

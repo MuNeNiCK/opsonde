@@ -73,7 +73,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
 
     Opsonde.TestAIUsage.configure!(provider.id, :resolver, 10, context.admin)
     {incident, run, _evidence, turn} = case_with_evidence!("late-neighbor-read", context)
-    assert {:ok, baseline} = projection(turn, context)
+    assert {:ok, baseline, _context} = projection(turn, context)
     assert context.vm.id in adjacent_target_ids(baseline, context.linux.id)
     before_case = Cases.get_case!(incident.id, authorize?: false)
     before_run = Cases.get_resolution_run!(run.id, authorize?: false)
@@ -195,7 +195,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
        context do
     {incident, run, evidence, first_turn} = case_with_evidence!("layered", context)
 
-    assert {:ok, request} = projection(first_turn, context)
+    assert {:ok, request, _context} = projection(first_turn, context)
 
     assert adjacent_target_ids(request, context.linux.id) ==
              MapSet.new([context.vm.id, context.kubernetes.id, context.switch.id])
@@ -219,7 +219,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
              "source_turn_id" => vm_source.id
            }
 
-    assert {:ok, vm_request} = projection(vm_turn, context)
+    assert {:ok, vm_request, _context} = projection(vm_turn, context)
 
     assert adjacent_target_ids(vm_request, context.vm.id) ==
              MapSet.new([context.linux.id, context.bmc.id])
@@ -239,7 +239,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert selected.selected_target_id == context.bmc.id
     assert selected.selected_target_revision == context.bmc.revision
 
-    assert {:ok, bmc_request} = projection(bmc_turn, context)
+    assert {:ok, bmc_request, _context} = projection(bmc_turn, context)
     assert adjacent_target_ids(bmc_request, context.bmc.id) == MapSet.new([context.vm.id])
     assert traversable_target_ids(bmc_request, context.bmc.id) == MapSet.new()
 
@@ -286,7 +286,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
     assert evidence_for_source_turn!(cycle_source.id, context.admin).content["message"] ==
              "Reassess the selected Target before returning through the same relationship"
 
-    assert {:ok, rejected_request} = projection(rejected_turn, context)
+    assert {:ok, rejected_request, _context} = projection(rejected_turn, context)
 
     assert adjacent_target_ids(rejected_request, context.vm.id) ==
              MapSet.new([context.linux.id, context.bmc.id])
@@ -302,7 +302,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         %{"source" => "target_result"}
       )
 
-    assert {:ok, observed_request} = projection(observed_turn, context)
+    assert {:ok, observed_request, _context} = projection(observed_turn, context)
 
     assert adjacent_target_ids(observed_request, context.vm.id) ==
              MapSet.new([context.linux.id, context.bmc.id])
@@ -315,7 +315,7 @@ defmodule Opsonde.RelatedTargetRouteTest do
         %{"source" => "target_result", "prior_relationship_id" => context.runs_on.id}
       )
 
-    assert {:ok, observed_after_traversal_request} =
+    assert {:ok, observed_after_traversal_request, _context} =
              projection(observed_after_traversal, context)
 
     assert adjacent_target_ids(observed_after_traversal_request, context.vm.id) ==

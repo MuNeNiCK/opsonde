@@ -30,15 +30,14 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     with {:ok, selection} <- selection(turn),
          {:ok, selection} <- current_selection(selection),
          {:ok, retry_context} <- retry_context(turn),
-         {:ok, request} <-
+         {:ok, request, context} <-
            Opsonde.Cases.Turn.RecoveryReviewProjection.build(
              turn.id,
              selection,
              retry_context
            ),
-         {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
          {:ok, %AIInvocationClaim{} = claim} <-
-           claim(turn, incident, selection, request, delivery_attempt(opts)) do
+           claim(turn, context, selection, request, delivery_attempt(opts)) do
       dispatch(turn, selection, request, claim, opts)
     else
       {:error, error} = failure ->
@@ -131,7 +130,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     end
   end
 
-  defp claim(turn, incident, selection, request, attempt) do
+  defp claim(turn, context, selection, request, attempt) do
     digest =
       AIInvocation.request_digest(
         {request, attempt, selection.provider_id, selection.assignment_id}
@@ -140,7 +139,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
     Cases.claim_ai_invocation(
       :reviewer,
       turn.case_id,
-      incident.revision,
+      context.case_revision,
       turn.resolution_run_id,
       turn.id,
       turn.revision,
@@ -153,18 +152,17 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       selection.source,
       digest,
       attempt,
+      %{invocation_context: context},
       authorize?: false
     )
   end
 
   defp dispatch(turn, selection, request, %AIInvocationClaim{state: :claimed} = claim, opts) do
-    supplied = Keyword.get(opts, :ai_invocation, %{})
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
     invocation =
-      Map.put(supplied, :cancelled?, fn ->
-        (is_function(supplied_cancelled, 0) and supplied_cancelled.()) or not current?(turn)
-      end)
+      Opsonde.Cases.Case.InvocationContext.invocation(
+        claim.invocation_context,
+        Keyword.get(opts, :ai_invocation, %{})
+      )
 
     case Providers.ai_review_recovery(selection.provider_id, request, invocation,
            authorize?: false
@@ -504,17 +502,4 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       )
 
   defp result_key(turn), do: Budget.key("recovery-review:result", turn.id)
-
-  defp current?(turn) do
-    with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false),
-         {:ok, run} <- Cases.get_resolution_run(turn.resolution_run_id, authorize?: false),
-         {:ok, true} <- Opsonde.Cases.Case.ConditionContext.current?(incident, turn.id) do
-      incident.status == :running and not incident.cancel_requested and
-        incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id} and
-        run.active and run.status == :running
-    else
-      {:error, cause} -> raise Ash.Error.to_error_class(cause)
-      _other -> false
-    end
-  end
 end

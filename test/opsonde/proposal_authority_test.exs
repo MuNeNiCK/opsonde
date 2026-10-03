@@ -355,7 +355,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       assignment_revision: context.reviewer_assignment.revision
     }
 
-    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+    assert {:ok, request, _context} = ReviewProjection.build(reviewing.id, selection)
 
     slices =
       Enum.filter(request.context_evidence, &(&1.kind == "file_read"))
@@ -401,7 +401,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     Cases.route_downstream_decision!(cited_proposal.source_turn_id, authorize?: false)
     cited_reviewing = Cases.get_proposal!(cited_proposal.id, authorize?: false)
-    assert {:ok, cited_request} = ReviewProjection.build(cited_reviewing.id, selection)
+    assert {:ok, cited_request, _context} = ReviewProjection.build(cited_reviewing.id, selection)
     assert [cited] = cited_request.cited_evidence
     assert cited.id == first.id
     assert cited.content["value"] == <<0, 1, 2>>
@@ -415,7 +415,7 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert {:error, _} = ReviewProjection.build(cited_reviewing.id, selection)
     owner = Accounts.change_role!(viewer, :operator, actor: context.admin)
     Targets.revoke_artifact!(reference["id"], actor: owner)
-    assert {:ok, unavailable} = ReviewProjection.build(cited_reviewing.id, selection)
+    assert {:ok, unavailable, _context} = ReviewProjection.build(cited_reviewing.id, selection)
     assert [cited] = unavailable.cited_evidence
     assert cited.content["status"] == "unavailable"
     refute Map.has_key?(cited.content, "value")
@@ -951,7 +951,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       source: :assignment
     }
 
-    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+    assert {:ok, request, _context} = ReviewProjection.build(reviewing.id, selection)
     assert request.initial_target_id == guest.id
     assert request.proposal.target_id == context.target.id
     assert request.operating_instructions == "Do not modify root"
@@ -967,7 +967,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     Targets.deactivate_relationship!(relation, relation.revision, actor: context.admin)
 
-    assert {:ok, changed} = ReviewProjection.build(reviewing.id, selection)
+    assert {:ok, changed, _context} = ReviewProjection.build(reviewing.id, selection)
     assert changed.initial_target_id == incident.initial_target_id
     assert changed.target_relations == []
   end
@@ -1115,7 +1115,7 @@ defmodule Opsonde.ProposalAuthorityTest do
       source: :assignment
     }
 
-    assert {:ok, request} = ReviewProjection.build(reviewing.id, selection)
+    assert {:ok, request, _context} = ReviewProjection.build(reviewing.id, selection)
     assert Cases.get_case!(incident.id, authorize?: false).status == :running
     assert Enum.map(request.cited_evidence, & &1.id) == [prior_evidence.id]
   end
@@ -1999,6 +1999,41 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Enum.count(invocations, &(&1.provider_id == context.reviewer_provider.id)) == 2
     assert Enum.count(invocations, &(&1.provider_id == backup.id)) == 1
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :rejected
+  end
+
+  @tag owned_context_read_fault: true
+  test "a changed Reviewer assignment after claim sends no proposal review", context do
+    configure_mode!(:auto, context.admin)
+    {_incident, run, proposal} = proposal!("review-assignment-changed", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    changed = :atomics.new(1, [])
+
+    ReviewDelivery.run(reviewing.id,
+      ai_invocation: %{
+        test_pid: self(),
+        cancelled?: fn ->
+          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+            do:
+              Opsonde.TestAIUsage.configure!(
+                context.reviewer_provider.id,
+                :reviewer,
+                11,
+                context.admin
+              )
+
+          false
+        end,
+        respond: fn _request -> flunk("obsolete Reviewer assignment dispatched AI") end
+      }
+    )
+
+    refute_receive {:review, _, _}
+
+    assert [%{dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    refute Cases.get_proposal!(proposal.id, authorize?: false).status == :authorized
   end
 
   @tag owned_context_read_fault: true

@@ -364,7 +364,10 @@ defmodule Opsonde.ProposalMaterializationTest do
       ).value
 
     selection = Providers.select_resolver_ai!(authorize?: false)
-    assert {:ok, request} = Opsonde.Cases.Turn.ResolverProjection.build(begun.id, selection)
+
+    assert {:ok, request, _context} =
+             Opsonde.Cases.Turn.ResolverProjection.build(begun.id, selection)
+
     {capability, operation, parameters} = exact_investigation(descriptor.protocol)
 
     tool =
@@ -427,7 +430,10 @@ defmodule Opsonde.ProposalMaterializationTest do
     reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
     assert reviewing.status == :reviewing
     reviewer = Providers.select_reviewer_ai!([], authorize?: false)
-    assert {:ok, review} = Opsonde.Cases.Proposal.ReviewProjection.build(proposal.id, reviewer)
+
+    assert {:ok, review, _context} =
+             Opsonde.Cases.Proposal.ReviewProjection.build(proposal.id, reviewer)
+
     assert review.proposal.purpose == :investigation
     assert review.proposal.parameters == parameters
     assert review.proposal.verification_intent == nil

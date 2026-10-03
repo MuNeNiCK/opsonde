@@ -4,6 +4,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   alias Opsonde.{Cases, Targets}
   alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
   alias Opsonde.Cases.Case.ConditionContext, as: ConditionContext
+  alias Opsonde.Cases.Case.InvocationContext
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
   alias Opsonde.Providers.AI
 
@@ -68,8 +69,39 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
       }
 
       case AI.Validator.validate_request(:review, request) do
-        :ok -> {:ok, request}
-        {:error, _error} = error -> error
+        :ok ->
+          verification =
+            for key <- [
+                  :target_id,
+                  :target_revision,
+                  :access_method_id,
+                  :access_method_revision,
+                  :provider_id,
+                  :provider_revision,
+                  :capability
+                ],
+                into: %{},
+                do: {key, proposal.verification_tool[to_string(key)]}
+
+          methods =
+            if map_size(proposal.verification_tool) == 0,
+              do: [proposal],
+              else: [proposal, verification]
+
+          context =
+            InvocationContext.project(
+              incident,
+              run,
+              {:proposal, proposal.id, proposal.revision, proposal.status},
+              conditions,
+              selection,
+              methods
+            )
+
+          {:ok, request, context}
+
+        {:error, _error} = error ->
+          error
       end
     end
   end

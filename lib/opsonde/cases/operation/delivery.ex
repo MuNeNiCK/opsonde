@@ -36,8 +36,20 @@ defmodule Opsonde.Cases.Operation.Delivery do
     end
   end
 
-  defp dispatch(%OperationClaim{operation: operation, actor: actor, clearance: clearance}, opts) do
-    invocation = invocation(operation.case_id, Keyword.get(opts, :target_invocation, %{}))
+  defp dispatch(
+         %OperationClaim{
+           operation: operation,
+           actor: actor,
+           clearance: clearance,
+           invocation_context: context
+         },
+         opts
+       ) do
+    invocation =
+      Opsonde.Cases.Case.InvocationContext.invocation(
+        context,
+        Keyword.get(opts, :target_invocation, %{})
+      )
 
     invocation =
       Map.put(invocation, :result_reference_reader, fn reference ->
@@ -351,6 +363,15 @@ defmodule Opsonde.Cases.Operation.Delivery do
   end
 
   defp continue_handoff(
+         %{status: :failed, dispatch_started_at: nil} = operation,
+         proposal,
+         evidence,
+         incident
+       ) do
+    continue_with_result(operation, proposal, evidence, incident)
+  end
+
+  defp continue_handoff(
          %{purpose: :remediation} = operation,
          %{verification_intent: intent, verification_tool: tool} = proposal,
          evidence,
@@ -548,23 +569,4 @@ defmodule Opsonde.Cases.Operation.Delivery do
 
   defp evidence_turn_id(%{purpose: :investigation}, proposal), do: proposal.source_turn_id
   defp evidence_turn_id(%{purpose: :remediation}, _proposal), do: nil
-
-  defp invocation(case_id, supplied) do
-    supplied_cancelled = Map.get(supplied, :cancelled?)
-
-    Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or case_stopped?(case_id)
-    end)
-  end
-
-  defp cancelled?(callback) when is_function(callback, 0), do: callback.()
-  defp cancelled?(_callback), do: false
-
-  defp case_stopped?(case_id) do
-    case Cases.get_case(case_id, authorize?: false) do
-      {:ok, %{status: :running, cancel_requested: false}} -> false
-      {:error, cause} -> raise Ash.Error.to_error_class(cause)
-      _stopped -> true
-    end
-  end
 end

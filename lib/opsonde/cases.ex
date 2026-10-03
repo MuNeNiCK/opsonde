@@ -29,6 +29,10 @@ defmodule Opsonde.Cases do
     end
 
     resource Opsonde.Cases.Case do
+      define :invocation_context_current,
+        action: :invocation_context_current,
+        args: [:invocation_context]
+
       define :list_cases, action: :read
       define :report_cases, action: :report_period, args: [:from, :to, :target_id]
 

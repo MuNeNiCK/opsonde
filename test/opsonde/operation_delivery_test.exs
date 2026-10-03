@@ -349,6 +349,93 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   @tag owned_context_read_fault: true
+  test "a Method revision change after Operation claim prevents the effect", context do
+    {_incident, _run, proposal} = authorized_proposal!("effect-method-changed", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    changed = :atomics.new(1, [])
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(fn -> flunk("obsolete Method dispatched an effect") end)
+                 |> Map.put(:cancelled?, fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                     Targets.update_access_method!(
+                       context.method,
+                       context.method.revision,
+                       %{priority: 11},
+                       actor: context.admin
+                     )
+                   end
+
+                   false
+                 end)
+             )
+
+    refute_receive {:effect, _, _}
+    saved = Cases.get_operation!(operation.id, authorize?: false)
+    assert saved.status == :failed
+    assert saved.dispatch_started_at == nil
+
+    assert Cases.verification_attempt_by_operation!(operation.id,
+             authorize?: false,
+             not_found_error?: false
+           ) == nil
+
+    assert Cases.get_case!(operation.case_id, authorize?: false).pending_intent["action"] ==
+             "resolve_turn"
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("obsolete effect was resent") end)
+             )
+
+    refute_receive {:effect, _, _}
+  end
+
+  @tag owned_context_read_fault: true
+  test "a Method revision change after Verification claim prevents the observation", context do
+    {_incident, _run, proposal} = authorized_proposal!("verify-method-changed", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    changed = :atomics.new(1, [])
+
+    VerificationDelivery.run(attempt.id,
+      target_invocation:
+        invocation(fn -> flunk("obsolete Method dispatched verification") end)
+        |> Map.put(:cancelled?, fn ->
+          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+            Targets.update_access_method!(
+              context.method,
+              context.method.revision,
+              %{priority: 11},
+              actor: context.admin
+            )
+          end
+
+          false
+        end)
+    )
+
+    refute_receive {:verify, _, _}
+    refute Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :verified
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation: invocation(fn -> flunk("obsolete verification was resent") end)
+             )
+
+    refute_receive {:verify, _, _}
+  end
+
+  @tag owned_context_read_fault: true
   test "built-in Operation and Verification Case read faults remain unsent retries", context do
     {_incident, _run, proposal} = authorized_proposal!("owned-target-context-read", context)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
@@ -2215,7 +2302,7 @@ defmodule Opsonde.OperationDeliveryTest do
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     next_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(next_turn.id, %AI.Selection{
                role: :resolver,
                provider_id: context.resolver_provider.id,
@@ -3863,7 +3950,7 @@ defmodule Opsonde.OperationDeliveryTest do
       source: :assignment
     }
 
-    assert {:ok, baseline} = ResolverProjection.build(turn.id, selection)
+    assert {:ok, baseline, _context} = ResolverProjection.build(turn.id, selection)
     assert evidence.id in baseline.recovery_evidence_ids
     before_case = Cases.get_case!(incident.id, authorize?: false)
     before_run = Cases.get_resolution_run!(run.id, authorize?: false)
@@ -4182,7 +4269,7 @@ defmodule Opsonde.OperationDeliveryTest do
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     pre_effect_turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
-    assert {:ok, suppressed} =
+    assert {:ok, suppressed, _context} =
              ResolverProjection.build(pre_effect_turn.id, selection)
 
     assert suppressed.observation_tools == []
@@ -4211,7 +4298,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(turn.id, selection)
 
     assert [%AI.Condition{failed_observation_ids: [^failed_id]}] = request.conditions
@@ -4332,7 +4419,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
     turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
 
-    assert {:ok, refreshed} =
+    assert {:ok, refreshed, _context} =
              ResolverProjection.build(turn.id, selection)
 
     assert Enum.any?(refreshed.observation_tools, &(&1.access_method_id == context.method.id))
@@ -4644,7 +4731,7 @@ defmodule Opsonde.OperationDeliveryTest do
       turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
       selection = Providers.select_resolver_ai!([], authorize?: false)
-      assert {:ok, projected} = ResolverProjection.build(turn.id, selection)
+      assert {:ok, projected, _context} = ResolverProjection.build(turn.id, selection)
       assert receipt.id in AI.recovery_evidence_ids(projected)
 
       assert :ok =
@@ -4962,6 +5049,44 @@ defmodule Opsonde.OperationDeliveryTest do
       assert length(Cases.list_ai_invocations!(authorize?: false)) ==
                length(before_invocations) + 1
     end
+  end
+
+  @tag owned_context_read_fault: true
+  test "a changed Recovery Reviewer assignment after claim sends no recovery review", context do
+    {_incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "recovery-assignment-changed")
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+    prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
+    changed = :atomics.new(1, [])
+
+    Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+      ai_invocation: %{
+        test_pid: self(),
+        cancelled?: fn ->
+          if :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+            do:
+              Opsonde.TestAIUsage.configure!(
+                context.reviewer_provider.id,
+                :reviewer,
+                11,
+                context.admin
+              )
+
+          false
+        end,
+        respond: fn _request -> flunk("obsolete recovery assignment dispatched AI") end
+      }
+    )
+
+    refute_receive {:review_recovery, _, _}
+
+    assert [%{dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+             |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == before_units
   end
 
   @tag owned_context_read_fault: true
@@ -5643,7 +5768,7 @@ defmodule Opsonde.OperationDeliveryTest do
       assert successor.intent["category"] == "invalid_output"
       assert successor.intent["rejection_code"] == "schema_validation"
 
-      assert {:ok, request} =
+      assert {:ok, request, _context} =
                ResolverProjection.build(
                  successor.id,
                  Providers.select_resolver_ai!(authorize?: false)
@@ -5719,6 +5844,9 @@ defmodule Opsonde.OperationDeliveryTest do
     current = Cases.get_case!(incident.id, authorize?: false)
     completed = Cases.get_turn!(turn.id, authorize?: false)
 
+    assert {:ok, _request, invocation_context} =
+             Opsonde.Cases.Turn.RecoveryReviewProjection.build(turn.id, selection)
+
     claim =
       Cases.claim_ai_invocation!(
         :reviewer,
@@ -5736,6 +5864,7 @@ defmodule Opsonde.OperationDeliveryTest do
         selection.source,
         Opsonde.Cases.AIInvocation.request_digest({turn.id, :simulated_interruption}),
         1,
+        %{invocation_context: invocation_context},
         authorize?: false
       )
 
@@ -6217,7 +6346,7 @@ defmodule Opsonde.OperationDeliveryTest do
       Cases.list_turns!(actor: context.admin)
       |> Enum.find(&(&1.resolution_run_id == resumed_run.id))
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(resumed_turn.id, %AI.Selection{
                role: :resolver,
                provider_id: context.resolver_provider.id,
@@ -6613,7 +6742,7 @@ defmodule Opsonde.OperationDeliveryTest do
       source: :assignment
     }
 
-    assert {:ok, baseline} = ResolverProjection.build(resumed_turn.id, selection)
+    assert {:ok, baseline, _context} = ResolverProjection.build(resumed_turn.id, selection)
     assert Enum.any?(baseline.evidence, &(&1.id == verification_id))
     before_case = Cases.get_case!(incident.id, authorize?: false)
     before_run = Cases.get_resolution_run!(resumed_run.id, authorize?: false)
@@ -6639,7 +6768,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_resolution_run!(resumed_run.id, authorize?: false) == before_run
     assert Cases.get_turn!(resumed_turn.id, authorize?: false) == before_turn
 
-    assert {:ok, request} =
+    assert {:ok, request, _context} =
              ResolverProjection.build(resumed_turn.id, %AI.Selection{
                role: :resolver,
                provider_id: context.resolver_provider.id,
