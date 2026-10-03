@@ -528,6 +528,89 @@ defmodule Opsonde.Providers.TargetTest do
     assert target_error(verification_error).message == "Invalid verification result"
   end
 
+  @tag json_capacity: true
+  test "effect request and receipt limits count encoded JSON bytes", context do
+    payload = %{"payload" => String.duplicate("x", 65_522)}
+    assert byte_size(Jason.encode!(payload)) == 65_536
+    request = %{effect_request(context.provider.revision, "json-limit") | parameters: payload}
+    result = %Target.EffectResult{status: :applied, details: payload}
+
+    assert {:ok, ^result} =
+             Providers.target_effect(context.provider.id, request, invocation(result),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert_receive {:effect, _state, ^request}
+
+    escaped = %{"payload" => String.duplicate(<<0>>, 11_000)}
+    assert byte_size(Jason.encode!(escaped)) == 66_014
+
+    assert {:error, input_error} =
+             Providers.target_effect(
+               context.provider.id,
+               %{request | parameters: escaped},
+               invocation(flunk_response()),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert target_error(input_error).message == "Invalid effect request"
+    refute_receive {:effect, _state, _request}
+  end
+
+  @tag escaped_json_capacity: true
+  test "escaped JSON above the result limit is rejected for every Target receipt", context do
+    escaped = %{"payload" => String.duplicate(<<0>>, 11_000)}
+    assert byte_size(Jason.encode!(escaped)) == 66_014
+
+    effect = %Target.EffectResult{status: :applied, details: escaped}
+
+    assert {:error, effect_error} =
+             Providers.target_effect(
+               context.provider.id,
+               effect_request(context.provider.revision, "escaped-json"),
+               invocation(effect),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert target_error(effect_error).message == "Invalid effect result"
+
+    for {facts, evidence} <- [{escaped, []}, {%{}, [escaped]}] do
+      assert {:error, observation_error} =
+               Providers.target_observe(
+                 context.provider.id,
+                 observation_request(context.provider.revision, 1),
+                 invocation(%Target.Observation{
+                   facts: facts,
+                   evidence: evidence,
+                   observed_at: DateTime.utc_now()
+                 }),
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      assert target_error(observation_error).message == "Invalid observation result"
+
+      assert {:error, verification_error} =
+               Providers.target_verify(
+                 context.provider.id,
+                 verification_request(context.provider.revision),
+                 invocation(%Target.Verification{
+                   status: :verified,
+                   facts: facts,
+                   evidence: evidence,
+                   observed_at: DateTime.utc_now()
+                 }),
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      assert target_error(verification_error).message == "Invalid verification result"
+    end
+  end
+
   defp observation_request(provider_revision, max_attempts) do
     struct!(Target.ObservationRequest,
       provider_revision: provider_revision,

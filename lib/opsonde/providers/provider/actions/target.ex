@@ -381,13 +381,13 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     bounded_binary?(operation.capability, 120) and
       bounded_binary?(operation.operation, 120) and
       bounded_binary?(operation.description, 500) and
-      bounded_map?(operation.input_schema) and json_encodable?(operation.input_schema)
+      bounded_map?(operation.input_schema)
   end
 
   defp valid_operation?(_operation), do: false
 
   defp valid_schema?(schema),
-    do: bounded_map?(schema) and json_encodable?(schema) and valid_json_schema?(schema)
+    do: bounded_map?(schema) and valid_json_schema?(schema)
 
   defp valid_json_schema?(schema) do
     try do
@@ -397,15 +397,13 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     end
   end
 
-  defp json_encodable?(value), do: match?({:ok, _encoded}, Jason.encode(value))
-
   defp bounded_binary?(value, maximum) when is_binary(value),
     do: byte_size(value) in 1..maximum
 
   defp bounded_binary?(_value, _maximum), do: false
 
   defp bounded_list?(items) when is_list(items) and length(items) <= @max_payload_items,
-    do: :erlang.external_size(items) <= @max_payload_bytes and json_encodable?(items)
+    do: bounded_json?(items)
 
   defp bounded_list?(_items), do: false
 
@@ -415,9 +413,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp bounded_term_list?(_items), do: false
 
   defp bounded_map?(map) when is_map(map) and map_size(map) <= @max_payload_items,
-    do: :erlang.external_size(map) <= @max_payload_bytes and json_encodable?(map)
+    do: bounded_json?(map)
 
   defp bounded_map?(_map), do: false
+
+  defp bounded_json?(value) do
+    case Jason.encode(value) do
+      {:ok, encoded} -> byte_size(encoded) <= @max_payload_bytes
+      {:error, _reason} -> false
+    end
+  end
 
   defp positive_integer?(value), do: is_integer(value) and value > 0
   defp nonempty_binary?(value), do: is_binary(value) and byte_size(value) > 0
