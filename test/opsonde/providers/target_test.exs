@@ -528,6 +528,34 @@ defmodule Opsonde.Providers.TargetTest do
     assert target_error(verification_error).message == "Invalid verification result"
   end
 
+  @tag redaction_capacity: true
+  test "redaction does not expand its inserted markers in a bounded effect receipt", context do
+    provider =
+      Providers.create_provider!(
+        "marker-redaction-provider",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"api_key" => "ab", "token" => "["},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    details = %{"payload" => String.duplicate("ab", 6_000)}
+    expected = %{"payload" => String.duplicate("[REDACTED]", 6_000)}
+    assert byte_size(Jason.encode!(details)) == 12_014
+    assert byte_size(Jason.encode!(expected)) == 60_014
+
+    assert {:ok, %Target.EffectResult{status: :applied, details: ^expected}} =
+             Providers.target_effect(
+               provider.id,
+               effect_request(provider.revision, "marker-redaction"),
+               invocation(%Target.EffectResult{status: :applied, details: details}),
+               actor: context.admin,
+               authorize?: false
+             )
+  end
+
   @tag json_capacity: true
   test "effect request and receipt limits count encoded JSON bytes", context do
     payload = %{"payload" => String.duplicate("x", 65_522)}

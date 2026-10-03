@@ -8,9 +8,10 @@ defmodule Opsonde.Providers.Redactor do
   )
 
   def message(message, credentials) when is_binary(message) and is_map(credentials) do
-    credentials
-    |> secret_strings()
-    |> Enum.reduce(message, &String.replace(&2, &1, @redacted))
+    case secret_strings(credentials) do
+      [] -> message
+      secrets -> String.replace(message, secrets, @redacted)
+    end
   end
 
   def value(%module{} = value, credentials) do
