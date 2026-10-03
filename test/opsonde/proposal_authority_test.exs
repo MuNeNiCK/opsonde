@@ -1954,6 +1954,50 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :rejected
   end
 
+  @tag owned_context_read_fault: true
+  test "a built-in proposal Reviewer Case read fault remains an unsent retry", context do
+    configure_mode!(:auto, context.admin)
+    {incident, run, proposal} = proposal!("owned-review-context-read", context)
+    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    original_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    injected = :atomics.new(1, [])
+
+    try do
+      assert {:error, error} =
+               ReviewDelivery.run(reviewing.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(injected, 1, 0, 1) == :ok,
+                       do:
+                         Opsonde.Repo.query!(
+                           "ALTER TABLE cases RENAME COLUMN title TO unavailable_case_title"
+                         )
+
+                     false
+                   end,
+                   respond: fn _request -> flunk("an unreadable Case dispatched Reviewer AI") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "title"
+    after
+      if :atomics.get(injected, 1) == 1,
+        do: Opsonde.Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_case_title TO title")
+    end
+
+    refute_receive {:review, _, _}
+
+    assert [%{status: :queued, dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             original_run.ai_usage_units
+  end
+
   @tag ai_unsent_retry: true
   test "a proposal Reviewer read fault retries its unsent invocation without stopping the Case",
        context do

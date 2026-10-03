@@ -247,6 +247,7 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
   defp case_stopped?(case_id) do
     case Cases.get_case(case_id, authorize?: false) do
       {:ok, %{status: :running, cancel_requested: false}} -> false
+      {:error, cause} -> raise Ash.Error.to_error_class(cause)
       _stopped -> true
     end
   end

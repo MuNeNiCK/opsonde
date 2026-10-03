@@ -230,6 +230,49 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
   end
 
+  @tag owned_context_read_fault: true
+  test "a built-in Resolver Case read fault remains an unsent retry", context do
+    {incident, run, turn} = turn!("owned-resolver-context-read", context.operator)
+    original_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    injected = :atomics.new(1, [])
+
+    try do
+      assert {:error, error} =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(injected, 1, 0, 1) == :ok do
+                       Repo.query!(
+                         "ALTER TABLE cases RENAME COLUMN title TO unavailable_case_title"
+                       )
+                     end
+
+                     false
+                   end,
+                   respond: fn _request -> flunk("an unreadable Case dispatched Resolver AI") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "title"
+    after
+      if :atomics.get(injected, 1) == 1 do
+        Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_case_title TO title")
+      end
+    end
+
+    refute_receive {:resolve, _, _}
+
+    assert [%{status: :queued, dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_turn!(turn.id, authorize?: false).status == :started
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             original_run.ai_usage_units
+  end
+
   @tag ai_unsent_retry: true
   test "an unsent retry save failure retains the unknown-response marker instead of resending",
        context do

@@ -125,7 +125,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     Ash.transact([AIInvocation, Case, Proposal], fn ->
       with :ok <- CaseAdmissionLock.acquire(),
            {:ok, current_case} <- Cases.get_case(incident.id, authorize?: false),
-           true <- review_context_current?(proposal) || {:error, :context_changed},
+           {:ok, true} <- review_context_current(proposal),
            {:ok, true} <- ConditionContext.current?(current_case, proposal.source_turn_id) do
         do_claim_invocation(proposal, current_case, selection, request, delivery_attempt)
       else
@@ -599,21 +599,26 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     supplied_cancelled = Map.get(supplied, :cancelled?)
 
     Map.put(supplied, :cancelled?, fn ->
-      cancelled?(supplied_cancelled) or not review_context_current?(proposal)
+      cancelled?(supplied_cancelled) or
+        case review_context_current(proposal) do
+          {:ok, current?} -> not current?
+          {:error, cause} -> raise Ash.Error.to_error_class(cause)
+        end
     end)
   end
 
   defp cancelled?(callback) when is_function(callback, 0), do: callback.()
   defp cancelled?(_callback), do: false
 
-  defp review_context_current?(proposal) do
+  defp review_context_current(proposal) do
     with {:ok, %{status: :running, cancel_requested: false}} <-
            Cases.get_case(proposal.case_id, authorize?: false),
          {:ok, %{status: :reviewing, revision: revision}} <-
            Cases.get_proposal(proposal.id, authorize?: false) do
-      revision == proposal.revision
+      {:ok, revision == proposal.revision}
     else
-      _changed -> false
+      {:error, _cause} = error -> error
+      _changed -> {:ok, false}
     end
   end
 

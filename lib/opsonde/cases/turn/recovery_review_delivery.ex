@@ -513,6 +513,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id} and
         run.active and run.status == :running
     else
+      {:error, cause} -> raise Ash.Error.to_error_class(cause)
       _other -> false
     end
   end

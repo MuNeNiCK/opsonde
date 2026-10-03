@@ -348,6 +348,63 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Cases.get_operation!(operation.id, authorize?: false).status == :unknown
   end
 
+  @tag owned_context_read_fault: true
+  test "built-in Operation and Verification Case read faults remain unsent retries", context do
+    {_incident, _run, proposal} = authorized_proposal!("owned-target-context-read", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    injected = :atomics.new(1, [])
+
+    callback = fn ->
+      if :atomics.compare_exchange(injected, 1, 0, 1) == :ok,
+        do: Repo.query!("ALTER TABLE cases RENAME COLUMN title TO unavailable_case_title")
+
+      false
+    end
+
+    try do
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn -> flunk("an unreadable Case dispatched an effect") end)
+                   |> Map.put(:cancelled?, callback)
+               )
+
+      assert Exception.message(error) =~ "title"
+    after
+      if :atomics.get(injected, 1) == 1,
+        do: Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_case_title TO title")
+    end
+
+    assert Cases.get_operation!(operation.id, authorize?: false).status == :queued
+    refute_receive {:effect, _, _}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    assert_receive {:effect, _, _}
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    :atomics.put(injected, 1, 0)
+
+    try do
+      assert {:error, error} =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation:
+                   invocation(fn -> flunk("an unreadable Case dispatched verification") end)
+                   |> Map.put(:cancelled?, callback)
+               )
+
+      assert Exception.message(error) =~ "title"
+    after
+      if :atomics.get(injected, 1) == 1,
+        do: Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_case_title TO title")
+    end
+
+    assert Cases.get_verification_attempt!(attempt.id, authorize?: false).status == :queued
+    refute_receive {:verify, _, _}
+  end
+
   @tag target_callback_read_fault: true
   test "a context callback storage fault retries unsent Operation and Verification dispatches",
        context do
@@ -4905,6 +4962,54 @@ defmodule Opsonde.OperationDeliveryTest do
       assert length(Cases.list_ai_invocations!(authorize?: false)) ==
                length(before_invocations) + 1
     end
+  end
+
+  @tag owned_context_read_fault: true
+  test "a built-in Recovery Reviewer Case read fault remains an unsent retry", context do
+    {incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "owned-recovery-context-read")
+
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    original_run = Cases.get_resolution_run!(run.id, authorize?: false)
+    prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
+    injected = :atomics.new(1, [])
+
+    try do
+      assert {:error, error} =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(injected, 1, 0, 1) == :ok,
+                       do:
+                         Repo.query!(
+                           "ALTER TABLE cases RENAME COLUMN title TO unavailable_case_title"
+                         )
+
+                     false
+                   end,
+                   respond: fn _request ->
+                     flunk("an unreadable Case dispatched Recovery Reviewer AI")
+                   end
+                 }
+               )
+
+      assert Exception.message(error) =~ "title"
+    after
+      if :atomics.get(injected, 1) == 1,
+        do: Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_case_title TO title")
+    end
+
+    refute_receive {:review_recovery, _, _}
+
+    assert [%{status: :queued, dispatch_confirmed: false, usage_reported: false}] =
+             Cases.list_ai_invocations!(authorize?: false)
+             |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             original_run.ai_usage_units
   end
 
   @tag ai_unsent_retry: true
