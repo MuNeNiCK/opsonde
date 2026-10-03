@@ -46,7 +46,7 @@ defmodule Opsonde.Transports.HTTP do
         {:error, _category, _message} = error ->
           error
 
-        {:error, %Ash.Error.Unknown{}} = error ->
+        {:error, %{errors: errors}} = error when is_list(errors) ->
           error
 
         _other ->
@@ -367,9 +367,19 @@ defmodule Opsonde.Transports.HTTP do
 
       {:ok, %{response | private: private}}
     else
-      {:error, :cancelled, _} = error -> error
-      {:error, %Ash.Error.Unknown{}} = error -> error
-      _ -> response_failure(writer)
+      {:error, :cancelled, _} = error ->
+        error
+
+      {:error, %{errors: errors} = cause} when is_list(errors) ->
+        {:error,
+         Target.Error.context_failure(cause, %{
+           "http_status" => response.status,
+           "receiving_file_id" => writer.id,
+           "received_bytes" => Map.get(response.private, :opsonde_received_bytes, 0)
+         })}
+
+      _ ->
+        response_failure(writer)
     end
   end
 

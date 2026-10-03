@@ -14,7 +14,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
       # Before dispatch no receipt could have completed. After dispatch retain
       # intent and recorded bytes, including a completion whose reply was lost;
       # the Artifact lifecycle owns retention and expiry.
-      if match?({:error, _, _}, result),
+      if match?({:error, _, _}, result) or match?({:error, %Target.BeforeSendError{}}, result),
         do: for({_, writer} <- ports.writers, do: writer.abort.())
 
       result
@@ -40,6 +40,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
           run(connection, headers, configuration, operation, invocation, ports, deadline)
         else
           {:error, :cancelled, _} = error -> error
+          {:error, %Target.BeforeSendError{}} = error -> error
           _ -> {:error, :failed, "Kubernetes WebSocket timed out before dispatch"}
         end
       after
@@ -47,6 +48,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
       end
     else
       {:error, :cancelled, _} = error -> error
+      {:error, %Target.BeforeSendError{}} = error -> error
       _ -> {:error, :failed, "Kubernetes WebSocket connection failed"}
     end
   end
@@ -171,16 +173,12 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp exchange(state, [step | rest]) do
     state = %{state | current: %{"op" => Atom.to_string(step.op), "index" => length(state.steps)}}
 
-    if not_cancelled(state.invocation) == :ok do
-      case step(state, step) do
-        {:ok, next, result} ->
-          exchange(%{next | steps: next.steps ++ [result], current: nil}, rest)
+    case step(state, step) do
+      {:ok, next, result} ->
+        exchange(%{next | steps: next.steps ++ [result], current: nil}, rest)
 
-        {:error, next, reason} ->
-          unknown(next, reason)
-      end
-    else
-      unknown(state, "cancelled")
+      {:error, next, reason} ->
+        unknown(next, reason)
     end
   end
 
@@ -222,12 +220,18 @@ defmodule Opsonde.Transports.Kubernetes.Session do
         if writer do
           reason = if Map.get(step, :until_close?), do: :eof, else: :entry_limit
 
-          case writer.complete.(next.current["size_bytes"], nil, reason) do
+          case port_call(
+                 fn -> writer.complete.(next.current["size_bytes"], nil, reason) end,
+                 true
+               ) do
             {:ok, file} ->
               if Target.FileReference.valid?(file) and file["id"] == writer.id and
                    file["size_bytes"] == next.current["size_bytes"],
                  do: {:ok, next, Map.put(result, "file", file)},
                  else: {:error, next, "file_complete_failed"}
+
+            {:error, cause} ->
+              {:error, next, Target.Error.context_failure(cause)}
 
             _ ->
               {:error, next, "file_complete_failed"}
@@ -272,18 +276,20 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp send_file(state, %{"size_bytes" => size}, _, _, size), do: {:ok, state}
 
   defp send_file(state, file, reader, prefix, offset) do
-    with :ok <- not_cancelled(state.invocation),
-         {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 <- reader.(offset),
+    with :ok <- not_cancelled(state.invocation, true),
+         {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 <-
+           port_call(fn -> reader.(offset) end, true),
          true <- offset + byte_size(bytes) <= file["size_bytes"],
          {:ok, next, _} <- step(state, %{op: :send, frame: {:binary, prefix <> bytes}}) do
       send_file(next, file, reader, prefix, offset + byte_size(bytes))
     else
       {:error, %{connection: _}, _} = error -> error
       {:error, :cancelled, _} -> {:error, state, "cancelled"}
+      {:error, cause} -> {:error, state, Target.Error.context_failure(cause)}
       _ -> {:error, state, "file_read_failed_after_dispatch"}
     end
   rescue
-    _ -> {:error, state, "file_read_failed_after_dispatch"}
+    cause -> {:error, state, Target.Error.context_failure(cause)}
   end
 
   defp frames(%{queue: []} = state, {:close, _}) when not is_nil(state.closed),
@@ -340,15 +346,26 @@ defmodule Opsonde.Transports.Kubernetes.Session do
              },
              matcher
            ),
-         else: (_ -> {:error, state, "file_or_inline_limit"})
+         else: (
+           {:error, cause} -> {:error, state, cause}
+           _ -> {:error, state, "file_or_inline_limit"}
+         )
   end
 
   defp store_frame(nil, _, bytes, state),
     do: if(state.inline_received + byte_size(bytes) <= state.inline_limit, do: :ok, else: :error)
 
   defp store_frame(writer, offset, bytes, state) do
-    case Target.FileWriter.append(writer, offset, bytes, fn -> not_cancelled(state.invocation) end) do
+    case port_call(
+           fn ->
+             Target.FileWriter.append(writer, offset, bytes, fn ->
+               not_cancelled(state.invocation, true)
+             end)
+           end,
+           true
+         ) do
       {:ok, _next} -> :ok
+      {:error, cause} -> {:error, Target.Error.context_failure(cause)}
       _ -> :error
     end
   end
@@ -418,6 +435,9 @@ defmodule Opsonde.Transports.Kubernetes.Session do
         {:ok, next} ->
           consume(%{next | closing?: true, closed: %{state.closed | reply_sent: true}}, rest)
 
+        {:error, next, %{errors: _} = cause} ->
+          {:error, next, cause}
+
         {:error, next, _} ->
           consume(next, rest)
       end
@@ -444,42 +464,70 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp consume(state, _), do: {:error, state, "invalid_frame"}
 
   defp send_frame(state, frame) do
-    with :ok <- not_cancelled(state.invocation),
+    with :ok <- not_cancelled(state.invocation, true),
          {:ok, websocket, bytes} <- WebSocket.encode(state.websocket, frame),
          {:ok, connection} <- WebSocket.stream_request_body(state.connection, state.ref, bytes) do
       {:ok, %{state | connection: connection, websocket: websocket}}
     else
       {:error, :cancelled, _} -> {:error, state, "cancelled"}
+      {:error, %{errors: _} = cause} -> {:error, state, cause}
       _ -> {:error, state, "send_failed"}
     end
   end
 
   defp read_wire(state) do
+    case receive_wire(state, 0) do
+      :empty -> wait_wire(state)
+      result -> result
+    end
+  end
+
+  defp wait_wire(state) do
     remaining = state.deadline - System.monotonic_time(:millisecond)
+    check = not_cancelled(state.invocation, true)
 
-    cond do
-      not_cancelled(state.invocation) != :ok ->
-        {:error, state, "cancelled"}
+    # A stop check may block while the remote response arrives. Retain that
+    # response before returning the stop result; new sends still check context.
+    case receive_wire(state, 0) do
+      :empty ->
+        cond do
+          match?({:error, _}, check) ->
+            {:error, cause} = check
+            {:error, state, cause}
 
-      remaining <= 0 ->
-        {:error, state, "duration_limit"}
+          check != :ok ->
+            {:error, state, "cancelled"}
 
-      state.transport_closed? ->
-        {:error, state, "disconnected"}
+          remaining <= 0 ->
+            {:error, state, "duration_limit"}
 
-      true ->
-        socket = Mint.HTTP.get_socket(state.connection)
+          state.transport_closed? ->
+            {:error, state, "disconnected"}
 
-        receive do
-          {:tcp, ^socket, _} = message -> stream_message(state, message)
-          {:tcp_closed, ^socket} = message -> stream_message(state, message)
-          {:tcp_error, ^socket, _} = message -> stream_message(state, message)
-          {:ssl, ^socket, _} = message -> stream_message(state, message)
-          {:ssl_closed, ^socket} = message -> stream_message(state, message)
-          {:ssl_error, ^socket, _} = message -> stream_message(state, message)
-        after
-          min(@poll_ms, remaining) -> read_wire(state)
+          true ->
+            case receive_wire(state, min(@poll_ms, remaining)) do
+              :empty -> read_wire(state)
+              result -> result
+            end
         end
+
+      result ->
+        result
+    end
+  end
+
+  defp receive_wire(state, wait) do
+    socket = Mint.HTTP.get_socket(state.connection)
+
+    receive do
+      {:tcp, ^socket, _} = message -> stream_message(state, message)
+      {:tcp_closed, ^socket} = message -> stream_message(state, message)
+      {:tcp_error, ^socket, _} = message -> stream_message(state, message)
+      {:ssl, ^socket, _} = message -> stream_message(state, message)
+      {:ssl_closed, ^socket} = message -> stream_message(state, message)
+      {:ssl_error, ^socket, _} = message -> stream_message(state, message)
+    after
+      wait -> :empty
     end
   end
 
@@ -543,6 +591,9 @@ defmodule Opsonde.Transports.Kubernetes.Session do
     {frames, omitted}
   end
 
+  defp unknown(state, %{errors: _} = cause),
+    do: {:error, Target.Error.context_failure(cause, details(state))}
+
   defp unknown(state, reason),
     do:
       {:ok,
@@ -560,7 +611,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
             reader = Map.get(invocation, :file_reader)
 
             if is_function(reader, 2) do
-              case reader.(label, 0) do
+              case port_call(fn -> reader.(label, 0) end, false) do
                 {:ok, bytes} when is_binary(bytes) ->
                   if byte_size(bytes) <= file["size_bytes"] and
                        (file["size_bytes"] == 0 or byte_size(bytes) > 0),
@@ -568,6 +619,12 @@ defmodule Opsonde.Transports.Kubernetes.Session do
                        {:ok,
                         %{ports | readers: Map.put(ports.readers, index, &reader.(label, &1))}},
                      else: :error
+
+                {:error, %Target.BeforeSendError{}} = error ->
+                  error
+
+                {:error, cause} ->
+                  {:error, Target.BeforeSendError.exception(cause: cause)}
 
                 _ ->
                   :error
@@ -580,9 +637,15 @@ defmodule Opsonde.Transports.Kubernetes.Session do
             writer = Map.get(invocation, :file_writer)
 
             if is_function(writer, 3) do
-              case writer.(Ecto.UUID.generate(), name, media) do
+              case port_call(fn -> writer.(Ecto.UUID.generate(), name, media) end, false) do
                 {:ok, %Target.FileWriter{status: :receiving, offset: 0} = capture} ->
                   {:ok, %{ports | writers: Map.put(ports.writers, index, capture)}}
+
+                {:error, %Target.BeforeSendError{}} = error ->
+                  error
+
+                {:error, cause} ->
+                  {:error, Target.BeforeSendError.exception(cause: cause)}
 
                 _ ->
                   :error
@@ -599,6 +662,10 @@ defmodule Opsonde.Transports.Kubernetes.Session do
         {:ok, ports} ->
           {:cont, {:ok, ports}}
 
+        {:error, cause} ->
+          for {_, writer} <- ports.writers, do: writer.abort.()
+          {:halt, {:error, cause}}
+
         _ ->
           for {_, writer} <- ports.writers, do: writer.abort.()
           {:halt, {:error, :failed, "Kubernetes WebSocket file is unavailable"}}
@@ -606,10 +673,24 @@ defmodule Opsonde.Transports.Kubernetes.Session do
     end)
   end
 
-  defp not_cancelled(invocation),
-    do:
-      if(Map.get(invocation, :cancelled?, fn -> false end).(),
-        do: {:error, :cancelled, "Kubernetes WebSocket was cancelled"},
-        else: :ok
-      )
+  defp not_cancelled(invocation, dispatched? \\ false) do
+    if Map.get(invocation, :cancelled?, fn -> false end).(),
+      do: {:error, :cancelled, "Kubernetes WebSocket was cancelled"},
+      else: :ok
+  rescue
+    cause -> context_failure(cause, dispatched?)
+  catch
+    kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), dispatched?)
+  end
+
+  defp port_call(callback, dispatched?) do
+    callback.()
+  rescue
+    cause -> context_failure(cause, dispatched?)
+  catch
+    kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), dispatched?)
+  end
+
+  defp context_failure(cause, true), do: {:error, Target.Error.context_failure(cause)}
+  defp context_failure(cause, false), do: {:error, Target.BeforeSendError.exception(cause: cause)}
 end

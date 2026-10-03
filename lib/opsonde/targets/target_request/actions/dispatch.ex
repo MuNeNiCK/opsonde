@@ -374,14 +374,26 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
          {:ok, result} <- callback.(current_actor) do
       {:ok, result}
     else
-      true -> {:error, request_error(:cancelled, "Target invocation was cancelled")}
-      {:error, %RequestError{} = error} -> {:error, error}
-      _ -> file_failure(failure)
+      true ->
+        {:error, request_error(:cancelled, "Target invocation was cancelled")}
+
+      {:error, %RequestError{} = error} ->
+        {:error, error}
+
+      {:error, cause} ->
+        if RequestError.expected?(cause),
+          do: file_failure(failure),
+          else: {:error, ProviderTarget.Error.context_failure(cause)}
+
+      _ ->
+        file_failure(failure)
     end
   rescue
-    _ -> file_failure(failure)
+    cause -> {:error, ProviderTarget.Error.context_failure(cause)}
   catch
-    _, _ -> file_failure(failure)
+    kind, reason ->
+      {:error,
+       ProviderTarget.Error.context_failure(ErlangError.exception(original: {kind, reason}))}
   end
 
   defp file_failure(:invalid_file), do: unavailable_file()

@@ -458,6 +458,53 @@ defmodule Opsonde.Providers.TargetTest do
     refute_receive {:effect, _, _}
   end
 
+  test "only context-marked aggregates retain classified causes and redact their progress",
+       context do
+    classified =
+      Ash.Error.Changes.InvalidAttribute.exception(field: :context, message: "context #{@token}")
+
+    progress = %{"bytes_sent" => 8, "description" => "receipt #{@token}"}
+    fault = Target.Error.context_failure(classified, progress)
+    request = effect_request(context.provider.revision, "context-error")
+
+    assert {:error, %Ash.Error.Invalid{} = error} =
+             Providers.target_effect(context.provider.id, request, invocation({:error, fault}),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    assert Target.Error.context_failure?(error)
+    assert Exception.message(error) =~ "context [REDACTED]"
+    refute Exception.message(error) =~ @token
+
+    assert Target.Error.context_progress(error) == %{
+             "bytes_sent" => 8,
+             "description" => "receipt [REDACTED]"
+           }
+
+    assert_receive {:effect, _, ^request}
+
+    unrelated =
+      Ash.Error.to_error_class([
+        RuntimeError.exception("native #{@token}"),
+        Target.Error.exception(category: :failed, message: "ordinary receipt error")
+      ])
+
+    assert {:error, rejected} =
+             Providers.target_effect(
+               context.provider.id,
+               request,
+               invocation({:error, unrelated}),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    refute Target.Error.context_failure?(rejected)
+    assert target_error(rejected).message == "Invalid effect result"
+    refute Exception.message(rejected) =~ @token
+    assert_receive {:effect, _, ^request}
+  end
+
   test "verification is independent and malformed or raised adapter results are rejected",
        context do
     request = verification_request(context.provider.revision)

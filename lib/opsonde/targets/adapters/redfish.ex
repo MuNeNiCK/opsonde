@@ -320,7 +320,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
        }}
     else
       {:error, %Target.BeforeSendError{}} = error -> error
-      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %{errors: errors}} = error when is_list(errors) -> error
       {:error, category, message} -> read_error(category, message)
     end
   end
@@ -570,7 +570,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
        }}
     else
       {:error, %Target.BeforeSendError{}} = error -> error
-      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %{errors: errors}} = error when is_list(errors) -> error
       _ -> {:error, :failed, "Redfish task progress is unavailable"}
     end
   end
@@ -608,7 +608,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       end)
     else
       {:error, %Target.BeforeSendError{}} = error -> error
-      {:error, %Ash.Error.Unknown{}} = error -> error
+      {:error, %{errors: errors}} = error when is_list(errors) -> error
       {:error, :cancelled, _message} = error -> error
       {:error, _category, message} -> {:error, :failed, message}
     end
@@ -734,8 +734,9 @@ defmodule Opsonde.Targets.Adapters.Redfish do
      }}
   end
 
-  defp effect_response(_state, {:error, %Ash.Error.Unknown{}} = error, _reference, _details),
-    do: error
+  defp effect_response(_state, {:error, %{errors: errors}} = error, _reference, _details)
+       when is_list(errors),
+       do: error
 
   defp effect_response(_state, {:error, %Target.BeforeSendError{}} = error, _reference, _details),
     do: error
@@ -786,7 +787,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       {:error, _category, _message} = error ->
         error
 
-      {:error, %Ash.Error.Unknown{}} = error ->
+      {:error, %{errors: errors}} = error when is_list(errors) ->
         error
 
       {:error, %Target.BeforeSendError{}} = error ->
@@ -829,7 +830,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
           )
         else
           {:error, _category, _message} = error -> error
-          {:error, %Ash.Error.Unknown{}} = error -> error
+          {:error, %{errors: errors}} = error when is_list(errors) -> error
           {:error, %Target.BeforeSendError{}} = error -> error
           _ -> {:error, :failed, "Redfish collection pagination is invalid"}
         end
@@ -1098,7 +1099,7 @@ defmodule Opsonde.Targets.Adapters.Redfish do
       {:error, category, message} ->
         {:error, category, message}
 
-      {:error, %Ash.Error.Unknown{}} = error ->
+      {:error, %{errors: errors}} = error when is_list(errors) ->
         error
 
       {:error, %Target.BeforeSendError{}} = error ->

@@ -325,7 +325,8 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     end
   end
 
-  defp normalize_error({:error, %Ash.Error.Unknown{} = error}, _allowed, fallback, credentials) do
+  defp normalize_error({:error, %{errors: errors} = error}, _allowed, fallback, credentials)
+       when is_list(errors) do
     if Target.Error.context_failure?(error),
       do: {:error, Redactor.value(error, credentials)},
       else: {:error, target_error(:failed, fallback)}

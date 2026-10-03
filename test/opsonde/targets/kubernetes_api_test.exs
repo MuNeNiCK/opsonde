@@ -1203,6 +1203,7 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     end
   end
 
+  @tag file_publication_fault: true
   test "failed Kubernetes result publication cannot report success or repeat a write", context do
     Opsonde.Repo.query!("""
     CREATE FUNCTION pg_temp.reject_kubernetes_file_ready() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1216,11 +1217,11 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       "CREATE TRIGGER reject_kubernetes_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_kubernetes_file_ready()"
     )
 
-    result =
-      file_clearance(context, "PUT", %{"body" => "changed"})
-      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+    assert {:error, error} =
+             file_clearance(context, "PUT", %{"body" => "changed"})
+             |> Targets.dispatch_target_effect(%{}, actor: context.operator, authorize?: false)
 
-    assert result.status == :unknown
+    assert Exception.message(error) =~ "injected file publication failure"
 
     assert Enum.filter(requests(context), &(&1.method == "PUT")) |> Enum.map(& &1.body) == [
              "changed"
@@ -1229,7 +1230,12 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
     assert receipt.status == :receiving
     assert receipt.received_bytes == 7
-    assert result.details["error"] =~ receipt.id
+
+    assert Target.Error.context_progress(error) == %{
+             "http_status" => 200,
+             "receiving_file_id" => receipt.id,
+             "received_bytes" => 7
+           }
 
     assert {:error, _} =
              Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)

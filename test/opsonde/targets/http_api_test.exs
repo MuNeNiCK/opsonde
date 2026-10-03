@@ -1577,6 +1577,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
     assert result.details["reason"] =~ receipt.id
   end
 
+  @tag file_publication_fault: true
   test "failed result publication cannot report a successful effect or repeat the write",
        context do
     # A real PostgreSQL failure at the publication boundary; assertions use public actions.
@@ -1592,20 +1593,25 @@ defmodule Opsonde.Targets.HTTPAPITest do
       "CREATE TRIGGER reject_http_file_ready BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_http_file_ready()"
     )
 
-    result =
-      cleared_http(context, "PUT", "/api/binary", %{
-        "body" => "plain-body",
-        "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
-      })
-      |> Targets.dispatch_target_effect!(%{}, actor: context.operator, authorize?: false)
+    assert {:error, error} =
+             cleared_http(context, "PUT", "/api/binary", %{
+               "body" => "plain-body",
+               "capture" => %{"duration_ms" => 500, "max_bytes" => 3}
+             })
+             |> Targets.dispatch_target_effect(%{}, actor: context.operator, authorize?: false)
 
-    assert result.status == :unknown
+    assert Exception.message(error) =~ "injected file publication failure"
     assert Agent.get(context.agent, & &1.writes) == ["plain-body"]
     [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
     assert receipt.status == :receiving
     assert receipt.received_bytes == 3
     assert receipt.completion_reason == nil
-    assert result.details["reason"] =~ receipt.id
+
+    assert Target.Error.context_progress(error) == %{
+             "http_status" => 200,
+             "receiving_file_id" => receipt.id,
+             "received_bytes" => 3
+           }
 
     assert {:error, _} =
              Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)

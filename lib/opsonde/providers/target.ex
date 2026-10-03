@@ -396,6 +396,7 @@ defmodule Opsonde.Providers.Target do
   defmodule Error do
     @moduledoc false
     use Splode.Error, class: :unknown, fields: [:category, :message, :progress]
+    @context_failure_message "Target invocation context check failed"
 
     @impl true
     def message(error), do: error.message
@@ -409,14 +410,14 @@ defmodule Opsonde.Providers.Target do
         cause,
         exception(
           category: :failed,
-          message: "Target invocation context check failed",
+          message: @context_failure_message,
           progress: progress
         )
       ])
     end
 
-    def context_failure?(%Ash.Error.Unknown{} = error),
-      do: is_nil(unwrap(error)) and not is_nil(find(error))
+    def context_failure?(%{errors: errors} = error) when is_list(errors),
+      do: not is_nil(find(error))
 
     def context_failure?(_error), do: false
 
@@ -427,7 +428,9 @@ defmodule Opsonde.Providers.Target do
 
     def context_progress(_error), do: nil
 
-    defp find(%__MODULE__{} = error), do: error
+    defp find(%__MODULE__{category: :failed, message: @context_failure_message} = error),
+      do: error
+
     defp find(%{errors: errors}) when is_list(errors), do: Enum.find_value(errors, &find/1)
     defp find(_error), do: nil
   end
@@ -457,11 +460,11 @@ defmodule Opsonde.Providers.Target do
   @type read_error ::
           {:error, :retryable | :timeout | :failed | :cancelled, String.t()}
           | {:error, BeforeSendError.t()}
-          | {:error, Ash.Error.Unknown.t()}
+          | {:error, Ash.Error.t()}
   @type effect_error ::
           {:error, :failed | :cancelled, String.t()}
           | {:error, BeforeSendError.t()}
-          | {:error, Ash.Error.Unknown.t()}
+          | {:error, Ash.Error.t()}
 
   @callback capabilities(state :: term(), invocation()) ::
               {:ok, Capabilities.t()} | read_error()

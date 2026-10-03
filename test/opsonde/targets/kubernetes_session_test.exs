@@ -24,12 +24,23 @@ defmodule Opsonde.Targets.KubernetesSessionTest do
         <<0, "status">> ->
           {:push, [{opcode, bytes}, {:binary, <<3, "native-exit-status">>}], agent}
 
+        <<0, "delayed">> ->
+          Process.sleep(60)
+          {:push, {opcode, bytes}, agent}
+
         _ ->
           {:push, {opcode, bytes}, agent}
       end
     end
 
     def handle_info(_, agent), do: {:ok, agent}
+
+    def handle_control({_bytes, opcode: :pong}, agent) do
+      Agent.update(agent, &Map.put(&1, :pong_received, true))
+      {:ok, agent}
+    end
+
+    def handle_control(_, agent), do: {:ok, agent}
     def terminate(reason, agent), do: Agent.update(agent, &Map.put(&1, :closed, reason))
   end
 
@@ -74,7 +85,10 @@ defmodule Opsonde.Targets.KubernetesSessionTest do
   setup tags do
     agent =
       start_supervised!(
-        {Agent, fn -> %{requests: [], frames: [], closed: nil, protocol: "test.raw.v1"} end}
+        {Agent,
+         fn ->
+           %{requests: [], frames: [], closed: nil, pong_received: false, protocol: "test.raw.v1"}
+         end}
       )
 
     scheme = Map.get(tags, :scheme, :https)
@@ -212,6 +226,111 @@ defmodule Opsonde.Targets.KubernetesSessionTest do
            ]
 
     assert remote.protocols == ["test.raw.v1"]
+  end
+
+  @tag websocket_context_fault: true
+  test "initial WebSocket context faults keep the original cause without an upgrade", context do
+    input =
+      request(context, %{
+        "path" => "/api/v1/namespaces/#{@namespace}/pods/one/exec",
+        "protocols" => ["test.raw.v1"],
+        "steps" => [%{"op" => "close"}]
+      })
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    for {message, callback} <- [
+          {"websocket_initial_context_unavailable",
+           fn ->
+             {:error, cause} =
+               Opsonde.Repo.query("SELECT websocket_initial_context_unavailable", [],
+                 mode: :savepoint
+               )
+
+             raise cause
+           end},
+          {"websocket_context_throw", fn -> throw(:websocket_context_throw) end}
+        ] do
+      assert {:error, error} =
+               Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      assert %Opsonde.Providers.Target.BeforeSendError{cause: cause} =
+               Opsonde.Providers.Target.BeforeSendError.unwrap(error)
+
+      assert Exception.message(cause) =~ message
+      assert Agent.get(context.agent, & &1.requests) == []
+    end
+  end
+
+  for mode <- [:postgres, :missing_record] do
+    @tag websocket_context_fault: true
+    test "WebSocket retains a native reply during #{mode} context failure", context do
+      input =
+        request(context, %{
+          "path" => "/apis/example.com/v1/namespaces/#{@namespace}/streams/one/connect",
+          "protocols" => ["test.raw.v1"],
+          "steps" => [
+            %{"op" => "send", "opcode" => "binary", "data" => Base.encode64(<<0, "delayed">>)},
+            %{"op" => "receive", "count" => 2},
+            %{"op" => "close"}
+          ]
+        })
+
+      clearance = Targets.clear_target_request!(input, actor: context.operator)
+      owner = self()
+
+      callback = fn ->
+        if Agent.get(context.agent, &(&1.frames != [] and &1.pong_received)) do
+          send(owner, :websocket_reply_stop_check)
+          Process.sleep(120)
+
+          {:error, cause} =
+            case unquote(mode) do
+              :postgres ->
+                Opsonde.Repo.query("SELECT websocket_reply_context_unavailable", [],
+                  mode: :savepoint
+                )
+
+              :missing_record ->
+                Targets.get_target("00000000-0000-0000-0000-000000000000",
+                  actor: context.operator
+                )
+            end
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               Targets.dispatch_target_effect(clearance, %{cancelled?: callback},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      case unquote(mode) do
+        :postgres ->
+          assert Exception.message(error) =~ "websocket_reply_context_unavailable"
+
+        :missing_record ->
+          assert %Ash.Error.Invalid{} = error
+          assert Exception.message(error) =~ "record not found"
+      end
+
+      assert Opsonde.Providers.Target.Error.context_failure?(error)
+      assert is_nil(Opsonde.Providers.Target.BeforeSendError.unwrap(error))
+
+      assert %{"bytes_sent" => 8, "bytes_received" => 8, "current_step" => %{"frames" => [frame]}} =
+               Opsonde.Providers.Target.Error.context_progress(error)
+
+      assert frame == %{"opcode" => "binary", "data" => Base.encode64(<<0, "delayed">>)}
+      assert_receive :websocket_reply_stop_check
+      assert Agent.get(context.agent, & &1.frames) == [{:binary, <<0, "delayed">>}]
+    end
   end
 
   test "peer cannot choose a subprotocol outside the reviewed request", context do
@@ -451,67 +570,95 @@ defmodule Opsonde.Targets.KubernetesSessionTest do
     assert Agent.get(context.agent, & &1.requests) == []
   end
 
-  test "receipt persistence failure after remote send remains unknown without replay", context do
-    # Native database fault fixture; the operation and receipt are inspected through actions.
-    Opsonde.Repo.query!("""
-    CREATE FUNCTION pg_temp.reject_session_progress() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.received_bytes <> OLD.received_bytes THEN
-        RAISE EXCEPTION 'injected WebSocket receipt progress failure';
-      END IF;
-      RETURN NEW;
-    END;
-    $$;
-    """)
+  for phase <- [:begin, :append, :complete] do
+    @tag websocket_file_fault: true
+    test "WebSocket #{phase} receipt failure retains its cause and dispatch facts", context do
+      # Native database fault fixture; the operation and receipt are inspected through actions.
+      condition =
+        case unquote(phase) do
+          :begin -> "TRUE"
+          :append -> "NEW.received_bytes <> OLD.received_bytes"
+          :complete -> "NEW.status = 'ready'"
+        end
 
-    Opsonde.Repo.query!(
-      "CREATE TRIGGER reject_session_progress BEFORE UPDATE ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_session_progress()"
-    )
+      event = if unquote(phase) == :begin, do: "INSERT", else: "UPDATE"
 
-    try do
-      request =
-        request(context, %{
-          "path" => "/api/v1/namespaces/#{@namespace}/pods/one/exec",
-          "protocols" => ["test.raw.v1"],
-          "steps" => [
-            %{"op" => "send", "opcode" => "binary", "data" => Base.encode64(<<0, "once">>)},
-            %{
-              "op" => "receive",
-              "count" => 1,
-              "response_file" => %{
-                "name" => "failed.bin",
-                "media_type" => "application/octet-stream"
-              }
-            },
-            %{"op" => "close"}
-          ]
-        })
+      Opsonde.Repo.query!("""
+      CREATE FUNCTION pg_temp.reject_session_progress() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF #{condition} THEN
+          RAISE EXCEPTION 'injected WebSocket receipt progress failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      """)
 
-      clearance = Targets.clear_target_request!(request, actor: context.operator)
+      Opsonde.Repo.query!(
+        "CREATE TRIGGER reject_session_progress BEFORE #{event} ON artifacts FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_session_progress()"
+      )
 
-      result =
-        Targets.dispatch_target_effect!(clearance, %{},
-          actor: context.operator,
-          authorize?: false
-        )
+      try do
+        request =
+          request(context, %{
+            "path" => "/api/v1/namespaces/#{@namespace}/pods/one/exec",
+            "protocols" => ["test.raw.v1"],
+            "steps" => [
+              %{"op" => "send", "opcode" => "binary", "data" => Base.encode64(<<0, "once">>)},
+              %{
+                "op" => "receive",
+                "count" => 1,
+                "response_file" => %{
+                  "name" => "failed.bin",
+                  "media_type" => "application/octet-stream"
+                }
+              },
+              %{"op" => "close"}
+            ]
+          })
 
-      assert result.status == :unknown
-      assert result.details["completion_reason"] == "file_or_inline_limit"
+        clearance = Targets.clear_target_request!(request, actor: context.operator)
 
-      receipt =
-        Targets.get_artifact!(result.details["current_step"]["receiving_file_id"],
-          actor: context.operator
-        )
+        assert {:error, error} =
+                 Targets.dispatch_target_effect(clearance, %{},
+                   actor: context.operator,
+                   authorize?: false
+                 )
 
-      assert receipt.status == :receiving
-      assert receipt.received_bytes == 0
+        if unquote(phase) == :begin do
+          assert %Opsonde.Providers.Target.BeforeSendError{} =
+                   before_send = Opsonde.Providers.Target.BeforeSendError.unwrap(error)
 
-      assert {:error, _} =
-               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+          assert Exception.message(before_send.cause) =~
+                   "injected WebSocket receipt progress failure"
 
-      assert Agent.get(context.agent, & &1.frames) == [{:binary, <<0, "once">>}]
-    after
-      Opsonde.Repo.query!("DROP TRIGGER reject_session_progress ON artifacts")
+          assert Opsonde.Providers.Target.BeforeSendError.retryable?(before_send)
+          assert Agent.get(context.agent, & &1.requests) == []
+          assert Agent.get(context.agent, & &1.frames) == []
+        else
+          assert Exception.message(error) =~ "injected WebSocket receipt progress failure"
+          progress = Opsonde.Providers.Target.Error.context_progress(error)
+          assert progress["bytes_sent"] == 5
+          assert progress["bytes_received"] == 5
+
+          receipt =
+            Targets.get_artifact!(progress["current_step"]["receiving_file_id"],
+              actor: context.operator
+            )
+
+          assert receipt.status == :receiving
+          assert receipt.received_bytes == if(unquote(phase) == :complete, do: 5, else: 0)
+
+          assert {:error, _} =
+                   Targets.artifact_reference(receipt.id, context.target.id,
+                     actor: context.operator
+                   )
+
+          assert Agent.get(context.agent, & &1.frames) == [{:binary, <<0, "once">>}]
+        end
+      after
+        Opsonde.Repo.query!("DROP TRIGGER reject_session_progress ON artifacts")
+      end
     end
   end
 

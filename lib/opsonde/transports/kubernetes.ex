@@ -345,7 +345,7 @@ defmodule Opsonde.Transports.Kubernetes do
 
   defp normalize({:error, category, message}, _phase), do: {:error, category, message}
 
-  defp normalize({:error, %Ash.Error.Unknown{}} = error, _phase), do: error
+  defp normalize({:error, %{errors: errors}} = error, _phase) when is_list(errors), do: error
   defp normalize({:error, %Opsonde.Providers.Target.BeforeSendError{}} = error, _phase), do: error
 
   defp normalize({:error, _error}, :effect),

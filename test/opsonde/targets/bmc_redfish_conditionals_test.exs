@@ -712,6 +712,7 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
              Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
   end
 
+  @tag file_publication_fault: true
   test "failed Redfish file publication cannot report success or resend the body", context do
     input = stage_file(context, <<255, 0, 1, 2, 255>>, "request.bin", "application/octet-stream")
 
@@ -738,15 +739,23 @@ defmodule Opsonde.Targets.BMCRedfishConditionalsTest do
       })
       |> Targets.clear_target_request!(actor: context.operator)
 
-    result =
-      Targets.dispatch_target_effect!(clearance, %{}, actor: context.operator, authorize?: false)
+    assert {:error, error} =
+             Targets.dispatch_target_effect(clearance, %{},
+               actor: context.operator,
+               authorize?: false
+             )
 
-    assert result.status == :unknown
+    assert Exception.message(error) =~ "injected file publication failure"
     receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
     receipt = Enum.find(receipts, &(&1.id != input["id"]))
     assert receipt.status == :receiving
     assert receipt.received_bytes == 5
-    assert result.details["reason"] =~ receipt.id
+
+    assert Target.Error.context_progress(error) == %{
+             "http_status" => 200,
+             "receiving_file_id" => receipt.id,
+             "received_bytes" => 5
+           }
 
     assert {:error, _} =
              Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)

@@ -417,80 +417,97 @@ defmodule Opsonde.OperationDeliveryTest do
     refute_receive {:verify, _, _}
   end
 
-  @tag inflight_target_read_fault: true
-  test "in-flight Target context faults persist terminal outcomes and retain their original cause",
-       context do
-    progress = %{"bytes_sent" => 8, "steps" => [%{"op" => "receive", "data" => "Zmlyc3Q="}]}
+  for mode <- [:postgres, :missing_record] do
+    @tag inflight_target_read_fault: true
+    test "in-flight #{mode} Target context faults persist outcomes and original cause",
+         context do
+      progress = %{"bytes_sent" => 8, "steps" => [%{"op" => "receive", "data" => "Zmlyc3Q="}]}
 
-    failed_response = fn ->
-      {:error, cause} =
-        Repo.query("SELECT inflight_target_context_unavailable", [], mode: :savepoint)
+      failed_response = fn ->
+        {:error, cause} =
+          case unquote(mode) do
+            :postgres ->
+              Repo.query("SELECT inflight_target_context_unavailable", [], mode: :savepoint)
 
-      {:error, Target.Error.context_failure(cause, progress)}
-    end
+            :missing_record ->
+              Targets.get_target("00000000-0000-0000-0000-000000000000", authorize?: false)
+          end
 
-    for kind <- [:effect, :observation] do
+        {:error, Target.Error.context_failure(cause, progress)}
+      end
+
+      expected_message =
+        if unquote(mode) == :postgres,
+          do: "inflight_target_context_unavailable",
+          else: "record not found"
+
+      for kind <- [:effect, :observation] do
+        {_incident, _run, proposal} =
+          authorized_proposal!("inflight-context-#{kind}", context, request_kind: kind)
+
+        operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+        assert {:error, error} =
+                 OperationDelivery.run(operation.id,
+                   target_invocation: invocation(failed_response)
+                 )
+
+        assert Exception.message(error) =~ expected_message
+        if unquote(mode) == :missing_record, do: assert(%Ash.Error.Invalid{} = error)
+        terminal = Cases.get_operation!(operation.id, authorize?: false)
+        assert terminal.status == if(kind == :effect, do: :unknown, else: :failed)
+        assert terminal.dispatch_started_at != nil
+        assert terminal.result_details["progress"] == progress
+
+        assert :ok =
+                 OperationDelivery.run(operation.id,
+                   target_invocation: invocation(fn -> flunk("in-flight request repeated") end)
+                 )
+
+        if kind == :effect do
+          assert_receive {:effect, _, _}
+          refute_receive {:effect, _, _}
+        else
+          assert_receive {:observe, _, _}
+          refute_receive {:observe, _, _}
+        end
+      end
+
       {_incident, _run, proposal} =
-        authorized_proposal!("inflight-context-#{kind}", context, request_kind: kind)
+        authorized_proposal!("inflight-verification-context", context,
+          service: "verification-api"
+        )
 
       operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
-      assert {:error, error} =
+      assert :ok =
                OperationDelivery.run(operation.id,
+                 target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+               )
+
+      assert_receive {:effect, _, _}
+      attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+
+      assert {:error, error} =
+               VerificationDelivery.run(attempt.id,
                  target_invocation: invocation(failed_response)
                )
 
-      assert Exception.message(error) =~ "inflight_target_context_unavailable"
-      terminal = Cases.get_operation!(operation.id, authorize?: false)
-      assert terminal.status == if(kind == :effect, do: :unknown, else: :failed)
+      assert Exception.message(error) =~ expected_message
+      if unquote(mode) == :missing_record, do: assert(%Ash.Error.Invalid{} = error)
+      terminal = Cases.get_verification_attempt!(attempt.id, authorize?: false)
+      assert terminal.status == :unknown
       assert terminal.dispatch_started_at != nil
-      assert terminal.result_details["progress"] == progress
+      assert terminal.facts["progress"] == progress
 
       assert :ok =
-               OperationDelivery.run(operation.id,
-                 target_invocation: invocation(fn -> flunk("in-flight request repeated") end)
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation(fn -> flunk("in-flight verification repeated") end)
                )
 
-      if kind == :effect do
-        assert_receive {:effect, _, _}
-        refute_receive {:effect, _, _}
-      else
-        assert_receive {:observe, _, _}
-        refute_receive {:observe, _, _}
-      end
+      assert_receive {:verify, _, _}
+      refute_receive {:verify, _, _}
     end
-
-    {_incident, _run, proposal} =
-      authorized_proposal!("inflight-verification-context", context, service: "verification-api")
-
-    operation = Cases.accept_operation!(proposal.id, authorize?: false)
-
-    assert :ok =
-             OperationDelivery.run(operation.id,
-               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
-             )
-
-    assert_receive {:effect, _, _}
-    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
-
-    assert {:error, error} =
-             VerificationDelivery.run(attempt.id,
-               target_invocation: invocation(failed_response)
-             )
-
-    assert Exception.message(error) =~ "inflight_target_context_unavailable"
-    terminal = Cases.get_verification_attempt!(attempt.id, authorize?: false)
-    assert terminal.status == :unknown
-    assert terminal.dispatch_started_at != nil
-    assert terminal.facts["progress"] == progress
-
-    assert :ok =
-             VerificationDelivery.run(attempt.id,
-               target_invocation: invocation(fn -> flunk("in-flight verification repeated") end)
-             )
-
-    assert_receive {:verify, _, _}
-    refute_receive {:verify, _, _}
   end
 
   @tag inflight_target_read_fault: true
