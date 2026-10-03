@@ -34,7 +34,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, continuity} <- target_continuity(incident, target, source_context),
          {:ok, {relations, traversable_relation_ids}} <- relations(target, incident, run, turn),
          {:ok, tools} <- tools(target, run, incident, conditions, continuity),
-         {:ok, continuity} <- EvidenceProjection.file_contents(incident, continuity),
+         {:ok, continuity} <- EvidenceProjection.file_contents(incident, run, continuity),
          {:ok, manual_recovery_ids} <-
            ConditionRecovery.manual_evidence_ids(incident, run, target, continuity),
          request <-

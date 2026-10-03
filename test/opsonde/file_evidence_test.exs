@@ -88,6 +88,76 @@ defmodule Opsonde.FileEvidenceTest do
     assert Cases.get_resolution_run!(context.run.id, authorize?: false).effect_count == 0
   end
 
+  test "resumed Case retains historical file metadata without treating it as current contents",
+       context do
+    {source, reference} = source!(context)
+    old = Cases.capture_file_read!(turn!(context, source, reference).id, authorize?: false)
+    incident = Cases.get_case!(context.incident.id, authorize?: false)
+    run = Cases.get_resolution_run!(context.run.id, authorize?: false)
+
+    attention =
+      Cases.require_case_attention!(
+        incident.id,
+        incident.revision,
+        run.id,
+        run.revision,
+        "file-history-interruption",
+        "Resolver interrupted",
+        %{"action" => "retry_resolver"},
+        "Resume investigation",
+        authorize?: false
+      )
+
+    paused = Cases.get_resolution_run!(run.id, authorize?: false)
+
+    resumed =
+      Cases.resume_case!(
+        attention.id,
+        attention.revision,
+        paused.id,
+        paused.revision,
+        paused.authority_mode,
+        paused.max_elapsed_seconds,
+        paused.max_resolver_turns,
+        paused.max_target_requests,
+        paused.max_effects,
+        paused.max_related_targets,
+        paused.max_ai_usage_units,
+        paused.max_no_progress_turns,
+        "Continue investigation",
+        actor: context.operator
+      )
+
+    current =
+      %{context | run: resumed, incident: Cases.get_case!(incident.id, authorize?: false)}
+      |> Map.put(
+        :started_turn,
+        Cases.list_turns!(actor: context.operator)
+        |> Enum.find(&(&1.resolution_run_id == resumed.id))
+      )
+
+    {source, reference} = source!(current)
+    fresh = Cases.capture_file_read!(turn!(current, source, reference).id, authorize?: false)
+
+    assert {:ok, [history, disclosed]} =
+             Opsonde.Cases.Evidence.Projection.file_contents(current.incident, resumed, [
+               old,
+               fresh
+             ])
+
+    assert history.id == old.id
+    assert history.content["status"] == "historical"
+    assert history.content["original_status"] == "available"
+    assert history.content["resolution_run_id"] == run.id
+    assert history.content["sha256"] == old.content["sha256"]
+    refute Map.has_key?(history.content, "value")
+    assert Opsonde.Providers.AI.claim_fact_keys(history) == []
+    assert disclosed.id == fresh.id
+    assert disclosed.content["value"] == <<0, 1, 2>>
+    assert {:error, _} = Cases.read_file_content(old.id, current.incident.id, authorize?: false)
+    assert Cases.get_evidence!(old.id, actor: context.operator).content == old.content
+  end
+
   test "file citation provenance rechecks current owner, Target and file availability", context do
     {source, reference} = source!(context)
     turn = turn!(context, source, reference)
@@ -475,19 +545,21 @@ defmodule Opsonde.FileEvidenceTest do
 
   defp turn!(context, source, reference, overrides \\ %{}) do
     started =
-      Cases.start_turn!(
-        context.incident.id,
-        context.run.id,
-        Ecto.UUID.generate(),
-        %{},
-        %{},
-        "Review limits",
-        authorize?: false
-      )
+      Map.get_lazy(context, :started_turn, fn ->
+        Cases.start_turn!(
+          context.incident.id,
+          context.run.id,
+          Ecto.UUID.generate(),
+          %{},
+          %{},
+          "Review limits",
+          authorize?: false
+        ).value
+      end)
 
     Cases.complete_turn!(
-      started.value.id,
-      started.value.revision,
+      started.id,
+      started.revision,
       %{
         "outcome" => "decision",
         "intent" =>

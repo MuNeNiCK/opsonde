@@ -46,11 +46,11 @@ defmodule Opsonde.Cases.Evidence.Projection do
     end)
   end
 
-  def file_contents(incident, evidence) do
+  def file_contents(incident, run, evidence) do
     evidence
     |> Enum.reduce_while({:ok, []}, fn item, {:ok, loaded} ->
       if item.kind == "file_read" and file_target_id(item) == incident.selected_target_id do
-        case Cases.read_file_content(item.id, incident.id, authorize?: false) do
+        case file_content(item, incident, run) do
           {:ok, content} -> {:cont, {:ok, [%{item | content: content} | loaded]}}
           {:error, _error} = error -> {:halt, error}
         end
@@ -61,6 +61,23 @@ defmodule Opsonde.Cases.Evidence.Projection do
     |> case do
       {:ok, loaded} -> {:ok, Enum.reverse(loaded)}
       error -> error
+    end
+  end
+
+  defp file_content(item, incident, run) do
+    with {:ok, stored} <- Cases.get_evidence(item.id, authorize?: false),
+         true <-
+           stored.case_id == incident.id || {:error, "File-read Evidence belongs to another Case"} do
+      if stored.resolution_run_id == run.id do
+        Cases.read_file_content(item.id, incident.id, authorize?: false)
+      else
+        {:ok,
+         stored.content
+         |> Map.drop(["value", "encoding"])
+         |> Map.put("original_status", stored.content["status"])
+         |> Map.put("status", "historical")
+         |> Map.put("resolution_run_id", stored.resolution_run_id)}
+      end
     end
   end
 

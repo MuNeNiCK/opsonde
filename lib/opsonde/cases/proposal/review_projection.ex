@@ -27,14 +27,15 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
            ),
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
-         {:ok, evidence} <- EvidenceProjection.file_contents(incident, evidence),
+         {:ok, evidence} <- EvidenceProjection.file_contents(incident, run, evidence),
          {:ok, context_evidence} <-
            EvidenceProjection.recent(
              incident.id,
              proposal.target_id,
              Enum.map(evidence, & &1.id)
            ),
-         {:ok, context_evidence} <- EvidenceProjection.file_contents(incident, context_evidence),
+         {:ok, context_evidence} <-
+           EvidenceProjection.file_contents(incident, run, context_evidence),
          {:ok, target_relations} <- target_relations(incident, proposal),
          {:ok, target} <- current_target(proposal),
          {:ok, recovery_ids} <-
