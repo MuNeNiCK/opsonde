@@ -48,7 +48,48 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       {:error, error} = failure ->
         if AI.Error.context_failure?(error),
           do: failure,
-          else: attention(turn, "Recovery Reviewer is unavailable", error)
+          else: reconcile_admission_failure(turn, error)
+    end
+  end
+
+  defp reconcile_admission_failure(turn, error) do
+    with {:ok, invocations} <-
+           Cases.list_ai_invocations(
+             query: [
+               filter: [
+                 case_id: turn.case_id,
+                 resolution_run_id: turn.resolution_run_id,
+                 turn_id: turn.id,
+                 role: :reviewer,
+                 status: [in: [:dispatching, :unknown]]
+               ],
+               sort: [dispatch_started_at: :asc],
+               limit: 1
+             ],
+             authorize?: false
+           ) do
+      case invocations do
+        [%{status: :dispatching} = invocation] ->
+          with {:ok, unknown} <-
+                 Cases.record_ai_invocation_outcome(
+                   invocation,
+                   invocation.revision,
+                   %{
+                     status: :unknown,
+                     category: "response_unknown",
+                     failure_code: "response_unknown",
+                     completed_at: DateTime.utc_now()
+                   },
+                   authorize?: false
+                 ),
+               do: settle_interruption(turn, unknown)
+
+        [unknown] ->
+          settle_interruption(turn, unknown)
+
+        [] ->
+          attention(turn, "Recovery Reviewer is unavailable", error)
+      end
     end
   end
 
@@ -199,11 +240,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
          %AIInvocationClaim{state: :interrupted} = claim,
          _opts
        ) do
-    with {:ok, _result} <-
-           charge(turn, claim.invocation.reserved_units, "unknown:#{claim.invocation.id}"),
-         :ok <- attention(turn, "Recovery Reviewer response is unknown", "Response was lost") do
-      :ok
-    end
+    settle_interruption(turn, claim.invocation)
   end
 
   defp dispatch(turn, _selection, _request, %AIInvocationClaim{state: :terminal}, _opts) do
@@ -211,6 +248,19 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       if event,
         do: apply_result(turn, event),
         else: attention(turn, "Recovery Reviewer failed", "Invocation is terminal")
+    end
+  end
+
+  defp settle_interruption(turn, invocation) do
+    Ash.transact([Case, ResolutionRun, Turn, CaseEvent], fn ->
+      with :ok <- CaseAdmissionLock.acquire(),
+           {:ok, _charged} <- charge(turn, invocation.reserved_units, "unknown:#{invocation.id}"),
+           :ok <- reconsider_recovery(turn, "Recovery Reviewer response was lost", "interrupted"),
+           do: :ok
+    end)
+    |> case do
+      {:ok, result} -> result
+      {:error, _cause} = failure -> failure
     end
   end
 

@@ -5806,81 +5806,67 @@ defmodule Opsonde.OperationDeliveryTest do
   end
 
   test "an interrupted Recovery Reviewer is charged once and cannot approve on replay", context do
-    {incident, run, proposal} =
-      authorized_proposal!("interrupted-recovery-review", context, request_kind: :observation)
-
-    operation = Cases.accept_operation!(proposal.id, authorize?: false)
-
-    assert :ok =
-             deliver_observation(operation, %{
-               "unit" => "api.service",
-               "active_state" => "active"
-             })
-
-    evidence = operation_evidence_record(operation.id)
-    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
-    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
-
-    assert :ok =
-             ResolverDelivery.run(turn.id,
-               target_invocation:
-                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn request ->
-                   {:ok,
-                    %AI.ResolverDecision{
-                      intent: %AI.RecoveryConclusion{
-                        reason: "The service is active in a direct observation",
-                        evidence_ids: [evidence.id],
-                        desired_outcome_claims: [
-                          %{
-                            "symptom_id" => request.case_symptom.id,
-                            "evidence_id" => evidence.id,
-                            "fact_keys" => ["active_state"],
-                            "reason" => "The inspected service is active"
-                          }
-                        ]
-                      },
-                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
-                    }}
-                 end
-               }
-             )
+    {incident, run, turn, _evidence} =
+      recovery_conclusion!(context, "interrupted-recovery-review")
 
     assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
              "review_recovery"
 
     before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
-    selection = Providers.select_reviewer_ai!([], authorize?: false)
-    current = Cases.get_case!(incident.id, authorize?: false)
-    completed = Cases.get_turn!(turn.id, authorize?: false)
+    parent = self()
 
-    assert {:ok, _request, invocation_context} =
-             Opsonde.Cases.Turn.RecoveryReviewProjection.build(turn.id, selection)
+    task =
+      Task.async(fn ->
+        Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+          ai_invocation: %{
+            test_pid: parent,
+            respond: fn _request ->
+              send(parent, :recovery_reviewer_remote_started)
+              receive do: (:never -> :unreachable)
+            end
+          }
+        )
+      end)
 
-    claim =
-      Cases.claim_ai_invocation!(
-        :reviewer,
-        incident.id,
-        current.revision,
-        run.id,
-        turn.id,
-        completed.revision,
-        nil,
-        nil,
-        selection.provider_id,
-        selection.assignment_id,
-        selection.provider_revision,
-        selection.assignment_revision,
-        selection.source,
-        Opsonde.Cases.AIInvocation.request_digest({turn.id, :simulated_interruption}),
-        1,
-        %{invocation_context: invocation_context},
-        authorize?: false
-      )
+    assert_receive {:review_recovery, _, _request}, 2_000
+    assert_receive :recovery_reviewer_remote_started, 2_000
+    assert nil == Task.shutdown(task, :brutal_kill)
+    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :reviewer, 11, context.admin)
 
-    assert claim.state == :claimed
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_interrupted_recovery_successor() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.event_type = 'turn_started' THEN
+        RAISE EXCEPTION 'injected interrupted recovery successor persistence failure';
+      END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_interrupted_recovery_successor BEFORE INSERT ON case_events
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_interrupted_recovery_successor();
+    """)
+
+    try do
+      assert {:error, error} = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
+
+      assert Exception.message(error) =~
+               "injected interrupted recovery successor persistence failure"
+    after
+      Repo.query!("DROP TRIGGER reject_interrupted_recovery_successor ON case_events")
+    end
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == before_units
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent ==
+             %{"action" => "review_recovery", "turn_id" => turn.id}
+
+    assert [%{status: :unknown}] =
+             Cases.list_ai_invocations!(authorize?: false)
+             |> Enum.filter(&(&1.role == :reviewer))
+
+    refute_receive {:review_recovery, _, _}
 
     assert :ok =
              Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
@@ -5891,8 +5877,17 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     stopped = Cases.get_case!(incident.id, authorize?: false)
-    assert stopped.status == :needs_attention
-    assert stopped.stop_reason == "Recovery Reviewer response is unknown"
+    assert stopped.status == :running
+    assert stopped.pending_intent["action"] == "resolve_turn"
+    refute stopped.pending_intent["turn_id"] == turn.id
+    successor = Cases.get_turn!(stopped.pending_intent["turn_id"], authorize?: false)
+    assert successor.intent["source"] == "recovery_review_interrupted"
+    assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
+
+    assert Cases.get_case!(incident.id, authorize?: false).pending_intent ==
+             stopped.pending_intent
+
+    refute_receive {:review_recovery, _, _}
 
     snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
     assert snapshot.ai_usage.unknown_invocations == 1

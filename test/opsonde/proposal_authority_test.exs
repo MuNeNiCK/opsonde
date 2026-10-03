@@ -2290,17 +2290,48 @@ defmodule Opsonde.ProposalAuthorityTest do
         )
       end)
 
-    assert_receive {:review, _, _request}
-    assert_receive :reviewer_remote_started
+    assert_receive {:review, _, _request}, 2_000
+    assert_receive :reviewer_remote_started, 2_000
     assert nil == Task.shutdown(task, :brutal_kill)
 
     [dispatching] = Cases.list_ai_invocations!(authorize?: false)
     assert dispatching.role == :reviewer
     assert dispatching.status == :dispatching
 
+    Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :reviewer, 11, context.admin)
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_interrupted_review_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status = 'unknown' THEN
+        RAISE EXCEPTION 'injected interrupted review outcome persistence failure';
+      END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Opsonde.Repo.query!("""
+    CREATE TRIGGER reject_interrupted_review_outcome BEFORE UPDATE ON ai_invocations
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_interrupted_review_outcome();
+    """)
+
+    try do
+      assert {:error, error} =
+               ReviewDelivery.run(reviewing.id, delivery_attempt: 1, max_delivery_attempts: 3)
+
+      assert Exception.message(error) =~ "injected interrupted review outcome persistence failure"
+    after
+      Opsonde.Repo.query!("DROP TRIGGER reject_interrupted_review_outcome ON ai_invocations")
+    end
+
+    assert [%{status: :dispatching}] = Cases.list_ai_invocations!(authorize?: false)
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    refute_receive {:review, _, _}
+
     assert {:error, retry_reason} =
              ReviewDelivery.run(reviewing.id,
-               delivery_attempt: 2,
+               delivery_attempt: 1,
                max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),
@@ -2308,7 +2339,7 @@ defmodule Opsonde.ProposalAuthorityTest do
                }
              )
 
-    assert retry_reason == "Reviewer response was lost on attempt 2 of 3"
+    assert retry_reason == "Reviewer response was lost on attempt 1 of 3"
 
     refute_receive {:review, _, _}
 
@@ -2338,7 +2369,7 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     assert :ok =
              ReviewDelivery.run(reviewing.id,
-               delivery_attempt: 3,
+               delivery_attempt: 2,
                max_delivery_attempts: 3,
                ai_invocation: %{
                  test_pid: self(),

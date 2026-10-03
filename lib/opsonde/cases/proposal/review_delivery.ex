@@ -65,6 +65,17 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
                not_found_error?: false
              ) do
         case invocation do
+          %{status: :dispatching} ->
+            with {:ok, unknown} <-
+                   record_invocation(invocation, :unknown,
+                     category: "response_unknown",
+                     failure_code: "response_unknown"
+                   ),
+                 do: persist_interruption(proposal, nil, unknown, opts)
+
+          %{status: :unknown} ->
+            persist_interruption(proposal, nil, invocation, opts)
+
           %{status: :failed, category: "context_changed"} ->
             replay_terminal_failure(proposal, invocation, opts)
 
