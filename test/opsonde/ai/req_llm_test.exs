@@ -938,6 +938,137 @@ defmodule Opsonde.AI.ReqLLMTest do
              Adapter.resolve(state, resolver_request(), %{})
   end
 
+  @tag persisted_native_context: true
+  test "a persisted Resolver invalidates an in-flight native assignment and continues without replaying it",
+       context do
+    alias Opsonde.Cases
+    alias Opsonde.Cases.Turn.ResolverDelivery
+
+    admin =
+      Accounts.bootstrap!(
+        "native-case-admin@example.com",
+        "correct horse battery staple",
+        "correct horse battery staple",
+        authorize?: true
+      )
+
+    authority = Cases.current_authority_setting!(actor: admin)
+
+    Cases.configure_authority_setting!(
+      authority.setting_revision,
+      :auto,
+      true,
+      600,
+      4,
+      5,
+      2,
+      3,
+      100_000,
+      2,
+      "Allow bounded native interruption recovery",
+      actor: admin
+    )
+
+    provider =
+      Providers.create_provider!(
+        "native-case-ai",
+        :ai,
+        Adapter.type(),
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => context.endpoint <> "/v1"
+        },
+        %{"api_key" => "native-case-secret"},
+        actor: admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: admin))
+
+    Opsonde.TestAIUsage.configure!(provider.id, :resolver, 10, admin)
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        "native-case-context",
+        "Investigate the unavailable service",
+        :warning,
+        %{"desired_outcome" => "The service responds"},
+        nil,
+        :en,
+        actor: admin
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+    turn =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "native-case-turn",
+        %{"objective" => "Resolve the incident"},
+        %{"action" => "continue"},
+        "Review Resolver limits",
+        authorize?: false
+      ).value
+
+    changed = :atomics.new(1, [])
+    set_mode(context.agent, {:sleep, 1_000})
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 cancelled?: fn ->
+                   if requests(context.agent) != [] and
+                        :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+                      do: Opsonde.TestAIUsage.configure!(provider.id, :resolver, 11, admin)
+
+                   false
+                 end
+               }
+             )
+
+    assert :atomics.get(changed, 1) == 1
+    assert length(requests(context.agent)) == 1
+
+    assert [
+             %{
+               status: :failed,
+               category: "context_changed",
+               dispatch_confirmed: true,
+               usage_reported: false,
+               reserved_units: 65_536
+             }
+           ] = Cases.list_ai_invocations!(authorize?: false)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_536
+    current = Cases.get_case!(incident.id, authorize?: false)
+    assert current.status == :running
+    assert current.pending_intent["action"] == "resolve_turn"
+    next_id = current.pending_intent["turn_id"]
+    refute next_id == turn.id
+
+    set_mode(
+      context.agent,
+      {:decision,
+       %{
+         "type" => "target_search",
+         "query" => "service host",
+         "reason" => "Find the affected registered Target"
+       }}
+    )
+
+    assert :ok = ResolverDelivery.run(next_id)
+    assert length(requests(context.agent)) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_548
+    assert :ok = ResolverDelivery.run(turn.id)
+    assert :ok = ResolverDelivery.run(next_id)
+    assert length(requests(context.agent)) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_548
+    assert length(Cases.list_ai_invocations!(authorize?: false)) == 2
+  end
+
   @tag invocation_read_fault: true
   test "a local read fault before each native AI role sends nothing and retains no-send accounting",
        context do
