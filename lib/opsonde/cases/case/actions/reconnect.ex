@@ -37,30 +37,37 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
   end
 
   defp current_conditions(incident, history) do
-    assessments =
-      case ConditionRecovery.assess_current(incident) do
-        {:ok, items} -> Map.new(items, &{&1.condition_id, &1})
-        {:error, _reason} -> %{}
+    memberships = Enum.filter(history, &is_nil(&1.detached_at))
+
+    with {:ok, assessments} <- current_assessments(incident, memberships) do
+      memberships
+      |> Enum.reduce_while({:ok, []}, fn membership, {:ok, items} ->
+        case Signals.get_condition(membership.condition_id, authorize?: false) do
+          {:ok, condition} ->
+            assessment = Map.get(assessments, condition.id)
+
+            {:cont,
+             {:ok,
+              [%{condition: condition, membership: membership, assessment: assessment} | items]}}
+
+          {:error, _reason} = error ->
+            {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, items} -> {:ok, Enum.reverse(items)}
+        error -> error
       end
+    end
+  end
 
-    history
-    |> Enum.filter(&is_nil(&1.detached_at))
-    |> Enum.reduce_while({:ok, []}, fn membership, {:ok, items} ->
-      case Signals.get_condition(membership.condition_id, authorize?: false) do
-        {:ok, condition} ->
-          assessment = Map.get(assessments, condition.id)
+  defp current_assessments(_incident, []), do: {:ok, %{}}
 
-          {:cont,
-           {:ok,
-            [%{condition: condition, membership: membership, assessment: assessment} | items]}}
-
-        {:error, _reason} = error ->
-          {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, items} -> {:ok, Enum.reverse(items)}
-      error -> error
+  defp current_assessments(incident, _memberships) do
+    case ConditionRecovery.assess_current(incident) do
+      {:ok, items} -> {:ok, Map.new(items, &{&1.condition_id, &1})}
+      {:error, %ConditionRecovery.EffectIncomplete{}} -> {:ok, %{}}
+      {:error, _cause} = error -> error
     end
   end
 end

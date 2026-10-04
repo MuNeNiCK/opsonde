@@ -3924,6 +3924,10 @@ defmodule Opsonde.OperationDeliveryTest do
     assert {:error, %ConditionRecovery.EffectIncomplete{}} =
              ConditionRecovery.assess_current(incident)
 
+    snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
+    assert snapshot.conditions != []
+    assert Enum.all?(snapshot.conditions, &is_nil(&1.assessment))
+
     assert :ok =
              OperationDelivery.run(second.id,
                target_invocation: invocation(fn -> flunk("stale effect was sent") end)

@@ -534,6 +534,49 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert length(snapshot["conditions"]) == 2
     assert length(snapshot["condition_history"]) == 2
 
+    root = Path.join(System.tmp_dir!(), "condition-cli-#{System.unique_integer([:positive])}")
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE evidences RENAME COLUMN observed_at TO unavailable_observed_at"
+    )
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Cases.case_reconnect_snapshot(incident.id, actor: context.admin)
+
+      assert Exception.message(cause) =~ "does not exist"
+      failed = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+      assert json_response(failed, 500)["error"]["code"] == "internal_error"
+      assert_operation_response(failed)
+
+      failed_cli =
+        capture_io(:stderr, fn ->
+          assert OpsondeCLI.CLI.run(["case", "show", incident.id], runtime) == 4
+        end)
+
+      assert %{"http_status" => 500, "error" => %{"code" => "internal_error"}} =
+               Jason.decode!(failed_cli)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE evidences RENAME COLUMN unavailable_observed_at TO observed_at"
+      )
+    end
+
+    assert length(get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)["conditions"]) ==
+             2
+
     refs = Enum.map(snapshot["conditions"], & &1["subject_ref"])
     assert Enum.all?(refs, &(&1["kind"] == "native_labels" and is_binary(&1["digest"])))
     assert length(Enum.uniq(refs)) == 2
