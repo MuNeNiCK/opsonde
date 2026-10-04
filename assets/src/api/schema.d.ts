@@ -2231,6 +2231,7 @@ export interface components {
             };
         };
         CaseAIUsage: {
+            /** @description Reported tokens plus allowances for unreported usage; not an invoiced amount. */
             budget_charged_units: number;
             complete: boolean;
             not_dispatched_invocations: number;
@@ -3097,6 +3098,7 @@ export interface components {
             /** Format: uuid */
             provider_id: string;
             reasoning_tokens: number | null;
+            /** @description Input-capacity allowance for unreported usage, capped by remaining run budget; not measured tokens or a billing limit. */
             reserved_units: number;
             /** Format: uuid */
             resolution_run_id: string;

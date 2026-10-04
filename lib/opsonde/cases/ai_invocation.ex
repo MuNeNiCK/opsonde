@@ -138,6 +138,10 @@ defmodule Opsonde.Cases.AIInvocation do
         allow_nil?: false,
         constraints: [min_length: 64, max_length: 64]
 
+      argument :request_size_bytes, :integer,
+        allow_nil?: false,
+        constraints: [min: 1, max: AI.max_input_bytes()]
+
       argument :delivery_attempt, :integer, constraints: [min: 1]
 
       argument :invocation_context, :struct,

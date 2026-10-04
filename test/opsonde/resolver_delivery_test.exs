@@ -321,7 +321,10 @@ defmodule Opsonde.ResolverDeliveryTest do
                selection.source,
                Opsonde.Cases.AIInvocation.request_digest(request),
                nil,
-               %{invocation_context: projected},
+               %{
+                 invocation_context: projected,
+                 request_size_bytes: AI.resolver_disclosure_size(request)
+               },
                authorize?: false
              )
 
@@ -1345,7 +1348,8 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     [dispatching] = Cases.list_ai_invocations!(authorize?: false)
     assert dispatching.status == :dispatching
-    assert dispatching.reserved_units == 65_536
+    assert dispatching.reserved_units > 65_536
+    assert dispatching.reserved_units < 200_000
 
     Opsonde.TestAIUsage.configure!(context.provider.id, :resolver, 11, context.admin)
 
@@ -1368,7 +1372,7 @@ defmodule Opsonde.ResolverDeliveryTest do
     completed = Cases.get_turn!(turn.id, authorize?: false)
     assert completed.status == :completed
     assert completed.result["outcome"] == "delivery_unknown"
-    assert completed.result["reserved_usage_units"] == 65_536
+    assert completed.result["reserved_usage_units"] == dispatching.reserved_units
     assert completed.progress_kind == :none
 
     [successor] =
@@ -1392,7 +1396,8 @@ defmodule Opsonde.ResolverDeliveryTest do
              "source_turn_id" => turn.id
            }
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_536
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             dispatching.reserved_units
 
     assert :ok =
              ResolverDelivery.run(turn.id,

@@ -198,7 +198,7 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
       selection.source,
       digest,
       attempt,
-      %{invocation_context: context},
+      %{invocation_context: context, request_size_bytes: AI.input_size(request)},
       authorize?: false
     )
   end

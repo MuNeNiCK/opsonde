@@ -2,9 +2,8 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
   use Ash.Resource.Actions.Implementation
   require Ash.Query
 
-  @max_reservation 65_536
-
   alias Opsonde.Cases
+  alias Opsonde.Providers.AI
 
   alias Opsonde.Cases.{
     AIInvocation,
@@ -49,7 +48,7 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
         provider_revision: arguments.provider_revision,
         assignment_revision: arguments.assignment_revision,
         selection_source: arguments.selection_source,
-        reserved_units: min(remaining, @max_reservation),
+        reserved_units: reservation_units(arguments, remaining),
         dispatch_started_at: DateTime.utc_now()
       }
 
@@ -78,7 +77,7 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
              invocation,
              invocation.revision,
              arguments.request_digest,
-             min(remaining, @max_reservation),
+             reservation_units(arguments, remaining),
              authorize?: false
            ) do
       %AIInvocationClaim{
@@ -111,6 +110,10 @@ defmodule Opsonde.Cases.AIInvocation.Actions.Claim do
 
   defp claim(invocation, _arguments, _run),
     do: %AIInvocationClaim{state: :terminal, invocation: invocation}
+
+  # Capacity-based allowance when usage is missing, not a token or billing bound.
+  defp reservation_units(arguments, remaining),
+    do: min(remaining, arguments.request_size_bytes + AI.max_output_bytes())
 
   defp current_context(arguments, incident, run) do
     with true <-

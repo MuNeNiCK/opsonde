@@ -2622,6 +2622,7 @@
         "additionalProperties": false,
         "properties": {
           "budget_charged_units": {
+            "description": "Reported tokens plus allowances for unreported usage; not an invoiced amount.",
             "minimum": 0,
             "type": "integer"
           },
@@ -5996,6 +5997,7 @@
             "type": "integer"
           },
           "reserved_units": {
+            "description": "Input-capacity allowance for unreported usage, capped by remaining run budget; not measured tokens or a billing limit.",
             "minimum": 1,
             "type": "integer"
           },

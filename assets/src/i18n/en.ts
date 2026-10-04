@@ -344,7 +344,7 @@ const en = {
         unknownReservation: "Unmeasured calls reserved {{units}} budget units.",
         pendingReservation: "Pending calls reserve {{units}} budget units.",
         scope:
-          "Case calls only. Tokens are reported by the AI service; reservations are budget bounds. Billing is provided by the service.",
+          "Case calls only. Tokens are reported by the AI service; reservations are input-capacity allowances, not limits on actual usage or billing.",
         role: "Role",
         result: "Result",
         measurement: "Usage",

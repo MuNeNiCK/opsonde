@@ -1673,10 +1673,13 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert stopped.stop_reason == "Reviewer delivery failed: Reviewer AI timed out"
 
     assert Cases.get_resolution_run!(run.id, authorize?: false).status == :needs_attention
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 196_608
-
     records = Cases.list_ai_invocations!(authorize?: false)
     assert length(records) == 3
+    assert Enum.all?(records, &(&1.reserved_units > 65_536 and not &1.usage_reported))
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             Enum.sum(Enum.map(records, & &1.reserved_units))
+
     assert Enum.all?(records, &(&1.status == :failed and &1.category == "timeout"))
     assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
@@ -2355,7 +2358,8 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert unknown.status == :unknown
     assert unknown.category == "response_unknown"
     assert unknown.failure_code == "response_unknown"
-    assert unknown.reserved_units == 65_536
+    assert unknown.reserved_units == dispatching.reserved_units
+    assert unknown.reserved_units > 65_536
 
     assert Cases.list_review_decisions!(actor: context.admin) == []
     assert Cases.get_proposal!(proposal.id, authorize?: false).status == :reviewing

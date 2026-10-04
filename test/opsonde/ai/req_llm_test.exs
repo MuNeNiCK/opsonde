@@ -1038,11 +1038,13 @@ defmodule Opsonde.AI.ReqLLMTest do
                category: "context_changed",
                dispatch_confirmed: true,
                usage_reported: false,
-               reserved_units: 65_536
+               reserved_units: reserved_units
              }
            ] = Cases.list_ai_invocations!(authorize?: false)
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_536
+    assert reserved_units > 65_536
+    assert reserved_units < 100_000
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == reserved_units
     current = Cases.get_case!(incident.id, authorize?: false)
     assert current.status == :running
     assert current.pending_intent["action"] == "resolve_turn"
@@ -1061,11 +1063,17 @@ defmodule Opsonde.AI.ReqLLMTest do
 
     assert :ok = ResolverDelivery.run(next_id)
     assert length(requests(context.agent)) == 1
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_548
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             reserved_units + 12
+
     assert :ok = ResolverDelivery.run(turn.id)
     assert :ok = ResolverDelivery.run(next_id)
     assert length(requests(context.agent)) == 1
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 65_548
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             reserved_units + 12
+
     assert length(Cases.list_ai_invocations!(authorize?: false)) == 2
   end
 

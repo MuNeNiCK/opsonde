@@ -198,7 +198,7 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
         {request, delivery_attempt, selection.provider_id, selection.assignment_id}
       ),
       delivery_attempt,
-      %{invocation_context: context},
+      %{invocation_context: context, request_size_bytes: AI.input_size(request)},
       authorize?: false
     )
   end

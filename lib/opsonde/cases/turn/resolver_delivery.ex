@@ -208,7 +208,10 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
         selection.source,
         AIInvocation.request_digest(request),
         nil,
-        %{invocation_context: context},
+        %{
+          invocation_context: context,
+          request_size_bytes: AI.resolver_disclosure_size(request)
+        },
         authorize?: false
       )
     else

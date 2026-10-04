@@ -247,6 +247,11 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
     properties =
       Map.new(counts, &{&1, non_negative_integer()})
       |> Map.put(:complete, %Schema{type: :boolean})
+      |> Map.put(:budget_charged_units, %{
+        non_negative_integer()
+        | description:
+            "Reported tokens plus allowances for unreported usage; not an invoiced amount."
+      })
 
     object(properties, counts ++ [:complete], false)
   end
@@ -263,7 +268,11 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       status: enum(~w(queued dispatching completed failed unknown)),
       usage_status: enum(~w(reported unknown pending not_dispatched)),
       dispatch_confirmed: %Schema{type: :boolean, nullable: true},
-      reserved_units: positive_integer(),
+      reserved_units: %{
+        positive_integer()
+        | description:
+            "Input-capacity allowance for unreported usage, capped by remaining run budget; not measured tokens or a billing limit."
+      },
       input_tokens: nullable_non_negative_integer(),
       output_tokens: nullable_non_negative_integer(),
       cached_tokens: nullable_non_negative_integer(),

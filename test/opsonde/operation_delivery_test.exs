@@ -342,6 +342,23 @@ defmodule Opsonde.OperationDeliveryTest do
   @tag normalized_capacity: true
   test "the next Resolver receives the exact maximum normalized investigation receipt without replay",
        context do
+    setting = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      setting.setting_revision,
+      setting.authority_mode,
+      setting.signal_automation_enabled,
+      setting.max_elapsed_seconds,
+      setting.max_resolver_turns,
+      setting.max_target_requests,
+      setting.max_effects,
+      setting.max_related_targets,
+      1_000_000,
+      setting.max_no_progress_turns,
+      "Allow the measured large-input validation",
+      actor: context.admin
+    )
+
     parameters = %{"command" => String.duplicate("x", 60_000)}
     details = %{"payload" => String.duplicate("!", 65_522)}
     reference = " " <> String.duplicate("!", 65_534) <> " "
@@ -428,7 +445,7 @@ defmodule Opsonde.OperationDeliveryTest do
                           }
                         ]
                       },
-                      usage: %AI.Usage{input_tokens: 7, output_tokens: 3}
+                      usage: %AI.Usage{input_tokens: 534_964, output_tokens: 203}
                     }}
                  end
                }
@@ -442,12 +459,18 @@ defmodule Opsonde.OperationDeliveryTest do
     assert observed.content["facts"] == expected
     assert observed.content["reference"] == expected_reference
 
+    [resolver_call] = Cases.list_ai_invocations!(authorize?: false)
+    assert resolver_call.reserved_units == 1_000_000
+    assert resolver_call.usage_reported
+    assert resolver_call.input_tokens == 534_964
+    assert resolver_call.output_tokens == 203
+
     assert :ok =
              ResolverDelivery.run(turn.id,
                ai_invocation: %{respond: fn _ -> flunk("saved paid AI result was resent") end}
              )
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 535_167
 
     assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
              "review_recovery"
@@ -487,7 +510,7 @@ defmodule Opsonde.OperationDeliveryTest do
                ai_invocation: %{respond: fn _ -> flunk("saved Reviewer result was resent") end}
              )
 
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 16
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 535_173
   end
 
   @tag normalized_capacity: true
@@ -6820,10 +6843,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
     assert snapshot.ai_usage.unknown_invocations == 1
-    assert snapshot.ai_usage.unknown_reserved_units == 65_536
     refute snapshot.ai_usage.complete
     page = Cases.page_case_ai_invocations!(incident.id, actor: context.operator)
     [missing] = Enum.filter(page.results, &(&1.role == :reviewer))
+    assert snapshot.ai_usage.unknown_reserved_units == missing.reserved_units
     assert missing.usage_status == :unknown
     assert missing.dispatch_confirmed == nil
 
