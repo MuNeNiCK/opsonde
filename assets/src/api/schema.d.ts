@@ -3715,6 +3715,30 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        LatestDeliverySummary: {
+            attempt_count: number;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: uuid */
+            destination_id: string;
+            destination_revision: number;
+            /** Format: date-time */
+            dispatch_started_at: string | null;
+            /** Format: date-time */
+            enqueued_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            provider_id: string;
+            provider_revision: number;
+            reference: string | null;
+            /** Format: uuid */
+            report_id: string;
+            report_revision: number;
+            revision: number;
+            /** @enum {string} */
+            status: "queued" | "dispatching" | "accepted" | "delivered" | "failed" | "unknown";
+        };
         InventoryImportRow: {
             candidate: {
                 [key: string]: unknown;
@@ -3742,7 +3766,7 @@ export interface components {
             updated_at: string;
         };
         LatestDeliveriesResponse: {
-            data: components["schemas"]["DeliverySummary"][];
+            data: components["schemas"]["LatestDeliverySummary"][];
         };
         ManagementBoundarySummary: {
             active: boolean;

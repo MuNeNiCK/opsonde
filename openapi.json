@@ -7527,6 +7527,94 @@
         ],
         "type": "object"
       },
+      "LatestDeliverySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "destination_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "destination_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reference": {
+            "maxLength": 1024,
+            "nullable": true,
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "report_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "accepted",
+              "delivered",
+              "failed",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_count",
+          "id",
+          "report_id",
+          "report_revision",
+          "provider_id",
+          "provider_revision",
+          "destination_id",
+          "destination_revision",
+          "status",
+          "reference",
+          "enqueued_at",
+          "dispatch_started_at",
+          "completed_at",
+          "revision"
+        ],
+        "type": "object"
+      },
       "InventoryImportRow": {
         "additionalProperties": false,
         "properties": {
@@ -7625,7 +7713,7 @@
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/DeliverySummary"
+              "$ref": "#/components/schemas/LatestDeliverySummary"
             },
             "maxItems": 100,
             "type": "array"

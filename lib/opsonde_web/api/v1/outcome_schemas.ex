@@ -40,10 +40,11 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "DeliveryResponse" => Schemas.data(ref("Delivery")),
       "DeliveryPage" => Schemas.page(ref("Delivery")),
       "DeliverySummary" => delivery_summary(),
+      "LatestDeliverySummary" => latest_delivery_summary(),
       "DeliverySummaryPage" => Schemas.page(ref("DeliverySummary")),
       "DeliverySummaryResponse" => Schemas.data(ref("DeliverySummary")),
       "LatestDeliveriesResponse" =>
-        Schemas.data(%Schema{type: :array, items: ref("DeliverySummary"), maxItems: 100}),
+        Schemas.data(%Schema{type: :array, items: ref("LatestDeliverySummary"), maxItems: 100}),
       "CreateDeliveryRequest" => create_delivery_request()
     }
   end
@@ -529,6 +530,16 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       },
       [:report_id, :report_revision, :provider_id, :provider_revision, :idempotency_key]
     )
+  end
+
+  defp latest_delivery_summary do
+    schema = delivery_summary()
+
+    %{
+      schema
+      | properties: Map.put(schema.properties, :attempt_count, positive_integer()),
+        required: [:attempt_count | schema.required]
+    }
   end
 
   defp wrapped(name, properties, required) do

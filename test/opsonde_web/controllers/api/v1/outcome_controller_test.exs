@@ -348,12 +348,14 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert_operation_response(response)
     assert length(records) == 2
     assert Enum.sort(Enum.map(records, & &1["id"])) == Enum.sort([oldest["id"], latest["id"]])
+    assert Enum.find(records, &(&1["report_id"] == older_report["id"]))["attempt_count"] == 1
+    assert Enum.find(records, &(&1["report_id"] == busy_report["id"]))["attempt_count"] == 51
 
     assert Enum.all?(
              records,
              &(Enum.sort(Map.keys(&1)) ==
                  Enum.sort(
-                   ~w(id report_id report_revision provider_id provider_revision destination_id destination_revision status reference enqueued_at dispatch_started_at completed_at revision)
+                   ~w(id report_id report_revision provider_id provider_revision destination_id destination_revision status reference enqueued_at dispatch_started_at completed_at revision attempt_count)
                  ))
            )
 
@@ -437,6 +439,14 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       |> Jason.decode!()
 
     assert cli_latest["data"] == changed
+
+    Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN details TO unavailable_details")
+
+    try do
+      assert get_data!(path, context.viewer_token) == changed
+    after
+      Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN unavailable_details TO details")
+    end
 
     cli_history =
       capture_io(fn ->

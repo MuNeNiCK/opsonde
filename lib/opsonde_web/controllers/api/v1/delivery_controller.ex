@@ -124,7 +124,13 @@ defmodule OpsondeWeb.API.V1.DeliveryController do
              OpenApiSpex.params(conn).report_ids,
              actor: conn.assigns.current_user
            ) do
-      Response.data(conn, Enum.map(deliveries, &OutcomeJSON.delivery_summary/1))
+      Response.data(
+        conn,
+        Enum.map(
+          deliveries,
+          &Map.put(OutcomeJSON.delivery_summary(&1), :attempt_count, &1.attempt_count)
+        )
+      )
     end
   end
 

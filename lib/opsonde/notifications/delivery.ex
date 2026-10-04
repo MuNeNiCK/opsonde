@@ -49,6 +49,15 @@ defmodule Opsonde.Notifications.Delivery do
                 sort: [report_id: :asc],
                 limit: 100
               )
+
+      prepare fn query, context ->
+        Ash.Query.after_action(query, fn _query, deliveries ->
+          counts =
+            __MODULE__ |> Ash.Query.select(@summary_fields) |> Ash.Query.load(:attempt_count)
+
+          Ash.load(deliveries, counts, actor: context.actor)
+        end)
+      end
     end
 
     read :summary_by_request do
@@ -237,6 +246,12 @@ defmodule Opsonde.Notifications.Delivery do
     belongs_to :provider, Opsonde.Providers.Provider do
       allow_nil? false
       public? true
+    end
+  end
+
+  aggregates do
+    count :attempt_count, __MODULE__ do
+      filter expr(report_id == parent(report_id))
     end
   end
 
