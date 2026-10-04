@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next";
 import { ApiError, apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import type { components } from "@/api/schema";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { useAuthentication } from "@/auth/context";
 import { PagedSelect } from "@/components/paged-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -81,11 +82,8 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const storageKey = `opsonde.delivery-request:${account?.id}`;
-  const [saved, setSaved] = useState(() => {
-    try {
-      const stored = sessionStorage.getItem(storageKey);
-      if (!stored) return { request: null as DeliveryRequest | null, unreadable: false };
-      const value: unknown = JSON.parse(stored);
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): DeliveryRequest => {
       if (
         typeof value !== "object" ||
         value === null ||
@@ -110,21 +108,16 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
       )
         throw new Error("Invalid delivery request");
       return {
-        request: {
-          report_id: value.report_id,
-          report_revision: value.report_revision,
-          provider_id: value.provider_id,
-          provider_revision: value.provider_revision,
-          idempotency_key: value.idempotency_key,
-        },
-        unreadable: false,
+        report_id: value.report_id,
+        report_revision: value.report_revision,
+        provider_id: value.provider_id,
+        provider_revision: value.provider_revision,
+        idempotency_key: value.idempotency_key,
       };
-    } catch {
-      return { request: null as DeliveryRequest | null, unreadable: true };
-    }
-  });
-  const [reportIdToRead] = useState(() => saved.request?.report_id ?? initialReportId);
-  const [providerIdToRead] = useState(() => saved.request?.provider_id);
+    }),
+  );
+  const [reportIdToRead] = useState(() => saved.intent?.report_id ?? initialReportId);
+  const [providerIdToRead] = useState(() => saved.intent?.provider_id);
   const mounted = useRef(false);
   const busy = useRef(false);
   const initialRead = useRef<AbortController | null>(null);
@@ -140,9 +133,8 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
   );
 
   function clearRequest(intent: DeliveryRequest) {
-    if (sessionStorage.getItem(storageKey) !== JSON.stringify(intent)) return;
-    sessionStorage.removeItem(storageKey);
-    if (mounted.current) setSaved({ request: null, unreadable: false });
+    if (!clearStoredRequest(storageKey, intent)) return;
+    if (mounted.current) setSaved({ intent: null, unreadable: false });
   }
   async function complete(receipt: DeliveryReceipt, intent: DeliveryRequest) {
     if (
@@ -172,11 +164,11 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
     await complete(receipt.data, intent);
   }
   async function checkResult() {
-    if (!saved.request || busy.current || !mounted.current) return;
+    if (!saved.intent || busy.current || !mounted.current) return;
     busy.current = true;
     setPending(true);
     try {
-      await readReceipt(saved.request);
+      await readReceipt(saved.intent);
     } catch {
       if (mounted.current) setError(t("reports.deliveryAcceptanceUnknown"));
     } finally {
@@ -239,7 +231,7 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
       !mounted.current ||
       busy.current ||
       !canOperate ||
-      saved.request ||
+      saved.intent ||
       saved.unreadable ||
       !report ||
       !provider
@@ -279,7 +271,7 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
         idempotency_key: crypto.randomUUID(),
       };
       sessionStorage.setItem(storageKey, JSON.stringify(intent));
-      setSaved({ request: intent, unreadable: false });
+      setSaved({ intent: intent, unreadable: false });
       dispatched = true;
       const receipt = await apiClient
         .POST("/api/v1/deliveries", {
@@ -348,7 +340,7 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
             }}
             load={loadReports}
             placeholder={reportIdToRead || t("reports.chooseReport")}
-            disabled={pending || !canOperate || !!saved.request || saved.unreadable}
+            disabled={pending || !canOperate || !!saved.intent || saved.unreadable}
           />
           <PagedSelect
             id="delivery-provider"
@@ -357,15 +349,15 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
             onChange={setProvider}
             load={loadProviders}
             placeholder={providerIdToRead || t("reports.chooseDestination")}
-            disabled={pending || !canOperate || !!saved.request || saved.unreadable}
+            disabled={pending || !canOperate || !!saved.intent || saved.unreadable}
           />
-          {(error || saved.request || saved.unreadable) && (
+          {(error || saved.intent || saved.unreadable) && (
             <Alert variant="destructive">
               <AlertDescription>{error || t("reports.deliveryAcceptanceUnknown")}</AlertDescription>
             </Alert>
           )}
           <div className="flex flex-wrap gap-2">
-            {saved.request && (
+            {saved.intent && (
               <Button
                 type="button"
                 variant="outline"
@@ -378,12 +370,7 @@ function CreateForm({ initialReportId, onEnqueued, onClose }: Props) {
             <Button
               type="submit"
               disabled={
-                pending ||
-                !report ||
-                !provider ||
-                !canOperate ||
-                !!saved.request ||
-                saved.unreadable
+                pending || !report || !provider || !canOperate || !!saved.intent || saved.unreadable
               }
             >
               {pending && <Spinner />}

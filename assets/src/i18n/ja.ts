@@ -894,6 +894,12 @@ const ja = {
       deactivateConfirmation:
         "このスケジュールから今後の監査実行を開始しなくなります。既存のCaseと履歴は残ります。",
       confirmDeactivate: "スケジュールを無効化",
+      deactivationUnknown: "無効化の結果を確認できません。",
+      deactivationSaveFailed: "無効化の要求を保存できません。送信はしていません。",
+      deactivationReceiptUnavailable: "無効化の要求を読み出せません。再送はしません。",
+      checkDeactivation: "無効化の結果を確認",
+      deactivationConfirmed: "無効化しました：{{name}}",
+      scheduleChanged: "スケジュールが変更されています。更新してから無効化してください。",
       noSchedules: "監査スケジュールは未登録です。",
       runs: "監査実行履歴",
       noRuns: "監査はまだ実行されていません。",

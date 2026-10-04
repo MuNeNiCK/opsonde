@@ -914,6 +914,13 @@ const en = {
       deactivateConfirmation:
         "This schedule will stop creating future audit runs. Existing Cases and history remain available.",
       confirmDeactivate: "Deactivate schedule",
+      deactivationUnknown: "Deactivation could not be confirmed.",
+      deactivationSaveFailed: "Could not save the request. No deactivation was submitted.",
+      deactivationReceiptUnavailable:
+        "The saved deactivation request could not be read. No new deactivation will be submitted.",
+      checkDeactivation: "Check deactivation result",
+      deactivationConfirmed: "Deactivated: {{name}}",
+      scheduleChanged: "The schedule changed. Refresh it before deactivating.",
       noSchedules: "No audit schedules are configured.",
       runs: "Audit runs",
       noRuns: "No audit runs have started.",

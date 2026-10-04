@@ -177,14 +177,19 @@ defmodule OpsondeCLI.CLI do
   end
 
   defp request_once(client, route, ids, body, options, runtime_options) do
-    registration =
-      case {route, body} do
-        {%Route{method: :post, path: "/providers"}, %{"provider" => %{"registration_id" => id}}} ->
+    receipt =
+      case {route, ids, body} do
+        {%Route{method: :post, path: "/providers"}, _ids,
+         %{"provider" => %{"registration_id" => id}}} ->
           %{"registration_id" => id}
 
-        {%Route{method: :post, path: "/audit-schedules"},
+        {%Route{method: :post, path: "/audit-schedules"}, _ids,
          %{"audit_schedule" => %{"registration_id" => id}}} ->
           %{"registration_id" => id}
+
+        {%Route{method: :post, path: "/audit-schedules/:id/deactivate"}, [id],
+         %{"audit_schedule" => %{"expected_revision" => revision}}} ->
+          %{"audit_schedule_id" => id, "expected_revision" => revision}
 
         _other ->
           %{}
@@ -209,14 +214,14 @@ defmodule OpsondeCLI.CLI do
 
       {:error, :http, status, response} ->
         context =
-          if status >= 500 and map_size(registration) > 0,
-            do: Map.put(registration, "outcome", "unknown"),
-            else: registration
+          if status >= 500 and map_size(receipt) > 0,
+            do: Map.put(receipt, "outcome", "unknown"),
+            else: receipt
 
         http_error(status, response, context)
 
       {:error, :transport, message} ->
-        transport_error(message, registration)
+        transport_error(message, receipt)
     end
   end
 

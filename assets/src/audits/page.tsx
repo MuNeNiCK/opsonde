@@ -6,6 +6,7 @@ import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
 import { AuditCreateForm } from "@/audits/create-form";
+import { AuditDeactivation } from "@/audits/deactivation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,12 +56,16 @@ async function loadSnapshot(): Promise<Snapshot> {
 }
 
 export function AuditPage() {
+  const { account } = useAuthentication();
+  return <Audits key={`${account?.id}:${account?.role}`} />;
+}
+
+function Audits() {
   const { t, i18n } = useTranslation();
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [confirmDeactivate, setConfirmDeactivate] = useState<string | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState<AuditSchedule | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
@@ -77,23 +82,6 @@ export function AuditPage() {
       active = false;
     };
   }, [t]);
-
-  async function deactivate(schedule: AuditSchedule) {
-    setPending(schedule.id);
-    setError("");
-    try {
-      await apiClient.POST("/api/v1/audit-schedules/{id}/deactivate", {
-        params: { path: { id: schedule.id } },
-        body: { audit_schedule: { expected_revision: schedule.revision } },
-      });
-      setConfirmDeactivate(null);
-      await refresh();
-    } catch {
-      setError(t("audits.requestFailed"));
-    } finally {
-      setPending(null);
-    }
-  }
 
   if (!snapshot) return <Loading />;
   const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
@@ -141,6 +129,16 @@ export function AuditPage() {
         />
       )}
 
+      {canManage && (
+        <AuditDeactivation
+          schedule={selectedSchedule}
+          onChanged={async () => {
+            await refresh();
+          }}
+          onClose={() => setSelectedSchedule(null)}
+        />
+      )}
+
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">{t("audits.schedules")}</h2>
         <div className="grid gap-4 xl:grid-cols-2">
@@ -179,40 +177,10 @@ export function AuditPage() {
                     }
                   />
                 </dl>
-                {canManage && schedule.active && confirmDeactivate !== schedule.id && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={pending !== null}
-                    onClick={() => setConfirmDeactivate(schedule.id)}
-                  >
+                {canManage && schedule.active && (
+                  <Button size="sm" variant="outline" onClick={() => setSelectedSchedule(schedule)}>
                     {t("audits.deactivate")}
                   </Button>
-                )}
-                {confirmDeactivate === schedule.id && (
-                  <Alert variant="destructive">
-                    <AlertDescription>
-                      <p>{t("audits.deactivateConfirmation")}</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={pending !== null}
-                          onClick={() => void deactivate(schedule)}
-                        >
-                          {pending === schedule.id && <Spinner />}
-                          {t("audits.confirmDeactivate")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setConfirmDeactivate(null)}
-                        >
-                          {t("common.cancel")}
-                        </Button>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
                 )}
               </CardContent>
             </Card>

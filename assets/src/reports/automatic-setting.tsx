@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -17,11 +18,8 @@ export function AutomaticReportSetting({ refreshKey }: { refreshKey: number }) {
   const { account } = useAuthentication();
   const canManage = account?.role === "admin";
   const storageKey = `opsonde.automatic-report-setting:${account?.id}`;
-  const [saved, setSaved] = useState(() => {
-    try {
-      const stored = sessionStorage.getItem(storageKey);
-      if (!stored) return { intent: null as Intent | null, unreadable: false };
-      const value: unknown = JSON.parse(stored);
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): Intent => {
       if (
         typeof value !== "object" ||
         value === null ||
@@ -36,14 +34,9 @@ export function AutomaticReportSetting({ refreshKey }: { refreshKey: number }) {
         typeof value.enabled !== "boolean"
       )
         throw new Error("Invalid automatic report setting request");
-      return {
-        intent: { id: value.id, revision: value.revision, enabled: value.enabled },
-        unreadable: false,
-      };
-    } catch {
-      return { intent: null as Intent | null, unreadable: true };
-    }
-  });
+      return { id: value.id, revision: value.revision, enabled: value.enabled };
+    }),
+  );
   const [setting, setSetting] = useState<Setting | null>(null);
   const [readStatus, setReadStatus] = useState({ refreshKey, reading: true });
   const reading = readStatus.refreshKey !== refreshKey || readStatus.reading;
@@ -91,8 +84,7 @@ export function AutomaticReportSetting({ refreshKey }: { refreshKey: number }) {
   }, [readCurrent]);
 
   function clearIntent(intent: Intent) {
-    if (sessionStorage.getItem(storageKey) !== JSON.stringify(intent)) return;
-    sessionStorage.removeItem(storageKey);
+    if (!clearStoredRequest(storageKey, intent)) return;
     if (mounted.current) setSaved({ intent: null, unreadable: false });
   }
 

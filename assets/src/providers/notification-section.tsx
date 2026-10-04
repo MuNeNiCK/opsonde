@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import type { components } from "@/api/schema";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { usePagedData } from "@/api/use-paged-data";
 import { useAuthentication } from "@/auth/context";
 import { PageControls } from "@/components/page-controls";
@@ -53,11 +54,8 @@ function Destinations({ canManage }: Props) {
     check: Provider["check"] | null;
   } | null>(null);
   const storageKey = `opsonde.notification-request:${account?.id}`;
-  const [saved, setSaved] = useState(() => {
-    try {
-      const stored = sessionStorage.getItem(storageKey);
-      if (!stored) return { intent: null as Intent | null, unreadable: false };
-      const value: unknown = JSON.parse(stored);
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): Intent => {
       if (
         typeof value !== "object" ||
         value === null ||
@@ -68,8 +66,7 @@ function Destinations({ canManage }: Props) {
         !["create", "check", "enable", "disable"].includes(String(value.action))
       )
         throw new Error("Invalid destination request");
-      if (value.action === "create")
-        return { intent: { action: "create", id: value.id } as Intent, unreadable: false };
+      if (value.action === "create") return { action: "create", id: value.id };
       if (
         !("revision" in value) ||
         typeof value.revision !== "number" ||
@@ -80,18 +77,13 @@ function Destinations({ canManage }: Props) {
       )
         throw new Error("Invalid destination request");
       return {
-        intent: {
-          action: value.action,
-          id: value.id,
-          revision: value.revision,
-          checkedAt: value.checkedAt,
-        } as Intent,
-        unreadable: false,
-      };
-    } catch {
-      return { intent: null as Intent | null, unreadable: true };
-    }
-  });
+        action: value.action,
+        id: value.id,
+        revision: value.revision,
+        checkedAt: value.checkedAt,
+      } as Intent;
+    }),
+  );
   const mounted = useRef(false);
   const busy = useRef(false);
   const read = useRef<AbortController | null>(null);
@@ -109,8 +101,7 @@ function Destinations({ canManage }: Props) {
   }, []);
 
   function clearIntent(intent: Intent) {
-    if (sessionStorage.getItem(storageKey) !== JSON.stringify(intent)) return;
-    sessionStorage.removeItem(storageKey);
+    if (!clearStoredRequest(storageKey, intent)) return;
     if (mounted.current) setSaved({ intent: null, unreadable: false });
   }
 

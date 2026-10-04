@@ -4,6 +4,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { useTranslation } from "react-i18next";
 import { ApiError, apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { usePagedData } from "@/api/use-paged-data";
 import { useAuthentication } from "@/auth/context";
 import { FormMultiSelect, FormSelect } from "@/components/form-select";
@@ -57,11 +58,8 @@ function Editor({ open, onCreated }: Props) {
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState<string | null>(null);
   const storageKey = `opsonde.audit-registration:${account?.id}`;
-  const [saved, setSaved] = useState(() => {
-    try {
-      const stored = sessionStorage.getItem(storageKey);
-      if (!stored) return { intent: null as Intent | null, unreadable: false };
-      const value: unknown = JSON.parse(stored);
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): Intent => {
       if (
         typeof value !== "object" ||
         value === null ||
@@ -73,11 +71,9 @@ function Editor({ open, onCreated }: Props) {
         !/^[0-9a-f]{64}$/.test(value.digest)
       )
         throw new Error("Unreadable Audit registration request");
-      return { intent: { id: value.id, digest: value.digest }, unreadable: false };
-    } catch {
-      return { intent: null as Intent | null, unreadable: true };
-    }
-  });
+      return { id: value.id, digest: value.digest };
+    }),
+  );
   const mounted = useRef(false);
   const busy = useRef(false);
   const read = useRef<AbortController | null>(null);
@@ -96,8 +92,7 @@ function Editor({ open, onCreated }: Props) {
   }, [open]);
 
   function clearIntent(intent: Intent) {
-    if (sessionStorage.getItem(storageKey) !== JSON.stringify(intent)) return false;
-    sessionStorage.removeItem(storageKey);
+    if (!clearStoredRequest(storageKey, intent)) return false;
     if (mounted.current) setSaved({ intent: null, unreadable: false });
     return true;
   }

@@ -550,6 +550,49 @@ defmodule OpsondeCLI.CLITest do
     assert {:ok, %{"server" => "https://opsonde.example"}} = Config.load(context.config_path)
   end
 
+  test "Audit deactivation retains original identity on HTTP and transport errors without replay",
+       context do
+    save_session(context)
+    owner = self()
+    id = "20000000-0000-4000-8000-000000000074"
+    input = Jason.encode!(%{"expected_revision" => 7})
+
+    for {status, expected_exit, outcome} <- [
+          {409, 4, "failed"},
+          {403, 4, "failed"},
+          {503, 15, "unknown"},
+          {:transport, 5, "unknown"}
+        ] do
+      Req.Test.stub(context.stub, fn conn ->
+        send(owner, {:deactivation_send, conn.method, conn.request_path})
+
+        if status == :transport do
+          Req.Test.transport_error(conn, :timeout)
+        else
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(status, Jason.encode!(%{"error" => %{"message" => "Controlled failure"}}))
+        end
+      end)
+
+      result =
+        capture_io(:stderr, fn ->
+          capture_io([input: input], fn ->
+            assert CLI.run(["audit", "deactivate", id, "--input", "-"], runtime(context)) ==
+                     expected_exit
+          end)
+        end)
+        |> Jason.decode!()
+
+      assert %{"outcome" => ^outcome, "audit_schedule_id" => ^id, "expected_revision" => 7} =
+               result
+
+      assert_receive {:deactivation_send, "POST", path}
+      assert path == "/api/v1/audit-schedules/#{id}/deactivate"
+      refute_receive {:deactivation_send, _, _}, 0
+    end
+  end
+
   test "returns typed authentication and transport failures", context do
     save_session(context)
 

@@ -361,6 +361,148 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     end
   end
 
+  @tag audit_deactivation: true
+  test "Audit deactivation authorization, revision and storage faults cannot fabricate an inactive result",
+       context do
+    boundary =
+      Targets.create_management_boundary!("deactivation-fault-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    id = "20000000-0000-4000-8000-000000000073"
+
+    post_data!(
+      "/api/v1/audit-schedules",
+      %{"audit_schedule" => audit_registration(boundary.id, id)},
+      context.admin_token
+    )
+
+    path = "/api/v1/audit-schedules/#{id}/deactivate"
+    input = %{"audit_schedule" => %{"expected_revision" => 1}}
+
+    for token <- [context.operator_token, context.viewer_token] do
+      assert %{"error" => %{"code" => "forbidden"}} =
+               post_json(path, input, token) |> json_response(403)
+    end
+
+    assert %{"error" => %{"code" => "conflict"}} =
+             post_json(
+               path,
+               %{"audit_schedule" => %{"expected_revision" => 2}},
+               context.admin_token
+             )
+             |> json_response(409)
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_audit_deactivation() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'audit deactivation storage unavailable'; END;
+    $$
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_audit_deactivation BEFORE UPDATE ON audit_schedules FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_audit_deactivation()"
+    )
+
+    try do
+      capture_log(fn ->
+        assert %{"error" => %{"code" => "internal_error"}} =
+                 post_json(path, input, context.admin_token) |> json_response(500)
+      end)
+    after
+      Opsonde.Repo.query!("DROP TRIGGER reject_audit_deactivation ON audit_schedules")
+    end
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      current = get_json("/api/v1/audit-schedules/#{id}", token)
+
+      assert %{"data" => %{"id" => ^id, "active" => true, "revision" => 1}} =
+               json_response(current, 200)
+
+      assert_operation_response(current)
+    end
+  end
+
+  @tag audit_deactivation: true
+  test "actual CLI confirms the original inactive Audit after commit response loss without replay",
+       context do
+    boundary =
+      Targets.create_management_boundary!("deactivation-lost-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    id = "20000000-0000-4000-8000-000000000074"
+
+    post_data!(
+      "/api/v1/audit-schedules",
+      %{"audit_schedule" => audit_registration(boundary.id, id)},
+      context.admin_token
+    )
+
+    root =
+      Path.join(System.tmp_dir!(), "audit-deactivation-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.admin_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    owner = self()
+    stub = {__MODULE__, make_ref()}
+
+    Req.Test.stub(stub, fn conn ->
+      send(owner, {:audit_deactivation_request, conn.method, conn.request_path})
+      result = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+      if conn.method == "POST" do
+        assert result.status == 200
+
+        assert %{"data" => %{"id" => ^id, "active" => false, "revision" => 2}} =
+                 Jason.decode!(result.resp_body)
+
+        %{
+          result
+          | status: 503,
+            resp_body:
+              Jason.encode!(%{
+                "error" => %{"code" => "response_lost", "message" => "Response lost after commit"}
+              })
+        }
+      else
+        result
+      end
+    end)
+
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+    input = Jason.encode!(%{"expected_revision" => 1})
+
+    lost =
+      capture_io(:stderr, fn ->
+        capture_io([input: input], fn ->
+          assert OpsondeCLI.CLI.run(["audit", "deactivate", id, "--input", "-"], runtime) == 15
+        end)
+      end)
+      |> Jason.decode!()
+
+    assert %{"outcome" => "unknown", "audit_schedule_id" => ^id, "expected_revision" => 1} = lost
+    assert_receive {:audit_deactivation_request, "POST", path}
+    assert path == "/api/v1/audit-schedules/#{id}/deactivate"
+
+    recovered =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["audit", "show", id], runtime) == 0
+      end)
+      |> Jason.decode!()
+
+    assert %{"data" => %{"id" => ^id, "active" => false, "revision" => 2}} = recovered
+    assert_receive {:audit_deactivation_request, "GET", read_path}
+    assert read_path == "/api/v1/audit-schedules/#{id}"
+    refute_receive {:audit_deactivation_request, "POST", _}, 0
+  end
+
   @tag audit_summaries: true
   test "Audit metadata cursors reach schedule and run 51 while selected scope and diagnostics stay on exact reads",
        context do

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useTranslation } from "react-i18next";
 import { ApiError, apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import type { components } from "@/api/schema";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { useAuthentication } from "@/auth/context";
 import { PagedSelect } from "@/components/paged-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -30,11 +31,8 @@ function GenerateForm({ onGenerated, onClose }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const storageKey = `opsonde.report-generation:${account?.id}`;
-  const [saved, setSaved] = useState(() => {
-    try {
-      const stored = sessionStorage.getItem(storageKey);
-      if (!stored) return { request: null as GenerationRequest | null, unreadable: false };
-      const value: unknown = JSON.parse(stored);
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): GenerationRequest => {
       if (
         typeof value !== "object" ||
         value === null ||
@@ -47,14 +45,9 @@ function GenerateForm({ onGenerated, onClose }: Props) {
         value.caseRevision < 1
       )
         throw new Error("Invalid generation request");
-      return {
-        request: { caseId: value.caseId, caseRevision: value.caseRevision },
-        unreadable: false,
-      };
-    } catch {
-      return { request: null as GenerationRequest | null, unreadable: true };
-    }
-  });
+      return { caseId: value.caseId, caseRevision: value.caseRevision };
+    }),
+  );
   const busy = useRef(false);
   const mounted = useRef(false);
   const read = useRef<AbortController | null>(null);
@@ -70,9 +63,8 @@ function GenerateForm({ onGenerated, onClose }: Props) {
   }, []);
 
   function clearRequest(intent: GenerationRequest) {
-    if (sessionStorage.getItem(storageKey) !== JSON.stringify(intent)) return;
-    sessionStorage.removeItem(storageKey);
-    if (mounted.current) setSaved({ request: null, unreadable: false });
+    if (!clearStoredRequest(storageKey, intent)) return;
+    if (mounted.current) setSaved({ intent: null, unreadable: false });
   }
 
   async function complete(report: ReportReceipt, intent: GenerationRequest) {
@@ -103,11 +95,11 @@ function GenerateForm({ onGenerated, onClose }: Props) {
   }
 
   async function checkResult() {
-    if (!saved.request || busy.current || !mounted.current) return;
+    if (!saved.intent || busy.current || !mounted.current) return;
     busy.current = true;
     setPending(true);
     try {
-      await readReceipt(saved.request);
+      await readReceipt(saved.intent);
     } catch {
       if (mounted.current) setError(t("reports.generationUnknown"));
     } finally {
@@ -131,7 +123,7 @@ function GenerateForm({ onGenerated, onClose }: Props) {
     if (
       !selected ||
       !canOperate ||
-      saved.request ||
+      saved.intent ||
       saved.unreadable ||
       busy.current ||
       !mounted.current
@@ -160,7 +152,7 @@ function GenerateForm({ onGenerated, onClose }: Props) {
       if (current.revision !== selected.revision) throw new Error(t("cases.stateChanged"));
       intent = { caseId: current.id, caseRevision: current.revision };
       sessionStorage.setItem(storageKey, JSON.stringify(intent));
-      setSaved({ request: intent, unreadable: false });
+      setSaved({ intent: intent, unreadable: false });
       dispatched = true;
       const report = await apiClient
         .POST("/api/v1/cases/{case_id}/reports", {
@@ -228,15 +220,15 @@ function GenerateForm({ onGenerated, onClose }: Props) {
             load={load}
             display={(item) => `${item.title} · ${item.report_language} · r${item.revision}`}
             placeholder={t("reports.chooseCase")}
-            disabled={pending || !canOperate || !!saved.request || saved.unreadable}
+            disabled={pending || !canOperate || !!saved.intent || saved.unreadable}
           />
-          {(error || saved.request || saved.unreadable) && (
+          {(error || saved.intent || saved.unreadable) && (
             <Alert variant="destructive">
               <AlertDescription>{error || t("reports.generationUnknown")}</AlertDescription>
             </Alert>
           )}
           <div className="flex flex-wrap gap-2">
-            {saved.request && (
+            {saved.intent && (
               <Button
                 type="button"
                 variant="outline"
@@ -248,7 +240,7 @@ function GenerateForm({ onGenerated, onClose }: Props) {
             )}
             <Button
               type="submit"
-              disabled={pending || !selected || !canOperate || !!saved.request || saved.unreadable}
+              disabled={pending || !selected || !canOperate || !!saved.intent || saved.unreadable}
             >
               {pending && <Spinner />}
               {t("reports.generate")}
