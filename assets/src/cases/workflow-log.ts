@@ -9,7 +9,7 @@ type Evidence = components["schemas"]["EvidenceSummary"];
 type Approval = components["schemas"]["Approval"];
 type Review = components["schemas"]["ReviewDecision"];
 type Report = components["schemas"]["ReportSummary"];
-type Target = components["schemas"]["Target"];
+type Target = Pick<components["schemas"]["TargetSummary"], "id" | "name">;
 
 export type StageKey =
   | "alert"

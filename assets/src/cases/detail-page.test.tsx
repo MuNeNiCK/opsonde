@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import type { components } from "@/api/schema";
 import { AuthenticationContext, type Authentication } from "@/auth/context";
@@ -128,10 +128,527 @@ const snapshot: components["schemas"]["CaseSnapshot"] = {
   reports: [{ ...reportSummary, id: oldReportId, case_revision: 1 }, reportSummary],
 };
 
+function openSnapshot(
+  id = caseId,
+  title = snapshot.case.title,
+): components["schemas"]["CaseSnapshot"] {
+  return { ...snapshot, case: { ...snapshot.case, id, title, status: "running" }, reports: [] };
+}
+
+function renderDetail(role: "viewer" | "operator" = "viewer") {
+  return render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: oldReportId, role } } as Authentication}
+    >
+      <MemoryRouter initialEntries={[`/cases/${caseId}`]}>
+        <Link to={`/cases/${reportId}`}>Other Case</Link>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+}
+
+test("changing Case hides the previous Case immediately and aborts its late reads", async () => {
+  await i18n.changeLanguage("en");
+  let oldRead: Request | undefined;
+  let finishOld: ((response: Response) => void) | undefined;
+  let finishNew: ((response: Response) => void) | undefined;
+  let oldReads = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path === `/api/v1/cases/${caseId}`) {
+      if (++oldReads === 2) {
+        oldRead = request;
+        return new Promise<Response>((resolve) => {
+          finishOld = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ data: openSnapshot() }));
+    }
+    if (path === `/api/v1/cases/${reportId}`)
+      return new Promise<Response>((resolve) => {
+        finishNew = resolve;
+      });
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail();
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(finishOld).toBeDefined());
+  await user.click(screen.getByRole("link", { name: "Other Case" }));
+  expect(screen.queryByRole("heading", { name: snapshot.case.title })).toBeNull();
+  expect(oldRead!.signal.aborted).toBe(true);
+  await act(async () => {
+    finishOld!(new Response(JSON.stringify({ data: openSnapshot() })));
+  });
+  expect(screen.queryByRole("heading", { name: snapshot.case.title })).toBeNull();
+  await act(async () => {
+    finishNew!(new Response(JSON.stringify({ data: openSnapshot(reportId, "New Case") })));
+  });
+  await screen.findByRole("heading", { name: "New Case" });
+  expect(oldReads).toBe(2);
+});
+
+test("an older Refresh response cannot replace the latest Case revision", async () => {
+  await i18n.changeLanguage("en");
+  let reads = 0;
+  let finishOld: ((response: Response) => void) | undefined;
+  let oldRead: Request | undefined;
+  wire.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === `/api/v1/cases/${caseId}`) {
+      if (++reads === 2) {
+        oldRead = request;
+        return new Promise<Response>((resolve) => {
+          finishOld = resolve;
+        });
+      }
+      const next = openSnapshot(caseId, reads === 3 ? "Newest Case" : snapshot.case.title);
+      if (reads === 3) next.case.revision = 3;
+      return new Response(JSON.stringify({ data: next }));
+    }
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail();
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(finishOld).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("heading", { name: "Newest Case" });
+  expect(oldRead!.signal.aborted).toBe(true);
+  await act(async () => {
+    finishOld!(new Response(JSON.stringify({ data: openSnapshot(caseId, "Stale Case") })));
+  });
+  expect(screen.queryByRole("heading", { name: "Stale Case" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Newest Case" })).toBeDefined();
+});
+
+test.each([false, true])(
+  "accepted=%s mutation with a failed reread is recovered by GET without replay",
+  async (accepted) => {
+    await i18n.changeLanguage("en");
+    let submitted = false;
+    let readFails = true;
+    const posts: Array<{ path: string; body: unknown }> = [];
+    wire.mockImplementation(async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (request.method === "POST") {
+        posts.push({ path, body: await request.json() });
+        submitted = true;
+        if (!accepted) throw new TypeError("response lost");
+        return new Response(JSON.stringify({ data: {} }));
+      }
+      if (path === `/api/v1/cases/${caseId}`) {
+        if (submitted && readFails)
+          return new Response(JSON.stringify({ error: { message: "Reload unavailable" } }), {
+            status: 503,
+          });
+        const next = openSnapshot();
+        if (submitted) {
+          next.case.current_owner_id = oldReportId;
+          next.case.revision = 3;
+        }
+        return new Response(JSON.stringify({ data: next }));
+      }
+      return new Response(JSON.stringify({ data: [], page: { next: null } }));
+    });
+    renderDetail("operator");
+    await screen.findByRole("heading", { name: snapshot.case.title });
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Assignment and cancellation"));
+    await user.click(screen.getByRole("button", { name: "Claim" }));
+    await screen.findByText(
+      accepted
+        ? "Request accepted. Refresh to load the current Case."
+        : "Could not confirm the result. Refresh to check.",
+    );
+    expect(screen.getByRole("button", { name: "Claim" })).toHaveProperty("disabled", true);
+    expect(posts).toEqual([
+      { path: `/api/v1/cases/${caseId}/claim`, body: { case: { expected_revision: 2 } } },
+    ]);
+    readFails = false;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Claim" })).toBeNull());
+    expect(posts).toHaveLength(1);
+    expect(screen.queryByText("Reload unavailable")).toBeNull();
+  },
+);
+
+test("a late mutation receipt after navigation does not reread or change the old Case", async () => {
+  await i18n.changeLanguage("en");
+  let finishPost: ((response: Response) => void) | undefined;
+  let oldReads = 0;
+  let posts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (request.method === "POST") {
+      ++posts;
+      expect(path).toBe(`/api/v1/cases/${caseId}/claim`);
+      return new Promise<Response>((resolve) => {
+        finishPost = resolve;
+      });
+    }
+    if (path === `/api/v1/cases/${caseId}`) {
+      ++oldReads;
+      return new Response(JSON.stringify({ data: openSnapshot() }));
+    }
+    if (path === `/api/v1/cases/${reportId}`)
+      return new Response(JSON.stringify({ data: openSnapshot(reportId, "New Case") }));
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail("operator");
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Assignment and cancellation"));
+  await user.click(screen.getByRole("button", { name: "Claim" }));
+  await waitFor(() => expect(finishPost).toBeDefined());
+  await user.click(screen.getByRole("link", { name: "Other Case" }));
+  await screen.findByRole("heading", { name: "New Case" });
+  await act(async () => {
+    finishPost!(new Response(JSON.stringify({ data: {} })));
+  });
+  expect(oldReads).toBe(1);
+  expect(posts).toBe(1);
+  expect(screen.getByRole("heading", { name: "New Case" })).toBeDefined();
+});
+
+test("101 current Target identities are read in finite batches without scanning opaque context", async () => {
+  await i18n.changeLanguage("en");
+  const ids = Array.from(
+    { length: 100 },
+    (_, index) => `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+  );
+  const batches: string[][] = [];
+  wire.mockImplementation(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`) {
+      const next = openSnapshot();
+      next.case.selected_target_id = caseId;
+      next.case.initial_context = { unreferenced_target_id: oldReportId };
+      return new Response(JSON.stringify({ data: next }));
+    }
+    if (url.pathname.endsWith("/turns"))
+      return new Response(
+        JSON.stringify({
+          data: ids.map((id, ordinal) => ({
+            id,
+            ordinal,
+            case_id: caseId,
+            status: "completed",
+            progress_kind: "hypothesis",
+            completed_at: timestamp,
+            inserted_at: timestamp,
+            source_turn_id: id,
+            summary: {
+              target_id: id,
+              relationship: null,
+              type: "target_selection",
+              reason: "Selected target",
+              outcome: "decision",
+            },
+          })),
+          page: { next: null },
+        }),
+      );
+    if (url.pathname === "/api/v1/targets/summaries") {
+      const selected = url.searchParams.get("ids")!.split(",");
+      batches.push(selected);
+      expect(url.searchParams.get("limit")).toBe("100");
+      return new Response(
+        JSON.stringify({
+          data: selected.map((id) => ({
+            id,
+            name: `Target ${id}`,
+            kind: "host",
+            type_id: "custom-os",
+          })),
+          page: { next: null },
+        }),
+      );
+    }
+    expect(url.pathname).not.toBe("/api/v1/targets");
+    expect(url.pathname).not.toBe("/api/v1/providers");
+    expect(url.pathname).not.toBe("/api/v1/access-methods");
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail();
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  expect(batches.map((batch) => batch.length)).toEqual([100, 1]);
+  expect(batches.flat()).toEqual([caseId, ...ids]);
+  expect(batches.flat()).not.toContain(oldReportId);
+});
+
+test("metadata failure preserves the current window and a missing Target retains its ID after Refresh", async () => {
+  await i18n.changeLanguage("en");
+  let mode: "found" | "error" | "missing" = "found";
+  let reads = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`) {
+      const next = openSnapshot();
+      ++reads;
+      return new Response(JSON.stringify({ data: next }));
+    }
+    if (url.pathname.endsWith("/turns"))
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: caseId,
+              ordinal: 1,
+              case_id: caseId,
+              status: "completed",
+              progress_kind: "hypothesis",
+              completed_at: timestamp,
+              inserted_at: timestamp,
+              summary: {
+                target_id: reportId,
+                relationship: null,
+                type: "target_selection",
+                reason: "Target identity receipt",
+                outcome: "decision",
+              },
+            },
+          ],
+          page: { next: null },
+        }),
+      );
+    if (url.pathname === "/api/v1/targets/summaries")
+      return mode === "error"
+        ? new Response(JSON.stringify({ error: { message: "Target metadata unavailable" } }), {
+            status: 503,
+          })
+        : new Response(
+            JSON.stringify({
+              data:
+                mode === "missing"
+                  ? []
+                  : [
+                      {
+                        id: reportId,
+                        name: "Known retired host",
+                        kind: "host",
+                        type_id: "custom-os",
+                      },
+                    ],
+              page: { next: null },
+            }),
+          );
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail();
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Target identity receipt"));
+  await screen.findByText("Known retired host");
+  mode = "error";
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText("Target metadata unavailable");
+  expect(screen.getByText("Known retired host")).toBeDefined();
+  mode = "missing";
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.queryByText("Known retired host")).toBeNull());
+  expect(screen.getByText(reportId)).toBeDefined();
+  expect(screen.queryByText("Target metadata unavailable")).toBeNull();
+  expect(reads).toBe(3);
+});
+
+test("Phoenix changed events refresh labels and preserve an in-flight history selection", async () => {
+  await i18n.changeLanguage("en");
+  const originalSocket = globalThis.WebSocket;
+  class WireSocket {
+    static instances: WireSocket[] = [];
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: ((event: { code: number; reason: string }) => void) | null = null;
+    topic = "";
+    joinRef = "";
+    constructor() {
+      WireSocket.instances.push(this);
+      queueMicrotask(() => {
+        this.readyState = 1;
+        this.onopen?.();
+      });
+    }
+    send(message: string) {
+      const [joinRef, ref, topic, event] = JSON.parse(message);
+      if (event === "phx_join") {
+        this.topic = topic;
+        this.joinRef = joinRef;
+        queueMicrotask(() =>
+          this.onmessage?.({
+            data: JSON.stringify([
+              joinRef,
+              ref,
+              topic,
+              "phx_reply",
+              { status: "ok", response: {} },
+            ]),
+          }),
+        );
+      }
+    }
+    changed() {
+      this.onmessage?.({ data: JSON.stringify([this.joinRef, null, this.topic, "changed", {}]) });
+    }
+    close() {
+      this.readyState = 3;
+      this.onclose?.({ code: 1000, reason: "closed" });
+    }
+  }
+  vi.stubGlobal("WebSocket", WireSocket);
+  sessionStorage.setItem("opsonde.session", "fixture");
+  let label = "Original live label";
+  let failRead = false;
+  let olderReads = 0;
+  let olderRequest: Request | undefined;
+  let finishOlder: ((response: Response) => void) | undefined;
+  const turnPage = (older: boolean) =>
+    new Response(
+      JSON.stringify({
+        data: [
+          {
+            id: older ? reportId : caseId,
+            ordinal: older ? 1 : 2,
+            case_id: caseId,
+            status: "completed",
+            progress_kind: "hypothesis",
+            completed_at: timestamp,
+            inserted_at: timestamp,
+            summary: {
+              target_id: older ? reportId : caseId,
+              relationship: null,
+              type: "target_selection",
+              reason: older ? "Older live receipt" : "Live target receipt",
+              outcome: "decision",
+            },
+          },
+        ],
+        page: { next: older ? null : "older-turns" },
+      }),
+    );
+  const methods: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    methods.push(request.method);
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`)
+      return failRead
+        ? new Response(JSON.stringify({ error: { message: "Live Case unavailable" } }), {
+            status: 503,
+          })
+        : new Response(JSON.stringify({ data: openSnapshot() }));
+    if (url.pathname.endsWith("/turns")) {
+      const older = url.searchParams.has("after");
+      if (older && ++olderReads === 1) {
+        olderRequest = request;
+        return new Promise<Response>((resolve) => {
+          finishOlder = resolve;
+        });
+      }
+      return turnPage(older);
+    }
+    if (url.pathname === "/api/v1/targets/summaries")
+      return new Response(
+        JSON.stringify({
+          data: url.searchParams
+            .get("ids")!
+            .split(",")
+            .map((id) => ({ id, name: label, kind: "host", type_id: "custom-os" })),
+          page: { next: null },
+        }),
+      );
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  try {
+    renderDetail();
+    await screen.findByRole("heading", { name: snapshot.case.title });
+    await waitFor(() => expect(WireSocket.instances[0]?.topic).toBe(`case:${caseId}`));
+    const socket = WireSocket.instances[0];
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Live target receipt"));
+    await screen.findByText(label);
+    label = "Updated live label";
+    await act(async () => {
+      socket.changed();
+    });
+    await screen.findByText(label);
+    expect(screen.queryByText("Original live label")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(finishOlder).toBeDefined());
+    await act(async () => {
+      socket.changed();
+    });
+    expect(olderRequest!.signal.aborted).toBe(false);
+    await act(async () => {
+      finishOlder!(turnPage(true));
+    });
+    await screen.findByText("Older live receipt");
+    expect(screen.getByText("Page 2")).toBeDefined();
+    await waitFor(() => expect(olderReads).toBe(2));
+    failRead = true;
+    await act(async () => {
+      socket.changed();
+    });
+    await screen.findByText("Live Case unavailable");
+    expect(screen.getByText("Older live receipt")).toBeDefined();
+    failRead = false;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.queryByText("Live Case unavailable")).toBeNull());
+    expect(screen.getByText("Page 2")).toBeDefined();
+    expect(methods.every((method) => method === "GET")).toBe(true);
+  } finally {
+    cleanup();
+    vi.stubGlobal("WebSocket", originalSocket);
+  }
+});
+
 afterEach(() => {
   cleanup();
   wire.mockReset();
   sessionStorage.clear();
+});
+
+test("initial Case read failure is visible and Refresh retries only reads", async () => {
+  await i18n.changeLanguage("en");
+  let fails = true;
+  const methods: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    methods.push(request.method);
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`) {
+      return fails
+        ? new Response(JSON.stringify({ error: { message: "Case storage unavailable" } }), {
+            status: 503,
+          })
+        : new Response(
+            JSON.stringify({
+              data: { ...snapshot, case: { ...snapshot.case, status: "running" }, reports: [] },
+            }),
+          );
+    }
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  render(
+    <AuthenticationContext.Provider value={{ account: { role: "viewer" } } as Authentication}>
+      <MemoryRouter initialEntries={[`/cases/${caseId}`]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  await screen.findByText("Case storage unavailable");
+  expect(screen.queryByRole("heading", { name: snapshot.case.title })).toBeNull();
+  fails = false;
+  await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  expect(screen.queryByText("Case storage unavailable")).toBeNull();
+  expect(methods.every((method) => method === "GET")).toBe(true);
 });
 
 test.each([false, true])(
@@ -205,6 +722,42 @@ test.each([false, true])(
           : new Response(JSON.stringify({ data: proposal }));
       if (path.startsWith("/api/v1/proposals/"))
         throw new Error("Unselected Proposal must stay unloaded");
+      if (
+        [
+          "/api/v1/targets/summaries",
+          "/api/v1/providers/summaries",
+          "/api/v1/access-methods",
+        ].includes(path)
+      ) {
+        const query = new URL(request.url).searchParams;
+        if (query.has("ids")) {
+          expect(query.get("ids")).toBe(caseId);
+          expect(query.get("limit")).toBe("100");
+          expect(query.has("active")).toBe(false);
+          expect(query.has("eligible")).toBe(false);
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: caseId,
+                  name:
+                    path === "/api/v1/targets/summaries"
+                      ? "Retired host beyond first page"
+                      : path === "/api/v1/access-methods"
+                        ? "Retired management path"
+                        : "Connection provider",
+                  kind: "host",
+                  type_id: "custom-os",
+                  method: "ssh",
+                  target_id: caseId,
+                  active: false,
+                },
+              ],
+              page: { next: null },
+            }),
+          );
+        }
+      }
       return new Response(JSON.stringify({ data: [], page: { next: null } }));
     });
     render(
@@ -225,7 +778,12 @@ test.each([false, true])(
     } else {
       expect(await screen.findByText("Current exact request requires approval")).toBeDefined();
       expect(screen.getByRole("button", { name: "Approve" })).toBeDefined();
+      expect(screen.getByText(/Retired host beyond first page/)).toBeDefined();
+      expect(screen.getByText(/Retired management path/)).toBeDefined();
+      expect(screen.getByText(/Connection provider/)).toBeDefined();
     }
+    expect(requests).not.toContain("/api/v1/targets");
+    expect(requests).not.toContain("/api/v1/providers");
     expect(requests.filter((path) => path.startsWith("/api/v1/proposals/"))).toEqual([
       `/api/v1/proposals/${reportId}`,
     ]);
@@ -247,6 +805,7 @@ test.each([false, true])(
     let delayedRefresh: ((response: Response) => void) | undefined;
     let delayedResponse: Response | undefined;
     let failNext = fails;
+    const referenceIds: string[] = [];
     const conditions: components["schemas"]["CaseCondition"][] = [reportId, oldReportId].map(
       (id) => ({
         id,
@@ -291,6 +850,24 @@ test.each([false, true])(
     wire.mockImplementation(async (request: Request) => {
       expect(request.method).toBe("GET");
       const url = new URL(request.url, "http://localhost");
+      if (url.pathname === "/api/v1/targets/summaries") {
+        const id = url.searchParams.get("ids")!;
+        referenceIds.push(id);
+        expect(url.searchParams.get("limit")).toBe("100");
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id,
+                name: id === caseId ? "Latest host label" : "Older host label",
+                kind: "host",
+                type_id: "custom-os",
+              },
+            ],
+            page: { next: null },
+          }),
+        );
+      }
       if (url.pathname === `/api/v1/cases/${caseId}`) {
         return new Response(
           JSON.stringify({
@@ -361,7 +938,7 @@ test.each([false, true])(
                       : collection === "operations"
                         ? "applied"
                         : "verified",
-                  target_id: collection === "proposals" ? caseId : null,
+                  target_id: collection === "proposals" ? (after ? oldReportId : caseId) : null,
                   proposal_id: null,
                   outcome_category: null,
                   completed_at: timestamp,
@@ -433,6 +1010,9 @@ test.each([false, true])(
     );
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
     expect(screen.getByText("Latest turns receipt")).toBeDefined();
+    const user = userEvent.setup();
+    await user.click(screen.getByText(/Latest proposals receipt/));
+    expect(screen.getAllByText("Latest host label").length).toBeGreaterThan(0);
     expect(screen.getByText("Current independent causes remain visible")).toBeDefined();
     expect(screen.getByText("Current recovery still requires observation")).toBeDefined();
     expect(screen.getByText(/Latest operations receipt/)).toBeDefined();
@@ -441,7 +1021,6 @@ test.each([false, true])(
     expect(requests).toEqual(["first"]);
     expect(screen.queryByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeNull();
     expect(screen.queryByText("Older window receipt")).toBeNull();
-    const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(delayedRefresh).toBeDefined());
     await user.click(screen.getByRole("button", { name: "Next" }));
@@ -456,6 +1035,9 @@ test.each([false, true])(
     expect(screen.getByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeDefined();
     expect(screen.getByText("Older turns receipt")).toBeDefined();
     expect(screen.queryByText("Latest turns receipt")).toBeNull();
+    await user.click(screen.getByText(/Older proposals receipt/));
+    expect(screen.getAllByText("Older host label").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Latest host label")).toBeNull();
     expect(screen.getByText("Current independent causes remain visible")).toBeDefined();
     expect(screen.getByText("Current recovery still requires observation")).toBeDefined();
     expect(screen.getByText(/Older operations receipt/)).toBeDefined();
@@ -480,6 +1062,10 @@ test.each([false, true])(
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
     expect(screen.queryByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeNull();
     expect(screen.queryByText("Older window receipt")).toBeNull();
+    await user.click(screen.getByText(/Latest proposals receipt/));
+    expect(screen.getAllByText("Latest host label").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Older host label")).toBeNull();
+    expect(referenceIds).toEqual([caseId, oldReportId, caseId]);
     expect(requests).toEqual([...expected, "first"]);
     for (const [collection, calls] of Object.entries(receiptRequests)) {
       expect(calls).toEqual(

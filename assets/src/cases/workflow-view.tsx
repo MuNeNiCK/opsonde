@@ -20,9 +20,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type Target = components["schemas"]["Target"];
-type AccessMethod = components["schemas"]["AccessMethod"];
-type Props = WorkflowLogInput & { targets: Target[]; methods: AccessMethod[] };
+type Target = Pick<components["schemas"]["TargetSummary"], "id" | "name" | "kind" | "type_id">;
+type AccessMethod = Pick<components["schemas"]["AccessMethod"], "id" | "method">;
+type Props = Omit<WorkflowLogInput, "targets"> & { targets: Target[]; methods: AccessMethod[] };
 type PhaseState = "completed" | "current" | "attention" | "pending";
 type PhaseKey = "alert" | "resolution" | "report" | "complete";
 type Phase = { key: PhaseKey; icon: LucideIcon; state: PhaseState };

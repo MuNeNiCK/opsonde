@@ -22,10 +22,10 @@ import { useTheme } from "@/components/theme-provider";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-type Target = components["schemas"]["Target"];
-type AccessMethod = components["schemas"]["AccessMethod"];
+type Target = Pick<components["schemas"]["TargetSummary"], "id" | "name" | "kind" | "type_id">;
+type AccessMethod = Pick<components["schemas"]["AccessMethod"], "id" | "method">;
 
-type Props = WorkflowLogInput & {
+type Props = Omit<WorkflowLogInput, "targets"> & {
   targets: Target[];
   methods: AccessMethod[];
   selectedLogId: string | null;

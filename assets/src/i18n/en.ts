@@ -395,6 +395,8 @@ const en = {
       pastConditionsTitle: "Previously assigned conditions",
       pastConditionDetachedAt: "Moved out",
       stateChanged: "This Case changed. Refresh and try again.",
+      resultUnknown: "Could not confirm the result. Refresh to check.",
+      acceptedRefreshFailed: "Request accepted. Refresh to load the current Case.",
       recoveryReviews: "Recovery reviews",
       recoveryReviewStatus: {
         approved: "Approved",

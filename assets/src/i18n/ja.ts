@@ -388,6 +388,8 @@ const ja = {
       pastConditionsTitle: "以前このケースにあった障害条件",
       pastConditionDetachedAt: "分離日時",
       stateChanged: "ケースの状態が変わりました。更新してから再試行してください。",
+      resultUnknown: "結果を確認できませんでした。更新してください。",
+      acceptedRefreshFailed: "操作を受け付けました。更新してください。",
       recoveryReviews: "復旧判断の審査",
       recoveryReviewStatus: {
         approved: "承認",
