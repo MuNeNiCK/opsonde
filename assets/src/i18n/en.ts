@@ -552,6 +552,8 @@ const en = {
       cancel: "Cancel resolution",
       handoffTo: "Handoff owner",
       handoff: "Handoff",
+      handoffReadFailed: "Could not load the selected account. Refresh to retry.",
+      handoffUnavailable: "Select an administrator or operator account.",
       resumeTitle: "Resume resolution",
       resumeDescription: "Start a new generation with explicit authority and finite limits.",
       resumeSafeDefaults:

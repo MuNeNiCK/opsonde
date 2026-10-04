@@ -11,18 +11,17 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
-import { ApiError, apiClient, apiData, collectPages } from "@/api/client";
+import { ApiError, apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
-import type { Account } from "@/auth/context";
 import { useAuthentication } from "@/auth/context";
 import { ProposalCard, ResumeCard } from "@/cases/detail-components";
 import { CaseAIUsage } from "@/cases/ai-usage";
+import { CaseHandoffForm } from "@/cases/handoff-form";
 import { loadCaseWindow, type CaseWindow, type HistoryCursor } from "@/cases/detail-data";
 import { subscribeToCase } from "@/cases/realtime";
 import { formatDate, formValue, parseAuthorityMode, translatedToken } from "@/cases/detail-utils";
 import { CaseWorkflowView } from "@/cases/workflow-view";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { FormSelect } from "@/components/form-select";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,7 +32,6 @@ import { Spinner } from "@/components/ui/spinner";
 
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type Detail = CaseWindow & {
-  accounts: Account[];
   historyIndex: number;
   historyCursors: Array<HistoryCursor | undefined>;
 };
@@ -60,7 +58,6 @@ function CaseDetail({ caseId }: { caseId: string }) {
   const mutation = useRef<string | null>(null);
   const changedDuringAction = useRef(false);
   const canOperate = account?.role === "admin" || account?.role === "operator";
-  const includeAccounts = account?.role === "admin";
   const readWindow = useCallback(
     async (index: number, cursor?: HistoryCursor) => {
       if (!mounted.current) return false;
@@ -72,29 +69,12 @@ function CaseDetail({ caseId }: { caseId: string }) {
       try {
         const state = await loadCaseWindow(caseId, cursor, signal);
         signal.throwIfAborted();
-        let accounts = currentDetail.current?.accounts ?? [];
-        if (!currentDetail.current && includeAccounts) {
-          accounts = await collectPages((after) =>
-            apiClient
-              .GET("/api/v1/accounts", {
-                params: { query: { limit: 100, after: after ?? undefined } },
-                signal,
-              })
-              .then(apiData)
-              .then((page) => {
-                signal.throwIfAborted();
-                return page;
-              }),
-          );
-        }
-        signal.throwIfAborted();
         const current = currentDetail.current;
         if (current && state.snapshot.case.revision < current.snapshot.case.revision) {
           throw new Error(t("cases.stateChanged"));
         }
         const next: Detail = {
           ...state,
-          accounts,
           historyIndex: index,
           historyCursors:
             current?.historyIndex === index
@@ -112,7 +92,7 @@ function CaseDetail({ caseId }: { caseId: string }) {
         return false;
       }
     },
-    [includeAccounts, caseId, t],
+    [caseId, t],
   );
   const refresh = useCallback(async () => {
     const current = currentDetail.current;
@@ -307,13 +287,11 @@ function CaseDetail({ caseId }: { caseId: string }) {
     if (action === "cancel") setConfirmCancellation(false);
   }
 
-  async function handoff(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const ownerId = formValue(new FormData(event.currentTarget), "owner_id");
+  async function handoff(ownerId: string, revision: number) {
     await mutate("handoff", () =>
       apiClient.POST("/api/v1/cases/{id}/handoff", {
         params: { path: { id: incident.id } },
-        body: { case: { expected_revision: incident.revision, owner_id: ownerId } },
+        body: { case: { expected_revision: revision, owner_id: ownerId } },
       }),
     );
   }
@@ -820,24 +798,14 @@ function CaseDetail({ caseId }: { caseId: string }) {
                     {t("cases.claim")}
                   </Button>
                 )}
-                {account?.role === "admin" && detail.accounts.length > 0 && (
-                  <form className="flex flex-wrap items-end gap-3" onSubmit={handoff}>
-                    <div className="min-w-64 space-y-2">
-                      <Label htmlFor="handoff-owner">{t("cases.handoffTo")}</Label>
-                      <FormSelect
-                        id="handoff-owner"
-                        name="owner_id"
-                        defaultValue={incident.current_owner_id ?? account.id}
-                        options={detail.accounts
-                          .filter((item) => item.role !== "viewer")
-                          .map((item) => ({ value: item.id, label: item.email }))}
-                      />
-                    </div>
-                    <Button type="submit" size="sm" variant="outline" disabled={pending !== null}>
-                      {pending === "handoff" && <Spinner />}
-                      {t("cases.handoff")}
-                    </Button>
-                  </form>
+                {account?.role === "admin" && (
+                  <CaseHandoffForm
+                    key={incident.current_owner_id ?? account.id}
+                    ownerId={incident.current_owner_id ?? account.id}
+                    revision={incident.revision}
+                    pending={pending !== null}
+                    onHandoff={handoff}
+                  />
                 )}
                 <Separator />
                 {!confirmCancellation ? (

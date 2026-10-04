@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -135,7 +135,7 @@ function openSnapshot(
   return { ...snapshot, case: { ...snapshot.case, id, title, status: "running" }, reports: [] };
 }
 
-function renderDetail(role: "viewer" | "operator" = "viewer") {
+function renderDetail(role: "viewer" | "operator" | "admin" = "viewer") {
   return render(
     <AuthenticationContext.Provider
       value={{ account: { id: oldReportId, role } } as Authentication}
@@ -149,6 +149,371 @@ function renderDetail(role: "viewer" | "operator" = "viewer") {
     </AuthenticationContext.Provider>,
   );
 }
+
+test("admin handoff pages eligible accounts and keeps the independently loaded current owner", async () => {
+  await i18n.changeLanguage("en");
+  const user = userEvent.setup();
+  const account = (id: string, email: string) => ({
+    id,
+    email,
+    role: "operator",
+    role_version: 1,
+    preferred_language: "en",
+    inserted_at: timestamp,
+    updated_at: timestamp,
+  });
+  const current = account(oldReportId, "current@example.test");
+  const tail = account(reportId, "tail@example.test");
+  const first = Array.from({ length: 50 }, (_, index) =>
+    account(
+      `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      `member${index}@example.test`,
+    ),
+  );
+  const requests: URL[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`)
+      return new Response(
+        JSON.stringify({
+          data: {
+            ...openSnapshot(),
+            case: { ...openSnapshot().case, current_owner_id: oldReportId },
+          },
+        }),
+      );
+    if (url.pathname === "/api/v1/accounts") {
+      requests.push(url);
+      const ids = url.searchParams.get("ids");
+      if (ids) {
+        expect(url.searchParams.get("limit")).toBe("1");
+        expect(url.searchParams.has("roles")).toBe(false);
+        return new Response(
+          JSON.stringify({ data: [ids === oldReportId ? current : tail], page: { next: null } }),
+        );
+      }
+      expect(url.searchParams.get("roles")).toBe("admin,operator");
+      expect(url.searchParams.get("limit")).toBe("50");
+      return new Response(
+        JSON.stringify(
+          url.searchParams.has("after")
+            ? { data: [tail], page: { next: null } }
+            : { data: first, page: { next: "accounts-next" } },
+        ),
+      );
+    }
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail("admin");
+  await user.click(await screen.findByText("Assignment and cancellation"));
+  const group = await screen.findByRole("group", { name: "Handoff owner" });
+  await waitFor(() =>
+    expect(within(group).getByRole("combobox").textContent).toContain("current@example.test"),
+  );
+  await user.click(within(group).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(within(group).getByText("Page 2")).toBeTruthy());
+  expect(within(group).getByRole("combobox").textContent).toContain("current@example.test");
+  await user.click(within(group).getByRole("combobox"));
+  await user.click(await screen.findByRole("option", { name: "tail@example.test" }));
+  await waitFor(() =>
+    expect(within(group).getByRole("combobox").textContent).toContain("tail@example.test"),
+  );
+  await user.click(within(group).getByRole("button", { name: "Previous" }));
+  await waitFor(() => expect(within(group).getByText("Page 1")).toBeTruthy());
+  expect(within(group).getByRole("combobox").textContent).toContain("tail@example.test");
+  expect(requests.filter((url) => !url.searchParams.has("ids"))).toHaveLength(3);
+  expect(requests.some((url) => url.searchParams.get("ids") === oldReportId)).toBe(true);
+  expect(requests.some((url) => url.searchParams.get("ids") === reportId)).toBe(true);
+  expect(wire.mock.calls.every(([request]) => (request as Request).method === "GET")).toBe(true);
+});
+
+test("handoff rechecks a changed owner role before dispatch and requires an eligible selection", async () => {
+  await i18n.changeLanguage("en");
+  const user = userEvent.setup();
+  const owner = {
+    id: oldReportId,
+    email: "owner@example.test",
+    role: "operator",
+    role_version: 1,
+    preferred_language: "en",
+    inserted_at: timestamp,
+    updated_at: timestamp,
+  };
+  const peer = { ...owner, id: reportId, email: "peer@example.test" };
+  let ownerReads = 0;
+  const posts: unknown[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      expect(url.pathname).toBe(`/api/v1/cases/${caseId}/handoff`);
+      posts.push(await request.json());
+      return new Response(JSON.stringify({ data: {} }));
+    }
+    if (url.pathname === `/api/v1/cases/${caseId}`) {
+      const next = openSnapshot();
+      next.case.current_owner_id = oldReportId;
+      return new Response(JSON.stringify({ data: next }));
+    }
+    if (url.pathname === "/api/v1/accounts") {
+      const id = url.searchParams.get("ids");
+      const data =
+        id === oldReportId
+          ? [{ ...owner, ...(++ownerReads > 1 ? { role: "viewer", role_version: 2 } : {}) }]
+          : [peer];
+      return new Response(JSON.stringify({ data, page: { next: null } }));
+    }
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail("admin");
+  await user.click(await screen.findByText("Assignment and cancellation"));
+  const group = await screen.findByRole("group", { name: "Handoff owner" });
+  const form = group.closest("form")!;
+  const handoff = within(form).getByRole("button", { name: "Handoff" });
+  await waitFor(() => expect(handoff.hasAttribute("disabled")).toBe(false));
+  await user.click(handoff);
+  await screen.findByText("Select an administrator or operator account.");
+  expect(within(form).getByText("Viewer")).toBeTruthy();
+  expect(within(group).getByRole("combobox").textContent).toContain("owner@example.test");
+  expect(handoff.hasAttribute("disabled")).toBe(true);
+  expect(posts).toEqual([]);
+  await user.click(within(group).getByRole("combobox"));
+  await user.click(await screen.findByRole("option", { name: "peer@example.test" }));
+  await waitFor(() => expect(handoff.hasAttribute("disabled")).toBe(false));
+  await user.click(handoff);
+  await waitFor(() =>
+    expect(posts).toEqual([{ case: { expected_revision: 2, owner_id: reportId } }]),
+  );
+  expect(ownerReads).toBe(2);
+});
+
+test("handoff account failures and missing identities do not hide the Case and recover by reads", async () => {
+  await i18n.changeLanguage("en");
+  const user = userEvent.setup();
+  let identityState = "failed";
+  let pageFails = true;
+  const account = {
+    id: oldReportId,
+    email: "recovered@example.test",
+    role: "operator",
+    role_version: 1,
+    preferred_language: "en",
+    inserted_at: timestamp,
+    updated_at: timestamp,
+  };
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === `/api/v1/cases/${caseId}`)
+      return new Response(JSON.stringify({ data: openSnapshot() }));
+    if (url.pathname === "/api/v1/accounts") {
+      const known = url.searchParams.has("ids");
+      if (known ? identityState === "failed" : pageFails)
+        return new Response(JSON.stringify({ error: { message: "Accounts unavailable" } }), {
+          status: 503,
+        });
+      return new Response(
+        JSON.stringify({
+          data: known && identityState === "missing" ? [] : [account],
+          page: { next: null },
+        }),
+      );
+    }
+    return new Response(JSON.stringify({ data: [], page: { next: null } }));
+  });
+  renderDetail("admin");
+  await screen.findByRole("heading", { name: snapshot.case.title });
+  await user.click(screen.getByText("Assignment and cancellation"));
+  const group = await screen.findByRole("group", { name: "Handoff owner" });
+  const form = group.closest("form")!;
+  await within(form).findByText("Could not load the selected account. Refresh to retry.");
+  const handoff = within(form).getByRole("button", { name: "Handoff" });
+  expect(handoff.hasAttribute("disabled")).toBe(true);
+  pageFails = false;
+  await user.click(within(group).getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(within(group).queryByRole("alert")).toBeNull());
+  identityState = "missing";
+  await user.click(within(form).getByRole("button", { name: "Refresh" }));
+  await within(form).findByText("Select an administrator or operator account.");
+  expect(within(group).getByRole("combobox").textContent).toContain(oldReportId);
+  expect(handoff.hasAttribute("disabled")).toBe(true);
+  identityState = "ready";
+  await user.click(within(form).getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(handoff.hasAttribute("disabled")).toBe(false));
+  expect(within(group).getByRole("combobox").textContent).toContain("recovered@example.test");
+  expect(wire.mock.calls.every(([request]) => (request as Request).method === "GET")).toBe(true);
+});
+
+test.each(["identity", "submission"])(
+  "leaving a Case aborts a late handoff %s read without dispatch",
+  async (stage) => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    let identityReads = 0;
+    let heldRequest: Request | undefined;
+    let finish: ((response: Response) => void) | undefined;
+    const account = {
+      id: oldReportId,
+      email: "old-owner@example.test",
+      role: "operator",
+      role_version: 1,
+      preferred_language: "en",
+      inserted_at: timestamp,
+      updated_at: timestamp,
+    };
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      if (url.pathname === `/api/v1/cases/${caseId}`)
+        return new Response(JSON.stringify({ data: openSnapshot() }));
+      if (url.pathname === `/api/v1/cases/${reportId}`) {
+        const next = openSnapshot(reportId, "New Case");
+        next.case.current_owner_id = reportId;
+        return new Response(JSON.stringify({ data: next }));
+      }
+      if (url.pathname === "/api/v1/accounts") {
+        const id = url.searchParams.get("ids");
+        if (id === oldReportId && ++identityReads === (stage === "identity" ? 1 : 2)) {
+          heldRequest = request;
+          return new Promise<Response>((resolve) => {
+            finish = resolve;
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                ...account,
+                ...(id === reportId ? { id: reportId, email: "new-owner@example.test" } : {}),
+              },
+            ],
+            page: { next: null },
+          }),
+        );
+      }
+      return new Response(JSON.stringify({ data: [], page: { next: null } }));
+    });
+    renderDetail("admin");
+    await user.click(await screen.findByText("Assignment and cancellation"));
+    if (stage === "submission") {
+      const handoff = screen.getByRole("button", { name: "Handoff" });
+      await waitFor(() => expect(handoff.hasAttribute("disabled")).toBe(false));
+      await user.click(handoff);
+    }
+    await waitFor(() => expect(finish).toBeDefined());
+    await user.click(screen.getByRole("link", { name: "Other Case" }));
+    await screen.findByRole("heading", { name: "New Case" });
+    expect(heldRequest!.signal.aborted).toBe(true);
+    await act(async () => {
+      finish!(new Response(JSON.stringify({ data: [account], page: { next: null } })));
+    });
+    await user.click(screen.getByText("Assignment and cancellation"));
+    const group = screen.getByRole("group", { name: "Handoff owner" });
+    await waitFor(() =>
+      expect(within(group).getByRole("combobox").textContent).toContain("new-owner@example.test"),
+    );
+    expect(within(group).getByRole("combobox").textContent).not.toContain("old-owner@example.test");
+    expect(wire.mock.calls.every(([request]) => (request as Request).method === "GET")).toBe(true);
+  },
+);
+
+test.each([false, true])(
+  "accepted=%s handoff with a failed reread recovers by GET without replay",
+  async (accepted) => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    let submitted = false;
+    let readFails = true;
+    const posts: unknown[] = [];
+    const account = {
+      id: oldReportId,
+      email: "owner@example.test",
+      role: "operator",
+      role_version: 1,
+      preferred_language: "en",
+      inserted_at: timestamp,
+      updated_at: timestamp,
+    };
+    const peer = { ...account, id: reportId, email: "peer@example.test" };
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      if (request.method === "POST") {
+        expect(url.pathname).toBe(`/api/v1/cases/${caseId}/handoff`);
+        posts.push(await request.json());
+        submitted = true;
+        if (!accepted) throw new TypeError("response lost");
+        return new Response(JSON.stringify({ data: {} }));
+      }
+      if (url.pathname === `/api/v1/cases/${caseId}`) {
+        if (submitted && readFails)
+          return new Response(JSON.stringify({ error: { message: "Case unavailable" } }), {
+            status: 503,
+          });
+        const next = openSnapshot();
+        next.case.current_owner_id = submitted ? reportId : oldReportId;
+        next.case.revision = submitted ? 3 : 2;
+        return new Response(JSON.stringify({ data: next }));
+      }
+      if (url.pathname === "/api/v1/accounts")
+        return new Response(
+          JSON.stringify({
+            data: url.searchParams.get("ids") === oldReportId ? [account] : [peer],
+            page: { next: null },
+          }),
+        );
+      return new Response(JSON.stringify({ data: [], page: { next: null } }));
+    });
+    renderDetail("admin");
+    await user.click(await screen.findByText("Assignment and cancellation"));
+    const group = await screen.findByRole("group", { name: "Handoff owner" });
+    await waitFor(() =>
+      expect(within(group).getByRole("combobox").hasAttribute("disabled")).toBe(false),
+    );
+    await user.click(within(group).getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "peer@example.test" }));
+    const handoff = screen.getByRole("button", { name: "Handoff" });
+    await waitFor(() => expect(handoff.hasAttribute("disabled")).toBe(false));
+    await user.click(handoff);
+    await screen.findByText(
+      accepted
+        ? "Request accepted. Refresh to load the current Case."
+        : "Could not confirm the result. Refresh to check.",
+    );
+    expect(handoff.hasAttribute("disabled")).toBe(true);
+    expect(posts).toEqual([{ case: { expected_revision: 2, owner_id: reportId } }]);
+    readFails = false;
+    await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]!);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Handoff" }).hasAttribute("disabled")).toBe(false),
+    );
+    expect(screen.getByRole("combobox").textContent).toContain("peer@example.test");
+    expect(posts).toHaveLength(1);
+  },
+);
+
+test.each(["viewer", "operator"] as const)(
+  "%s Case view does not load administrator handoff choices",
+  async (role) => {
+    await i18n.changeLanguage("en");
+    wire.mockImplementation(
+      async (request: Request) =>
+        new Response(
+          JSON.stringify(
+            new URL(request.url).pathname === `/api/v1/cases/${caseId}`
+              ? { data: openSnapshot() }
+              : { data: [], page: { next: null } },
+          ),
+        ),
+    );
+    renderDetail(role);
+    await screen.findByRole("heading", { name: snapshot.case.title });
+    if (role === "operator")
+      await userEvent.setup().click(screen.getByText("Assignment and cancellation"));
+    expect(screen.queryByRole("button", { name: "Handoff" })).toBeNull();
+    expect(
+      wire.mock.calls.some(
+        ([request]) => new URL((request as Request).url).pathname === "/api/v1/accounts",
+      ),
+    ).toBe(false);
+  },
+);
 
 test("changing Case hides the previous Case immediately and aborts its late reads", async () => {
   await i18n.changeLanguage("en");

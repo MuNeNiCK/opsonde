@@ -539,6 +539,8 @@ const ja = {
       cancel: "解決を中止",
       handoffTo: "引継ぎ先",
       handoff: "引き継ぐ",
+      handoffReadFailed: "アカウントを確認できません。更新してください。",
+      handoffUnavailable: "管理者または運用者を選択してください。",
       resumeTitle: "解決を再開",
       resumeDescription: "権限と有限の上限を明示し、新しい世代として再開します。",
       resumeSafeDefaults:
