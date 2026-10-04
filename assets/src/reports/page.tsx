@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus, Printer, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
-import { FormSelect } from "@/components/form-select";
 import { TechnicalDetails } from "@/components/technical-details";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +24,7 @@ import {
 import { NotificationProviderSection } from "@/providers/notification-section";
 import { CaseReportDocument } from "@/reports/case-document";
 import { ReportGenerateForm } from "@/reports/generate-form";
+import { DeliveryCreateForm } from "@/reports/delivery-form";
 
 type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
@@ -162,46 +162,6 @@ export function ReportPage() {
     }
   }
 
-  async function deliver(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const report = snapshot?.reports.find((item) => item.id === formValue(form, "report_id"));
-    const provider = snapshot?.providers.find((item) => item.id === formValue(form, "provider_id"));
-    if (!report || !provider) return;
-    const succeeded = await mutate("deliver", () =>
-      apiClient.POST("/api/v1/deliveries", {
-        body: {
-          delivery: {
-            report_id: report.id,
-            report_revision: report.revision,
-            provider_id: provider.id,
-            provider_revision: provider.revision,
-            idempotency_key: crypto.randomUUID(),
-          },
-        },
-      }),
-    );
-    if (succeeded) {
-      setPanel(null);
-      setSelectedReportId("");
-    }
-  }
-
-  async function mutate(key: string, action: () => Promise<unknown>) {
-    setPending(key);
-    setError("");
-    try {
-      await action();
-      await refresh();
-      return true;
-    } catch {
-      setError(t("reports.requestFailed"));
-      return false;
-    } finally {
-      setPending(null);
-    }
-  }
-
   async function updateAutomaticGeneration(enabled: boolean) {
     if (!snapshot || !canManageProviders) return;
     setPending("setting");
@@ -245,13 +205,6 @@ export function ReportPage() {
       </div>
     );
   }
-  const notificationProviders = snapshot.providers.filter(
-    (provider) =>
-      provider.kind === "notification" &&
-      provider.enabled &&
-      provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision,
-  );
   const caseTitle = (id: string) => snapshot.cases.find((item) => item.id === id)?.title ?? id;
   const reportName = (id: string) => {
     const report = snapshot.reports.find((item) => item.id === id);
@@ -376,55 +329,14 @@ export function ReportPage() {
           {panel === "generate" ? (
             <ReportGenerateForm onGenerated={refresh} onClose={() => setPanel(null)} />
           ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("reports.deliver")}</CardTitle>
-                <CardDescription>{t("reports.deliverDescription")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="space-y-4" onSubmit={deliver}>
-                  <div className="space-y-2">
-                    <Label htmlFor="delivery-report">{t("reports.report")}</Label>
-                    <FormSelect
-                      id="delivery-report"
-                      name="report_id"
-                      value={selectedReportId}
-                      onValueChange={(value) => setSelectedReportId(value ?? "")}
-                      required
-                      placeholder={t("reports.chooseReport")}
-                      options={snapshot.reports.map((item) => ({
-                        value: item.id,
-                        label: `${caseTitle(item.case_id)} · ${item.language} · ${item.outcome}`,
-                      }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="delivery-provider">{t("reports.destination")}</Label>
-                    <FormSelect
-                      id="delivery-provider"
-                      name="provider_id"
-                      required
-                      placeholder={t("reports.chooseDestination")}
-                      options={notificationProviders.map((item) => ({
-                        value: item.id,
-                        label: item.name,
-                      }))}
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    disabled={
-                      pending !== null ||
-                      snapshot.reports.length === 0 ||
-                      notificationProviders.length === 0
-                    }
-                  >
-                    {pending === "deliver" && <Spinner />}
-                    {t("reports.createDelivery")}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+            <DeliveryCreateForm
+              initialReportId={selectedReportId}
+              onEnqueued={refresh}
+              onClose={() => {
+                setPanel(null);
+                setSelectedReportId("");
+              }}
+            />
           )}
         </section>
       )}
@@ -752,10 +664,6 @@ function Loading() {
       <span>{t("common.loading")}</span>
     </div>
   );
-}
-function formValue(form: FormData, name: string) {
-  const value = form.get(name);
-  return typeof value === "string" ? value : "";
 }
 function formatDate(value: string, locale = "en") {
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
