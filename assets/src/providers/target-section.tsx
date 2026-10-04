@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, CircleAlert, Network } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "@/api/client";
@@ -8,32 +8,43 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 
-type Provider = components["schemas"]["Provider"];
+type Provider = components["schemas"]["ProviderSummary"];
 
 type Props = {
   providers: Provider[];
   canManage: boolean;
+  readPending: boolean;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
 };
 
-export function TargetProviderSection({ providers, canManage, onRefresh, onError }: Props) {
+export function TargetProviderSection({
+  providers,
+  canManage,
+  readPending,
+  onRefresh,
+  onError,
+}: Props) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
-  const visibleProviders = providers.filter(
-    (provider) => provider.kind === "target" || provider.kind === "inventory",
-  );
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);
     onError("");
     try {
       await action();
-      await onRefresh();
+      if (mounted.current) await onRefresh();
     } catch {
-      onError(t("targets.requestFailed"));
+      if (mounted.current) onError(t("targets.requestFailed"));
     } finally {
-      setPending(null);
+      if (mounted.current) setPending(null);
     }
   }
 
@@ -72,7 +83,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        {visibleProviders.map((provider) => {
+        {providers.map((provider) => {
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
           const canEnable = provider.kind === "target" || passed;
@@ -115,7 +126,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={pending !== null}
+                          disabled={pending !== null || readPending}
                           onClick={() => void providerAction(provider, "check")}
                         >
                           {pending === `${provider.id}-check` && <Spinner />}
@@ -125,7 +136,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                       {!provider.enabled ? (
                         <Button
                           size="sm"
-                          disabled={!canEnable || pending !== null}
+                          disabled={!canEnable || pending !== null || readPending}
                           onClick={() => void providerAction(provider, "enable")}
                         >
                           {pending === `${provider.id}-enable` && <Spinner />}
@@ -135,7 +146,7 @@ export function TargetProviderSection({ providers, canManage, onRefresh, onError
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={pending !== null}
+                          disabled={pending !== null || readPending}
                           onClick={() => void providerAction(provider, "disable")}
                         >
                           {pending === `${provider.id}-disable` && <Spinner />}

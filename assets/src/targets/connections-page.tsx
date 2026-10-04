@@ -1,44 +1,37 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
+import { PageControls } from "@/components/page-controls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { TargetProviderSection } from "@/providers/target-section";
-import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
 
 export function TargetConnectionsPage() {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const location = useLocation();
-  const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
   const [error, setError] = useState("");
   const success = (location.state as { created?: string } | null)?.created === "target";
   const checkFailed = (location.state as { checkFailed?: boolean } | null)?.checkFailed === true;
   const canManage = account?.role === "admin";
-  const refresh = useCallback(async () => setSnapshot(await loadTargetSnapshot()), []);
-
-  useEffect(() => {
-    let active = true;
-    loadTargetSnapshot()
-      .then((next) => active && setSnapshot(next))
-      .catch(() => {
-        if (active) setError(t("targets.requestFailed"));
-      });
-    return () => {
-      active = false;
-    };
-  }, [t]);
-
-  if (!snapshot)
-    return (
-      <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
-        <Spinner />
-        <span>{t("common.loading")}</span>
-      </div>
-    );
+  const providers = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        apiClient
+          .GET("/api/v1/providers/summaries", {
+            params: { query: { kinds: ["target", "inventory"], limit: 50, after } },
+            querySerializer: commaSeparatedQuery,
+            signal,
+          })
+          .then(apiData),
+      [],
+    ),
+  );
 
   return (
     <div className="space-y-6 p-6 lg:p-8">
@@ -58,9 +51,9 @@ export function TargetConnectionsPage() {
           </Button>
         )}
       </div>
-      {error && (
+      {!!(error || providers.error) && (
         <Alert variant="destructive" className="sticky top-16 z-20">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || t("targets.requestFailed")}</AlertDescription>
         </Alert>
       )}
       {success && (
@@ -76,12 +69,40 @@ export function TargetConnectionsPage() {
           <AlertDescription>{t("targets.readOnly")}</AlertDescription>
         </Alert>
       )}
-      <TargetProviderSection
-        providers={snapshot.providers}
-        canManage={canManage}
-        onRefresh={refresh}
-        onError={setError}
-      />
+      <Button
+        variant="outline"
+        disabled={providers.pending}
+        onClick={() => {
+          setError("");
+          void providers.retry().catch(() => {});
+        }}
+      >
+        {t("common.refresh")}
+      </Button>
+      {providers.pending && (
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Spinner />
+          {t("common.loading")}
+        </div>
+      )}
+      {providers.view && (
+        <>
+          <PageControls
+            index={providers.view.index}
+            hasNext={!!providers.view.page.next}
+            pending={providers.pending}
+            previous={providers.previous}
+            next={providers.next}
+          />
+          <TargetProviderSection
+            providers={providers.view.data}
+            canManage={canManage}
+            readPending={providers.pending || !!providers.error}
+            onRefresh={providers.retry}
+            onError={setError}
+          />
+        </>
+      )}
     </div>
   );
 }
