@@ -34,10 +34,15 @@ defmodule Opsonde.Cases.CaseConditionMembership do
       prepare build(sort: [attached_at: :asc, id: :asc])
     end
 
-    read :history_for_case do
+    read :page_history_for_case do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
-      prepare build(sort: [attached_at: :asc, id: :asc])
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+
+      prepare build(
+                select: [:id, :case_id, :condition_id, :attached_at, :detached_at, :reason],
+                sort: [attached_at: :desc, id: :desc]
+              )
     end
 
     read :history_for_condition do
@@ -75,7 +80,6 @@ defmodule Opsonde.Cases.CaseConditionMembership do
     policy action([
              :active_for_condition,
              :active_for_case,
-             :history_for_case,
              :history_for_condition,
              :attach_record,
              :detach_record,
@@ -84,7 +88,7 @@ defmodule Opsonde.Cases.CaseConditionMembership do
       forbid_if always()
     end
 
-    policy action(:read) do
+    policy action([:read, :page_history_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

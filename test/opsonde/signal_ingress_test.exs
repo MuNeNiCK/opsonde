@@ -817,6 +817,197 @@ defmodule Opsonde.SignalIngressTest do
     assert length(Cases.active_conditions_for_case!(first.id, authorize?: false)) == 2
   end
 
+  @tag condition_membership_capacity: true
+  test "Case reads preserve the largest native membership set and larger stored sets", context do
+    enable_signal_automation!(context.admin)
+
+    target =
+      Targets.create_target!("capacity-host", "host", "linux", %{}, nil, actor: context.admin)
+
+    Targets.create_external_identity!(target.id, "test-monitor", "hostname", "capacity-host",
+      actor: context.admin
+    )
+
+    at = DateTime.add(DateTime.utc_now(), -10, :second)
+
+    events =
+      for index <- 1..33 do
+        event("membership-capacity", "service-#{index}", :firing, at,
+          target_ref: %{kind: :hostname, value: "capacity-host"},
+          attributes: %{
+            "labels" => %{"service" => "service-#{index}", "alertname" => "ServiceUnavailable"}
+          }
+        )
+      end
+
+    ingest!(
+      context.provider,
+      envelope("membership-capacity", at),
+      invocation("membership-capacity", events)
+    )
+
+    cases = Cases.list_cases!(actor: context.admin)
+    assert length(cases) == 2
+
+    memberships =
+      Enum.map(cases, &{&1, Cases.active_conditions_for_case!(&1.id, authorize?: false)})
+
+    assert Enum.sort(Enum.map(memberships, fn {_incident, members} -> length(members) end)) == [
+             1,
+             32
+           ]
+
+    {incident, members} =
+      Enum.find(memberships, fn {_incident, members} -> length(members) == 32 end)
+
+    ids = MapSet.new(members, & &1.condition_id)
+
+    native_event =
+      Enum.find(
+        Signals.list_signal_events!(actor: context.admin),
+        &MapSet.member?(ids, &1.condition_id)
+      )
+
+    original = Enum.find(events, &(&1.event_key == native_event.event_key))
+    recovery_at = DateTime.add(at, 1, :second)
+
+    recovered = %{
+      original
+      | receipt_id: "membership-recovery",
+        state: :recovered,
+        occurred_at: recovery_at
+    }
+
+    ingest!(
+      context.provider,
+      envelope("membership-recovery", recovery_at),
+      invocation("membership-recovery", [recovered])
+    )
+
+    assert :ok = dispatch_initial!(incident)
+
+    [turn] =
+      Cases.started_turns_for_run!(
+        Cases.active_resolution_run!(incident.id, authorize?: false).id,
+        authorize?: false
+      )
+
+    selection = %AI.Selection{
+      role: :resolver,
+      provider_id: Ecto.UUID.generate(),
+      provider_revision: 1,
+      source: :assignment
+    }
+
+    assert {:ok, request, _context} = ResolverProjection.build(turn.id, selection)
+    assert length(request.conditions) == 32
+    assert MapSet.new(request.conditions, & &1.id) == ids
+    assert Enum.count(request.conditions, &(&1.state == :firing)) == 31
+    assert Enum.count(request.conditions, &(&1.state == :recovered)) == 1
+
+    handler = {__MODULE__, make_ref()}
+    Process.put(:capacity_query_count, 0)
+    Process.put(:capacity_condition_query_count, 0)
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:opsonde, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if Process.get(:count_capacity_reads) do
+            Process.put(:capacity_query_count, Process.get(:capacity_query_count) + 1)
+
+            if String.contains?(metadata.query, "FROM \"conditions\"") do
+              Process.put(
+                :capacity_condition_query_count,
+                Process.get(:capacity_condition_query_count) + 1
+              )
+            end
+          end
+        end,
+        nil
+      )
+
+    try do
+      for {count, kind} <- [{32, "native"}, {102, "internal-record extension"}] do
+        if count == 102 do
+          # These additional recovered obligations are read-capacity fixtures, not native admission.
+          source = Signals.get_condition!(native_event.condition_id, authorize?: false)
+
+          inputs =
+            Map.take(source, Ash.Resource.Info.action(source.__struct__, :create_record).accept)
+
+          for index <- 1..70 do
+            condition =
+              Signals.create_condition_record!(
+                Map.merge(inputs, %{
+                  occurrence: index + 1000,
+                  predicate: "Stored obligation #{index}",
+                  subject_key: "stored-obligation-#{index}",
+                  subject_ref: %{},
+                  state: :recovered
+                }),
+                authorize?: false
+              )
+
+            Cases.attach_case_condition_record!(
+              %{
+                case_id: incident.id,
+                condition_id: condition.id,
+                attached_at: at,
+                reason: "Read capacity fixture"
+              },
+              authorize?: false
+            )
+          end
+        end
+
+        Process.put(:capacity_query_count, 0)
+        Process.put(:capacity_condition_query_count, 0)
+        :erlang.garbage_collect()
+        {:memory, before_memory} = Process.info(self(), :memory)
+        started = System.monotonic_time(:microsecond)
+        Process.put(:count_capacity_reads, true)
+        assert {:ok, snapshot} = Cases.case_reconnect_snapshot(incident.id, actor: context.admin)
+        Process.put(:count_capacity_reads, false)
+        elapsed = System.monotonic_time(:microsecond) - started
+        {:memory, after_memory} = Process.info(self(), :memory)
+        assert length(snapshot.conditions) == count
+        assert snapshot.case.condition_count == count
+        assert snapshot.case.firing_condition_count == 31
+        assert Enum.all?(snapshot.conditions, &(&1.condition.revision >= 1))
+        assert MapSet.subset?(ids, MapSet.new(snapshot.conditions, & &1.condition.id))
+        assert Process.get(:capacity_condition_query_count) <= 2
+
+        token = api_token!(context.admin.email)
+        public_snapshot = api_get_data!("/api/v1/cases/#{incident.id}", token)
+        assert length(public_snapshot["conditions"]) == count
+        assert public_snapshot["case"]["condition_count"] == count
+        assert public_snapshot["case"]["firing_condition_count"] == 31
+        refute Map.has_key?(public_snapshot, "condition_history")
+
+        IO.puts(
+          "Condition read measurement " <>
+            Jason.encode!(%{
+              kind: kind,
+              count: count,
+              sql_queries: Process.get(:capacity_query_count),
+              condition_queries: Process.get(:capacity_condition_query_count),
+              elapsed_us: elapsed,
+              process_memory_before: before_memory,
+              process_memory_after: after_memory,
+              retained_term_heap_bytes:
+                :erts_debug.size(snapshot) * :erlang.system_info(:wordsize),
+              public_data_bytes: byte_size(Jason.encode!(public_snapshot))
+            })
+        )
+      end
+    after
+      Process.put(:count_capacity_reads, false)
+      :telemetry.detach(handler)
+    end
+  end
+
   @tag condition_read_frequency: true
   test "PoE and twenty AP stay together when a coincident core Condition is split",
        context do

@@ -814,6 +814,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{id}/condition-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case Condition membership history */
+        get: operations["listCaseConditionHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/verification-attempts/{id}": {
         parameters: {
             query?: never;
@@ -1740,6 +1757,10 @@ export interface components {
         ReportResponse: {
             data: components["schemas"]["Report"];
         };
+        CaseConditionMembershipPage: {
+            data: components["schemas"]["CaseConditionMembership"][];
+            page: components["schemas"]["Page"];
+        };
         CaseResponse: {
             data: components["schemas"]["Case"];
         };
@@ -2356,7 +2377,6 @@ export interface components {
                 assessments: components["schemas"]["TurnConditionContext"] | null;
                 groups: components["schemas"]["TurnConditionContext"] | null;
             };
-            condition_history: components["schemas"]["CaseConditionMembership"][];
             conditions: components["schemas"]["CaseCondition"][];
             operations: components["schemas"]["OperationSummary"][];
             proposals: components["schemas"]["ProposalSummary"][];
@@ -7969,6 +7989,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIInvocationPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCaseConditionHistory: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Condition membership page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseConditionMembershipPage"];
                 };
             };
             /** @description Authentication is required */

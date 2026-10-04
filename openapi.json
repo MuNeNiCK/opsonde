@@ -488,6 +488,25 @@
         ],
         "type": "object"
       },
+      "CaseConditionMembershipPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CaseConditionMembership"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "CaseResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2880,12 +2899,6 @@
             ],
             "type": "object"
           },
-          "condition_history": {
-            "items": {
-              "$ref": "#/components/schemas/CaseConditionMembership"
-            },
-            "type": "array"
-          },
           "conditions": {
             "items": {
               "$ref": "#/components/schemas/CaseCondition"
@@ -2927,7 +2940,6 @@
           "case",
           "ai_usage",
           "conditions",
-          "condition_history",
           "condition_context",
           "resolution_runs",
           "proposals",
@@ -13974,6 +13986,112 @@
           }
         },
         "summary": "List Case AI invocation accounting",
+        "tags": [
+          "Cases"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/condition-history": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseConditionHistory",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseConditionMembershipPage"
+                }
+              }
+            },
+            "description": "Condition membership page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case Condition membership history",
         "tags": [
           "Cases"
         ]

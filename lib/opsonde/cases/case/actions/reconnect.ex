@@ -1,7 +1,7 @@
 defmodule Opsonde.Cases.Case.Actions.Reconnect do
   use Ash.Resource.Actions.Implementation
 
-  alias Opsonde.{Cases, Signals}
+  alias Opsonde.Cases
   alias Opsonde.Cases.Case.ReconnectSnapshot
   alias Opsonde.Cases.AIInvocation
   alias Opsonde.Cases.Case.ConditionRecovery, as: ConditionRecovery
@@ -13,9 +13,21 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
     opts = [actor: context.actor]
 
     with {:ok, incident} <-
-           Cases.get_case(case_id, Keyword.put(opts, :load, AIInvocation.usage_aggregates())),
-         {:ok, history} <- Cases.condition_membership_history_for_case(case_id, authorize?: false),
-         {:ok, conditions} <- current_conditions(incident, history),
+           Cases.get_case(
+             case_id,
+             Keyword.put(
+               opts,
+               :load,
+               [:condition_count, :firing_condition_count] ++ AIInvocation.usage_aggregates()
+             )
+           ),
+         {:ok, memberships} <-
+           Cases.active_conditions_for_case(case_id,
+             authorize?: false,
+             query: [select: [:id, :case_id, :condition_id, :attached_at, :detached_at]],
+             load: [:condition]
+           ),
+         {:ok, conditions} <- current_conditions(incident, memberships),
          {:ok, condition_context} <- latest_condition_context(incident, conditions, opts),
          {:ok, runs} <- Cases.resolution_runs_for_case(case_id, opts),
          {:ok, proposals} <- Cases.proposal_summaries_for_case(case_id, opts),
@@ -27,7 +39,6 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
          case: incident,
          ai_usage: AIInvocation.usage_summary(incident),
          conditions: conditions,
-         condition_history: history,
          condition_context: condition_context,
          resolution_runs: runs,
          proposals: proposals,
@@ -60,35 +71,23 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
     end
   end
 
-  defp current_conditions(incident, history) do
-    memberships = Enum.filter(history, &is_nil(&1.detached_at))
-
+  defp current_conditions(incident, memberships) do
     with {:ok, assessments} <- current_assessments(incident, memberships) do
-      memberships
-      |> Enum.reduce_while({:ok, []}, fn membership, {:ok, items} ->
-        case Signals.get_condition(membership.condition_id, authorize?: false) do
-          {:ok, condition} ->
-            assessment = Map.get(assessments, condition.id)
-
-            {:cont,
-             {:ok,
-              [%{condition: condition, membership: membership, assessment: assessment} | items]}}
-
-          {:error, _reason} = error ->
-            {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, items} -> {:ok, Enum.reverse(items)}
-        error -> error
-      end
+      {:ok,
+       Enum.map(memberships, fn membership ->
+         %{
+           condition: membership.condition,
+           membership: membership,
+           assessment: Map.get(assessments, membership.condition_id)
+         }
+       end)}
     end
   end
 
   defp current_assessments(_incident, []), do: {:ok, %{}}
 
-  defp current_assessments(incident, _memberships) do
-    case ConditionRecovery.assess_current(incident) do
+  defp current_assessments(incident, memberships) do
+    case ConditionRecovery.assess_loaded(incident, memberships) do
       {:ok, items} -> {:ok, Map.new(items, &{&1.condition_id, &1})}
       {:error, %ConditionRecovery.EffectIncomplete{}} -> {:ok, %{}}
       {:error, _cause} = error -> error

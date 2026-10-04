@@ -18,8 +18,17 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident, exclude_operation_id \\ nil) do
     with {:ok, memberships} <-
-           Cases.active_conditions_for_case(incident.id, authorize?: false, load: [:condition]),
-         true <- memberships != [] || invalid("Signal Case has no active Conditions"),
+           Cases.active_conditions_for_case(incident.id,
+             authorize?: false,
+             query: [select: [:id, :case_id, :condition_id, :attached_at, :detached_at]],
+             load: [:condition]
+           ) do
+      assess_loaded(incident, memberships, exclude_operation_id)
+    end
+  end
+
+  def assess_loaded(incident, memberships, exclude_operation_id \\ nil) do
+    with true <- memberships != [] || invalid("Signal Case has no active Conditions"),
          {:ok, effects} <-
            lineage_effects(
              incident,

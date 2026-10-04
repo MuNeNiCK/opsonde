@@ -120,7 +120,6 @@ const snapshot: components["schemas"]["CaseSnapshot"] = {
     complete: true,
   },
   conditions: [],
-  condition_history: [],
   condition_context: { groups: null, assessments: null },
   resolution_runs: [],
   proposals: [],
@@ -241,6 +240,7 @@ test.each([false, true])(
     const receiptRequests: Record<string, string[]> = {
       turns: [],
       proposals: [],
+      "condition-history": [],
       operations: [],
       "verification-attempts": [],
     };
@@ -316,53 +316,62 @@ test.each([false, true])(
         receiptRequests[collection].push(after ?? "first");
         if (after) expect(after).toBe(`older-${collection}`);
         const item =
-          collection === "turns"
+          collection === "condition-history"
             ? {
-                id: `turns-${after ? "old" : "latest"}`,
+                id: `membership-${after ? "old" : "latest"}`,
                 case_id: caseId,
-                resolution_run_id: caseId,
-                ordinal: after ? 1 : 2,
-                status: "completed",
-                progress_kind: "hypothesis",
-                revision: 1,
-                inserted_at: timestamp,
-                updated_at: timestamp,
-                started_at: timestamp,
-                completed_at: timestamp,
-                summary: {
-                  outcome: "decision",
-                  type: "handoff",
-                  reason: `${after ? "Older" : "Latest"} turns receipt`,
-                  target_id: null,
-                  capability: null,
-                  operation: null,
-                  failure_category: null,
-                  failure_message: null,
-                  relationship: null,
-                },
+                condition_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                attached_at: timestamp,
+                detached_at: after ? timestamp : null,
+                reason: "Historical split",
               }
-            : {
-                id: `${collection}-${after ? "old" : "latest"}`,
-                revision: 1,
-                capability: "fixture",
-                operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
-                status:
-                  collection === "proposals"
-                    ? "authorized"
-                    : collection === "operations"
-                      ? "applied"
-                      : "verified",
-                target_id: collection === "proposals" ? caseId : null,
-                proposal_id: null,
-                outcome_category: null,
-                completed_at: timestamp,
-                updated_at: timestamp,
-                accepted_at: timestamp,
-                inserted_at: timestamp,
-                source_turn_id: caseId,
-                access_method_id: caseId,
-                proposal_digest: "a".repeat(64),
-              };
+            : collection === "turns"
+              ? {
+                  id: `turns-${after ? "old" : "latest"}`,
+                  case_id: caseId,
+                  resolution_run_id: caseId,
+                  ordinal: after ? 1 : 2,
+                  status: "completed",
+                  progress_kind: "hypothesis",
+                  revision: 1,
+                  inserted_at: timestamp,
+                  updated_at: timestamp,
+                  started_at: timestamp,
+                  completed_at: timestamp,
+                  summary: {
+                    outcome: "decision",
+                    type: "handoff",
+                    reason: `${after ? "Older" : "Latest"} turns receipt`,
+                    target_id: null,
+                    capability: null,
+                    operation: null,
+                    failure_category: null,
+                    failure_message: null,
+                    relationship: null,
+                  },
+                }
+              : {
+                  id: `${collection}-${after ? "old" : "latest"}`,
+                  revision: 1,
+                  capability: "fixture",
+                  operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
+                  status:
+                    collection === "proposals"
+                      ? "authorized"
+                      : collection === "operations"
+                        ? "applied"
+                        : "verified",
+                  target_id: collection === "proposals" ? caseId : null,
+                  proposal_id: null,
+                  outcome_category: null,
+                  completed_at: timestamp,
+                  updated_at: timestamp,
+                  accepted_at: timestamp,
+                  inserted_at: timestamp,
+                  source_turn_id: caseId,
+                  access_method_id: caseId,
+                  proposal_digest: "a".repeat(64),
+                };
         return new Response(
           JSON.stringify({
             data: [item],
@@ -430,6 +439,7 @@ test.each([false, true])(
     expect(screen.getByText(/Latest proposals receipt/)).toBeDefined();
     expect(screen.getByText(/Latest verification-attempts receipt/)).toBeDefined();
     expect(requests).toEqual(["first"]);
+    expect(screen.queryByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeNull();
     expect(screen.queryByText("Older window receipt")).toBeNull();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Refresh" }));
@@ -443,6 +453,7 @@ test.each([false, true])(
       await user.click(screen.getByRole("button", { name: "Next" }));
     }
     expect(await screen.findByText("Older window receipt")).toBeDefined();
+    expect(screen.getByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeDefined();
     expect(screen.getByText("Older turns receipt")).toBeDefined();
     expect(screen.queryByText("Latest turns receipt")).toBeNull();
     expect(screen.getByText("Current independent causes remain visible")).toBeDefined();
@@ -463,9 +474,11 @@ test.each([false, true])(
     });
     expect(screen.queryByText("Latest window receipt")).toBeNull();
     expect(screen.getByText("Older window receipt")).toBeDefined();
+    expect(screen.getByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeDefined();
     expect(screen.queryByText(/Latest operations receipt/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Previous" }));
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
+    expect(screen.queryByText("cccccccc-cccc-4ccc-8ccc-cccccccccccc")).toBeNull();
     expect(screen.queryByText("Older window receipt")).toBeNull();
     expect(requests).toEqual([...expected, "first"]);
     for (const [collection, calls] of Object.entries(receiptRequests)) {

@@ -45,6 +45,7 @@ type HistoryCursor = Record<
   | "timeline"
   | "turns"
   | "proposals"
+  | "conditionHistory"
   | "evidence"
   | "approvals"
   | "reviews"
@@ -59,6 +60,7 @@ type Detail = {
   timeline: CaseEvent[];
   turns: Turn[];
   proposals: ProposalSummary[];
+  conditionHistory: components["schemas"]["CaseConditionMembership"][];
   awaitingProposal: Proposal | null;
   proposalError: Error | null;
   evidence: Evidence[];
@@ -84,6 +86,7 @@ type CaseState = Pick<
   | "timeline"
   | "turns"
   | "proposals"
+  | "conditionHistory"
   | "awaitingProposal"
   | "proposalError"
   | "evidence"
@@ -111,6 +114,7 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     timeline,
     turns,
     proposals,
+    conditionHistory,
     evidence,
     approvals,
     reviews,
@@ -136,6 +140,13 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     loadHistoryPage(cursor?.proposals, (after) =>
       apiClient
         .GET("/api/v1/cases/{id}/proposals", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.conditionHistory, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/condition-history", {
           params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
         })
         .then(apiData),
@@ -219,6 +230,7 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     timeline: timeline.data,
     turns: turns.data,
     proposals: proposals.data,
+    conditionHistory: conditionHistory.data,
     awaitingProposal,
     proposalError,
     evidence: evidence.data,
@@ -233,6 +245,7 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
       timeline: timeline.page.next,
       turns: turns.page.next,
       proposals: proposals.page.next,
+      conditionHistory: conditionHistory.page.next,
       evidence: evidence.page.next,
       approvals: approvals.page.next,
       reviews: reviews.page.next,
@@ -414,7 +427,7 @@ export function CaseDetailPage() {
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
-  const detachedConditions = detail.snapshot.condition_history
+  const detachedConditions = detail.conditionHistory
     .filter((membership) => membership.detached_at !== null)
     .sort((a, b) => (b.detached_at ?? "").localeCompare(a.detached_at ?? ""));
   const latestRun = [...detail.snapshot.resolution_runs].sort(

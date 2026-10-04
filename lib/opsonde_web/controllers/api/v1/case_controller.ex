@@ -110,6 +110,17 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Proposal summary page", "application/json", WorkflowSchemas.ref("ProposalPage")}] ++
         @show_errors
 
+  operation :condition_history,
+    operation_id: "listCaseConditionHistory",
+    summary: "List Case Condition membership history",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Condition membership page", "application/json",
+           WorkflowSchemas.ref("CaseConditionMembershipPage")}
+      ] ++ @show_errors
+
   operation :show_turn,
     operation_id: "getResolverTurn",
     summary: "Get a complete Resolver turn",
@@ -316,6 +327,15 @@ defmodule OpsondeWeb.API.V1.CaseController do
     page_case_records(conn, params, &Cases.page_case_proposals(id, &1), fn record ->
       Map.take(record, Opsonde.Cases.Proposal.summary_fields())
     end)
+  end
+
+  def condition_history(conn, %{"id" => id} = params) do
+    page_case_records(
+      conn,
+      params,
+      &Cases.page_case_condition_history(id, &1),
+      &WorkflowJSON.condition_membership/1
+    )
   end
 
   def operations(conn, %{"id" => id} = params) do

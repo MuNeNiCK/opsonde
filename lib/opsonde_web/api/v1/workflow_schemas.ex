@@ -25,6 +25,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "CaseSnapshotResponse" => Schemas.data(ref("CaseSnapshot")),
       "CaseCondition" => case_condition(),
       "CaseConditionMembership" => case_condition_membership(),
+      "CaseConditionMembershipPage" => Schemas.page(ref("CaseConditionMembership")),
       "ResolutionRun" => resolution_run(),
       "ResolutionRunResponse" => Schemas.data(ref("ResolutionRun")),
       "CaseEvent" => event(),
@@ -230,7 +231,6 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         case: ref("Case"),
         ai_usage: ref("CaseAIUsage"),
         conditions: array(ref("CaseCondition")),
-        condition_history: array(ref("CaseConditionMembership")),
         condition_context:
           object(
             %{
@@ -250,7 +250,6 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         :case,
         :ai_usage,
         :conditions,
-        :condition_history,
         :condition_context,
         :resolution_runs,
         :proposals,

@@ -79,7 +79,6 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       case: case_record(snapshot.case),
       ai_usage: snapshot.ai_usage,
       conditions: Enum.map(snapshot.conditions, &condition/1),
-      condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
       condition_context:
         Map.new(snapshot.condition_context, fn {key, turn} ->
           {key, turn_condition_context(turn)}

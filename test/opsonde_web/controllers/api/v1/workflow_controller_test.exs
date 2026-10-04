@@ -460,6 +460,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
   end
 
+  @tag condition_history_capacity: true
   test "authenticated Case snapshot and split expose native Condition ownership", context do
     current = Cases.current_authority_setting!(actor: context.admin)
 
@@ -538,7 +539,66 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
     assert length(snapshot["conditions"]) == 2
-    assert length(snapshot["condition_history"]) == 2
+
+    current_condition =
+      Signals.get_condition!(hd(snapshot["conditions"])["id"], authorize?: false)
+
+    historical_condition =
+      current_condition
+      |> Map.take(
+        ~w(signal_correlation_id target_id occurrence first_fired_at current_occurred_at)a
+      )
+      |> Map.merge(%{
+        predicate: "Historical fixture",
+        occurrence: current_condition.occurrence + 1,
+        subject_key: "history-capacity",
+        subject_ref: %{},
+        state: :recovered
+      })
+      |> Signals.create_condition_record!(authorize?: false)
+
+    for index <- 1..100 do
+      attached_at = DateTime.add(incident.inserted_at, index, :second)
+
+      membership =
+        Cases.attach_case_condition_record!(
+          %{
+            case_id: incident.id,
+            condition_id: historical_condition.id,
+            attached_at: attached_at,
+            reason: "Historical fixture"
+          },
+          authorize?: false
+        )
+
+      Cases.detach_case_condition_record!(
+        membership,
+        membership.revision,
+        %{detached_at: DateTime.add(attached_at, 1, :second), reason: String.duplicate("h", 500)},
+        authorize?: false
+      )
+    end
+
+    response = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert byte_size(response.resp_body) < 30_000
+    snapshot = json_response(response, 200)["data"]
+    refute Map.has_key?(snapshot, "condition_history")
+    assert length(snapshot["conditions"]) == 2
+    assert snapshot["case"]["condition_count"] == 2
+    assert snapshot["case"]["firing_condition_count"] == 2
+
+    history_path = "/api/v1/cases/#{incident.id}/condition-history"
+    history_response = get_json("#{history_path}?limit=100", context.viewer_token)
+    history = json_response(history_response, 200)
+    assert_operation_response(history_response)
+    assert length(history["data"]) == 100
+    assert Enum.all?(history["data"], &(&1["condition_id"] == historical_condition.id))
+    assert Enum.all?(history["data"], &(&1["detached_at"] != nil))
+    history_query = URI.encode_query(%{"after" => history["page"]["next"], "limit" => 100})
+    history_tail = get_json("#{history_path}?#{history_query}", context.viewer_token)
+    assert length(json_response(history_tail, 200)["data"]) == 2
+    assert json_response(history_tail, 200)["page"]["next"] == nil
+    assert json_response(get_json(history_path, nil), 401)["error"]["code"] == "unauthenticated"
 
     Opsonde.Repo.query!(
       "ALTER TABLE operations RENAME COLUMN result_details TO unavailable_result_details"
@@ -569,6 +629,82 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     stub = {__MODULE__, make_ref()}
     Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
     runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    history_cli =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 [
+                   "case",
+                   "condition-history",
+                   incident.id,
+                   "--limit",
+                   "100",
+                   "--after",
+                   history["page"]["next"]
+                 ],
+                 runtime
+               ) == 0
+      end)
+
+    assert Map.take(Jason.decode!(history_cli), ["data", "page"]) ==
+             json_response(history_tail, 200)
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE case_condition_memberships RENAME COLUMN reason TO unavailable_reason"
+    )
+
+    try do
+      capture_log(fn ->
+        current_only = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+        assert json_response(current_only, 200)["data"]["conditions"] == snapshot["conditions"]
+        failed = get_json(history_path, context.viewer_token)
+        assert json_response(failed, 500)["error"]["code"] == "internal_error"
+
+        capture_io(:stderr, fn ->
+          assert OpsondeCLI.CLI.run(["case", "condition-history", incident.id], runtime) == 4
+        end)
+      end)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE case_condition_memberships RENAME COLUMN unavailable_reason TO reason"
+      )
+    end
+
+    assert json_response(get_json("#{history_path}?limit=100", context.viewer_token), 200) ==
+             history
+
+    for {table, column} <- [
+          {"case_condition_memberships", "condition_id"},
+          {"conditions", "predicate"}
+        ] do
+      Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_#{column}")
+
+      try do
+        assert {:error, %Ash.Error.Unknown{} = cause} =
+                 Cases.case_reconnect_snapshot(incident.id, actor: context.admin)
+
+        assert Exception.message(cause) =~ "does not exist"
+
+        capture_log(fn ->
+          failed = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+          assert json_response(failed, 500)["error"]["code"] == "internal_error"
+
+          capture_io(:stderr, fn ->
+            assert OpsondeCLI.CLI.run(["case", "show", incident.id], runtime) == 4
+          end)
+        end)
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE #{table} RENAME COLUMN unavailable_#{column} TO #{column}"
+        )
+      end
+
+      assert get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)["conditions"] ==
+               snapshot["conditions"]
+    end
+
+    refute_receive {:resolve, _, _}
+    refute_receive {:effect, _, _}
 
     Opsonde.Repo.query!(
       "ALTER TABLE evidences RENAME COLUMN observed_at TO unavailable_observed_at"
@@ -775,9 +911,17 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              Enum.map(get_data!("/api/v1/cases", context.viewer_token), & &1["condition_count"])
            ) == [1, 1]
 
-    assert length(parent_snapshot["condition_history"]) == 2
-    assert length(child_snapshot["condition_history"]) == 1
-    assert Enum.any?(parent_snapshot["condition_history"], &(&1["detached_at"] != nil))
+    parent_tail = get_data!("#{history_path}?#{history_query}", context.viewer_token)
+    assert length(parent_tail) == 2
+
+    assert Enum.any?(
+             parent_tail,
+             &(&1["condition_id"] == moved["id"] && &1["detached_at"] != nil)
+           )
+
+    child_history = get_data!("/api/v1/cases/#{child_id}/condition-history", context.viewer_token)
+    assert length(child_history) == 1
+    assert hd(child_history)["condition_id"] == moved["id"]
 
     timeline = get_data!("/api/v1/cases/#{parent.id}/timeline", context.viewer_token)
     assert Enum.any?(timeline, &(&1["related_case_id"] == child_id))
