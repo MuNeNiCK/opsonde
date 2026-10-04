@@ -164,7 +164,9 @@ defmodule Opsonde.Cases.Operation do
       validate Opsonde.Validations.CurrentRevision
       validate present(:completed_at)
       validate present(:outcome_category)
-      validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :result_details, max_bytes: Opsonde.Providers.Target.max_result_bytes()}
 
       validate {Opsonde.Validations.BoundedMap, argument: :protected_reference} do
         where present(:protected_reference)
@@ -190,7 +192,10 @@ defmodule Opsonde.Cases.Operation do
       validate Opsonde.Validations.CurrentRevision
       validate present(:completed_at)
       validate present(:outcome_category)
-      validate {Opsonde.Validations.BoundedMap, attribute: :result_details}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :result_details, max_bytes: Opsonde.Providers.Target.max_result_bytes()}
+
       change transition_state(:failed)
       change set_attribute(:dispatch_started_at, nil)
       change optimistic_lock(:revision)
@@ -349,7 +354,13 @@ defmodule Opsonde.Cases.Operation do
 
     attribute :reference, :string,
       public?: true,
-      constraints: [min_length: 1, max_length: 500]
+      constraints: [
+        min_length: 1,
+        max_length: Opsonde.Providers.Target.max_result_bytes(),
+        length_count: :bytes,
+        match: ~r/\A[^\x00]*\z/u,
+        trim?: false
+      ]
 
     attribute :protected_reference, :map, sensitive?: true
 

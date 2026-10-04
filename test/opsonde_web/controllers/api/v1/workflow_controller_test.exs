@@ -1278,13 +1278,17 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_operation_response(invalid_revision)
   end
 
-  test "public evidence pages expose the complete canonical receipt to authenticated clients",
+  @tag normalized_public_receipt: true
+  test "public clients read the complete normalized receipt and opaque reference",
        context do
     configure_mode!(:full_access, context.admin)
-    setup = proposal_setup!(context)
+    setup = proposal_setup!(context, token: "!")
     {incident, proposal} = awaiting_proposal!(setup, context.operator)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
-    details = %{"payload" => String.duplicate("y", 65_522)}
+    details = %{"payload" => String.duplicate("!", 65_522)}
+    expected_details = %{"payload" => String.duplicate("[REDACTED]", 65_522)}
+    reference = " " <> String.duplicate("!", 65_534) <> " "
+    expected_reference = " " <> String.duplicate("[REDACTED]", 65_534) <> " "
 
     assert :ok =
              Opsonde.Cases.Operation.Delivery.run(operation.id,
@@ -1292,7 +1296,11 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                  test_pid: self(),
                  respond: fn ->
                    {:ok,
-                    %Opsonde.Providers.Target.EffectResult{status: :applied, details: details}}
+                    %Opsonde.Providers.Target.EffectResult{
+                      status: :applied,
+                      details: details,
+                      reference: reference
+                    }}
                  end
                }
              )
@@ -1304,10 +1312,23 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       assert_operation_response(response)
       body = json_response(response, 200)
       receipt = Enum.find(body["data"], &(&1["source_ref"] == operation.id))
-      assert receipt["content"]["details"] == details
+      assert receipt["content"]["details"] == expected_details
+      assert receipt["content"]["reference"] == expected_reference
       assert receipt["content"]["parameters"] == %{"service" => "api"}
       assert receipt["content"]["tool_id"] == proposal.tool_id
       refute Map.has_key?(receipt, "stored_content")
+
+      response = get_json("/api/v1/operations/#{operation.id}", token)
+      assert_operation_response(response)
+      assert json_response(response, 200)["data"]["reference"] == expected_reference
+      assert json_response(response, 200)["data"]["result_details"] == expected_details
+
+      response = get_json("/api/v1/cases/#{incident.id}", token)
+      assert_operation_response(response)
+      snapshot = json_response(response, 200)["data"]
+      assert hd(snapshot["operations"])["reference"] == expected_reference
+      assert hd(snapshot["operations"])["result_details"] == expected_details
+      assert hd(snapshot["verification_attempts"])["operation_reference"] == expected_reference
     end
 
     assert get_json("/api/v1/cases/#{incident.id}/evidence", nil).status == 401
@@ -1330,14 +1351,14 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     }
   end
 
-  defp proposal_setup!(context) do
+  defp proposal_setup!(context, opts \\ []) do
     provider =
       Providers.create_provider!(
         "workflow-target-provider",
         :target,
         "fixture-target",
         %{"endpoint" => "reachable"},
-        %{"token" => "provider-secret"},
+        %{"token" => Keyword.get(opts, :token, "provider-secret")},
         actor: context.admin
       )
       |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))

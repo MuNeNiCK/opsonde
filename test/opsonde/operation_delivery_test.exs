@@ -23,7 +23,7 @@ defmodule Opsonde.OperationDeliveryTest do
 
   @password "correct horse battery staple"
 
-  setup do
+  setup tags do
     admin =
       Accounts.bootstrap!("operation-admin@example.com", @password, @password, authorize?: true)
 
@@ -36,7 +36,7 @@ defmodule Opsonde.OperationDeliveryTest do
         :target,
         "fixture-target",
         %{"endpoint" => "reachable"},
-        %{"token" => "operation-secret"},
+        %{"token" => if(tags[:normalized_capacity], do: "!", else: "operation-secret")},
         actor: admin
       )
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
@@ -99,6 +99,240 @@ defmodule Opsonde.OperationDeliveryTest do
       resolver_assignment: resolver_assignment,
       reviewer_provider: reviewer_provider
     }
+  end
+
+  @tag normalized_capacity: true
+  test "maximum raw effect survives redaction and failed Evidence storage without losing its known result",
+       context do
+    details = %{"payload" => String.duplicate("!", 65_522)}
+    expected = %{"payload" => String.duplicate("[REDACTED]", 65_522)}
+    assert byte_size(Jason.encode!(details)) == 65_536
+    assert byte_size(Jason.encode!(expected)) == 655_234
+
+    {incident, _run, proposal} = authorized_proposal!("redacted-effect-receipt", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_redacted_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Redacted receipt storage unavailable'; END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_redacted_receipt BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source = 'operation')
+    EXECUTE FUNCTION pg_temp.reject_redacted_receipt()
+    """)
+
+    try do
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn ->
+                     send(self(), :redacted_effect_sent)
+                     {:ok, %Target.EffectResult{status: :applied, details: details}}
+                   end)
+               )
+
+      assert Exception.message(error) =~ "Redacted receipt storage unavailable"
+    after
+      Repo.query!("DROP TRIGGER reject_redacted_receipt ON evidences")
+    end
+
+    assert_received :redacted_effect_sent
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert saved.status == :applied
+    assert saved.result_details == expected
+
+    for _ <- 1..2 do
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn -> flunk("known redacted effect was resent") end)
+               )
+    end
+
+    page = Cases.page_case_evidence!(incident.id, actor: context.operator)
+    receipt = Enum.find(page.results, &(&1.source_ref == operation.id))
+    assert receipt.content["details"] == expected
+    assert Enum.count(page.results, &(&1.source_ref == operation.id)) == 1
+    assert Cases.get_operation!(operation.id, actor: context.operator).status == :applied
+  end
+
+  @tag normalized_verification: true, normalized_capacity: true
+  test "maximum raw verification keeps both redacted facts and provider evidence after a save failure",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("redacted-verification-receipt", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation({:ok, %Target.EffectResult{status: :applied}})
+             )
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    facts = %{"payload" => String.duplicate("!", 32_742)}
+    items = [%{"payload" => String.duplicate("!", 32_742)}]
+    assert byte_size(Jason.encode!(%{"facts" => facts, "evidence" => items})) == 65_536
+    expected_facts = %{"payload" => String.duplicate("[REDACTED]", 32_742)}
+    expected_items = [%{"payload" => String.duplicate("[REDACTED]", 32_742)}]
+
+    result = %Target.Verification{
+      status: :verified,
+      facts: facts,
+      evidence: items,
+      observed_at: DateTime.utc_now()
+    }
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_redacted_verification() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Redacted verification storage unavailable'; END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_redacted_verification BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source = 'verification')
+    EXECUTE FUNCTION pg_temp.reject_redacted_verification()
+    """)
+
+    try do
+      assert {:error, error} =
+               VerificationDelivery.run(attempt.id, target_invocation: invocation({:ok, result}))
+
+      assert Exception.message(error) =~ "Redacted verification storage unavailable"
+    after
+      Repo.query!("DROP TRIGGER reject_redacted_verification ON evidences")
+    end
+
+    assert_receive {:verify, _, _}
+    saved = Cases.get_verification_attempt!(attempt.id, actor: context.operator)
+    assert saved.status == :verified
+    assert saved.facts == expected_facts
+    assert saved.provider_evidence == %{"items" => expected_items}
+
+    for _ <- 1..2 do
+      assert :ok =
+               VerificationDelivery.run(attempt.id,
+                 target_invocation: invocation(fn -> flunk("known verification was resent") end)
+               )
+    end
+
+    receipt =
+      Cases.page_case_evidence!(incident.id, actor: context.operator).results
+      |> Enum.find(&(&1.source_ref == attempt.id))
+
+    assert receipt.content["facts"] == expected_facts
+    assert receipt.content["provider_evidence"] == %{"items" => expected_items}
+    refute_receive {:verify, _, _}
+  end
+
+  @tag normalized_reference: true, normalized_capacity: true
+  test "a bounded opaque result reference retains its bytes through verification and public reads",
+       context do
+    {incident, _run, proposal} = authorized_proposal!("opaque-result-reference", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    reference = " " <> String.duplicate("!", 65_534) <> " "
+    expected = " " <> String.duplicate("[REDACTED]", 65_534) <> " "
+    assert byte_size(reference) == 65_536
+    assert byte_size(expected) == 655_342
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :applied,
+                      reference: reference
+                    }}
+                 )
+             )
+
+    assert Cases.get_operation!(operation.id, actor: context.operator).reference == expected
+    [attempt] = Cases.verification_attempts_for_case!(incident.id, actor: context.operator)
+    assert attempt.operation_reference == expected
+
+    assert :ok =
+             VerificationDelivery.run(attempt.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Verification{
+                      status: :verified,
+                      observed_at: DateTime.utc_now()
+                    }}
+                 )
+             )
+
+    assert_receive {:verify, _state, request}
+    assert request.reference == expected
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(fn -> flunk("opaque reference effect was resent") end)
+             )
+
+    assert operation_evidence_record(operation.id).content["reference"] == expected
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+  end
+
+  @tag normalized_capacity: true
+  test "maximum raw observation retains redacted data and observation time in canonical Evidence",
+       context do
+    {incident, _run, proposal} =
+      authorized_proposal!("redacted-observation", context,
+        request_kind: :observation,
+        purpose: :investigation
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    facts = %{"payload" => String.duplicate("!", 65_498)}
+    assert byte_size(Jason.encode!(%{"facts" => facts, "evidence" => []})) == 65_536
+    observed_at = ~U[2026-10-04 00:00:00.123456Z]
+    expected = %{"payload" => String.duplicate("[REDACTED]", 65_498)}
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      facts: facts,
+                      evidence: [],
+                      observed_at: observed_at
+                    }}
+                 )
+             )
+
+    assert_receive {:observe, _, _}
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert saved.status == :applied
+
+    assert saved.result_details == %{
+             "facts" => expected,
+             "evidence" => [],
+             "observed_at" => "2026-10-04T00:00:00.123456Z"
+           }
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("known observation was resent") end)
+             )
+
+    receipt =
+      Cases.page_case_evidence!(incident.id, actor: context.operator).results
+      |> Enum.find(&(&1.source_ref == operation.id))
+
+    assert receipt.content["facts"] == expected
+
+    assert receipt.content["details"] == %{
+             "evidence" => [],
+             "observed_at" => "2026-10-04T00:00:00.123456Z"
+           }
+
+    assert receipt.kind == "observation"
   end
 
   test "large admitted request and result survive an Evidence save failure without resending",

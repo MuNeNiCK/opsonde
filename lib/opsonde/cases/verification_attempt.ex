@@ -94,8 +94,14 @@ defmodule Opsonde.Cases.VerificationAttempt do
       validate present(:outcome_category)
       validate present(:observed_at)
       validate present(:completed_at)
-      validate {Opsonde.Validations.BoundedMap, attribute: :facts}
-      validate {Opsonde.Validations.BoundedMap, attribute: :provider_evidence}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :facts, max_bytes: Opsonde.Providers.Target.max_result_bytes()}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :provider_evidence,
+                max_bytes: Opsonde.Providers.Target.max_result_bytes()}
+
       change optimistic_lock(:revision)
     end
 
@@ -134,8 +140,14 @@ defmodule Opsonde.Cases.VerificationAttempt do
       validate present(:outcome_category)
       validate present(:observed_at)
       validate present(:completed_at)
-      validate {Opsonde.Validations.BoundedMap, attribute: :facts}
-      validate {Opsonde.Validations.BoundedMap, attribute: :provider_evidence}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :facts, max_bytes: Opsonde.Providers.Target.max_result_bytes()}
+
+      validate {Opsonde.Validations.BoundedMap,
+                attribute: :provider_evidence,
+                max_bytes: Opsonde.Providers.Target.max_result_bytes()}
+
       change set_attribute(:status, :unknown)
       change set_attribute(:dispatch_started_at, nil)
       change optimistic_lock(:revision)
@@ -238,7 +250,13 @@ defmodule Opsonde.Cases.VerificationAttempt do
 
     attribute :operation_reference, :string,
       public?: true,
-      constraints: [min_length: 1, max_length: 500]
+      constraints: [
+        min_length: 1,
+        max_length: Opsonde.Providers.Target.max_result_bytes(),
+        length_count: :bytes,
+        match: ~r/\A[^\x00]*\z/u,
+        trim?: false
+      ]
 
     attribute :authorization_digest, :string,
       allow_nil?: false,

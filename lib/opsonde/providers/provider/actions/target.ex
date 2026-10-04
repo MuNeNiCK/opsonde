@@ -11,7 +11,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   @verification_statuses [:verified, :not_verified, :unknown]
   @max_read_attempts 5
   @max_payload_items 100
-  @max_payload_bytes 65_536
+  @max_payload_bytes Target.max_payload_bytes()
 
   @impl true
   def run(input, opts, _context) do
@@ -256,9 +256,15 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
     if bounded_map?(facts) and bounded_list?(evidence) and
          valid_state_facts?(value.state_facts, facts) and
-         bounded_map?(result),
-       do: {:ok, Redactor.value(value, credentials)},
-       else: {:error, target_error(:failed, "Invalid observation result")}
+         bounded_map?(result) do
+      public = Redactor.value(value, credentials)
+
+      if bounded_map?(Target.Observation.details(public), Target.max_result_bytes()),
+        do: {:ok, public},
+        else: {:error, target_error(:failed, "Invalid observation result")}
+    else
+      {:error, target_error(:failed, "Invalid observation result")}
+    end
   end
 
   defp normalize_observation(result, credentials),
@@ -276,10 +282,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
   defp normalize_effect({:ok, %Target.EffectResult{status: status} = value}, credentials)
        when status in @effect_statuses and is_map(value.details) do
     if bounded_map?(value.details) and
-         (is_nil(value.reference) or nonempty_binary?(value.reference)) and
+         Target.valid_result_reference?(value.reference, @max_payload_bytes) and
          (is_nil(value.protected_reference) or bounded_map?(value.protected_reference)) do
       public = Redactor.value(%{value | protected_reference: nil}, credentials)
-      {:ok, %{public | protected_reference: value.protected_reference}}
+
+      if bounded_map?(public.details, Target.max_result_bytes()) and
+           Target.valid_result_reference?(public.reference) do
+        {:ok, %{public | protected_reference: value.protected_reference}}
+      else
+        {:error, target_error(:failed, "Invalid effect result")}
+      end
     else
       {:error, target_error(:failed, "Invalid effect result")}
     end
@@ -300,9 +312,18 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
        )
        when status in @verification_statuses and is_map(facts) and is_list(evidence) do
     if bounded_map?(facts) and bounded_list?(evidence) and
-         bounded_map?(%{"facts" => facts, "evidence" => evidence}),
-       do: {:ok, Redactor.value(value, credentials)},
-       else: {:error, target_error(:failed, "Invalid verification result")}
+         bounded_map?(%{"facts" => facts, "evidence" => evidence}) do
+      public = Redactor.value(value, credentials)
+
+      if bounded_map?(
+           %{"facts" => public.facts, "evidence" => public.evidence},
+           Target.max_result_bytes()
+         ),
+         do: {:ok, public},
+         else: {:error, target_error(:failed, "Invalid verification result")}
+    else
+      {:error, target_error(:failed, "Invalid verification result")}
+    end
   end
 
   defp normalize_verification(result, credentials),
@@ -355,7 +376,7 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp validate_verification_request(%Target.VerificationRequest{} = request) do
     if valid_request_base?(request) and nonempty_binary?(request.operation_id) and
-         (is_nil(request.reference) or nonempty_binary?(request.reference)) and
+         Target.valid_result_reference?(request.reference) and
          bounded_map?(request.parameters) and bounded_map?(request.expected) do
       :ok
     else
@@ -419,14 +440,16 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
 
   defp bounded_term_list?(_items), do: false
 
-  defp bounded_map?(map) when is_map(map) and map_size(map) <= @max_payload_items,
-    do: bounded_json?(map)
+  defp bounded_map?(map, maximum \\ @max_payload_bytes)
 
-  defp bounded_map?(_map), do: false
+  defp bounded_map?(map, maximum) when is_map(map) and map_size(map) <= @max_payload_items,
+    do: bounded_json?(map, maximum)
 
-  defp bounded_json?(value) do
+  defp bounded_map?(_map, _maximum), do: false
+
+  defp bounded_json?(value, maximum \\ @max_payload_bytes) do
     case Jason.encode(value) do
-      {:ok, encoded} -> byte_size(encoded) <= @max_payload_bytes
+      {:ok, encoded} -> byte_size(encoded) <= maximum
       {:error, _reason} -> false
     end
   end

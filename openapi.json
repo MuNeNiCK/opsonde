@@ -260,7 +260,7 @@
             "type": "string"
           },
           "operation_reference": {
-            "maxLength": 500,
+            "maxLength": 655360,
             "nullable": true,
             "type": "string"
           },
@@ -3115,7 +3115,7 @@
             "type": "string"
           },
           "reference": {
-            "maxLength": 500,
+            "maxLength": 655360,
             "nullable": true,
             "type": "string"
           },

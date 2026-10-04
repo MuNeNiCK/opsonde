@@ -18,7 +18,9 @@ defmodule Opsonde.Targets.HTTPAPITest do
         end)
       end)
 
-      if get_req_header(conn, "authorization") == ["Bearer fixture-token"] and
+      credential = Agent.get(agent, &Map.get(&1, :credential, "fixture-token"))
+
+      if get_req_header(conn, "authorization") == ["Bearer " <> credential] and
            Agent.get(agent, &Map.get(&1, :authorized, true)) do
         route(conn, agent)
       else
@@ -174,9 +176,14 @@ defmodule Opsonde.Targets.HTTPAPITest do
     end
   end
 
-  setup do
+  setup tags do
+    credential = if(tags[:normalized_native], do: "@", else: "fixture-token")
     observer = self()
-    agent = start_supervised!({Agent, fn -> %{writes: [], observer: observer} end})
+
+    agent =
+      start_supervised!(
+        {Agent, fn -> %{writes: [], observer: observer, credential: credential} end}
+      )
 
     server =
       start_supervised!({Bandit, plug: {Stub, agent}, scheme: :http, port: 0, startup_log: false})
@@ -205,7 +212,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
         :target,
         "http-api",
         %{},
-        %{"bearer_token" => "fixture-token"},
+        %{"bearer_token" => credential},
         actor: admin
       )
       |> then(&Providers.enable_provider!(&1, &1.revision, actor: admin))
@@ -234,7 +241,7 @@ defmodule Opsonde.Targets.HTTPAPITest do
       )
       |> then(&Targets.check_access_method!(&1.id, &1.revision, %{}, actor: admin))
 
-    {:ok, state} = HTTP.build(%{}, %{"bearer_token" => "fixture-token"})
+    {:ok, state} = HTTP.build(%{}, %{"bearer_token" => credential})
     {:ok, state} = HTTP.bind_connection(state, %Target.Connection{endpoint: endpoint})
 
     %{
@@ -858,6 +865,61 @@ defmodule Opsonde.Targets.HTTPAPITest do
 
     assert Enum.any?(dispatch_error.errors, &match?(%Target.Error{category: :failed}, &1))
     assert Agent.get(context.agent, & &1.writes) == []
+  end
+
+  @tag normalized_native: true
+  test "registered HTTP observation and verification retain the complete normalized native response",
+       context do
+    Agent.update(context.agent, &Map.put(&1, :status, String.duplicate("@", 8_192)))
+
+    request = %Request{
+      kind: :observation,
+      authority_mode: :readonly,
+      target_id: context.target.id,
+      target_revision: context.target.revision,
+      access_method_id: context.method.id,
+      access_method_revision: context.method.revision,
+      capability: "request.http.observe",
+      operation: "request.observe",
+      parameters: %{"method" => "GET", "path" => "/api/status"}
+    }
+
+    observation =
+      request
+      |> Targets.clear_target_request!(actor: context.operator)
+      |> Targets.dispatch_target_observation!(%{}, actor: context.operator, authorize?: false)
+
+    assert observation.facts["body"] == String.duplicate("[REDACTED]", 8_192)
+    assert observation.facts["body_truncated"] == false
+    assert byte_size(Jason.encode!(observation.facts)) > 65_536
+
+    verification =
+      Providers.target_verify!(
+        context.provider.id,
+        %Target.VerificationRequest{
+          provider_revision: context.provider.revision,
+          target_id: context.target.id,
+          target_revision: context.target.revision,
+          access_method_id: context.method.id,
+          access_method_revision: context.method.revision,
+          connection: %Target.Connection{endpoint: context.endpoint},
+          capability: "request.http.observe",
+          operation: "request.observe",
+          authorization_digest: "fixture",
+          operation_id: "fixture",
+          parameters: request.parameters,
+          expected: %{"status" => 200}
+        },
+        %{},
+        actor: context.operator,
+        authorize?: false
+      )
+
+    assert verification.status == :verified
+    assert verification.facts["body"] == observation.facts["body"]
+
+    assert Enum.count(Agent.get(context.agent, & &1.requests), &(&1 == {"GET", "/api/status"})) ==
+             2
   end
 
   test "a lost HTTP effect response stays unknown and is not replayed", context do

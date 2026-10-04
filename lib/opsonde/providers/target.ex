@@ -1,6 +1,21 @@
 defmodule Opsonde.Providers.Target do
   @moduledoc false
 
+  # Pure protocol-port limits shared by admission and canonical receipt storage.
+  # Fixed observation/verification framing fits within the unchanged JSON
+  # scaffolding's headroom in the redaction expansion bound.
+  def max_payload_bytes, do: 65_536
+  def max_result_bytes, do: Opsonde.Providers.Redactor.max_encoded_bytes(max_payload_bytes())
+
+  # Opaque references are UTF-8 text, with bytes and whitespace preserved.
+  def valid_result_reference?(value, maximum \\ max_result_bytes())
+  def valid_result_reference?(nil, _maximum), do: true
+
+  def valid_result_reference?(value, maximum) do
+    is_binary(value) and byte_size(value) in 1..maximum and String.valid?(value) and
+      not String.contains?(value, <<0>>)
+  end
+
   defmodule EvidenceRequirement do
     @moduledoc false
     @enforce_keys [:parameter, :fact, :observation]
@@ -332,6 +347,18 @@ defmodule Opsonde.Providers.Target do
     @enforce_keys [:facts, :observed_at]
     defstruct @enforce_keys ++ [evidence: [], state_facts: nil]
     @type t :: %__MODULE__{}
+
+    def details(%__MODULE__{} = value) do
+      details = %{
+        "facts" => value.facts,
+        "evidence" => value.evidence,
+        "observed_at" => DateTime.to_iso8601(value.observed_at)
+      }
+
+      if value.state_facts,
+        do: Map.put(details, "state_facts", value.state_facts),
+        else: details
+    end
   end
 
   defmodule EffectRequest do
@@ -562,7 +589,7 @@ defmodule Opsonde.Providers.Target do
 
   defp bounded_map?(value) when is_map(value) and map_size(value) <= 100 do
     case Jason.encode(value) do
-      {:ok, encoded} -> byte_size(encoded) <= 65_536
+      {:ok, encoded} -> byte_size(encoded) <= max_payload_bytes()
       {:error, _reason} -> false
     end
   end

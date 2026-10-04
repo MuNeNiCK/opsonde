@@ -7,6 +7,10 @@ defmodule Opsonde.Providers.Redactor do
     password passphrase private_key secret signing_secret token
   )
 
+  # Each match consumes at least one input byte. Single-pass replacement never
+  # scans an inserted marker, and JSON syntax itself is not replaced.
+  def max_encoded_bytes(input_bytes), do: input_bytes * byte_size(@redacted)
+
   def message(message, credentials) when is_binary(message) and is_map(credentials) do
     case secret_strings(credentials) do
       [] -> message

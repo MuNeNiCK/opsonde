@@ -578,6 +578,35 @@ defmodule Opsonde.Providers.TargetTest do
   end
 
   @tag redaction_capacity: true
+  @tag reference_capacity: true
+  test "opaque effect references obey the raw byte budget before normalization", context do
+    request = effect_request(context.provider.revision, "reference-limit")
+    reference = " " <> String.duplicate("x", 65_534) <> " "
+
+    assert {:ok, %Target.EffectResult{reference: ^reference}} =
+             Providers.target_effect(
+               context.provider.id,
+               request,
+               invocation(%Target.EffectResult{status: :applied, reference: reference}),
+               actor: context.admin,
+               authorize?: false
+             )
+
+    for invalid <- [reference <> "x", String.duplicate("界", 21_846), <<255>>, "a\0b"] do
+      assert {:error, error} =
+               Providers.target_effect(
+                 context.provider.id,
+                 request,
+                 invocation(%Target.EffectResult{status: :applied, reference: invalid}),
+                 actor: context.admin,
+                 authorize?: false
+               )
+
+      assert target_error(error).message == "Invalid effect result"
+    end
+  end
+
+  @tag redaction_capacity: true
   test "redaction does not expand its inserted markers in a bounded effect receipt", context do
     provider =
       Providers.create_provider!(

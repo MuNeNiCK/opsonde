@@ -8,7 +8,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
   @authority_modes [:readonly, :ask, :auto, :full_access]
   @request_kinds [:observation, :effect, :verification]
   @max_payload_items 100
-  @max_payload_bytes 65_536
+  @max_payload_bytes ProviderTarget.max_payload_bytes()
 
   @impl true
   def run(input, opts, context) do
@@ -454,7 +454,7 @@ defmodule Opsonde.Targets.TargetRequest.Actions.Dispatch do
       request.kind == :verification and not nonempty_binary?(request.operation_id) ->
         invalid_request()
 
-      not is_nil(request.reference) and not nonempty_binary?(request.reference) ->
+      not ProviderTarget.valid_result_reference?(request.reference) ->
         invalid_request()
 
       true ->
