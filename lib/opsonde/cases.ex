@@ -462,6 +462,14 @@ defmodule Opsonde.Cases do
       define :operation_summaries_for_case, action: :summaries_for_case, args: [:case_id]
       define :page_case_operations, action: :page_for_case, args: [:case_id]
 
+      define :latest_recovery_effect,
+        action: :latest_recovery_effect,
+        args: [:case_id, :condition_ids, :exclude_operation_id]
+
+      define :latest_applied_recovery_effect,
+        action: :latest_applied_recovery_effect,
+        args: [:case_id, :resolution_run_id, :condition_ids]
+
       define :recent_method_observations,
         action: :recent_method_observations,
         args: [

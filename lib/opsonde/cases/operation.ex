@@ -78,6 +78,50 @@ defmodule Opsonde.Cases.Operation do
       prepare build(select: @summary_fields, sort: [inserted_at: :desc, id: :desc])
     end
 
+    read :latest_recovery_effect do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :condition_ids, {:array, :uuid}
+      argument :exclude_operation_id, :uuid
+
+      filter expr(
+               case_id == ^arg(:case_id) and purpose == :remediation and
+                 not (status == :failed and is_nil(dispatch_started_at)) and
+                 (is_nil(^arg(:exclude_operation_id)) or id != ^arg(:exclude_operation_id)) and
+                 (is_nil(^arg(:condition_ids)) or
+                    exists(
+                      proposal,
+                      fragment(
+                        "EXISTS (SELECT 1 FROM unnest(?) AS affected WHERE (affected->>'condition_id')::uuid = ANY(?::uuid[]))",
+                        affected_conditions,
+                        ^arg(:condition_ids)
+                      )
+                    ))
+             )
+
+      prepare build(select: @summary_fields, sort: [accepted_at: :desc, id: :desc], limit: 1)
+    end
+
+    read :latest_applied_recovery_effect do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+      argument :condition_ids, {:array, :uuid}, allow_nil?: false, constraints: [min_length: 1]
+
+      filter expr(
+               case_id == ^arg(:case_id) and resolution_run_id == ^arg(:resolution_run_id) and
+                 purpose == :remediation and status == :applied and not is_nil(completed_at) and
+                 exists(
+                   proposal,
+                   fragment(
+                     "EXISTS (SELECT 1 FROM unnest(?) AS affected WHERE (affected->>'condition_id')::uuid = ANY(?::uuid[]))",
+                     affected_conditions,
+                     ^arg(:condition_ids)
+                   )
+                 )
+             )
+
+      prepare build(select: @summary_fields, sort: [completed_at: :desc, id: :desc], limit: 1)
+    end
+
     read :recent_method_observations do
       argument :case_id, :uuid, allow_nil?: false
       argument :resolution_run_id, :uuid, allow_nil?: false
@@ -269,7 +313,14 @@ defmodule Opsonde.Cases.Operation do
       forbid_if always()
     end
 
-    policy action([:read, :for_case, :summaries_for_case, :page_for_case]) do
+    policy action([
+             :read,
+             :for_case,
+             :summaries_for_case,
+             :page_for_case,
+             :latest_recovery_effect,
+             :latest_applied_recovery_effect
+           ]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

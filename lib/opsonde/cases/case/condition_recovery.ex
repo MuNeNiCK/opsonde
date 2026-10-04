@@ -20,7 +20,12 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     with {:ok, memberships} <-
            Cases.active_conditions_for_case(incident.id, authorize?: false, load: [:condition]),
          true <- memberships != [] || invalid("Signal Case has no active Conditions"),
-         {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, exclude_operation_id),
+         {:ok, effects} <-
+           lineage_effects(
+             incident,
+             Enum.map(memberships, & &1.condition_id),
+             exclude_operation_id
+           ),
          {:ok, evidence} <-
            Cases.condition_assessment_evidence(
              incident.id,
@@ -48,20 +53,24 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   def inherited_baseline(incident), do: incident.recovery_baseline_at || incident.inserted_at
 
   def applied_effect_refresh_at(incident, run_id, condition_ids) do
-    selected = MapSet.new(condition_ids)
-
-    if MapSet.size(selected) == 0 do
+    if condition_ids == [] do
       {:ok, nil}
     else
-      with {:ok, effects} <- lineage_effects(incident, MapSet.new(), 0, nil) do
-        effects
-        |> Enum.filter(fn {operation, ids} ->
-          operation.resolution_run_id == run_id and operation.status == :applied and
-            is_struct(operation.completed_at, DateTime) and
-            Enum.any?(ids, &MapSet.member?(selected, &1))
+      with {:ok, case_ids} <- lineage_case_ids(incident, MapSet.new(), 0) do
+        Enum.reduce_while(case_ids, {:ok, nil}, fn case_id, {:ok, latest_at} ->
+          case Cases.latest_applied_recovery_effect(case_id, run_id, condition_ids,
+                 authorize?: false
+               ) do
+            {:ok, [operation]} ->
+              {:cont, {:ok, later_time(latest_at, operation.completed_at)}}
+
+            {:ok, []} ->
+              {:cont, {:ok, latest_at}}
+
+            {:error, _error} = error ->
+              {:halt, error}
+          end
         end)
-        |> Enum.map(fn {operation, _ids} -> operation.completed_at end)
-        |> then(&{:ok, Enum.max(&1, DateTime, fn -> nil end)})
       end
     end
   end
@@ -69,12 +78,9 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   def baseline_for_case(incident) do
     inherited = inherited_baseline(incident)
 
-    with {:ok, operations} <- Cases.operation_summaries_for_case(incident.id, authorize?: false),
-         true <- length(operations) < 100 || invalid("Operation history exceeds recovery bound") do
-      operations
-      |> Enum.filter(&affects_recovery?/1)
-      |> Enum.sort_by(& &1.accepted_at, {:desc, DateTime})
-      |> case do
+    with {:ok, operations} <-
+           Cases.latest_recovery_effect(incident.id, nil, nil, authorize?: false) do
+      case operations do
         [] ->
           {:ok, inherited}
 
@@ -260,19 +266,11 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp condition_baseline(incident, condition_id, effects) do
-    relevant = Enum.filter(effects, fn {_operation, ids} -> condition_id in ids end)
-
-    case Enum.sort_by(
-           relevant,
-           fn {operation, _ids} ->
-             {DateTime.to_unix(operation.accepted_at, :microsecond), operation.id}
-           end,
-           :desc
-         ) do
-      [] ->
+    case Map.get(effects, condition_id) do
+      nil ->
         {:ok, inherited_baseline(incident)}
 
-      [{%{status: status, completed_at: %DateTime{} = completed_at}, _ids} | _]
+      %{status: status, completed_at: %DateTime{} = completed_at}
       when status in [:applied, :failed, :partial, :unknown] ->
         inherited = inherited_baseline(incident)
 
@@ -284,66 +282,77 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     end
   end
 
-  defp lineage_effects(_incident, _seen, depth, _exclude_operation_id)
-       when depth >= @max_lineage_depth,
-       do: invalid("Case split lineage exceeds recovery bound")
+  defp lineage_effects(incident, condition_ids, exclude_operation_id) do
+    with {:ok, case_ids} <- lineage_case_ids(incident, MapSet.new(), 0) do
+      Enum.reduce_while(case_ids, {:ok, %{}}, fn case_id, {:ok, collected} ->
+        case scoped_effects(case_id, condition_ids, exclude_operation_id) do
+          {:ok, effects} ->
+            {:cont,
+             {:ok,
+              Map.merge(collected, effects, fn _id, first, second ->
+                newest_effect(first, second)
+              end)}}
 
-  defp lineage_effects(incident, seen, depth, exclude_operation_id) do
-    if MapSet.member?(seen, incident.id) do
-      invalid("Case split lineage contains a cycle")
-    else
-      with {:ok, operations} <- Cases.operation_summaries_for_case(incident.id, authorize?: false),
-           true <-
-             length(operations) < 100 || invalid("Operation history exceeds recovery bound"),
-           {:ok, effects} <- scoped_effects(operations, exclude_operation_id),
-           {:ok, parent_effects} <-
-             parent_effects(
-               incident,
-               MapSet.put(seen, incident.id),
-               depth + 1,
-               exclude_operation_id
-             ) do
-        {:ok, effects ++ parent_effects}
-      end
+          {:error, _error} = error ->
+            {:halt, error}
+        end
+      end)
     end
   end
 
-  defp parent_effects(%{split_parent_id: nil}, _seen, _depth, _exclude_operation_id),
-    do: {:ok, []}
+  defp scoped_effects(case_id, condition_ids, exclude_operation_id) do
+    Enum.reduce_while(condition_ids, {:ok, %{}}, fn id, {:ok, effects} ->
+      case Cases.latest_recovery_effect(case_id, [id], exclude_operation_id, authorize?: false) do
+        {:ok, [operation]} ->
+          {:cont, {:ok, Map.put(effects, id, operation)}}
 
-  defp parent_effects(%{split_parent_id: parent_id}, seen, depth, exclude_operation_id) do
-    with {:ok, parent} <- Cases.get_case(parent_id, authorize?: false) do
-      lineage_effects(parent, seen, depth, exclude_operation_id)
-    end
-  end
-
-  defp scoped_effects(operations, exclude_operation_id) do
-    operations
-    |> Enum.filter(fn operation ->
-      operation.id != exclude_operation_id and affects_recovery?(operation)
-    end)
-    |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
-      case Cases.get_proposal(operation.proposal_id,
-             authorize?: false,
-             query: Ash.Query.select(Opsonde.Cases.Proposal, [:affected_conditions])
-           ) do
-        {:ok, proposal} when is_list(proposal.affected_conditions) ->
-          ids = Enum.map(proposal.affected_conditions, & &1["condition_id"])
-          {:cont, {:ok, [{operation, ids} | effects]}}
+        {:ok, []} ->
+          {:cont, {:ok, effects}}
 
         {:error, _error} = error ->
           {:halt, error}
-
-        _invalid ->
-          {:halt, invalid("Effect Condition scope is unavailable")}
       end
     end)
   end
 
-  defp affects_recovery?(operation),
-    do:
-      operation.purpose == :remediation and
-        not (operation.status == :failed and is_nil(operation.dispatch_started_at))
+  defp newest_effect(first, second) do
+    key = fn operation ->
+      {DateTime.to_unix(operation.accepted_at, :microsecond), operation.id}
+    end
+
+    if key.(first) >= key.(second), do: first, else: second
+  end
+
+  defp later_time(nil, at), do: at
+
+  defp later_time(first, second),
+    do: if(DateTime.compare(first, second) == :lt, do: second, else: first)
+
+  defp lineage_case_ids(_incident, _seen, depth)
+       when depth >= @max_lineage_depth,
+       do: invalid("Case split lineage exceeds recovery bound")
+
+  defp lineage_case_ids(incident, seen, depth) do
+    if MapSet.member?(seen, incident.id) do
+      invalid("Case split lineage contains a cycle")
+    else
+      with {:ok, parents} <- parent_case_ids(incident, MapSet.put(seen, incident.id), depth + 1) do
+        {:ok, [incident.id | parents]}
+      end
+    end
+  end
+
+  defp parent_case_ids(%{split_parent_id: nil}, _seen, _depth), do: {:ok, []}
+
+  defp parent_case_ids(%{split_parent_id: parent_id}, seen, depth) do
+    with {:ok, parent} <-
+           Cases.get_case(parent_id,
+             authorize?: false,
+             query: [select: [:id, :split_parent_id]]
+           ) do
+      lineage_case_ids(parent, seen, depth)
+    end
+  end
 
   defp citation_scope(%{kind: "file_read", id: id}), do: {"file_read", id}
 

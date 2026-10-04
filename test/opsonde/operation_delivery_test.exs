@@ -413,6 +413,8 @@ defmodule Opsonde.OperationDeliveryTest do
              &(&1.id == receipt.id)
            )
 
+    append_investigation_history!(operation, 101)
+
     with_projection_read_fault("evidences", "kind", "text", receipt.id, fn ->
       assert {:error, %Ash.Error.Unknown{} = error} =
                ResolverDelivery.run(turn.id,
@@ -431,6 +433,8 @@ defmodule Opsonde.OperationDeliveryTest do
                ai_invocation: %{
                  test_pid: self(),
                  respond: fn request ->
+                   assert receipt.id in request.recovery_evidence_ids
+
                    {:ok,
                     %AI.ResolverDecision{
                       intent: %AI.RecoveryConclusion{
@@ -3932,7 +3936,7 @@ defmodule Opsonde.OperationDeliveryTest do
        context do
     enable_signal_automation!(context.admin)
 
-    {incident, _run, proposal, signal_provider} =
+    {incident, scoped_run, proposal, signal_provider} =
       authorized_proposal!("scoped-effect-recovery", context,
         trigger_kind: :signal,
         additional_event_key: "operation-scoped-effect-recovery:db",
@@ -3951,6 +3955,8 @@ defmodule Opsonde.OperationDeliveryTest do
              )
 
     assert_receive {:effect, _, _}
+
+    append_investigation_history!(operation, 101)
 
     signal_event!(
       signal_provider,
@@ -3982,6 +3988,14 @@ defmodule Opsonde.OperationDeliveryTest do
       incident.initial_context["signal_event_key"],
       "api-recovered-after-effect"
     )
+
+    saved_effect = Cases.get_operation!(operation.id, authorize?: false)
+    affected_id = hd(proposal.affected_conditions)["condition_id"]
+
+    assert {:ok, refresh_at} =
+             ConditionRecovery.applied_effect_refresh_at(incident, scoped_run.id, [affected_id])
+
+    assert refresh_at == saved_effect.completed_at
 
     {:ok, assessments} = ConditionRecovery.assess_current(incident)
     by_id = Map.new(assessments, &{&1.condition_id, &1.status})
@@ -7935,6 +7949,62 @@ defmodule Opsonde.OperationDeliveryTest do
     Cases.route_downstream_decision!(completed.id, authorize?: false)
     proposal = Cases.proposal_by_source_turn!(completed.id, authorize?: false)
     Cases.accept_operation!(proposal.id, authorize?: false)
+  end
+
+  # Undispatched capacity fixtures use internal Ash record actions, not 101 native requests.
+  defp append_investigation_history!(operation, count) do
+    proposal = Cases.get_proposal!(operation.proposal_id, authorize?: false)
+    turn = Cases.get_turn!(proposal.source_turn_id, authorize?: false)
+
+    copy_inputs = fn record ->
+      Map.take(record, Ash.Resource.Info.action(record.__struct__, :create_record).accept)
+      |> Map.drop([:id])
+    end
+
+    for index <- 1..count do
+      key = "investigation-history:#{operation.id}:#{index}"
+
+      next_turn =
+        Cases.create_turn_record!(
+          Map.merge(copy_inputs.(turn), %{
+            ordinal: turn.ordinal + index + 100,
+            idempotency_key: key
+          }),
+          authorize?: false
+        )
+
+      next_proposal =
+        Cases.create_proposal_record!(
+          Map.merge(copy_inputs.(proposal), %{
+            source_turn_id: next_turn.id,
+            purpose: :investigation,
+            reserved_operation_id: Ecto.UUID.generate(),
+            operation_idempotency_key: key
+          }),
+          authorize?: false
+        )
+
+      next_operation =
+        Cases.create_operation_record!(
+          Map.merge(copy_inputs.(operation), %{
+            id: next_proposal.reserved_operation_id,
+            proposal_id: next_proposal.id,
+            purpose: :investigation,
+            idempotency_key: key
+          }),
+          authorize?: false
+        )
+
+      Cases.record_operation_no_send!(
+        next_operation.id,
+        next_operation.revision,
+        %{
+          outcome_category: "cancelled",
+          completed_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+    end
   end
 
   # Window and assessment scans remain readable; only the later primary-ID read fails.
