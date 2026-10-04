@@ -7846,6 +7846,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 after?: string;
+                ids?: string[];
             };
             header?: never;
             path?: never;

@@ -425,6 +425,13 @@ defmodule OpsondeCLI.CLI do
     end
   end
 
+  defp query(%Route{path: "/reports"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+  end
+
   defp query(%Route{page?: true, path: "/accounts"}, options) do
     []
     |> maybe_query(:limit, options[:limit])
@@ -564,6 +571,7 @@ defmodule OpsondeCLI.CLI do
       opsonde delivery summaries [--report-ids UUID,UUID] [--limit N] [--after CURSOR]
       opsonde delivery latest --report-ids UUID,UUID
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
+      opsonde report list [--ids UUID,UUID] [--limit N] [--after CURSOR]
       opsonde report read ID
       opsonde file list TARGET_ID
       opsonde file show|revoke TARGET_ID FILE_ID

@@ -24,6 +24,8 @@ defmodule Opsonde.Reports.Report do
     defaults [:read]
 
     read :page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      filter expr(is_nil(^arg(:ids)) or id in ^arg(:ids))
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
 
       prepare build(

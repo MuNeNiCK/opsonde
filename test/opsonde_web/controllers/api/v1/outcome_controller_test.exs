@@ -280,6 +280,27 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert get_data!(summaries, context.viewer_token) == []
   end
 
+  @tag report_identity: true
+  test "Report identity filters reject excess IDs and preserve authenticated missing results",
+       context do
+    path = "/api/v1/reports"
+    ids = for(_ <- 1..100, do: Ecto.UUID.generate()) |> Enum.join(",")
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      response = get_json(path <> "?ids=" <> ids, token)
+      assert %{"data" => [], "page" => %{"next" => nil}} = json_response(response, 200)
+      assert_operation_response(response)
+    end
+
+    assert get_json(path <> "?ids=" <> ids, nil).status == 401
+
+    for invalid <- ["", "not-a-uuid", Ecto.UUID.generate() <> "," <> ids] do
+      response = get_json(path <> "?ids=" <> invalid, context.viewer_token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(response, 422)
+      assert_operation_response(response)
+    end
+  end
+
   @tag report_page_capacity: true
   test "maximum immutable Report bodies remain exact while the public index contains only metadata",
        context do
@@ -365,6 +386,20 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert Enum.sort(Enum.map(first_page["data"] ++ tail_page["data"], & &1["id"])) ==
              Enum.sort(report_ids)
 
+    oldest_id = hd(report_ids)
+    refute Enum.any?(first_page["data"], &(&1["id"] == oldest_id))
+    selected = get_json("/api/v1/reports?ids=#{oldest_id}&limit=1", context.viewer_token)
+
+    assert %{
+             "data" => [%{"id" => ^oldest_id, "case_revision" => 1, "revision" => 1} = summary],
+             "page" => %{"next" => nil}
+           } = json_response(selected, 200)
+
+    assert_operation_response(selected)
+    assert summary["case_id"] == incident.id
+    refute Map.has_key?(summary, "content")
+    refute Map.has_key?(summary, "document")
+
     full = get_json("/api/v1/reports/#{hd(report_ids)}", context.viewer_token)
     assert_operation_response(full)
     assert json_response(full, 200)["data"]["content"]["padding"] == padding
@@ -398,6 +433,16 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
     assert Jason.decode!(listed_tail)["data"] == tail_page["data"]
 
+    selected_cli =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["report", "list", "--ids", oldest_id, "--limit", "1"], runtime) ==
+                 0
+      end)
+      |> Jason.decode!()
+
+    assert selected_cli["data"] == [summary]
+    assert selected_cli["page"]["next"] == nil
+
     shown =
       capture_io(fn ->
         assert OpsondeCLI.CLI.run(["report", "show", hd(report_ids)], runtime) == 0
@@ -411,7 +456,11 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       assert {:error, %Ash.Error.Unknown{} = cause} = Reports.page_reports(actor: context.viewer)
       assert Exception.message(cause) =~ "does not exist"
 
-      for path <- ["/api/v1/reports", "/api/v1/reports/#{hd(report_ids)}"] do
+      for path <- [
+            "/api/v1/reports",
+            "/api/v1/reports?ids=#{oldest_id}&limit=1",
+            "/api/v1/reports/#{hd(report_ids)}"
+          ] do
         failed = get_json(path, context.viewer_token)
         assert json_response(failed, 500)["error"]["code"] == "internal_error"
         assert_operation_response(failed)

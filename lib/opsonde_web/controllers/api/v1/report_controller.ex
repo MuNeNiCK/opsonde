@@ -28,7 +28,7 @@ defmodule OpsondeWeb.API.V1.ReportController do
   operation :index,
     operation_id: "listReports",
     summary: "List Reports",
-    parameters: Schemas.pagination_parameters(),
+    parameters: Schemas.pagination_parameters() ++ [Schemas.reference_ids_parameter()],
     responses:
       [ok: {"Report page", "application/json", OutcomeSchemas.ref("ReportPage")}] ++ @list_errors
 
@@ -77,8 +77,11 @@ defmodule OpsondeWeb.API.V1.ReportController do
         ])
 
   def index(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids])
+
     with {:ok, page} <- Pagination.parse(params),
-         {:ok, reports} <- Reports.page_reports(page: page, actor: conn.assigns.current_user) do
+         {:ok, reports} <-
+           Reports.page_reports(input, page: page, actor: conn.assigns.current_user) do
       Response.page(conn, reports, &OutcomeJSON.report_summary/1)
     end
   end
