@@ -1,10 +1,12 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, Printer } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
+import { PageControls } from "@/components/page-controls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +24,7 @@ import {
 } from "@/components/ui/table";
 
 type Summary = components["schemas"]["PeriodSummary"];
-type Target = components["schemas"]["Target"];
+type Target = components["schemas"]["TargetSummary"];
 
 const today = new Date();
 const defaultTo = today.toISOString().slice(0, 10);
@@ -58,13 +60,34 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
   const key = `${from}|${to}|${target}`;
   const periodValid = validPeriod(from, to);
   const [loaded, setLoaded] = useState<{ key: string; summary: Summary } | null>(null);
-  const [targets, setTargets] = useState<Target[]>([]);
+  const [identities, setIdentities] = useState<{
+    key: string;
+    targets: Target[];
+    error: boolean;
+  } | null>(null);
+  const [identityAttempt, setIdentityAttempt] = useState(0);
   const [requestError, setRequestError] = useState<{ key: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [draft, setDraft] = useState({ key, from, to, target });
   const fromInput = draft.key === key ? draft.from : from;
   const toInput = draft.key === key ? draft.to : to;
   const targetInput = draft.key === key ? draft.target : target;
+  const identityKey = `${target}|${targetInput}`;
+  const targetPage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        print
+          ? Promise.resolve({ data: [] as Target[], page: { next: null } })
+          : apiClient
+              .GET("/api/v1/targets/summaries", { params: { query: { limit: 50, after } }, signal })
+              .then(apiData),
+      [print],
+    ),
+  );
+  const choices = [...(targetPage.view?.data ?? [])];
+  const selected = identities?.targets.find((item) => item.id === targetInput);
+  if (selected && !choices.some((item) => item.id === selected.id)) choices.push(selected);
+  const identityError = identities?.key === identityKey && identities.error;
   const setDraftField = (field: "from" | "to" | "target", value: string) =>
     setDraft({ key, from: fromInput, to: toInput, target: targetInput, [field]: value });
   const summary = loaded?.key === key ? loaded.summary : null;
@@ -76,21 +99,37 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
   const pending = periodValid && !summary && !error;
 
   useEffect(() => {
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/targets", {
-          params: { query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    )
-      .then(setTargets)
-      .catch(() => undefined);
-  }, []);
+    const controller = new AbortController();
+    const ids = [...new Set([target, targetInput].filter((id) => id !== "all"))];
+    const read = ids.length
+      ? apiClient
+          .GET("/api/v1/targets/summaries", {
+            params: { query: { ids, limit: 2 } },
+            querySerializer: commaSeparatedQuery,
+            signal: controller.signal,
+          })
+          .then(apiData)
+          .then((page) => page.data)
+      : Promise.resolve([] as Target[]);
+    void read
+      .then((targets) => {
+        if (!controller.signal.aborted) setIdentities({ key: identityKey, targets, error: false });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setIdentities((previous) => ({
+            key: identityKey,
+            targets: previous?.targets.filter((item) => ids.includes(item.id)) ?? [],
+            error: true,
+          }));
+      });
+    return () => controller.abort();
+  }, [target, targetInput, identityKey, identityAttempt]);
 
   useEffect(() => {
     if (!periodValid) return;
 
-    let active = true;
+    const controller = new AbortController();
     apiClient
       .GET("/api/v1/reports/operations-summary", {
         params: {
@@ -100,12 +139,17 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
             target_id: target === "all" ? undefined : target,
           },
         },
+        signal: controller.signal,
       })
       .then((response) => apiData(response).data)
-      .then((result) => active && setLoaded({ key, summary: result }))
-      .catch(() => active && setRequestError({ key, message: t("reports.requestFailed") }));
+      .then((result) => !controller.signal.aborted && setLoaded({ key, summary: result }))
+      .catch(
+        () =>
+          !controller.signal.aborted &&
+          setRequestError({ key, message: t("reports.requestFailed") }),
+      );
     return () => {
-      active = false;
+      controller.abort();
     };
   }, [from, to, target, key, periodValid, attempt, t]);
 
@@ -116,23 +160,19 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
       return;
     }
     setRequestError(null);
-    setLoaded(null);
     const next = new URLSearchParams({ from: fromInput, to: toInput });
     if (targetInput !== "all") next.set("target", targetInput);
-    setDraft({
-      key: `${fromInput}|${toInput}|${targetInput}`,
-      from: fromInput,
-      to: toInput,
-      target: targetInput,
-    });
     setParams(next);
-    setAttempt((current) => current + 1);
+    if (`${fromInput}|${toInput}|${targetInput}` === key) {
+      setLoaded(null);
+      setAttempt((current) => current + 1);
+    }
   }
 
   const targetName =
     target === "all"
       ? t("reports.allTargets")
-      : (targets.find((item) => item.id === target)?.name ?? target);
+      : (identities?.targets.find((item) => item.id === target)?.name ?? target);
   const printUrl = `/reports/operations/print?${new URLSearchParams({
     from,
     to,
@@ -188,17 +228,44 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
               onChange={(event) => setDraftField("to", event.target.value)}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2" role="group" aria-label={t("reports.periodTarget")}>
             <Label htmlFor="period-target">{t("reports.periodTarget")}</Label>
             <FormSelect
+              key={targetInput}
               id="period-target"
               value={targetInput}
-              onValueChange={(value) => setDraftField("target", value ?? "all")}
+              onValueChange={(value) => {
+                if (value !== null) setDraftField("target", value);
+              }}
               options={[
                 { value: "all", label: t("reports.allTargets") },
-                ...targets.map((item) => ({ value: item.id, label: item.name })),
+                ...choices.map((item) => ({ value: item.id, label: item.name })),
+                ...(targetInput !== "all" && !choices.some((item) => item.id === targetInput)
+                  ? [{ value: targetInput, label: targetInput }]
+                  : []),
               ]}
+              disabled={targetPage.pending}
             />
+            <PageControls
+              index={targetPage.view?.index ?? 0}
+              hasNext={!!targetPage.view?.page.next}
+              pending={targetPage.pending}
+              previous={targetPage.previous}
+              next={targetPage.next}
+            />
+            {targetPage.error != null && (
+              <Alert variant="destructive">
+                <AlertDescription>{t("reports.requestFailed")}</AlertDescription>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void targetPage.retry().catch(() => {})}
+                >
+                  {t("common.refresh")}
+                </Button>
+              </Alert>
+            )}
           </div>
           <div className="flex items-end">
             <Button type="submit" disabled={pending} className="w-full">
@@ -206,6 +273,20 @@ export function PeriodReportPage({ print = false }: { print?: boolean }) {
             </Button>
           </div>
         </form>
+      )}
+
+      {identityError && (
+        <Alert variant="destructive">
+          <AlertDescription>{t("reports.requestFailed")}</AlertDescription>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setIdentityAttempt((value) => value + 1)}
+          >
+            {t("common.refresh")}
+          </Button>
+        </Alert>
       )}
 
       {error && (
