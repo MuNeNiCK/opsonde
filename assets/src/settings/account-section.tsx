@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, Plus, Save, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
+import { PageControls } from "@/components/page-controls";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,44 +21,37 @@ const roles: Role[] = ["admin", "operator", "viewer"];
 
 export function AccountSection({ currentAccountId }: { currentAccountId: string }) {
   const { t } = useTranslation();
-  const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  const loadAccounts = useCallback(async () => {
-    const records = await collectPages(async (after) =>
-      apiData(
-        await apiClient.GET("/api/v1/accounts", {
-          params: { query: { limit: 100, after: after ?? undefined } },
-        }),
-      ),
-    );
-    setAccounts(records);
-    setDraftRoles({});
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    collectPages(async (after) =>
-      apiData(
+  const page = usePagedData(
+    useCallback(async (after: string | undefined, signal: AbortSignal) => {
+      const result = apiData(
         await apiClient.GET("/api/v1/accounts", {
-          params: { query: { limit: 100, after: after ?? undefined } },
+          params: { query: { limit: 50, after } },
+          signal,
         }),
-      ),
-    )
-      .then((records) => {
-        if (active) setAccounts(records);
-      })
-      .catch(() => {
-        if (active) setError(t("setup.accounts.requestFailed"));
-      });
-    return () => {
-      active = false;
-    };
-  }, [t]);
+      );
+      if (!signal.aborted) setDraftRoles({});
+      return result;
+    }, []),
+  );
+  const accounts = page.view?.data ?? [];
+  async function refresh() {
+    setError("");
+    setSuccess("");
+    await page.retry().catch(() => {});
+  }
 
   async function createAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,17 +70,20 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
     setError("");
     setSuccess("");
     try {
-      await apiClient.POST("/api/v1/accounts", {
-        body: { account: { email, password, role } },
-      });
-      await loadAccounts();
+      apiData(
+        await apiClient.POST("/api/v1/accounts", {
+          body: { account: { email, password, role } },
+        }),
+      );
+      if (!mounted.current) return;
       formElement.reset();
       setShowCreate(false);
       setSuccess(t("setup.accounts.created"));
+      await page.retry().catch(() => {});
     } catch {
-      setError(t("setup.accounts.requestFailed"));
+      if (mounted.current) setError(t("setup.accounts.requestFailed"));
     } finally {
-      setPending(null);
+      if (mounted.current) setPending(null);
     }
   }
 
@@ -98,16 +96,19 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
     setError("");
     setSuccess("");
     try {
-      await apiClient.PATCH("/api/v1/accounts/{id}/role", {
-        params: { path: { id: account.id } },
-        body: { account: { role } },
-      });
-      await loadAccounts();
+      apiData(
+        await apiClient.PATCH("/api/v1/accounts/{id}/role", {
+          params: { path: { id: account.id } },
+          body: { account: { role } },
+        }),
+      );
+      if (!mounted.current) return;
       setSuccess(t("setup.accounts.roleChanged", { email: account.email }));
+      await page.retry().catch(() => {});
     } catch {
-      setError(t("setup.accounts.requestFailed"));
+      if (mounted.current) setError(t("setup.accounts.requestFailed"));
     } finally {
-      setPending(null);
+      if (mounted.current) setPending(null);
     }
   }
 
@@ -121,15 +122,20 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">{t("setup.accounts.description")}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setShowCreate((open) => !open)}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pending !== null}
+          onClick={() => setShowCreate((open) => !open)}
+        >
           {showCreate ? null : <Plus />}
           {t(showCreate ? "common.close" : "setup.accounts.createTitle")}
         </Button>
       </div>
 
-      {error && (
+      {!!(error || page.error) && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || t("setup.accounts.loadFailed")}</AlertDescription>
         </Alert>
       )}
       {success && (
@@ -149,7 +155,14 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
             <form className="grid gap-4 md:grid-cols-2" onSubmit={createAccount}>
               <div className="space-y-2">
                 <Label htmlFor="account-email">{t("setup.accounts.email")}</Label>
-                <Input id="account-email" name="email" type="email" autoComplete="off" required />
+                <Input
+                  id="account-email"
+                  name="email"
+                  type="email"
+                  autoComplete="off"
+                  disabled={pending !== null}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="account-password">{t("setup.accounts.password")}</Label>
@@ -159,6 +172,7 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
                   type="password"
                   autoComplete="new-password"
                   minLength={12}
+                  disabled={pending !== null}
                   required
                 />
               </div>
@@ -168,6 +182,7 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
                   id="account-role"
                   name="role"
                   defaultValue="operator"
+                  disabled={pending !== null}
                   options={roles.map((role) => ({
                     value: role,
                     label: t(`setup.accounts.roles.${role}`),
@@ -187,73 +202,86 @@ export function AccountSection({ currentAccountId }: { currentAccountId: string 
 
       <Card>
         <CardHeader className="border-b">
-          <CardTitle className="text-base">
-            {t("setup.accounts.listTitle")}
-            {accounts && <span className="ml-2 text-muted-foreground">{accounts.length}</span>}
-          </CardTitle>
+          <CardTitle className="text-base">{t("setup.accounts.listTitle")}</CardTitle>
           <CardDescription>{t("setup.accounts.roleDescription")}</CardDescription>
+          <div className="flex flex-wrap gap-2">
+            <PageControls
+              index={page.view?.index ?? 0}
+              hasNext={!!page.view?.page.next}
+              pending={page.pending || pending !== null}
+              previous={page.previous}
+              next={page.next}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page.pending || pending !== null}
+              onClick={() => void refresh()}
+            >
+              {t("common.refresh")}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
-          {accounts === null ? (
+          {page.pending && (
             <div className="flex items-center gap-2 px-5 py-6 text-sm text-muted-foreground">
               <Spinner />
               {t("common.loading")}
             </div>
-          ) : (
-            accounts.map((account) => {
-              const current = account.id === currentAccountId;
-              const selectedRole = draftRoles[account.id] ?? account.role;
-              return (
-                <form
-                  key={`${account.id}-${account.role_version}`}
-                  className="flex flex-col gap-3 border-b px-5 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
-                  onSubmit={(event) => void changeRole(account, event)}
-                >
-                  <div className="min-w-0 space-y-1.5">
-                    <p className="break-all text-sm font-medium">{account.email}</p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{t(`setup.accounts.roles.${account.role}`)}</Badge>
-                      {current && (
-                        <span className="text-xs text-muted-foreground">
-                          {t("setup.accounts.current")}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {!current && (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <FormSelect
-                        id={`account-role-${account.id}`}
-                        name="role"
-                        ariaLabel={`${account.email}: ${t("setup.accounts.role")}`}
-                        className="sm:w-36"
-                        value={selectedRole}
-                        onValueChange={(value) => {
-                          if (isRole(value)) {
-                            setDraftRoles((roles) => ({ ...roles, [account.id]: value }));
-                          }
-                        }}
-                        disabled={pending !== null}
-                        options={roles.map((role) => ({
-                          value: role,
-                          label: t(`setup.accounts.roles.${role}`),
-                        }))}
-                      />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        variant="outline"
-                        disabled={selectedRole === account.role || pending !== null}
-                      >
-                        {pending === account.id ? <Spinner /> : <Save />}
-                        {t("setup.accounts.saveRole")}
-                      </Button>
-                    </div>
-                  )}
-                </form>
-              );
-            })
           )}
+          {accounts.map((account) => {
+            const current = account.id === currentAccountId;
+            const selectedRole = draftRoles[account.id] ?? account.role;
+            return (
+              <form
+                key={`${account.id}-${account.role_version}`}
+                className="flex flex-col gap-3 border-b px-5 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+                onSubmit={(event) => void changeRole(account, event)}
+              >
+                <div className="min-w-0 space-y-1.5">
+                  <p className="break-all text-sm font-medium">{account.email}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">{t(`setup.accounts.roles.${account.role}`)}</Badge>
+                    {current && (
+                      <span className="text-xs text-muted-foreground">
+                        {t("setup.accounts.current")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {!current && (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <FormSelect
+                      id={`account-role-${account.id}`}
+                      name="role"
+                      ariaLabel={`${account.email}: ${t("setup.accounts.role")}`}
+                      className="sm:w-36"
+                      value={selectedRole}
+                      onValueChange={(value) => {
+                        if (isRole(value)) {
+                          setDraftRoles((roles) => ({ ...roles, [account.id]: value }));
+                        }
+                      }}
+                      disabled={pending !== null || page.pending}
+                      options={roles.map((role) => ({
+                        value: role,
+                        label: t(`setup.accounts.roles.${role}`),
+                      }))}
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedRole === account.role || pending !== null || page.pending}
+                    >
+                      {pending === account.id ? <Spinner /> : <Save />}
+                      {t("setup.accounts.saveRole")}
+                    </Button>
+                  </div>
+                )}
+              </form>
+            );
+          })}
         </CardContent>
       </Card>
     </section>
