@@ -1,58 +1,73 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { Link, useLocation } from "react-router-dom";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import type { components } from "@/api/schema";
+import { usePagedData } from "@/api/use-paged-data";
+import { PageControls } from "@/components/page-controls";
 import { useAuthentication } from "@/auth/context";
 import { AuditCreateForm } from "@/audits/create-form";
 import { AuditDeactivation } from "@/audits/deactivation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 
 type AuditRun = components["schemas"]["AuditRun"];
 type AuditSchedule = components["schemas"]["AuditSchedule"];
-type ManagementBoundary = components["schemas"]["ManagementBoundarySummary"];
-type Target = components["schemas"]["Target"];
+type ScheduleSummary = components["schemas"]["AuditScheduleSummary"];
+type RunSummary = components["schemas"]["AuditRunSummary"] & { targetName?: string };
+type Selection = { kind: "schedule" | "run"; id: string };
 
-type Snapshot = {
-  schedules: AuditSchedule[];
-  runs: AuditRun[];
-  targets: Target[];
-  boundaries: ManagementBoundary[];
-};
+function loadSchedules(after: string | undefined, signal: AbortSignal) {
+  return apiClient
+    .GET("/api/v1/audit-schedules/summaries", {
+      params: { query: { limit: 50, after } },
+      signal,
+    })
+    .then(apiData);
+}
 
-async function loadSnapshot(): Promise<Snapshot> {
-  const [schedules, runs, targets, boundaries] = await Promise.all([
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/audit-schedules", {
-          params: { query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/audit-runs", { params: { query: { limit: 100, after: after ?? undefined } } })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
-        .then(apiData),
-    ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/management-boundaries", {
-          params: { query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    ),
-  ]);
-  return { schedules, runs, targets, boundaries };
+async function loadRuns(after: string | undefined, signal: AbortSignal) {
+  const owner = new AbortController();
+  signal = AbortSignal.any([signal, owner.signal]);
+  try {
+    const page = await apiClient
+      .GET("/api/v1/audit-runs/summaries", {
+        params: { query: { limit: 50, after } },
+        signal,
+      })
+      .then(apiData);
+    const ids = [...new Set(page.data.flatMap((item) => (item.target_id ? [item.target_id] : [])))];
+    const targets = ids.length
+      ? await apiClient
+          .GET("/api/v1/targets/summaries", {
+            params: { query: { limit: 50, ids } },
+            querySerializer: commaSeparatedQuery,
+            signal,
+          })
+          .then(apiData)
+      : { data: [] };
+    signal.throwIfAborted();
+    const names = new Map(targets.data.map((item) => [item.id, item.name]));
+    return {
+      ...page,
+      data: page.data.map((item) => ({
+        ...item,
+        targetName: item.target_id ? names.get(item.target_id) : undefined,
+      })),
+    };
+  } catch (error) {
+    owner.abort();
+    throw error;
+  }
+}
+
+function hashSelection(hash: string): Selection | null {
+  const match = /^#audit-(schedule|run)-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.exec(hash);
+  return match ? { kind: match[1] as Selection["kind"], id: match[2] } : null;
 }
 
 export function AuditPage() {
@@ -63,30 +78,30 @@ export function AuditPage() {
 function Audits() {
   const { t, i18n } = useTranslation();
   const { account } = useAuthentication();
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const schedules = usePagedData<ScheduleSummary>(loadSchedules);
+  const runs = usePagedData<RunSummary>(loadRuns);
+  const location = useLocation();
+  const [chosen, setChosen] = useState<{ hash: string; value: Selection | null } | null>(null);
+  const selection = chosen?.hash === location.hash ? chosen.value : hashSelection(location.hash);
+  const select = (value: Selection | null) => setChosen({ hash: location.hash, value });
+  const [detailRefresh, setDetailRefresh] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedSchedule, setSelectedSchedule] = useState<AuditSchedule | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState<Pick<
+    AuditSchedule,
+    "id" | "name" | "revision"
+  > | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
 
-  const refresh = useCallback(async () => setSnapshot(await loadSnapshot()), []);
-
-  useEffect(() => {
-    let active = true;
-    loadSnapshot()
-      .then((next) => active && setSnapshot(next))
-      .catch(() => {
-        if (active) setError(t("audits.requestFailed"));
-      });
-    return () => {
-      active = false;
-    };
-  }, [t]);
-
-  if (!snapshot) return <Loading />;
-  const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
-  const boundaryName = (id: string) =>
-    snapshot.boundaries.find((item) => item.id === id)?.name ?? id;
+  const currentPages = useRef({ schedules: schedules.retry, runs: runs.retry });
+  useLayoutEffect(() => {
+    currentPages.current = { schedules: schedules.retry, runs: runs.retry };
+  });
+  const refresh = useCallback(async () => {
+    setError("");
+    await Promise.all([currentPages.current.schedules(), currentPages.current.runs()]);
+    setDetailRefresh((value) => value + 1);
+  }, []);
 
   return (
     <div className="space-y-10 p-6 lg:p-8">
@@ -96,7 +111,10 @@ function Audits() {
           <p className="mt-2 text-muted-foreground">{t("audits.description")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void refresh()}>
+          <Button
+            variant="outline"
+            onClick={() => void refresh().catch(() => setError(t("audits.requestFailed")))}
+          >
             <RefreshCw /> {t("audits.refresh")}
           </Button>
           {canManage && (
@@ -108,9 +126,9 @@ function Audits() {
         </div>
       </div>
 
-      {error && (
+      {!!(error || schedules.error || runs.error) && (
         <Alert variant="destructive" className="sticky top-16 z-20">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || t("audits.requestFailed")}</AlertDescription>
         </Alert>
       )}
       {!canManage && (
@@ -139,18 +157,25 @@ function Audits() {
         />
       )}
 
-      <section className="space-y-4">
+      {selection && (
+        <SelectedAudit
+          key={`${selection.kind}:${selection.id}`}
+          selection={selection}
+          refreshKey={detailRefresh}
+          onClose={() => select(null)}
+          onSelect={select}
+        />
+      )}
+
+      <section aria-label={t("audits.schedules")} className="space-y-4">
         <h2 className="text-xl font-semibold">{t("audits.schedules")}</h2>
         <div className="grid gap-4 xl:grid-cols-2">
-          {snapshot.schedules.map((schedule) => (
+          {schedules.view?.data.map((schedule) => (
             <Card key={schedule.id} id={`audit-schedule-${schedule.id}`}>
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <CardTitle>{schedule.name}</CardTitle>
-                    <CardDescription>
-                      {t("audits.desiredOutcome")}: {schedule.desired_outcome}
-                    </CardDescription>
                   </div>
                   <Badge variant={schedule.active ? "default" : "outline"}>
                     {t(schedule.active ? "audits.active" : "audits.inactive")}
@@ -168,15 +193,14 @@ function Audits() {
                     value={formatDate(schedule.next_run_at, i18n.resolvedLanguage)}
                   />
                   <Metric label={t("audits.reportLanguage")} value={schedule.report_language} />
-                  <Metric
-                    label={t("audits.scope")}
-                    value={
-                      schedule.management_boundary_id
-                        ? boundaryName(schedule.management_boundary_id)
-                        : schedule.target_ids.map(targetName).join(", ")
-                    }
-                  />
                 </dl>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => select({ kind: "schedule", id: schedule.id })}
+                >
+                  {t("reports.viewDetails")}
+                </Button>
                 {canManage && schedule.active && (
                   <Button size="sm" variant="outline" onClick={() => setSelectedSchedule(schedule)}>
                     {t("audits.deactivate")}
@@ -185,14 +209,22 @@ function Audits() {
               </CardContent>
             </Card>
           ))}
-          {snapshot.schedules.length === 0 && <Empty text={t("audits.noSchedules")} />}
+          {schedules.view?.data.length === 0 && <Empty text={t("audits.noSchedules")} />}
         </div>
+        {!schedules.view && !schedules.error && <Loading />}
+        <PageControls
+          index={schedules.view?.index ?? 0}
+          hasNext={!!schedules.view?.page.next}
+          pending={schedules.pending}
+          previous={schedules.previous}
+          next={schedules.next}
+        />
       </section>
 
-      <section className="space-y-4">
+      <section aria-label={t("audits.runs")} className="space-y-4">
         <h2 className="text-xl font-semibold">{t("audits.runs")}</h2>
         <div className="divide-y rounded-lg border bg-card">
-          {snapshot.runs.map((run) => (
+          {runs.view?.data.map((run) => (
             <div
               key={run.id}
               id={`audit-run-${run.id}`}
@@ -208,7 +240,7 @@ function Audits() {
                       className="font-medium underline-offset-4 hover:underline"
                       to={`/targets/${run.target_id}`}
                     >
-                      {targetName(run.target_id)}
+                      {run.targetName ?? run.target_id}
                     </Link>
                   ) : (
                     <span className="font-medium">{run.target_key}</span>
@@ -216,16 +248,16 @@ function Audits() {
                 </div>
                 <p className="mt-1 text-muted-foreground">
                   {formatDate(run.scheduled_for, i18n.resolvedLanguage)}
-                  {run.reason ? ` · ${t("audits.runFailedGuidance")}` : ""}
                 </p>
-                {run.reason && (
-                  <details className="mt-2 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer">{t("common.diagnostics")}</summary>
-                    <p className="mt-1">{run.reason}</p>
-                  </details>
-                )}
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => select({ kind: "run", id: run.id })}
+                >
+                  {t("reports.viewDetails")}
+                </Button>
                 {run.case_id ? (
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/cases/${run.case_id}`}>{t("audits.openCase")}</Link>
@@ -237,19 +269,190 @@ function Audits() {
                 )}
                 {(run.status === "failed" || run.status === "skipped") && (
                   <Button asChild size="sm" variant="outline">
-                    <a href={`#audit-schedule-${run.audit_schedule_id}`}>
+                    <Link
+                      to={`#audit-schedule-${run.audit_schedule_id}`}
+                      onClick={() => select({ kind: "schedule", id: run.audit_schedule_id })}
+                    >
                       {t("audits.reviewSchedule")}
-                    </a>
+                    </Link>
                   </Button>
                 )}
               </div>
             </div>
           ))}
-          {snapshot.runs.length === 0 && (
+          {runs.view?.data.length === 0 && (
             <p className="p-6 text-center text-sm text-muted-foreground">{t("audits.noRuns")}</p>
           )}
         </div>
+        {!runs.view && !runs.error && <Loading />}
+        <PageControls
+          index={runs.view?.index ?? 0}
+          hasNext={!!runs.view?.page.next}
+          pending={runs.pending}
+          previous={runs.previous}
+          next={runs.next}
+        />
       </section>
+    </div>
+  );
+}
+
+function SelectedAudit({
+  selection,
+  refreshKey,
+  onClose,
+  onSelect,
+}: {
+  selection: Selection;
+  refreshKey: number;
+  onClose: () => void;
+  onSelect: (selection: Selection) => void;
+}) {
+  const { t } = useTranslation();
+  const [state, setState] = useState<{
+    key: number;
+    detail?: AuditSchedule | AuditRun;
+    error?: unknown;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    const request =
+      selection.kind === "schedule"
+        ? apiClient
+            .GET("/api/v1/audit-schedules/{id}", {
+              params: { path: { id: selection.id } },
+              signal: controller.signal,
+            })
+            .then(apiData)
+        : apiClient
+            .GET("/api/v1/audit-runs/{id}", {
+              params: { path: { id: selection.id } },
+              signal: controller.signal,
+            })
+            .then(apiData);
+    request
+      .then(({ data }) => {
+        if (data.id !== selection.id) throw new Error("Audit detail identity mismatch");
+        if (!controller.signal.aborted) setState({ key: refreshKey, detail: data });
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setState({ key: refreshKey, error });
+      });
+    return () => controller.abort();
+  }, [selection.id, selection.kind, refreshKey, retry]);
+  const detail = state?.key === refreshKey ? state.detail : undefined;
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <CardTitle>{t("reports.viewDetails")}</CardTitle>
+        <Button variant="ghost" onClick={onClose}>
+          {t("common.close")}
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {state?.error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{t("audits.requestFailed")}</AlertDescription>
+            <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
+              {t("common.refresh")}
+            </Button>
+          </Alert>
+        ) : !detail ? (
+          <Loading />
+        ) : "target_ids" in detail ? (
+          <>
+            <h3 className="font-medium">{detail.name}</h3>
+            <Metric label={t("audits.desiredOutcome")} value={detail.desired_outcome} />
+            <ScheduleScope schedule={detail} />
+          </>
+        ) : (
+          <>
+            <Badge>{t(`audits.runStatus.${detail.status}`)}</Badge>
+            {detail.reason && <p className="break-words">{detail.reason}</p>}
+            <Button
+              variant="outline"
+              onClick={() => onSelect({ kind: "schedule", id: detail.audit_schedule_id })}
+            >
+              {t("audits.reviewSchedule")}
+            </Button>
+            {detail.case_id && (
+              <Button asChild variant="outline">
+                <Link to={`/cases/${detail.case_id}`}>{t("audits.openCase")}</Link>
+              </Button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ScheduleScope({ schedule }: { schedule: AuditSchedule }) {
+  const { t } = useTranslation();
+  const load = useCallback(
+    async (after: string | undefined, signal: AbortSignal) => {
+      if (schedule.management_boundary_id) {
+        const response = await apiClient
+          .GET("/api/v1/management-boundaries", {
+            params: {
+              query: { limit: 1, ids: [schedule.management_boundary_id] },
+            },
+            querySerializer: commaSeparatedQuery,
+            signal,
+          })
+          .then(apiData);
+        return {
+          data: [
+            {
+              id: schedule.management_boundary_id,
+              name:
+                response.data.find((item) => item.id === schedule.management_boundary_id)?.name ??
+                schedule.management_boundary_id,
+            },
+          ],
+          page: { next: null },
+        };
+      }
+      const start = Number(after ?? 0);
+      const ids = schedule.target_ids.slice(start, start + 50);
+      const response = ids.length
+        ? await apiClient
+            .GET("/api/v1/targets/summaries", {
+              params: { query: { limit: 50, ids } },
+              querySerializer: commaSeparatedQuery,
+              signal,
+            })
+            .then(apiData)
+        : { data: [] };
+      const names = new Map(response.data.map((item) => [item.id, item.name]));
+      return {
+        data: ids.map((id) => ({ id, name: names.get(id) ?? id })),
+        page: { next: start + 50 < schedule.target_ids.length ? String(start + 50) : null },
+      };
+    },
+    [schedule],
+  );
+  const scope = usePagedData(load);
+  return (
+    <div className="space-y-3">
+      <h4 className="font-medium">{t("audits.scope")}</h4>
+      {!!scope.error && (
+        <Alert variant="destructive">
+          <AlertDescription>{t("audits.requestFailed")}</AlertDescription>
+          <Button variant="outline" onClick={() => void scope.retry().catch(() => {})}>
+            {t("common.refresh")}
+          </Button>
+        </Alert>
+      )}
+      <p className="break-words">{scope.view?.data.map((item) => item.name).join(", ")}</p>
+      <PageControls
+        index={scope.view?.index ?? 0}
+        hasNext={!!scope.view?.page.next}
+        pending={scope.pending}
+        previous={scope.previous}
+        next={scope.next}
+      />
     </div>
   );
 }

@@ -44,7 +44,7 @@ function auditScreen(account = { id: "audit-admin", role: "admin" }) {
 }
 function list(request: Request, schedule = original) {
   return Response.json({
-    data: new URL(request.url).pathname === "/api/v1/audit-schedules" ? [schedule] : [],
+    data: new URL(request.url).pathname === "/api/v1/audit-schedules/summaries" ? [schedule] : [],
     page: { next: null },
   });
 }
@@ -87,7 +87,7 @@ test("lost Audit deactivation survives reload and confirms the original ID witho
       return Response.json({ error: { message: "Storage unavailable" } }, { status: 500 });
     }
     return Response.json({
-      data: path === "/api/v1/audit-schedules" ? [canonical] : [],
+      data: path === "/api/v1/audit-schedules/summaries" ? [canonical] : [],
       page: { next: null },
     });
   });

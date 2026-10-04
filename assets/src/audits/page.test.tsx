@@ -6,10 +6,258 @@ import { AuthenticationContext, type Authentication } from "@/auth/context";
 import i18n from "@/i18n/config";
 import { AuditPage } from "@/audits/page";
 
+const windowUUID = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const windowSchedule = (n: number) => ({
+  id: windowUUID(n),
+  name: `Window schedule ${n}`,
+  revision: 1,
+  active: true,
+  cron_expression: "0 * * * *",
+  timezone: "Etc/UTC",
+  report_language: "en",
+  next_run_at: "2026-10-05T01:00:00Z",
+  management_boundary_id: null,
+});
+const windowRun = (n: number) => ({
+  id: windowUUID(n + 100),
+  audit_schedule_id: windowUUID(90),
+  status: "failed",
+  target_id: null,
+  target_key: `Window host ${n}`,
+  case_id: null,
+  scheduled_for: "2026-10-05T01:00:00Z",
+});
+
+test("Audit current windows reach item51 and an off-page schedule without full catalog reads", async () => {
+  await i18n.changeLanguage("en");
+  const requests: URL[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    requests.push(url);
+    if (
+      url.pathname === "/api/v1/audit-schedules/summaries" ||
+      url.pathname === "/api/v1/audit-runs/summaries"
+    ) {
+      expect(url.searchParams.get("limit")).toBe("50");
+      const indices = url.searchParams.has("after")
+        ? [51]
+        : Array.from({ length: 50 }, (_, n) => n + 1);
+      return Response.json({
+        data: indices.map((index) =>
+          url.pathname.includes("schedules") ? windowSchedule(index) : windowRun(index),
+        ),
+        page: { next: indices[0] === 51 ? null : "tail" },
+      });
+    }
+    if (url.pathname === `/api/v1/audit-schedules/${windowUUID(90)}`)
+      return Response.json({
+        data: {
+          ...windowSchedule(90),
+          desired_outcome: "Exact off-page objective",
+          target_ids: Array.from({ length: 51 }, (_, n) => windowUUID(n + 200)),
+        },
+      });
+    if (url.pathname === "/api/v1/targets/summaries") {
+      const ids = url.searchParams.get("ids")!.split(",");
+      expect(ids.length).toBeLessThanOrEqual(50);
+      return Response.json({
+        data: ids.map((id) => ({ id, name: `Scope ${id}` })),
+        page: { next: null },
+      });
+    }
+    throw new Error(`Unexpected catalog read ${url.pathname}`);
+  });
+  render(auditScreen({ id: "audit-viewer", role: "viewer" }));
+  const user = userEvent.setup();
+  const schedules = screen.getByRole("region", { name: "Schedules" });
+  const runs = screen.getByRole("region", { name: "Audit runs" });
+  await within(schedules).findByText("Window schedule 1");
+  await within(runs).findByText("Window host 1");
+  expect(requests).toHaveLength(2);
+  await user.click(within(schedules).getByRole("button", { name: "Next" }));
+  await within(schedules).findByText("Window schedule 51");
+  await user.click(within(runs).getByRole("button", { name: "Next" }));
+  await within(runs).findByText("Window host 51");
+  await user.click(within(runs).getByRole("button", { name: "Review schedule" }));
+  await screen.findByText("Exact off-page objective");
+  await screen.findByText(`Scope ${windowUUID(200)}`, { exact: false });
+  const scopeNext = screen
+    .getAllByRole("button", { name: "Next" })
+    .find((button) => !button.hasAttribute("disabled"))!;
+  await user.click(scopeNext);
+  await screen.findByText(`Scope ${windowUUID(250)}`);
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByText("Exact off-page objective")).toBeNull();
+  expect(requests.some((url) => url.pathname === "/api/v1/targets")).toBe(false);
+});
+
+test("Audit page errors retain the complete current window and retry its cursor", async () => {
+  await i18n.changeLanguage("en");
+  let fail = true;
+  const cursors: Array<string | null> = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/audit-schedules/summaries") {
+      const after = url.searchParams.get("after");
+      cursors.push(after);
+      if (after && fail)
+        return Response.json({ error: { message: "Storage unavailable" } }, { status: 500 });
+      return Response.json({
+        data: [windowSchedule(after ? 51 : 1)],
+        page: { next: after ? null : "tail" },
+      });
+    }
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(auditScreen({ id: "audit-viewer", role: "viewer" }));
+  const user = userEvent.setup();
+  const schedules = screen.getByRole("region", { name: "Schedules" });
+  await within(schedules).findByText("Window schedule 1");
+  await user.click(within(schedules).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(screen.getAllByRole("alert").length).toBeGreaterThan(1));
+  expect(within(schedules).getByText("Window schedule 1")).toBeDefined();
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await within(schedules).findByText("Window schedule 51");
+  expect(cursors).toEqual([null, "tail", "tail"]);
+});
+
+test("an accepted Audit creation refreshes the page selected while its acknowledgement was pending", async () => {
+  await i18n.changeLanguage("en");
+  vi.spyOn(crypto, "randomUUID").mockReturnValue(receiptId);
+  const cursors: Array<string | null> = [];
+  let resolvePost!: (response: Response) => void;
+  let canonical: Record<string, unknown> = {};
+  let posts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      posts++;
+      const input = await request.json();
+      canonical = { ...input.audit_schedule, id: receiptId, revision: 1 };
+      return new Promise<Response>((resolve) => {
+        resolvePost = resolve;
+      });
+    }
+    if (url.pathname === "/api/v1/audit-schedules/summaries") {
+      const after = url.searchParams.get("after");
+      cursors.push(after);
+      return Response.json({
+        data: [windowSchedule(after ? 51 : 1)],
+        page: { next: after ? null : "tail" },
+      });
+    }
+    return scopeResponse(request);
+  });
+  render(auditScreen());
+  const user = await fillAudit();
+  await user.click(screen.getByRole("button", { name: "Create schedule" }));
+  await waitFor(() => expect(posts).toBe(1));
+  const schedules = screen.getByRole("region", { name: "Schedules" });
+  await user.click(within(schedules).getByRole("button", { name: "Next" }));
+  await within(schedules).findByText("Window schedule 51");
+  await act(async () => resolvePost(Response.json({ data: canonical }, { status: 201 })));
+  await screen.findByText("Registered: Receipt audit");
+  expect(cursors).toEqual([null, "tail", "tail"]);
+  expect(within(schedules).queryByText("Window schedule 1")).toBeNull();
+  expect(posts).toBe(1);
+});
+
+test("an off-page Period Audit Run hash loads exact diagnostics and aborts on close", async () => {
+  await i18n.changeLanguage("en");
+  const runId = windowUUID(151);
+  let detailRead!: Request;
+  let resolveDetail!: (response: Response) => void;
+  wire.mockImplementation(async (request: Request) => {
+    if (new URL(request.url).pathname === `/api/v1/audit-runs/${runId}`) {
+      detailRead = request;
+      return new Promise<Response>((resolve) => {
+        resolveDetail = resolve;
+      });
+    }
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: "audit-viewer", role: "viewer" } } as Authentication}
+    >
+      <MemoryRouter initialEntries={[`/audits#audit-run-${runId}`]}>
+        <AuditPage />
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  await waitFor(() => expect(detailRead).toBeDefined());
+  await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+  expect(detailRead.signal.aborted).toBe(true);
+  await act(async () =>
+    resolveDetail(
+      Response.json({ data: { ...windowRun(51), reason: "Private late diagnostics" } }),
+    ),
+  );
+  expect(screen.queryByText("Private late diagnostics")).toBeNull();
+});
+
 const wire = vi.hoisted(() => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   return fetch;
+});
+
+test("initial Audit read failure is visible to a viewer and retries without writes", async () => {
+  await i18n.changeLanguage("en");
+  let fail = true;
+  wire.mockImplementation(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    if (new URL(request.url).pathname === "/api/v1/audit-schedules/summaries")
+      return fail
+        ? Response.json({ error: { message: "Storage unavailable" } }, { status: 500 })
+        : Response.json({ data: [windowSchedule(51)], page: { next: null } });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(auditScreen({ id: "audit-viewer", role: "viewer" }));
+  await screen.findByText(i18n.t("audits.requestFailed"));
+  fail = false;
+  await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText("Window schedule 51");
+  expect(screen.queryByText(i18n.t("audits.requestFailed"))).toBeNull();
+});
+
+test("failed Audit Run labels do not publish a partial window and retry the same cursor", async () => {
+  await i18n.changeLanguage("en");
+  let fail = true;
+  const cursors: Array<string | null> = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/audit-runs/summaries") {
+      const after = url.searchParams.get("after");
+      cursors.push(after);
+      const index = after ? 51 : 1;
+      return Response.json({
+        data: [{ ...windowRun(index), target_id: windowUUID(index) }],
+        page: { next: after ? null : "tail" },
+      });
+    }
+    if (url.pathname === "/api/v1/targets/summaries") {
+      const id = url.searchParams.get("ids")!;
+      expect(id.split(",")).toHaveLength(1);
+      if (id === windowUUID(51) && fail)
+        return Response.json({ error: { message: "Label storage unavailable" } }, { status: 500 });
+      return Response.json({ data: [{ id, name: `Exact host ${id}` }], page: { next: null } });
+    }
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(auditScreen({ id: "audit-viewer", role: "viewer" }));
+  const user = userEvent.setup();
+  const runs = screen.getByRole("region", { name: "Audit runs" });
+  await within(runs).findByText(`Exact host ${windowUUID(1)}`);
+  await user.click(within(runs).getByRole("button", { name: "Next" }));
+  await screen.findByText(i18n.t("audits.requestFailed"));
+  expect(within(runs).queryByText(`Exact host ${windowUUID(51)}`)).toBeNull();
+  expect(within(runs).getByText(`Exact host ${windowUUID(1)}`)).toBeDefined();
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await within(runs).findByText(`Exact host ${windowUUID(51)}`);
+  expect(cursors).toEqual([null, "tail", "tail"]);
 });
 
 afterEach(() => {
@@ -636,7 +884,7 @@ test("an accepted Audit creation keeps its receipt when the list refresh fails",
       return Response.json({ data: canonical }, { status: 201 });
     }
     if (path === `/api/v1/audit-schedules/${receiptId}`) return Response.json({ data: canonical });
-    if (path === "/api/v1/audit-schedules" && accepted && refreshFails)
+    if (path === "/api/v1/audit-schedules/summaries" && accepted && refreshFails)
       return Response.json({ error: { message: "List storage unavailable" } }, { status: 500 });
     return scopeResponse(request);
   });
