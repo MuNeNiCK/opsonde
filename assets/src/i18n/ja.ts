@@ -37,6 +37,7 @@ const ja = {
       },
     },
     common: {
+      refresh: "更新",
       previousPage: "前へ",
       nextPage: "次へ",
       pageNumber: "{{page}}ページ",
@@ -1200,6 +1201,7 @@ const ja = {
       identities: "外部識別子",
       noIdentities: "外部識別子なし",
       accessMethods: "接続経路",
+      pageRecords: "このページ：{{count}}件",
       noAccessMethods: "接続経路なし",
       relationships: "接続先の関係",
       noRelationships: "接続先の関係なし",

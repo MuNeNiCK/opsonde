@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   Cable,
@@ -10,25 +10,39 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
-import { apiClient, apiData } from "@/api/client";
+import { ApiError, apiClient, apiData } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
+import { PageControls } from "@/components/page-controls";
 import { useAuthentication } from "@/auth/context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { loadTargetSnapshot, type TargetSnapshot } from "@/targets/data";
+import {
+  loadDetailHeader,
+  loadDetailMethods,
+  loadDetailRelationships,
+} from "@/targets/detail-data";
 import { AccessMethodForm } from "@/targets/access-method-form";
 import { TargetDetailActions } from "@/targets/detail-actions";
 import { TargetFileSection } from "@/targets/file-section";
 
 export function TargetDetailPage() {
   const { targetId = "" } = useParams();
+  return <TargetDetail key={targetId} targetId={targetId} />;
+}
+
+function TargetDetail({ targetId }: { targetId: string }) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const { account } = useAuthentication();
-  const [snapshot, setSnapshot] = useState<TargetSnapshot | null>(null);
+  const [header, setHeader] = useState<Awaited<ReturnType<typeof loadDetailHeader>> | null>(null);
+  const [headerError, setHeaderError] = useState<unknown>(null);
+  const [loadingHeader, setLoadingHeader] = useState(true);
+  const owner = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
   const [error, setError] = useState("");
   const [checkingMethodId, setCheckingMethodId] = useState<string | null>(null);
   const [editingMethodId, setEditingMethodId] = useState<string | null>(null);
@@ -37,31 +51,108 @@ export function TargetDetailPage() {
   );
   const canManage = account?.role === "admin";
 
-  const refresh = useCallback(async () => setSnapshot(await loadTargetSnapshot()), []);
+  const methodPage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        loadDetailMethods(targetId, after, signal),
+      [targetId],
+    ),
+  );
+  const identityPage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        apiClient
+          .GET("/api/v1/external-identities", {
+            params: { query: { target_id: targetId, active: true, limit: 50, after } },
+            signal,
+          })
+          .then(apiData),
+      [targetId],
+    ),
+  );
+  const relationshipPage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        loadDetailRelationships(targetId, after, signal),
+      [targetId],
+    ),
+  );
+  const readHeader = useCallback(async () => {
+    if (!mounted.current) return;
+    owner.current?.abort();
+    const controller = new AbortController();
+    owner.current = controller;
+    return loadDetailHeader(targetId, controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) {
+          setHeader(next);
+          setHeaderError(null);
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) {
+          setHeaderError(cause);
+          throw cause;
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingHeader(false);
+      });
+  }, [targetId]);
+  const refreshHeader = () => {
+    if (!mounted.current) return Promise.resolve();
+    setLoadingHeader(true);
+    setHeaderError(null);
+    return readHeader();
+  };
+  const refresh = async () => {
+    await Promise.all([
+      refreshHeader(),
+      methodPage.reload(),
+      identityPage.reload(),
+      relationshipPage.reload(),
+    ]);
+  };
 
   useEffect(() => {
-    let active = true;
-    loadTargetSnapshot()
-      .then((next) => active && setSnapshot(next))
-      .catch(() => {
-        if (active) setError(t("targets.requestFailed"));
-      });
+    mounted.current = true;
+    void readHeader().catch(() => {});
     return () => {
-      active = false;
+      mounted.current = false;
+      owner.current?.abort();
     };
-  }, [t]);
+  }, [readHeader]);
 
-  if (!snapshot) {
+  if (!header) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
-        <Spinner />
-        <span>{t("common.loading")}</span>
+        {headerError != null ? (
+          <div className="space-y-3">
+            <Alert variant="destructive">
+              <AlertDescription>
+                {t(
+                  headerError instanceof ApiError && headerError.status === 404
+                    ? "targets.targetNotFound"
+                    : "targets.requestFailed",
+                )}
+              </AlertDescription>
+            </Alert>
+            <Button disabled={loadingHeader} onClick={() => void refreshHeader().catch(() => {})}>
+              {t("common.refresh")}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Spinner />
+            <span>{t("common.loading")}</span>
+          </>
+        )}
       </div>
     );
   }
 
-  const target = snapshot.targets.find((item) => item.id === targetId && item.active);
-  if (!target) {
+  const { target, catalog, boundary } = header;
+  if (!target.active) {
     return (
       <div className="space-y-4 p-6 lg:p-8">
         <Button asChild variant="ghost">
@@ -77,28 +168,28 @@ export function TargetDetailPage() {
     );
   }
 
-  const identities = snapshot.identities.filter(
-    (item) => item.target_id === target.id && item.active,
-  );
-  const methods = snapshot.methods
-    .filter((item) => item.target_id === target.id && item.active)
-    .sort((left, right) => left.priority - right.priority);
-  const relationships = snapshot.relationships.filter(
-    (item) =>
-      item.active &&
-      (item.source_target_id === target.id || item.destination_target_id === target.id),
-  );
-  const boundary = snapshot.boundaries.find((item) => item.id === target.management_boundary_id);
-  const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
+  const identities = identityPage.view?.data ?? [];
+  const methods = methodPage.view?.data ?? [];
+  const relationships = relationshipPage.view?.data ?? [];
 
   async function complete(message: string) {
     await refresh();
-    setSuccess(message);
+    if (mounted.current) setSuccess(message);
   }
 
   return (
     <div className="space-y-6 p-6 lg:p-8">
       <div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={
+            loadingHeader || methodPage.pending || identityPage.pending || relationshipPage.pending
+          }
+          onClick={() => void refresh().catch(() => {})}
+        >
+          {t("common.refresh")}
+        </Button>
         <Button asChild size="sm" variant="ghost" className="mb-3 -ml-3">
           <Link to="/targets">
             <ArrowLeft />
@@ -127,9 +218,9 @@ export function TargetDetailPage() {
         )}
       </div>
 
-      {error && (
+      {(error || headerError != null) && (
         <Alert variant="destructive" className="sticky top-16 z-20">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || t("targets.requestFailed")}</AlertDescription>
         </Alert>
       )}
       {success && (
@@ -146,9 +237,7 @@ export function TargetDetailPage() {
       {canManage && (
         <TargetDetailActions
           target={target}
-          targets={snapshot.targets}
-          providers={snapshot.providers}
-          catalog={snapshot.catalog}
+          catalog={catalog}
           initialAction={searchParams.get("action") === "relationship" ? "relationship" : undefined}
           onComplete={complete}
           onError={setError}
@@ -161,15 +250,17 @@ export function TargetDetailPage() {
           icon={<Cable />}
           title={t("targets.accessMethods")}
           empty={t("targets.noAccessMethods")}
+          page={methodPage}
         >
-          {methods.map((method, index) => {
-            const provider = snapshot.providers.find((item) => item.id === method.provider_id);
+          {methods.map(({ method, provider }, index) => {
             const available = method.check.current;
             return (
               <Record
                 key={method.id}
                 title={method.name}
-                badge={index === 0 ? t("targets.preferred") : undefined}
+                badge={
+                  methodPage.view?.index === 0 && index === 0 ? t("targets.preferred") : undefined
+                }
               >
                 <p className="break-all text-sm text-muted-foreground">
                   {method.method} · {method.endpoint} · P{method.priority}
@@ -233,10 +324,12 @@ export function TargetDetailPage() {
                             }),
                           );
                         } catch {
-                          setError(t("targets.requestFailed"));
+                          if (mounted.current) setError(t("targets.requestFailed"));
                         } finally {
-                          await refresh();
-                          setCheckingMethodId(null);
+                          await refresh().catch(() => {
+                            if (mounted.current) setError(t("targets.requestFailed"));
+                          });
+                          if (mounted.current) setCheckingMethodId(null);
                         }
                       }}
                     >
@@ -246,8 +339,8 @@ export function TargetDetailPage() {
                     {editingMethodId === method.id ? (
                       <AccessMethodForm
                         target={target}
-                        providers={snapshot.providers}
-                        catalog={snapshot.catalog}
+                        initialProvider={provider}
+                        catalog={catalog}
                         method={method}
                         onSaved={async () => {
                           await complete(t("targets.accessMethodUpdated"));
@@ -276,6 +369,7 @@ export function TargetDetailPage() {
           icon={<Fingerprint />}
           title={t("targets.identities")}
           empty={t("targets.noIdentities")}
+          page={identityPage}
         >
           {identities.map((identity) => (
             <Record key={identity.id} title={identity.source + " · " + identity.kind}>
@@ -288,8 +382,9 @@ export function TargetDetailPage() {
           icon={<Link2 />}
           title={t("targets.layerRelationships")}
           empty={t("targets.noLayerRelationships")}
+          page={relationshipPage}
         >
-          {relationships.map((relationship) => {
+          {relationships.map(({ relationship, peer: referencedPeer }) => {
             const outgoing = relationship.source_target_id === target.id;
             const peer = outgoing
               ? relationship.destination_target_id
@@ -297,7 +392,8 @@ export function TargetDetailPage() {
             return (
               <Record key={relationship.id} title={relationship.kind}>
                 <p className="text-sm text-muted-foreground">
-                  {outgoing ? t("targets.outgoing") : t("targets.incoming")} · {targetName(peer)}
+                  {outgoing ? t("targets.outgoing") : t("targets.incoming")} ·{" "}
+                  {referencedPeer?.name ?? peer}
                 </p>
               </Record>
             );
@@ -327,26 +423,58 @@ function Section({
   title,
   empty,
   children,
+  page,
 }: {
   icon: ReactNode;
   title: string;
   empty: string;
   children: ReactNode;
+  page?: {
+    view: { index: number; page: { next: string | null } } | null;
+    pending: boolean;
+    error: unknown;
+    previous: () => void;
+    next: () => void;
+    retry: () => Promise<void>;
+  };
 }) {
+  const { t } = useTranslation();
   const items = Array.isArray(children) ? children : [children];
   return (
-    <Card>
+    <Card role="region" aria-label={title}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <span className="[&_svg]:size-4">{icon}</span>
           {title}
         </CardTitle>
         <CardDescription>
-          {items.length} {title}
+          {page ? t("targets.pageRecords", { count: items.length }) : `${items.length} ${title}`}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {items.length ? children : <p className="text-sm text-muted-foreground">{empty}</p>}
+        {page?.pending && <Spinner />}
+        {page?.error != null && (
+          <Alert variant="destructive">
+            <AlertDescription>{t("targets.requestFailed")}</AlertDescription>
+            <Button variant="outline" size="sm" onClick={() => void page.retry().catch(() => {})}>
+              {t("common.refresh")}
+            </Button>
+          </Alert>
+        )}
+        {items.length ? (
+          children
+        ) : !page?.pending && page?.error == null ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : null}
+        {page && (
+          <PageControls
+            index={page.view?.index ?? 0}
+            hasNext={!!page.view?.page.next}
+            pending={page.pending}
+            previous={page.previous}
+            next={page.next}
+          />
+        )}
       </CardContent>
     </Card>
   );

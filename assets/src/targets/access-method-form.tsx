@@ -1,18 +1,18 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import { Check, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData } from "@/api/client";
-import { FormSelect } from "@/components/form-select";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { PagedSelect } from "@/components/paged-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { TargetConnectionForm } from "@/targets/connection-form";
-import type { AccessMethod, Provider, Target, TargetTypeCatalog } from "@/targets/data";
+import type { AccessMethod, ProviderReference, Target, TargetTypeCatalog } from "@/targets/data";
 
 export function AccessMethodForm({
   target,
-  providers,
+  initialProvider,
   catalog,
   method,
   onSaved,
@@ -20,7 +20,7 @@ export function AccessMethodForm({
   onError,
 }: {
   target: Target;
-  providers: Provider[];
+  initialProvider?: ProviderReference;
   catalog: TargetTypeCatalog;
   method?: AccessMethod;
   onSaved: () => Promise<void>;
@@ -29,23 +29,36 @@ export function AccessMethodForm({
 }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
-  const [providerId, setProviderId] = useState(method?.provider_id ?? "");
+  const [selectedProvider, setSelectedProvider] = useState<ProviderReference | null>(null);
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
-  const [createdProvider, setCreatedProvider] = useState<Provider | null>(null);
+  const [createdName, setCreatedName] = useState<string>();
   const [registeredMethod, setRegisteredMethod] = useState<AccessMethod | null>(null);
   const allowedTypes =
-    catalog.types.find((item) => item.id === target.type_id)?.access_method_types ?? [];
-  const availableProviders = [...providers, ...(createdProvider ? [createdProvider] : [])].filter(
-    (provider) =>
-      provider.kind === "target" &&
-      provider.enabled &&
-      provider.access_method_profile &&
-      allowedTypes.includes(provider.adapter_type),
+    catalog.types.find((item) => item.id === target.type_id)?.access_method_types.join(",") ?? "";
+  const loadProviders = useCallback(
+    (after: string | undefined, signal: AbortSignal) =>
+      allowedTypes
+        ? apiClient
+            .GET("/api/v1/providers/references", {
+              params: {
+                query: {
+                  kind: "target",
+                  enabled: true,
+                  adapter_types: allowedTypes.split(","),
+                  limit: 50,
+                  after,
+                },
+              },
+              querySerializer: commaSeparatedQuery,
+              signal,
+            })
+            .then(apiData)
+        : Promise.resolve({ data: [] as ProviderReference[], page: { next: null } }),
+    [allowedTypes],
   );
-  const [creatingConnection, setCreatingConnection] = useState(
-    !method && availableProviders.length === 0,
-  );
-  const provider = availableProviders.find((item) => item.id === providerId);
+  const [creatingConnection, setCreatingConnection] = useState(false);
+  const candidate = method ? initialProvider : selectedProvider;
+  const provider = candidate?.enabled ? candidate : null;
   const currentEndpoint = endpoint;
   const fieldId = `target-access-${method?.id ?? "new"}`;
 
@@ -216,18 +229,24 @@ export function AccessMethodForm({
     return (
       choice && (
         <div className="space-y-3">
-          {availableProviders.length > 0 && (
-            <Button variant="ghost" onClick={() => setCreatingConnection(false)}>
-              {t("targets.useExistingConnection")}
-            </Button>
-          )}
+          <Button variant="ghost" onClick={() => setCreatingConnection(false)}>
+            {t("targets.useExistingConnection")}
+          </Button>
           <TargetConnectionForm
             choice={choice}
             catalog={catalog}
             onError={onError}
             onCreated={({ provider, endpoint }) => {
-              setCreatedProvider(provider);
-              setProviderId(provider.id);
+              setSelectedProvider({
+                id: provider.id,
+                name: provider.name,
+                kind: provider.kind,
+                adapter_type: provider.adapter_type,
+                enabled: provider.enabled,
+                revision: provider.revision,
+                access_method_profile: provider.access_method_profile,
+              });
+              setCreatedName(provider.name);
               setEndpoint(endpoint ?? "");
               setCreatingConnection(false);
             }}
@@ -242,25 +261,22 @@ export function AccessMethodForm({
       {method ? (
         <div className="space-y-2">
           <Label>{t("targets.connection")}</Label>
-          <p className="text-sm">{provider?.name ?? t("targets.connectionMissing")}</p>
+          <p className="text-sm">{initialProvider?.name ?? t("targets.connectionMissing")}</p>
         </div>
       ) : (
         <div className="space-y-2">
-          <Label htmlFor={`${fieldId}-provider`}>{t("targets.connection")}</Label>
-          <FormSelect
+          <PagedSelect
             id={`${fieldId}-provider`}
-            name="provider_id"
-            required
+            label={t("targets.connection")}
             placeholder={t("targets.chooseConnection")}
-            value={providerId}
-            onValueChange={(id) => {
-              setProviderId(id ?? "");
+            selected={selectedProvider}
+            load={loadProviders}
+            disabled={pending}
+            onChange={(item) => {
+              setSelectedProvider(item);
               setEndpoint("");
             }}
-            options={availableProviders.map((item) => ({
-              value: item.id,
-              label: `${item.name} · ${item.adapter_type}`,
-            }))}
+            display={(item) => `${item.name} · ${item.adapter_type}`}
           />
           <Button
             type="button"
@@ -278,7 +294,7 @@ export function AccessMethodForm({
         <Input
           id={`${fieldId}-name`}
           name="name"
-          defaultValue={method?.name ?? createdProvider?.name}
+          defaultValue={method?.name ?? createdName}
           required
         />
       </div>

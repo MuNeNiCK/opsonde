@@ -37,6 +37,7 @@ const en = {
       },
     },
     common: {
+      refresh: "Refresh",
       previousPage: "Previous",
       nextPage: "Next",
       pageNumber: "Page {{page}}",
@@ -1227,6 +1228,7 @@ const en = {
       identities: "External identities",
       noIdentities: "No external identities",
       accessMethods: "Access methods",
+      pageRecords: "This page: {{count}} records",
       noAccessMethods: "No access methods",
       relationships: "Outgoing relationships",
       noRelationships: "No outgoing relationships",

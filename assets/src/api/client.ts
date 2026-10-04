@@ -3,6 +3,7 @@ import type { paths } from "@/api/schema";
 
 const tokenKey = "opsonde.session";
 export const authenticationExpiredEvent = "opsonde:authentication-expired";
+export const commaSeparatedQuery = { array: { style: "form", explode: false } } as const;
 
 type ErrorBody = {
   error?: { code?: string; message?: string; request_id?: string };

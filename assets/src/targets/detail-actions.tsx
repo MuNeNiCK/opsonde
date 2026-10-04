@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import { Cable, Fingerprint, Link2, Plus, FileText, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient } from "@/api/client";
-import { FormSelect, type FormSelectOption } from "@/components/form-select";
+import { apiClient, apiData } from "@/api/client";
+import { PagedSelect } from "@/components/paged-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,22 +10,18 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { AccessMethodForm } from "@/targets/access-method-form";
-import type { Provider, Target, TargetTypeCatalog } from "@/targets/data";
+import type { Target, TargetReference, TargetTypeCatalog } from "@/targets/data";
 
 type Action = "identity" | "access" | "relationship" | "instructions";
 
 export function TargetDetailActions({
   target,
-  targets,
-  providers,
   catalog,
   initialAction,
   onComplete,
   onError,
 }: {
   target: Target;
-  targets: Target[];
-  providers: Provider[];
   catalog: TargetTypeCatalog;
   initialAction?: Action;
   onComplete: (message: string) => Promise<void>;
@@ -34,6 +30,17 @@ export function TargetDetailActions({
   const { t } = useTranslation();
   const [action, setAction] = useState<Action | null>(initialAction ?? null);
   const [pending, setPending] = useState(false);
+  const [destination, setDestination] = useState<TargetReference | null>(null);
+  const loadDestinations = useCallback(
+    (after: string | undefined, signal: AbortSignal) =>
+      apiClient
+        .GET("/api/v1/targets/references", {
+          params: { query: { active: true, exclude_id: target.id, limit: 50, after } },
+          signal,
+        })
+        .then(apiData),
+    [target.id],
+  );
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -122,7 +129,6 @@ export function TargetDetailActions({
         {action === "access" && (
           <AccessMethodForm
             target={target}
-            providers={providers}
             catalog={catalog}
             onSaved={async () => {
               await onComplete(t("targets.changeSaved"));
@@ -140,7 +146,7 @@ export function TargetDetailActions({
                   body: {
                     relationship: {
                       source_target_id: target.id,
-                      destination_target_id: value(form, "destination_target_id"),
+                      destination_target_id: destination?.id ?? "",
                       kind: value(form, "kind"),
                       facts: {},
                       valid_until: null,
@@ -150,14 +156,14 @@ export function TargetDetailActions({
               )
             }
           >
-            <LabeledSelect
+            <PagedSelect
+              id="target-destination"
               label={t("targets.destinationTarget")}
-              name="destination_target_id"
-              required
               placeholder={t("targets.chooseTarget")}
-              options={targets
-                .filter((item) => item.active && item.id !== target.id)
-                .map((item) => ({ value: item.id, label: item.name }))}
+              load={loadDestinations}
+              selected={destination}
+              onChange={setDestination}
+              disabled={pending}
             />
             <Field
               label={t("targets.relationshipKind")}
@@ -168,7 +174,7 @@ export function TargetDetailActions({
             <Submit
               pending={pending}
               label={t("targets.addRelationship")}
-              disabled={targets.filter((item) => item.active && item.id !== target.id).length === 0}
+              disabled={!destination}
             />
           </form>
         )}
@@ -223,37 +229,6 @@ function Field({
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
       <Input id={id} name={name} {...props} />
-    </div>
-  );
-}
-
-function LabeledSelect({
-  label,
-  name,
-  options,
-  placeholder,
-  defaultValue,
-  required,
-}: {
-  label: string;
-  name: string;
-  options: FormSelectOption[];
-  placeholder?: string;
-  defaultValue?: string;
-  required?: boolean;
-}) {
-  const id = "target-action-" + name;
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <FormSelect
-        id={id}
-        name={name}
-        options={options}
-        placeholder={placeholder}
-        defaultValue={defaultValue}
-        required={required}
-      />
     </div>
   );
 }
