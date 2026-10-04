@@ -195,35 +195,56 @@ defmodule OpsondeCLI.CLI do
           %{}
       end
 
-    case Client.request(
-           client,
-           route.method,
-           Commands.path(route, ids),
-           body,
-           query(route, options)
-         ) do
-      {:ok, _status, response} ->
-        result = outcome(route.outcome, response)
+    with :ok <- emit_registration(receipt) do
+      case Client.request(
+             client,
+             route.method,
+             Commands.path(route, ids),
+             body,
+             query(route, options)
+           ) do
+        {:ok, _status, response} ->
+          result = outcome(route.outcome, response)
 
-        with :ok <- maybe_clear_logout(route, runtime_options) do
-          print_response(route, response, result)
-          Map.fetch!(@exit, result)
-        else
-          {:error, message} -> local_error(message)
-        end
+          with :ok <- maybe_clear_logout(route, runtime_options) do
+            print_response(route, response, result)
+            Map.fetch!(@exit, result)
+          else
+            {:error, message} -> local_error(message)
+          end
 
-      {:error, :http, status, response} ->
-        context =
-          if status >= 500 and map_size(receipt) > 0,
-            do: Map.put(receipt, "outcome", "unknown"),
-            else: receipt
+        {:error, :http, status, response} ->
+          context =
+            if status >= 500 and map_size(receipt) > 0,
+              do: Map.put(receipt, "outcome", "unknown"),
+              else: receipt
 
-        http_error(status, response, context)
+          http_error(status, response, context)
 
-      {:error, :transport, message} ->
-        transport_error(message, receipt)
+        {:error, :transport, message} ->
+          transport_error(message, receipt)
+      end
+    else
+      :error -> 4
     end
   end
+
+  defp emit_registration(%{"registration_id" => id}) do
+    with {:ok, _uuid} <- Ecto.UUID.cast(id) do
+      IO.puts(
+        :stderr,
+        Jason.encode!(%{"event" => "registration_prepared", "registration_id" => id})
+      )
+    else
+      :error -> :error
+    end
+  rescue
+    _error -> :error
+  catch
+    :exit, _reason -> :error
+  end
+
+  defp emit_registration(_receipt), do: :ok
 
   defp file_result({:ok, response}) do
     print(with_outcome(response, :succeeded))
@@ -633,6 +654,7 @@ defmodule OpsondeCLI.CLI do
 
     Input JSON contains the resource fields directly; the CLI adds the API envelope.
     Output is fixed-English JSON, except report read ID prints the Report language text.
+    Registration IDs are emitted to stderr before dispatch; retain them to check the original result.
     Exit codes: 0 succeeded/resolved, 2 usage, 3 authentication,
     4 rejected, 5 transport, 10 accepted/resolving, 11 approval required, 12 needs attention,
     13 failed, 14 partial, 15 unknown, 16 cancellation requested.

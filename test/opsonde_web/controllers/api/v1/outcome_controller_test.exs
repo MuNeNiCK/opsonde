@@ -341,9 +341,14 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
             assert OpsondeCLI.CLI.run(["audit", "schedule", "--input", "-"], runtime) == 15
           end)
         end)
-        |> Jason.decode!()
+        |> String.split("\n", trim: true)
+        |> Enum.map(&Jason.decode!/1)
+
+      [prepared, lost] = lost
+      assert prepared["event"] == "registration_prepared"
 
       assert %{"outcome" => "unknown", "registration_id" => retained_id} = lost
+      assert prepared["registration_id"] == retained_id
       if id, do: assert(retained_id == chosen_id)
       assert_receive {:accepted_audit, ^retained_id}
       assert_receive {:audit_request, "POST"}
@@ -358,6 +363,127 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       assert recovered["data"]["name"] == input["name"]
       assert_receive {:audit_request, "GET"}
       refute_receive {:audit_request, "POST"}, 0
+    end
+  end
+
+  @tag registration_process: true
+  test "a killed CLI retains its generated registration identity before the committed acknowledgement",
+       context do
+    boundary =
+      Targets.create_management_boundary!("process-receipt", "datacenter", %{},
+        actor: context.admin
+      )
+
+    owner = self()
+
+    plug = fn conn, _opts ->
+      send(owner, {:registration_request, conn.method})
+
+      conn =
+        Plug.Conn.register_before_send(conn, fn result ->
+          if conn.method == "POST" and result.status == 201 do
+            id = Jason.decode!(result.resp_body)["data"]["id"]
+            send(owner, {:registration_committed, id, self()})
+            receive do: (:release_ack -> :ok)
+          end
+
+          result
+        end)
+
+      OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+    end
+
+    server =
+      start_supervised!({Bandit, plug: plug, ip: {127, 0, 0, 1}, port: 0, startup_log: false})
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+    root =
+      Path.join(System.tmp_dir!(), "cli-process-receipt-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "http://127.0.0.1:#{port}", "token" => context.admin_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    executable = System.find_executable("elixir")
+    paths = Path.wildcard("_build/test/lib/*/ebin") |> Enum.flat_map(&["-pa", Path.expand(&1)])
+
+    script =
+      "Application.ensure_all_started(:req); [config | args] = System.argv(); System.halt(OpsondeCLI.CLI.run(args, config_path: config))"
+
+    for {command, input, read_command} <- [
+          {["provider", "create"],
+           %{
+             "name" => "Process provider",
+             "kind" => "notification",
+             "adapter_type" => "fixture-notification",
+             "configuration" => %{"destination" => "reachable"},
+             "credentials" => %{"token" => "private-process-secret"}
+           }, ["provider", "show"]},
+          {["audit", "schedule"],
+           Map.delete(audit_registration(boundary.id, nil), "registration_id"), ["audit", "show"]}
+        ] do
+      input_path = Path.join(root, "input.json")
+      File.write!(input_path, Jason.encode!(input))
+      args = paths ++ ["-e", script, "--", config_path] ++ command ++ ["--input", input_path]
+
+      child =
+        Port.open({:spawn_executable, executable}, [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          args: args,
+          env: [{~c"ERL_FLAGS", ~c"+S 2:2"}]
+        ])
+
+      {:os_pid, child_pid} = Port.info(child, :os_pid)
+
+      on_exit(fn ->
+        if Port.info(child),
+          do: System.cmd("kill", ["-KILL", to_string(child_pid)], stderr_to_stdout: true)
+      end)
+
+      assert_receive {^child, {:data, prepared}}, 10_000
+
+      assert %{"event" => "registration_prepared", "registration_id" => id} =
+               Jason.decode!(prepared)
+
+      refute prepared =~ "private-process-secret"
+      assert_receive {:registration_committed, ^id, handler}, 5_000
+      assert_receive {:registration_request, "POST"}
+      assert System.cmd("kill", ["-KILL", to_string(child_pid)]) == {"", 0}
+      assert_receive {^child, {:exit_status, _status}}, 5_000
+      send(handler, :release_ack)
+
+      {output, 0} =
+        System.cmd(executable, paths ++ ["-e", script, "--", config_path] ++ read_command ++ [id],
+          env: [{"ERL_FLAGS", "+S 2:2"}]
+        )
+
+      assert %{"data" => %{"id" => ^id, "revision" => 1}} = Jason.decode!(output)
+      assert_receive {:registration_request, "GET"}
+
+      broken_output_script =
+        String.replace(
+          script,
+          "System.halt(",
+          "Process.unregister(:standard_error); System.halt("
+        )
+
+      assert {"", 4} =
+               System.cmd(
+                 executable,
+                 paths ++
+                   ["-e", broken_output_script, "--", config_path] ++
+                   command ++ ["--input", input_path], env: [{"ERL_FLAGS", "+S 2:2"}])
+
+      refute_receive {:registration_request, "POST"}, 0
+      refute_receive {:registration_committed, _, _}, 0
     end
   end
 
