@@ -66,10 +66,10 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
       {:ok, targets} when length(targets) == length(ids) ->
         if Enum.all?(targets, & &1.active),
           do: :ok,
-          else: {:error, "Audit Target is inactive"}
+          else: invalid_scope("Audit Target is inactive")
 
       {:ok, _targets} ->
-        {:error, "Audit Target is unavailable"}
+        invalid_scope("Audit Target is unavailable")
 
       {:error, _error} = error ->
         error
@@ -84,10 +84,14 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
     |> Ash.read_one(authorize?: false)
     |> case do
       {:ok, %{active: true}} -> :ok
-      {:ok, nil} -> {:error, "Management boundary is unavailable"}
-      {:ok, _boundary} -> {:error, "Management boundary is inactive"}
-      {:error, _error} -> {:error, "Management boundary is unavailable"}
+      {:ok, nil} -> invalid_scope("Management boundary is unavailable")
+      {:ok, _boundary} -> invalid_scope("Management boundary is inactive")
+      {:error, _error} = error -> error
     end
+  end
+
+  defp invalid_scope(message) do
+    {:error, Ash.Error.Changes.InvalidAttribute.exception(field: :schedule, message: message)}
   end
 
   defp create_record(arguments, next_run_at) do

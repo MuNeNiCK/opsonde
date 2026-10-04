@@ -105,6 +105,113 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   end
 
   @tag audit_registration: true
+  test "Audit creation rejects inactive and unavailable scope without saving the chosen identity",
+       context do
+    boundary =
+      Targets.create_management_boundary!("inactive-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    target =
+      Targets.create_target!("inactive-audit-target", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    Targets.deactivate_target!(target, target.revision, actor: context.admin)
+    Targets.deactivate_management_boundary!(boundary, boundary.revision, actor: context.admin)
+
+    for {target_ids, boundary_id, message} <- [
+          {[target.id], nil, "Audit Target is inactive"},
+          {[Ash.UUID.generate()], nil, "Audit Target is unavailable"},
+          {[], boundary.id, "Management boundary is inactive"},
+          {[], Ash.UUID.generate(), "Management boundary is unavailable"}
+        ] do
+      id = Ash.UUID.generate()
+
+      input =
+        audit_registration(boundary_id, id)
+        |> Map.put("target_ids", target_ids)
+
+      assert {:error, %Ash.Error.Invalid{} = domain_error} =
+               Audits.schedule_audit(
+                 id,
+                 input["name"],
+                 input["desired_outcome"],
+                 input["timezone"],
+                 input["cron_expression"],
+                 input["report_language"],
+                 target_ids,
+                 boundary_id,
+                 actor: context.admin
+               )
+
+      assert Exception.message(domain_error) =~ message
+
+      rejected =
+        post_json("/api/v1/audit-schedules", %{"audit_schedule" => input}, context.admin_token)
+
+      assert %{
+               "error" => %{
+                 "code" => "validation_failed",
+                 "details" => %{"fields" => ["schedule"]}
+               }
+             } =
+               json_response(rejected, 422)
+
+      assert_operation_response(rejected)
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               get_json("/api/v1/audit-schedules/#{id}", context.admin_token)
+               |> json_response(404)
+    end
+  end
+
+  @tag audit_registration: true
+  test "Audit scope storage failure remains an internal error rather than an absent scope",
+       context do
+    boundary =
+      Targets.create_management_boundary!("scope-storage-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    target =
+      Targets.create_target!("scope-storage-target", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    for {table, target_ids, boundary_id} <- [
+          {"targets", [target.id], nil},
+          {"management_boundaries", [], boundary.id}
+        ] do
+      id = Ash.UUID.generate()
+
+      input =
+        audit_registration(boundary_id, id)
+        |> Map.put("target_ids", target_ids)
+
+      Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN active TO unavailable_active")
+
+      try do
+        capture_log(fn ->
+          assert %{"error" => %{"code" => "internal_error"}} =
+                   post_json(
+                     "/api/v1/audit-schedules",
+                     %{"audit_schedule" => input},
+                     context.admin_token
+                   )
+                   |> json_response(500)
+        end)
+      after
+        Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN unavailable_active TO active")
+      end
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               get_json("/api/v1/audit-schedules/#{id}", context.admin_token)
+               |> json_response(404)
+    end
+  end
+
+  @tag audit_registration: true
   test "Audit schedule and wake job storage failures cannot leave an accepted schedule",
        context do
     boundary =
