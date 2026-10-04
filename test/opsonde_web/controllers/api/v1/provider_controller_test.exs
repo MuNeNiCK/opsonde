@@ -2,6 +2,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
   import OpenApiSpex.TestAssertions
+  import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Cases, Providers}
 
@@ -26,6 +27,121 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
       operator_token: token!(operator.email),
       viewer_token: token!(viewer.email)
     }
+  end
+
+  @tag provider_registration: true
+  test "a caller registration identity locates the exact Provider and cannot overwrite it",
+       context do
+    registration_id = "10000000-0000-4000-8000-000000000051"
+
+    input = %{
+      "provider" => %{
+        "registration_id" => registration_id,
+        "name" => "Original destination",
+        "kind" => "notification",
+        "adapter_type" => "fixture-notification",
+        "configuration" => %{"destination" => "reachable"},
+        "credentials" => %{"token" => "private-registration-secret"}
+      }
+    }
+
+    created = post_json("/api/v1/providers", input, context.admin_token)
+    assert %{"data" => %{"id" => ^registration_id, "revision" => 1}} = json_response(created, 201)
+    assert_operation_response(created)
+    assert_secret_free(created, ["private-registration-secret"])
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      read = get_json("/api/v1/providers/#{registration_id}", token)
+
+      assert %{"data" => %{"id" => ^registration_id, "name" => "Original destination"}} =
+               json_response(read, 200)
+
+      assert_operation_response(read)
+    end
+
+    conflicting = put_in(input, ["provider", "name"], "Different destination")
+
+    assert %{"error" => %{"code" => "conflict"}} =
+             post_json("/api/v1/providers", conflicting, context.admin_token)
+             |> json_response(409)
+
+    assert %{"data" => %{"name" => "Original destination", "revision" => 1}} =
+             get_json("/api/v1/providers/#{registration_id}", context.admin_token)
+             |> json_response(200)
+  end
+
+  @tag provider_registration: true
+  test "registration requires a valid identity and creation authority", context do
+    registration_id = "10000000-0000-4000-8000-000000000052"
+
+    provider = %{
+      "registration_id" => registration_id,
+      "name" => "Unregistered destination",
+      "kind" => "notification",
+      "adapter_type" => "fixture-notification",
+      "configuration" => %{"destination" => "reachable"},
+      "credentials" => %{"token" => "private-input-secret"}
+    }
+
+    for {invalid, status} <- [
+          {Map.delete(provider, "registration_id"), 400},
+          {%{provider | "registration_id" => "not-a-uuid"}, 422},
+          {%{provider | "registration_id" => nil}, 422}
+        ] do
+      response = post_json("/api/v1/providers", %{"provider" => invalid}, context.admin_token)
+      assert %{"error" => _} = json_response(response, status)
+      assert_secret_free(response, ["private-input-secret"])
+    end
+
+    for token <- [context.operator_token, context.viewer_token] do
+      assert %{"error" => %{"code" => "forbidden"}} =
+               post_json("/api/v1/providers", %{"provider" => provider}, token)
+               |> json_response(403)
+    end
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             get_json("/api/v1/providers/#{registration_id}", context.admin_token)
+             |> json_response(404)
+  end
+
+  @tag provider_registration: true
+  test "registration persistence failure does not fabricate an accepted receipt", context do
+    registration_id = "10000000-0000-4000-8000-000000000053"
+
+    input = %{
+      "provider" => %{
+        "registration_id" => registration_id,
+        "name" => "Failed destination",
+        "kind" => "notification",
+        "adapter_type" => "fixture-notification",
+        "configuration" => %{"destination" => "reachable"},
+        "credentials" => %{"token" => "private-storage-secret"}
+      }
+    }
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_provider_registration() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'registration storage unavailable'; END;
+    $$
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_provider_registration BEFORE INSERT ON providers FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_provider_registration()"
+    )
+
+    try do
+      capture_log(fn ->
+        response = post_json("/api/v1/providers", input, context.admin_token)
+        assert %{"error" => %{"code" => "internal_error"}} = json_response(response, 500)
+        assert_secret_free(response, ["private-storage-secret"])
+      end)
+    after
+      Opsonde.Repo.query!("DROP TRIGGER reject_provider_registration ON providers")
+    end
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             get_json("/api/v1/providers/#{registration_id}", context.admin_token)
+             |> json_response(404)
   end
 
   @tag provider_summaries: true
@@ -258,6 +374,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "/api/v1/providers",
         %{
           "provider" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "vertex-probe",
             "kind" => "ai",
             "adapter_type" => "req-llm",
@@ -287,6 +404,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "/api/v1/providers",
         %{
           "provider" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "public-http-target",
             "kind" => "target",
             "adapter_type" => "http-api",
@@ -325,6 +443,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
             "/api/v1/providers",
             %{
               "provider" => %{
+                "registration_id" => Ash.UUID.generate(),
                 "name" => "#{kind}-primary",
                 "kind" => kind,
                 "adapter_type" => adapter,
@@ -617,6 +736,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "/api/v1/providers",
         %{
           "provider" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "review-only",
             "kind" => "ai",
             "adapter_type" => "fixture-ai",
@@ -641,6 +761,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         "/api/v1/providers",
         %{
           "provider" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "target-with-ai-usage",
             "kind" => "target",
             "adapter_type" => "fixture-target",
@@ -980,6 +1101,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
       "/api/v1/providers",
       %{
         "provider" => %{
+          "registration_id" => Ash.UUID.generate(),
           "name" => name,
           "kind" => kind,
           "adapter_type" => adapter_type,

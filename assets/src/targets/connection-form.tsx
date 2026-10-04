@@ -65,6 +65,7 @@ export function TargetConnectionForm({
       await apiClient.POST("/api/v1/providers", {
         body: {
           provider: {
+            registration_id: crypto.randomUUID(),
             name: value(form, "name"),
             kind: "inventory",
             adapter_type: "netbox-api",
@@ -155,6 +156,7 @@ export function TargetConnectionForm({
           await apiClient.POST("/api/v1/providers", {
             body: {
               provider: {
+                registration_id: crypto.randomUUID(),
                 name: value(form, "name"),
                 kind: "target",
                 adapter_type: adapterType,

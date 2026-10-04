@@ -8193,6 +8193,10 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "registration_id": {
+                "format": "uuid",
+                "type": "string"
+              },
               "usage_priority": {
                 "maximum": 10000,
                 "minimum": 0,
@@ -8208,6 +8212,7 @@
               }
             },
             "required": [
+              "registration_id",
               "name",
               "kind",
               "adapter_type",

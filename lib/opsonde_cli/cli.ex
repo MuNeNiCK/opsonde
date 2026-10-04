@@ -177,6 +177,15 @@ defmodule OpsondeCLI.CLI do
   end
 
   defp request_once(client, route, ids, body, options, runtime_options) do
+    registration =
+      case {route, body} do
+        {%Route{method: :post, path: "/providers"}, %{"provider" => %{"registration_id" => id}}} ->
+          %{"registration_id" => id}
+
+        _other ->
+          %{}
+      end
+
     case Client.request(
            client,
            route.method,
@@ -194,11 +203,16 @@ defmodule OpsondeCLI.CLI do
           {:error, message} -> local_error(message)
         end
 
-      {:error, :http, status, body} ->
-        http_error(status, body)
+      {:error, :http, status, response} ->
+        context =
+          if status >= 500 and map_size(registration) > 0,
+            do: Map.put(registration, "outcome", "unknown"),
+            else: registration
+
+        http_error(status, response, context)
 
       {:error, :transport, message} ->
-        transport_error(message)
+        transport_error(message, registration)
     end
   end
 
@@ -331,11 +345,16 @@ defmodule OpsondeCLI.CLI do
 
   defp request_body(%Route{root: nil}, _options, _runtime_options), do: {:ok, nil}
 
-  defp request_body(%Route{root: root}, options, runtime_options) do
+  defp request_body(%Route{root: root} = route, options, runtime_options) do
     with path when is_binary(path) <- options[:input],
          {:ok, encoded} <- read_input(path, runtime_options),
          {:ok, decoded} when is_map(decoded) <- Jason.decode(encoded) do
-      {:ok, %{root => decoded}}
+      input =
+        if route.method == :post and route.path == "/providers",
+          do: Map.put_new_lazy(decoded, "registration_id", &Ash.UUID.generate/0),
+          else: decoded
+
+      {:ok, %{root => input}}
     else
       nil ->
         {:error, "This command requires --input FILE or --input -"}

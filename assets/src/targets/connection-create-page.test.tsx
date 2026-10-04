@@ -119,6 +119,7 @@ test("named controller profile uses the published IPMI form and exact Provider i
       options: {
         body: {
           provider: {
+            registration_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
             name: "rack-controller",
             kind: "target",
             adapter_type: "hpe-ilo-ipmi",
@@ -157,6 +158,7 @@ test("Custom network NETCONF preserves protocol auth and host fingerprint", asyn
     options: {
       body: {
         provider: {
+          registration_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
           name: "edge-netconf",
           kind: "target",
           adapter_type: "netconf",

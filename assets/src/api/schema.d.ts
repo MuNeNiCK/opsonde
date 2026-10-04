@@ -3888,6 +3888,8 @@ export interface components {
                 /** @enum {string} */
                 kind: "ai" | "signal" | "target" | "inventory" | "notification";
                 name: string;
+                /** Format: uuid */
+                registration_id: string;
                 usage_priority?: number;
                 /** @enum {string} */
                 usage_scope?: "all" | "resolver" | "reviewer";

@@ -178,6 +178,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
         provider:
           object(
             %{
+              registration_id: Schemas.uuid(),
               name: %Schema{type: :string, minLength: 1, maxLength: 120},
               kind: provider_kind(),
               adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
@@ -186,7 +187,7 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
               usage_scope: %Schema{type: :string, enum: ~w(all resolver reviewer)},
               usage_priority: priority()
             },
-            [:name, :kind, :adapter_type, :configuration, :credentials]
+            [:registration_id, :name, :kind, :adapter_type, :configuration, :credentials]
           )
       },
       [:provider]

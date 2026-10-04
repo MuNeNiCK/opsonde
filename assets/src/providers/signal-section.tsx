@@ -65,6 +65,7 @@ export function SignalProviderCreateForm({
       await apiClient.POST("/api/v1/providers", {
         body: {
           provider: {
+            registration_id: crypto.randomUUID(),
             name: formValue(form, "name"),
             kind: "signal",
             adapter_type: adapterType,

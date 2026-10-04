@@ -51,6 +51,7 @@ export function NotificationProviderSection({ providers, canManage, onRefresh, o
       apiClient.POST("/api/v1/providers", {
         body: {
           provider: {
+            registration_id: crypto.randomUUID(),
             name: formValue(form, "name"),
             kind: "notification",
             adapter_type: "http-webhook",

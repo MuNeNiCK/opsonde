@@ -38,6 +38,74 @@ defmodule OpsondeCLI.TargetAPITest do
     }
   end
 
+  for supplied_id <- [nil, "10000000-0000-4000-8000-000000000054"] do
+    @tag provider_registration: true
+    @tag supplied_id: supplied_id
+    test "CLI retains the original Provider registration identity after a lost acknowledgement (#{inspect(supplied_id)})",
+         context do
+      owner = self()
+
+      Req.Test.stub(context.stub, fn conn ->
+        response = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+        if conn.method == "POST" and conn.request_path == "/api/v1/providers" do
+          assert response.status == 201
+          %{"data" => %{"id" => id}} = Jason.decode!(response.resp_body)
+          send(owner, {:registered, id})
+
+          %{
+            response
+            | status: 503,
+              resp_body: Jason.encode!(%{error: %{message: "Registration response lost"}})
+          }
+        else
+          send(owner, {:read, conn.method, conn.request_path})
+          response
+        end
+      end)
+
+      input = %{
+        name: "CLI destination",
+        kind: "notification",
+        adapter_type: "fixture-notification",
+        configuration: %{destination: "reachable"},
+        credentials: %{token: "private-cli-registration"}
+      }
+
+      input =
+        if context.supplied_id,
+          do: Map.put(input, :registration_id, context.supplied_id),
+          else: input
+
+      error =
+        capture_io(Jason.encode!(input), fn ->
+          stderr =
+            capture_io(:stderr, fn ->
+              assert CLI.run(["provider", "create", "--input", "-"], context.runtime) == 4
+            end)
+
+          send(owner, {:error_output, stderr})
+        end)
+
+      assert error == ""
+      assert_receive {:registered, id}
+      if context.supplied_id, do: assert(id == context.supplied_id)
+      assert_receive {:error_output, stderr}
+
+      assert %{"registration_id" => ^id, "http_status" => 503, "outcome" => "unknown"} =
+               Jason.decode!(stderr)
+
+      refute stderr =~ "private-cli-registration"
+
+      assert %{"id" => ^id, "name" => "CLI destination", "revision" => 1} =
+               cli_data!(context, ["provider", "show", id])
+
+      assert_receive {:read, "GET", path}
+      assert path == "/api/v1/providers/#{id}"
+      refute_receive {:registered, _}, 20
+    end
+  end
+
   test "CLI checks a registered Method through the authenticated remote API contract", context do
     provider =
       Providers.create_provider!(

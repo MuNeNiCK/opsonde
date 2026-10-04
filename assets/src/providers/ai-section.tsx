@@ -143,6 +143,7 @@ export function AIProviderCreateForm({
       await apiClient.POST("/api/v1/providers", {
         body: {
           provider: {
+            registration_id: crypto.randomUUID(),
             name,
             kind: "ai",
             adapter_type: "req-llm",

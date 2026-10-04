@@ -275,6 +275,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
         %{
           "provider" =>
             %{
+              "registration_id" => registration_id,
               "name" => name,
               "kind" => kind,
               "adapter_type" => adapter_type,
@@ -296,7 +297,7 @@ defmodule OpsondeWeb.API.V1.ProviderController do
              adapter_type,
              configuration,
              credentials,
-             usage,
+             Map.put(usage, :registration_id, registration_id),
              actor: conn.assigns.current_user
            ) do
       Response.data(conn, ProviderJSON.data(provider), :created)

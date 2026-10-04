@@ -122,6 +122,10 @@ defmodule Opsonde.Providers.Provider do
       primary? true
       accept [:name, :kind, :adapter_type, :configuration, :credentials]
 
+      argument :registration_id, :uuid,
+        allow_nil?: false,
+        default: &Ash.UUID.generate/0
+
       argument :usage_scope, :atom,
         allow_nil?: false,
         default: :all,
@@ -132,6 +136,7 @@ defmodule Opsonde.Providers.Provider do
         default: 100,
         constraints: [min: 0, max: 10_000]
 
+      change set_attribute(:id, arg(:registration_id))
       change Opsonde.Providers.Provider.Changes.ValidateAdapter
       change Opsonde.Providers.Provider.Changes.InitializeAIUsage
     end
