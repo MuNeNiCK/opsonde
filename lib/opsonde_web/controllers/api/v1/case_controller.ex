@@ -106,6 +106,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Evidence page", "application/json", WorkflowSchemas.ref("EvidencePage")}] ++
         @show_errors
 
+  operation :show_evidence,
+    operation_id: "getEvidence",
+    summary: "Get complete Case evidence",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Evidence", "application/json", WorkflowSchemas.ref("EvidenceResponse")}] ++
+        @show_errors
+
   operation :ai_invocations,
     operation_id: "listCaseAIInvocations",
     summary: "List Case AI invocation accounting",
@@ -244,7 +252,18 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def evidence(conn, %{"id" => id} = params) do
-    page_case_records(conn, params, &Cases.page_case_evidence(id, &1), &WorkflowJSON.evidence/1)
+    page_case_records(
+      conn,
+      params,
+      &Cases.page_case_evidence(id, &1),
+      &WorkflowJSON.evidence_summary/1
+    )
+  end
+
+  def show_evidence(conn, %{"id" => id}) do
+    with {:ok, evidence} <- Cases.get_evidence(id, actor: conn.assigns.current_user) do
+      Response.data(conn, WorkflowJSON.evidence(evidence))
+    end
   end
 
   def ai_invocations(conn, %{"id" => id} = params) do

@@ -33,7 +33,7 @@ import { Spinner } from "@/components/ui/spinner";
 type Approval = components["schemas"]["Approval"];
 type CaseEvent = components["schemas"]["CaseEvent"];
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
-type Evidence = components["schemas"]["Evidence"];
+type Evidence = components["schemas"]["EvidenceSummary"];
 type ReviewDecision = components["schemas"]["ReviewDecision"];
 type Turn = components["schemas"]["ResolverTurn"];
 type Provider = components["schemas"]["Provider"];
@@ -248,10 +248,10 @@ export function CaseDetailPage() {
     const first = detail.evidence.find(
       (entry) =>
         entry.kind === "signal_event" &&
-        entry.content["condition_id"] === condition.id &&
-        entry.content["state"] === "firing",
+        entry.summary.condition_id === condition.id &&
+        entry.summary.status === "firing",
     );
-    const attributes = first?.content["attributes"] as Record<string, unknown> | undefined;
+    const attributes = first?.summary;
     return typeof attributes?.title === "string" ? attributes.title : condition.predicate;
   };
   const currentConditionRevisions = JSON.stringify(

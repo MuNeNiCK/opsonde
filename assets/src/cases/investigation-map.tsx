@@ -331,13 +331,7 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
   const resolved = props.snapshot.case.status === "resolved";
   const graphNodes: Array<InvestigationNode & { width: number; height: number }> = [];
 
-  const signalContent = recordValue(latestSignal?.content);
-  const signalAttributes = recordValue(signalContent?.attributes);
-  const signalAnnotations = recordValue(signalAttributes?.annotations);
-  const signalTitle =
-    textField(signalAnnotations, "summary") ||
-    textField(signalAttributes, "title") ||
-    props.snapshot.case.title;
+  const signalTitle = latestSignal?.summary.title || props.snapshot.case.title;
   const signalLogIds = signalEvidence.map((item) => `evidence-${item.id}`);
   graphNodes.push({
     id: "signal",
@@ -349,10 +343,7 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
       kind: "signal",
       icon: BellRing,
       title: t("cases.workflow.phases.alert"),
-      subtitle:
-        textField(recordValue(signalContent?.target_ref), "value") ||
-        latestSignal?.source ||
-        signalTitle,
+      subtitle: latestSignal?.summary.target_label || latestSignal?.source || signalTitle,
       badges: [
         ...new Set(
           props.snapshot.conditions.map((condition) =>

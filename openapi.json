@@ -2174,6 +2174,18 @@
         ],
         "type": "object"
       },
+      "EvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Evidence"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "CreateTargetRequest": {
         "properties": {
           "target": {
@@ -2420,7 +2432,7 @@
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/Evidence"
+              "$ref": "#/components/schemas/EvidenceSummary"
             },
             "type": "array"
           },
@@ -7251,6 +7263,114 @@
         ],
         "type": "object"
       },
+      "EvidenceSummary": {
+        "additionalProperties": false,
+        "description": "Evidence index metadata with bounded presentation labels. Retrieve /evidence/{id} for exact content; no facts or request/result payloads are included.",
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_ref": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              },
+              "condition_id": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "status": {
+                "maxLength": 80,
+                "nullable": true,
+                "type": "string"
+              },
+              "target_id": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "target_label": {
+                "maxLength": 500,
+                "nullable": true,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "category",
+              "target_id",
+              "condition_id",
+              "title",
+              "target_label"
+            ],
+            "type": "object"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "turn_id",
+          "kind",
+          "source",
+          "source_ref",
+          "observed_at",
+          "inserted_at",
+          "updated_at",
+          "summary"
+        ],
+        "type": "object"
+      },
       "SignalReceiptPage": {
         "additionalProperties": false,
         "properties": {
@@ -11489,6 +11609,90 @@
         "summary": "Create an audit schedule",
         "tags": [
           "Audits"
+        ]
+      }
+    },
+    "/api/v1/evidence/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getEvidence",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceResponse"
+                }
+              }
+            },
+            "description": "Evidence"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get complete Case evidence",
+        "tags": [
+          "Cases"
         ]
       }
     },

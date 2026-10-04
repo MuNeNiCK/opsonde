@@ -93,6 +93,7 @@ defmodule OpsondeCLI.Commands do
     {"case", "turns"} => Route.page("/cases/:id/turns", 1),
     {"case", "ai-invocations"} => Route.page("/cases/:id/ai-invocations", 1),
     {"case", "evidence"} => Route.page("/cases/:id/evidence", 1),
+    {"evidence", "show"} => Route.new(:get, "/evidence/:id", 1),
     {"case", "approvals"} => Route.page("/cases/:id/approvals", 1),
     {"case", "reviews"} => Route.page("/cases/:id/review-decisions", 1),
     {"case", "claim"} => Route.new(:post, "/cases/:id/claim", 1, "case", outcome: :case_record),

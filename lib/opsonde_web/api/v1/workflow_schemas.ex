@@ -32,7 +32,9 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "ResolverTurn" => turn(),
       "ResolverTurnPage" => Schemas.page(ref("ResolverTurn")),
       "Evidence" => evidence(),
-      "EvidencePage" => Schemas.page(ref("Evidence")),
+      "EvidenceResponse" => Schemas.data(ref("Evidence")),
+      "EvidenceSummary" => evidence_summary(),
+      "EvidencePage" => Schemas.page(ref("EvidenceSummary")),
       "Approval" => approval(),
       "ApprovalPage" => Schemas.page(ref("Approval")),
       "ReviewDecision" => review_decision(),
@@ -447,6 +449,32 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       ~w(id case_id resolution_run_id turn_id kind source source_ref content observed_at inserted_at updated_at)a,
       false
     )
+  end
+
+  defp evidence_summary do
+    evidence = evidence()
+
+    summary =
+      object(
+        %{
+          status: nullable_string(80),
+          category: nullable_string(120),
+          target_id: nullable_uuid(),
+          condition_id: nullable_uuid(),
+          title: nullable_string(200),
+          target_label: nullable_string(500)
+        },
+        ~w(status category target_id condition_id title target_label)a,
+        false
+      )
+
+    %{
+      evidence
+      | properties: evidence.properties |> Map.delete(:content) |> Map.put(:summary, summary),
+        required: Enum.reject(evidence.required, &(&1 == :content)) ++ [:summary],
+        description:
+          "Evidence index metadata with bounded presentation labels. Retrieve /evidence/{id} for exact content; no facts or request/result payloads are included."
+    }
   end
 
   defp approval do

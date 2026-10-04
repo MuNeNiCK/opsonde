@@ -127,6 +127,7 @@ defmodule OpsondeWeb.Router do
     get "/cases/:id/turns", CaseController, :turns
     get "/cases/:id/ai-invocations", CaseController, :ai_invocations
     get "/cases/:id/evidence", CaseController, :evidence
+    get "/evidence/:id", CaseController, :show_evidence
     get "/cases/:id/approvals", CaseController, :approvals
     get "/cases/:id/review-decisions", CaseController, :review_decisions
     post "/cases/:id/claim", CaseController, :claim

@@ -25,6 +25,7 @@ defmodule Opsonde.Cases.Evidence do
       filter expr(case_id == ^arg(:case_id))
       pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
       prepare build(sort: [observed_at: :asc, inserted_at: :asc, id: :asc])
+      prepare build(load: [:summary])
     end
 
     read :projection_window do
@@ -210,7 +211,9 @@ defmodule Opsonde.Cases.Evidence do
   end
 
   preparations do
-    prepare build(load: [:content])
+    prepare build(load: [:content]) do
+      where negate(action_is(:page_for_case))
+    end
   end
 
   changes do
@@ -274,6 +277,10 @@ defmodule Opsonde.Cases.Evidence do
   end
 
   calculations do
+    calculate :summary, :map, {Opsonde.Cases.Evidence.Calculations.Content, summary?: true} do
+      public? true
+    end
+
     calculate :content, :map, Opsonde.Cases.Evidence.Calculations.Content do
       public? true
     end

@@ -4,6 +4,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
   import OpenApiSpex.TestAssertions
   import Ecto.Query
   import ExUnit.CaptureLog
+  import ExUnit.CaptureIO
 
   alias Opsonde.{Accounts, Cases, Providers, Reports, Signals, Targets}
   alias Opsonde.Cases.Case
@@ -981,7 +982,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                  "kind" => "observation",
                  "source" => "fixture",
                  "source_ref" => "observation-1",
-                 "content" => %{"service" => "unhealthy"}
+                 "summary" => %{"status" => nil}
                }
              ],
              "page" => %{"next" => nil}
@@ -1307,16 +1308,79 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert_receive {:effect, _, _}
 
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+
+    for index <- 1..99 do
+      Cases.append_evidence!(
+        incident.id,
+        operation.resolution_run_id,
+        nil,
+        "public-summary:#{index}",
+        "operation_outcome",
+        "operation",
+        operation.id,
+        %{"target_id" => setup.target.id},
+        saved.completed_at,
+        authorize?: false
+      )
+    end
+
     for token <- [context.operator_token, context.viewer_token] do
-      response = get_json("/api/v1/cases/#{incident.id}/evidence", token)
+      response = get_json("/api/v1/cases/#{incident.id}/evidence?limit=100", token)
       assert_operation_response(response)
       body = json_response(response, 200)
       receipt = Enum.find(body["data"], &(&1["source_ref"] == operation.id))
+      refute Map.has_key?(receipt, "content")
+      assert receipt["summary"]["status"] == "applied"
+      assert receipt["summary"]["target_id"] == setup.target.id
+      assert length(body["data"]) == 100
+      assert byte_size(response.resp_body) < 100_000
+      query = URI.encode_query(%{"limit" => 100, "after" => body["page"]["next"]})
+      next = get_json("/api/v1/cases/#{incident.id}/evidence?#{query}", token)
+      assert_operation_response(next)
+      tail = json_response(next, 200)
+      assert length(tail["data"]) == 1
+      assert tail["page"]["next"] == nil
+      assert length(Enum.uniq_by(body["data"] ++ tail["data"], & &1["id"])) == 101
+
+      response = get_json("/api/v1/evidence/#{receipt["id"]}", token)
+      assert_operation_response(response)
+      receipt = json_response(response, 200)["data"]
       assert receipt["content"]["details"] == expected_details
       assert receipt["content"]["reference"] == expected_reference
       assert receipt["content"]["parameters"] == %{"service" => "api"}
       assert receipt["content"]["tool_id"] == proposal.tool_id
       refute Map.has_key?(receipt, "stored_content")
+
+      root = Path.join(System.tmp_dir!(), "evidence-cli-#{System.unique_integer([:positive])}")
+      config_path = Path.join(root, "config.json")
+
+      :ok =
+        OpsondeCLI.Config.save(
+          %{"server" => "https://opsonde.example", "token" => token},
+          config_path
+        )
+
+      on_exit(fn -> File.rm_rf(root) end)
+      stub = {__MODULE__, make_ref()}
+      Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+      runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+      listed =
+        capture_io(fn ->
+          assert OpsondeCLI.CLI.run(["case", "evidence", incident.id, "--limit", "100"], runtime) ==
+                   0
+        end)
+
+      assert length(Jason.decode!(listed)["data"]) == 100
+      assert byte_size(listed) < 100_000
+
+      shown =
+        capture_io(fn ->
+          assert OpsondeCLI.CLI.run(["evidence", "show", receipt["id"]], runtime) == 0
+        end)
+
+      assert Jason.decode!(shown)["data"]["content"] == receipt["content"]
 
       response = get_json("/api/v1/operations/#{operation.id}", token)
       assert_operation_response(response)
@@ -1332,6 +1396,15 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     end
 
     assert get_json("/api/v1/cases/#{incident.id}/evidence", nil).status == 401
+
+    receipt =
+      Cases.list_evidence!(actor: context.operator) |> Enum.find(&(&1.source_ref == operation.id))
+
+    assert get_json("/api/v1/evidence/#{receipt.id}", nil).status == 401
+    assert get_json("/api/v1/evidence/not-a-uuid", context.viewer_token).status == 422
+
+    assert get_json("/api/v1/evidence/#{Ecto.UUID.generate()}", context.viewer_token).status ==
+             404
   end
 
   defp resume_input(incident, run, expected_run_revision) do

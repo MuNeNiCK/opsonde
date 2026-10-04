@@ -228,6 +228,14 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   end
 
   def evidence(evidence) do
+    evidence_record(evidence) |> Map.put(:content, evidence.content)
+  end
+
+  def evidence_summary(evidence) do
+    evidence_record(evidence) |> Map.put(:summary, evidence.summary)
+  end
+
+  defp evidence_record(evidence) do
     %{
       id: evidence.id,
       case_id: evidence.case_id,
@@ -236,7 +244,6 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       kind: evidence.kind,
       source: evidence.source,
       source_ref: evidence.source_ref,
-      content: evidence.content,
       observed_at: evidence.observed_at,
       inserted_at: evidence.inserted_at,
       updated_at: evidence.updated_at

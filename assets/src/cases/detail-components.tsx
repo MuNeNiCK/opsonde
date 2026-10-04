@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { CircleAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
+import { apiClient, apiData } from "@/api/client";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
 import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -291,6 +292,54 @@ export function NumberField({
     </div>
   );
 }
+export function EvidenceDetails({ id }: { id: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  return (
+    <details className="mt-2" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        {t("cases.workflow.technicalDetails")}
+      </summary>
+      {open && <EvidenceContent key={id} id={id} />}
+    </details>
+  );
+}
+
+function EvidenceContent({ id }: { id: string }) {
+  const { t } = useTranslation();
+  const [content, setContent] = useState<unknown>();
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    apiClient
+      .GET("/api/v1/evidence/{id}", { params: { path: { id } }, signal: controller.signal })
+      .then(apiData)
+      .then((response) => {
+        if (!controller.signal.aborted) setContent(response.data.content);
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted)
+          setError(reason instanceof Error ? reason.message : t("cases.requestFailed"));
+      });
+    return () => controller.abort();
+  }, [id, t]);
+
+  if (error)
+    return (
+      <p role="alert" className="mt-2 text-sm text-destructive">
+        {error}
+      </p>
+    );
+  if (content === undefined) return <p role="status">{t("common.loading")}</p>;
+  return (
+    <pre className="mt-2 max-h-52 overflow-auto rounded-md bg-muted/45 p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
+      {JSON.stringify(content, null, 2)}
+    </pre>
+  );
+}
+
 export function DataBlock({ title, value }: { title?: string; value: unknown }) {
   const { t } = useTranslation();
   return (

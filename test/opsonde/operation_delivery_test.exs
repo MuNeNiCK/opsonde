@@ -154,6 +154,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
     page = Cases.page_case_evidence!(incident.id, actor: context.operator)
     receipt = Enum.find(page.results, &(&1.source_ref == operation.id))
+    assert receipt.summary["status"] == "applied"
+    receipt = Cases.get_evidence!(receipt.id, actor: context.operator)
     assert receipt.content["details"] == expected
     assert Enum.count(page.results, &(&1.source_ref == operation.id)) == 1
     assert Cases.get_operation!(operation.id, actor: context.operator).status == :applied
@@ -221,6 +223,7 @@ defmodule Opsonde.OperationDeliveryTest do
     receipt =
       Cases.page_case_evidence!(incident.id, actor: context.operator).results
       |> Enum.find(&(&1.source_ref == attempt.id))
+      |> then(&Cases.get_evidence!(&1.id, actor: context.operator))
 
     assert receipt.content["facts"] == expected_facts
     assert receipt.content["provider_evidence"] == %{"items" => expected_items}
@@ -324,6 +327,7 @@ defmodule Opsonde.OperationDeliveryTest do
     receipt =
       Cases.page_case_evidence!(incident.id, actor: context.operator).results
       |> Enum.find(&(&1.source_ref == operation.id))
+      |> then(&Cases.get_evidence!(&1.id, actor: context.operator))
 
     assert receipt.content["facts"] == expected
 
@@ -396,7 +400,10 @@ defmodule Opsonde.OperationDeliveryTest do
 
     page = Cases.page_case_evidence!(incident.id, actor: context.operator)
     public_receipt = Enum.find(page.results, &(&1.id == receipt.id))
-    assert public_receipt.content == receipt.content
+    assert public_receipt.summary["status"] == "applied"
+
+    assert Cases.get_evidence!(public_receipt.id, actor: context.operator).content ==
+             receipt.content
 
     with_projection_read_fault("operations", "status", "text", operation.id, fn ->
       assert {:error, error} = Cases.page_case_evidence(incident.id, actor: context.operator)
@@ -469,6 +476,8 @@ defmodule Opsonde.OperationDeliveryTest do
 
     page = Cases.page_case_evidence!(incident.id, actor: context.operator)
     receipt = Enum.find(page.results, &(&1.source_ref == attempt.id))
+    assert receipt.summary["status"] == "verified"
+    receipt = Cases.get_evidence!(receipt.id, actor: context.operator)
     assert receipt.content["facts"] == facts
     assert receipt.content["expected"] == expected
     assert byte_size(Jason.encode!(receipt.content)) > 65_536

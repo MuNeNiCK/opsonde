@@ -5,7 +5,7 @@ import { translatedToken } from "@/cases/detail-utils";
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type CaseEvent = components["schemas"]["CaseEvent"];
 type Turn = components["schemas"]["ResolverTurn"];
-type Evidence = components["schemas"]["Evidence"];
+type Evidence = components["schemas"]["EvidenceSummary"];
 type Approval = components["schemas"]["Approval"];
 type Review = components["schemas"]["ReviewDecision"];
 type Report = components["schemas"]["Report"];
@@ -39,6 +39,7 @@ export type LogEntry = {
   summary: string;
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
+  evidenceId?: string;
   failed?: boolean;
   reasonLanguage?: string;
 };
@@ -157,7 +158,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       source: item.source,
       summary: presentation.summary,
       facts: presentation.facts,
-      technical: item.content,
+      evidenceId: item.id,
       failed: item.kind.endsWith("_error"),
     });
   }
@@ -282,22 +283,11 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
 }
 
 function presentEvidence(item: Evidence, t: TFunction): Pick<LogEntry, "summary" | "facts"> {
-  const content = recordValue(item.content) ?? {};
-  const attributes = recordValue(content.attributes);
-  const annotations = recordValue(attributes?.annotations);
-  const targetRef = recordValue(content.target_ref);
-  const status = textField(content, "status") || textField(content, "state");
-  const category = textField(content, "category");
-  const message =
-    textField(content, "message") ||
-    textField(annotations, "description") ||
-    textField(annotations, "summary") ||
-    textField(attributes, "title");
-  const observed = compactRecord(content.facts) || compactRecord(attributes?.facts);
-  const target = textField(targetRef, "value") || textField(content, "target_id");
+  const { status, category, title, target_id, target_label } = item.summary;
+  const target = target_label || target_id;
 
   return {
-    summary: message || translatedToken(t, "evidenceKind", item.kind),
+    summary: title || translatedToken(t, "evidenceKind", item.kind),
     facts: compactFacts([
       status && {
         label: t("cases.workflow.fields.result"),
@@ -311,7 +301,6 @@ function presentEvidence(item: Evidence, t: TFunction): Pick<LogEntry, "summary"
         value: translatedToken(t, "failure", category),
       },
       target && { label: t("cases.workflow.fields.target"), value: target },
-      observed && { label: t("cases.workflow.fields.observed"), value: observed },
     ]),
   };
 }

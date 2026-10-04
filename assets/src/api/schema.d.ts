@@ -575,6 +575,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evidence/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get complete Case evidence */
+        get: operations["getEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/openapi.json": {
         parameters: {
             query?: never;
@@ -2088,6 +2105,9 @@ export interface components {
                 trigger_kind: "manual";
             };
         };
+        EvidenceResponse: {
+            data: components["schemas"]["Evidence"];
+        };
         CreateTargetRequest: {
             target: {
                 facts?: {
@@ -2155,7 +2175,7 @@ export interface components {
             protocol: "ssh" | "http" | "netconf" | "restconf" | "redfish" | "ipmi" | "kubernetes";
         };
         EvidencePage: {
-            data: components["schemas"]["Evidence"][];
+            data: components["schemas"]["EvidenceSummary"][];
             page: components["schemas"]["Page"];
         };
         CLISessionRequestResponse: {
@@ -3382,6 +3402,36 @@ export interface components {
                 /** @enum {string} */
                 preferred_language: "en" | "ja";
             };
+        };
+        /** @description Evidence index metadata with bounded presentation labels. Retrieve /evidence/{id} for exact content; no facts or request/result payloads are included. */
+        EvidenceSummary: {
+            /** Format: uuid */
+            case_id: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            kind: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: uuid */
+            resolution_run_id: string;
+            source: string;
+            source_ref: string;
+            summary: {
+                category: string | null;
+                /** Format: uuid */
+                condition_id: string | null;
+                status: string | null;
+                /** Format: uuid */
+                target_id: string | null;
+                target_label: string | null;
+                title: string | null;
+            };
+            /** Format: uuid */
+            turn_id: string | null;
+            /** Format: date-time */
+            updated_at: string;
         };
         SignalReceiptPage: {
             data: components["schemas"]["SignalReceipt"][];
@@ -6562,6 +6612,73 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
