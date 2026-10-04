@@ -11,7 +11,6 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     def message(_error), do: "Relevant Target effect is not complete"
   end
 
-  @max_evidence 256
   @max_lineage_depth 32
   @max_citations_per_condition 3
   @observation_source_fields ~w(id case_id purpose status dispatch_started_at target_id target_revision capability operation selectors)a
@@ -27,26 +26,50 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
              Enum.map(memberships, & &1.condition_id),
              exclude_operation_id
            ),
-         {:ok, evidence} <-
+         {:ok, assessments} <- prepare_assessments(memberships, incident, effects),
+         {:ok, assessments} <- scan_assessment_pages(incident, assessments, nil) do
+      {:ok, Enum.map(assessments, &finish_assessment/1)}
+    end
+  end
+
+  defp prepare_assessments(memberships, incident, effects) do
+    Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
+      with {:ok, baseline} <- condition_baseline(incident, membership.condition_id, effects),
+           {:ok, assessment} <- prepare_assessment(membership.condition, baseline) do
+        {:cont, {:ok, [assessment | collected]}}
+      else
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, assessments} -> {:ok, Enum.reverse(assessments)}
+      error -> error
+    end
+  end
+
+  defp scan_assessment_pages(incident, assessments, cursor) do
+    page_options = if cursor, do: [after: cursor], else: []
+
+    with {:ok, page} <-
            Cases.condition_assessment_evidence(
              incident.id,
              inherited_baseline(incident),
-             authorize?: false
+             authorize?: false,
+             page: page_options
            ),
-         true <-
-           length(evidence) <= @max_evidence || invalid("Condition evidence window is full") do
-      Enum.reduce_while(memberships, {:ok, []}, fn membership, {:ok, collected} ->
-        with condition <- membership.condition,
-             {:ok, baseline} <- condition_baseline(incident, condition.id, effects),
-             {:ok, assessment} <- assess_condition(condition, evidence, baseline) do
-          {:cont, {:ok, [assessment | collected]}}
-        else
-          {:error, _error} = error -> {:halt, error}
-        end
-      end)
-      |> case do
-        {:ok, assessments} -> {:ok, Enum.reverse(assessments)}
-        error -> error
+         {:ok, assessments} <-
+           Enum.reduce_while(assessments, {:ok, []}, fn assessment, {:ok, collected} ->
+             case assess_window(assessment, page.results) do
+               {:ok, assessed} -> {:cont, {:ok, [assessed | collected]}}
+               {:error, _error} = error -> {:halt, error}
+             end
+           end) do
+      assessments = Enum.reverse(assessments)
+
+      if page.more? do
+        scan_assessment_pages(incident, assessments, List.last(page.results).__metadata__.keyset)
+      else
+        {:ok, assessments}
       end
     end
   end
@@ -224,64 +247,100 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     end
   end
 
-  defp assess_condition(condition, evidence, after_at) do
+  defp prepare_assessment(condition, after_at) do
     cond do
       condition.state != :recovered ->
-        {:ok, result(condition, :firing)}
+        {:ok, %{assessment: result(condition, :firing)}}
 
       is_nil(condition.target_id) ->
-        {:ok, result(condition, :unmapped_target)}
+        {:ok, %{assessment: result(condition, :unmapped_target)}}
 
       true ->
         case Targets.get_target(condition.target_id, authorize?: false, not_found_error?: false) do
           {:ok, %{active: true, revision: revision}} ->
-            with {:ok, failed_evidence} <-
-                   select_evidence(
-                     evidence,
-                     &current_failed_observation(
-                       &1,
-                       condition,
-                       after_at,
-                       revision,
-                       &1.recovery_metadata
-                     )
-                   ),
-                 {:ok, current_evidence} <-
-                   select_evidence(
-                     evidence,
-                     &current_evidence(&1, condition, after_at, revision, &1.recovery_metadata)
-                   ) do
-              failed_ids =
-                failed_evidence
-                |> Enum.uniq_by(&citation_scope/1)
-                |> Enum.take(@max_citations_per_condition)
-                |> Enum.map(& &1.id)
-
-              citations =
-                current_evidence
-                |> Enum.uniq_by(&citation_scope/1)
-                |> Enum.take(@max_citations_per_condition)
-                |> Enum.map(& &1.id)
-
-              {:ok,
-               case citations do
-                 [] ->
-                   if DateTime.compare(condition.current_occurred_at, after_at) == :lt,
-                     do: result(condition, :stale_source, [], failed_ids),
-                     else: result(condition, :needs_observation, [], failed_ids)
-
-                 ids ->
-                   result(condition, :ready_for_review, ids, failed_ids)
-               end}
-            end
+            {:ok,
+             %{
+               condition: condition,
+               after_at: after_at,
+               target_revision: revision,
+               current: [],
+               failed: []
+             }}
 
           {:error, _error} = error ->
             error
 
           _other ->
-            {:ok, result(condition, :target_changed)}
+            {:ok, %{assessment: result(condition, :target_changed)}}
         end
     end
+  end
+
+  defp assess_window(%{assessment: _assessment} = collected, _evidence), do: {:ok, collected}
+
+  defp assess_window(collected, evidence) do
+    Enum.reduce_while(evidence, {:ok, collected}, fn item, {:ok, collected} ->
+      with {:ok, failed?} <-
+             current_failed_observation(
+               item,
+               collected.condition,
+               collected.after_at,
+               collected.target_revision,
+               item.recovery_metadata
+             ),
+           {:ok, current?} <-
+             current_evidence(
+               item,
+               collected.condition,
+               collected.after_at,
+               collected.target_revision,
+               item.recovery_metadata
+             ) do
+        {:cont,
+         {:ok,
+          %{
+            collected
+            | failed: add_citation(collected.failed, item, failed?),
+              current: add_citation(collected.current, item, current?)
+          }}}
+      else
+        {:error, _error} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp add_citation(citations, _evidence, false), do: citations
+
+  defp add_citation(citations, _evidence, true)
+       when length(citations) >= @max_citations_per_condition, do: citations
+
+  defp add_citation(citations, evidence, true) do
+    scope = citation_scope(evidence)
+
+    if Enum.any?(citations, fn {_id, previous_scope} -> scope == previous_scope end),
+      do: citations,
+      else: citations ++ [{evidence.id, scope}]
+  end
+
+  defp finish_assessment(%{assessment: assessment}), do: assessment
+
+  defp finish_assessment(collected) do
+    citations = Enum.map(collected.current, &elem(&1, 0))
+    failed_ids = Enum.map(collected.failed, &elem(&1, 0))
+
+    status =
+      cond do
+        citations != [] ->
+          :ready_for_review
+
+        DateTime.compare(collected.condition.current_occurred_at, collected.after_at) == :lt ->
+          :stale_source
+
+        true ->
+          :needs_observation
+      end
+
+    result(collected.condition, status, citations, failed_ids)
   end
 
   defp condition_baseline(incident, condition_id, effects) do

@@ -4738,6 +4738,50 @@ defmodule Opsonde.OperationDeliveryTest do
     pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
     turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
 
+    # Small foreign-source records exercise retained candidate history, not native observations.
+    for index <- 1..257 do
+      Cases.create_evidence_record!(
+        %{
+          case_id: incident.id,
+          resolution_run_id: run.id,
+          idempotency_key: "recovery-capacity:#{index}",
+          kind: "observation",
+          source: "capacity_fixture",
+          source_ref: "candidate-#{index}",
+          content: %{"status" => "applied"},
+          observed_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+    end
+
+    first_page =
+      Cases.condition_assessment_evidence!(incident.id, incident.inserted_at, authorize?: false)
+
+    assert length(first_page.results) == 100
+    assert first_page.more?
+    refute Enum.any?(first_page.results, &(&1.id == evidence.id))
+
+    second_page =
+      Cases.condition_assessment_evidence!(incident.id, incident.inserted_at,
+        authorize?: false,
+        page: [after: List.last(first_page.results).__metadata__.keyset]
+      )
+
+    assert length(second_page.results) == 100
+    assert second_page.more?
+
+    third_page =
+      Cases.condition_assessment_evidence!(incident.id, incident.inserted_at,
+        authorize?: false,
+        page: [after: List.last(second_page.results).__metadata__.keyset]
+      )
+
+    # The setup observation and the delivered receipt precede the 257 capacity records.
+    assert length(third_page.results) == 59
+    refute third_page.more?
+    assert Enum.any?(third_page.results, &(&1.id == evidence.id))
+
     selection = %AI.Selection{
       role: :resolver,
       provider_id: context.resolver_provider.id,

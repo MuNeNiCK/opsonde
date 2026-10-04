@@ -104,7 +104,8 @@ defmodule Opsonde.Cases.Evidence do
                  kind in ["observation", "target_verification", "file_read"]
              )
 
-      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 257)
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 100
+      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc])
       prepare build(load: [:recovery_metadata])
     end
 
