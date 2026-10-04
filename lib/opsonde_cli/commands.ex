@@ -62,6 +62,7 @@ defmodule OpsondeCLI.Commands do
     {"identity", "deactivate"} =>
       Route.new(:post, "/external-identities/:id/deactivate", 1, "external_identity"),
     {"access-method", "list"} => Route.page("/access-methods"),
+    {"access-method", "show"} => Route.new(:get, "/access-methods/:id", 1),
     {"access-method", "create"} => Route.new(:post, "/access-methods", 0, "access_method"),
     {"access-method", "update"} => Route.new(:patch, "/access-methods/:id", 1, "access_method"),
     {"access-method", "check"} =>

@@ -99,6 +99,7 @@ defmodule OpsondeWeb.Router do
     post "/external-identities/:id/deactivate", TargetSetupController, :identities_deactivate
 
     get "/access-methods", TargetSetupController, :access_methods_index
+    get "/access-methods/:id", TargetSetupController, :access_methods_show
     post "/access-methods", TargetSetupController, :access_methods_create
     patch "/access-methods/:id", TargetSetupController, :access_methods_update
     post "/access-methods/:id/check", TargetSetupController, :access_methods_check

@@ -2,6 +2,8 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
   import OpenApiSpex.TestAssertions
+  import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Providers}
   alias Opsonde.Providers.Registry
@@ -71,6 +73,96 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     assert get_json("/api/v1/access-methods", context.viewer_token)
            |> json_response(200)
            |> get_in(["data", Access.at(0), "check", "status"]) == "passed"
+  end
+
+  @tag method_detail: true
+  test "registered Method detail is reachable beyond the first global page", context do
+    target = create_target!(context.admin_token, "method-detail", "host", "custom-os", nil)
+
+    for index <- 1..100 do
+      create_access_method!(context, target, "earlier-method-#{index}", "ssh", [])
+    end
+
+    method = create_access_method!(context, target, "selected-method", "ssh", [])
+
+    page =
+      get_json("/api/v1/access-methods?limit=100", context.viewer_token) |> json_response(200)
+
+    assert length(page["data"]) == 100
+    refute Enum.any?(page["data"], &(&1["id"] == method["id"]))
+    path = "/api/v1/access-methods/#{method["id"]}"
+
+    checked =
+      post_json(
+        path <> "/check",
+        %{"access_method" => %{"expected_revision" => method["revision"]}},
+        context.admin_token
+      )
+      |> json_response(200)
+      |> Map.fetch!("data")
+
+    assert checked["revision"] > method["revision"]
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      response = get_json(path, token)
+      assert json_response(response, 200)["data"] == checked
+      assert_operation_response(response)
+    end
+
+    assert response(get_json(path, nil), 401)
+
+    assert response(
+             get_json("/api/v1/access-methods/#{Ecto.UUID.generate()}", context.viewer_token),
+             404
+           )
+
+    root = Path.join(System.tmp_dir!(), "method-detail-cli-#{System.unique_integer([:positive])}")
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    shown =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["access-method", "show", method["id"]], runtime) == 0
+      end)
+
+    assert Jason.decode!(shown)["data"] == checked
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE access_methods RENAME COLUMN revision TO unavailable_revision"
+    )
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Opsonde.Targets.get_access_method(method["id"], actor: context.admin)
+
+      assert Exception.message(cause) =~ "does not exist"
+
+      capture_log(fn ->
+        failed = get_json(path, context.viewer_token)
+        assert json_response(failed, 500)["error"]["code"] == "internal_error"
+
+        capture_io(:stderr, fn ->
+          assert OpsondeCLI.CLI.run(["access-method", "show", method["id"]], runtime) == 4
+        end)
+      end)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE access_methods RENAME COLUMN unavailable_revision TO revision"
+      )
+    end
+
+    assert json_response(get_json(path, context.viewer_token), 200)["data"] == checked
+    refute_receive {:check, _, _}
   end
 
   test "Target type catalog publishes custom choices per supported category", context do

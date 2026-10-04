@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Check, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData } from "@/api/client";
 import { FormSelect } from "@/components/form-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -125,15 +125,13 @@ export function AccessMethodForm({
     setPending(true);
     onError("");
     try {
-      const methods = await collectPages((after) =>
-        apiClient
-          .GET("/api/v1/access-methods", {
-            params: { query: { limit: 100, after: after ?? undefined } },
+      const current = (
+        await apiClient
+          .GET("/api/v1/access-methods/{id}", {
+            params: { path: { id: registeredMethod.id } },
           })
-          .then(apiData),
-      );
-      const current = methods.find((item) => item.id === registeredMethod.id);
-      if (!current) throw new Error(t("targets.connectionMissing"));
+          .then(apiData)
+      ).data;
       setRegisteredMethod(current);
       if (!current.check.current) {
         const checked = apiData(

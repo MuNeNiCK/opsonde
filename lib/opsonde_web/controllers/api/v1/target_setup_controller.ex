@@ -209,6 +209,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       [ok: {"Access Method page", "application/json", TargetSchemas.ref("AccessMethodPage")}] ++
         @list_errors
 
+  operation :access_methods_show,
+    operation_id: "getAccessMethod",
+    summary: "Get an Access Method",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Access Method", "application/json", TargetSchemas.ref("AccessMethodResponse")}] ++
+        @show_errors
+
   operation :access_methods_create,
     operation_id: "createAccessMethod",
     summary: "Create an Access Method",
@@ -463,6 +471,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
 
   def access_methods_index(conn, params) do
     page(conn, params, &Targets.page_access_methods/1, &TargetSetupJSON.access_method/1)
+  end
+
+  def access_methods_show(conn, %{"id" => id}) do
+    with {:ok, method} <- Targets.get_access_method(id, actor: conn.assigns.current_user) do
+      Response.data(conn, TargetSetupJSON.access_method(method))
+    end
   end
 
   def access_methods_create(conn, %{"access_method" => input}) do
