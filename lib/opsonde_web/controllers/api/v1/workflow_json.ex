@@ -1,7 +1,6 @@
 defmodule OpsondeWeb.API.V1.WorkflowJSON do
   @moduledoc false
 
-  alias OpsondeWeb.API.V1.OutcomeJSON
   alias Opsonde.Cases.Case.Symptom, as: CaseSymptom
 
   def authority(setting) do
@@ -79,9 +78,14 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
       proposals: Enum.map(snapshot.proposals, &proposal/1),
-      operations: Enum.map(snapshot.operations, &operation/1),
-      verification_attempts: Enum.map(snapshot.verification_attempts, &verification_attempt/1),
-      reports: Enum.map(snapshot.reports, &OutcomeJSON.report/1)
+      operations:
+        Enum.map(snapshot.operations, &Map.take(&1, Opsonde.Cases.Operation.summary_fields())),
+      verification_attempts:
+        Enum.map(
+          snapshot.verification_attempts,
+          &Map.take(&1, Opsonde.Cases.VerificationAttempt.summary_fields())
+        ),
+      reports: Enum.map(snapshot.reports, &Map.take(&1, Opsonde.Reports.Report.summary_fields()))
     }
   end
 

@@ -802,6 +802,12 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert case_id == incident["id"]
     assert report_id == report.id
+    [report_summary] = json_response(snapshot, 200)["data"]["reports"]
+    refute Map.has_key?(report_summary, "content")
+    refute Map.has_key?(report_summary, "document")
+    complete_report = get_json("/api/v1/reports/#{report.id}", context.viewer_token)
+    assert_operation_response(complete_report)
+    assert json_response(complete_report, 200)["data"]["content"] == report.content
     refute snapshot.resp_body =~ "pending_intent"
     refute snapshot.resp_body =~ "idempotency_key"
 
@@ -1390,9 +1396,24 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       response = get_json("/api/v1/cases/#{incident.id}", token)
       assert_operation_response(response)
       snapshot = json_response(response, 200)["data"]
-      assert hd(snapshot["operations"])["reference"] == expected_reference
-      assert hd(snapshot["operations"])["result_details"] == expected_details
-      assert hd(snapshot["verification_attempts"])["operation_reference"] == expected_reference
+      assert byte_size(response.resp_body) < 20_000
+      assert hd(snapshot["operations"])["status"] == "applied"
+      refute Map.has_key?(hd(snapshot["operations"]), "reference")
+      refute Map.has_key?(hd(snapshot["operations"]), "result_details")
+      refute Map.has_key?(hd(snapshot["verification_attempts"]), "operation_reference")
+
+      reconnected =
+        capture_io(fn ->
+          assert OpsondeCLI.CLI.run(["case", "show", incident.id], runtime) == 10
+        end)
+
+      assert byte_size(reconnected) < 20_000
+      assert Jason.decode!(reconnected)["data"]["operations"] == snapshot["operations"]
+
+      attempt = hd(snapshot["verification_attempts"])
+      response = get_json("/api/v1/verification-attempts/#{attempt["id"]}", token)
+      assert_operation_response(response)
+      assert json_response(response, 200)["data"]["operation_reference"] == expected_reference
     end
 
     assert get_json("/api/v1/cases/#{incident.id}/evidence", nil).status == 401
@@ -1405,6 +1426,35 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert get_json("/api/v1/evidence/#{Ecto.UUID.generate()}", context.viewer_token).status ==
              404
+  end
+
+  @tag unicode_evidence_summary: true
+  test "display labels bound Unicode codepoints while exact evidence remains available",
+       context do
+    incident = open_case!(context.operator_token, "unicode-evidence-label")
+    run = Cases.active_resolution_run!(incident["id"], authorize?: false)
+    title = "A" <> String.duplicate("\u0301", 32_000)
+
+    evidence =
+      Cases.append_evidence!(
+        incident["id"],
+        run.id,
+        nil,
+        "unicode-label",
+        "signal_event",
+        "fixture",
+        "unicode-label",
+        %{"state" => "firing", "attributes" => %{"title" => title}},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    response = get_json("/api/v1/cases/#{incident["id"]}/evidence", context.viewer_token)
+    assert_operation_response(response)
+    [summary] = json_response(response, 200)["data"]
+    assert byte_size(summary["summary"]["title"]) <= 800
+    response = get_json("/api/v1/evidence/#{evidence.id}", context.viewer_token)
+    assert json_response(response, 200)["data"]["content"]["attributes"]["title"] == title
   end
 
   defp resume_input(incident, run, expected_run_revision) do

@@ -1998,6 +1998,48 @@ export interface components {
                 expected_case_revision: number;
             };
         };
+        VerificationAttemptSummary: {
+            /** Format: date-time */
+            accepted_at: string;
+            /** Format: uuid */
+            access_method_id: string;
+            /** Format: uuid */
+            actor_id: string;
+            /** @enum {string} */
+            authority_mode: "ask" | "auto" | "full_access";
+            capability: string;
+            case_generation: number;
+            /** Format: uuid */
+            case_id: string;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            dispatch_started_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            /** Format: date-time */
+            observed_at: string | null;
+            operation: string;
+            /** Format: uuid */
+            operation_id: string;
+            outcome_category: string | null;
+            /** Format: uuid */
+            proposal_id: string;
+            /** Format: uuid */
+            provider_id: string;
+            /** Format: uuid */
+            resolution_run_id: string;
+            revision: number;
+            /** @enum {string} */
+            status: "queued" | "dispatching" | "verified" | "not_verified" | "unknown";
+            /** Format: uuid */
+            target_id: string;
+            tool_id: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         TargetCategory: {
             id: string;
             label: string;
@@ -2206,11 +2248,11 @@ export interface components {
             case: components["schemas"]["Case"];
             condition_history: components["schemas"]["CaseConditionMembership"][];
             conditions: components["schemas"]["CaseCondition"][];
-            operations: components["schemas"]["Operation"][];
+            operations: components["schemas"]["OperationSummary"][];
             proposals: components["schemas"]["Proposal"][];
-            reports: components["schemas"]["Report"][];
+            reports: components["schemas"]["ReportSummary"][];
             resolution_runs: components["schemas"]["ResolutionRun"][];
-            verification_attempts: components["schemas"]["VerificationAttempt"][];
+            verification_attempts: components["schemas"]["VerificationAttemptSummary"][];
         };
         UpdateManagementBoundaryRequest: {
             management_boundary: {
@@ -2958,6 +3000,21 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        ReportSummary: {
+            /** Format: uuid */
+            case_id: string;
+            case_revision: number;
+            content_digest: string;
+            /** Format: date-time */
+            generated_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            language: "en" | "ja";
+            /** @enum {string} */
+            outcome: "resolved" | "needs_attention" | "cancelled";
+            revision: number;
+        };
         CreateTargetFileRequest: {
             file: {
                 expected_sha256: string;
@@ -3054,6 +3111,51 @@ export interface components {
         DeliveryPage: {
             data: components["schemas"]["Delivery"][];
             page: components["schemas"]["Page"];
+        };
+        OperationSummary: {
+            /** Format: date-time */
+            accepted_at: string;
+            /** Format: uuid */
+            access_method_id: string;
+            /** Format: uuid */
+            actor_id: string;
+            /** Format: uuid */
+            approval_id: string;
+            /** @enum {string} */
+            authority_mode: "readonly" | "ask" | "auto" | "full_access";
+            capability: string;
+            case_generation: number;
+            /** Format: uuid */
+            case_id: string;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: date-time */
+            dispatch_started_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            /** Format: date-time */
+            not_before: string;
+            operation: string;
+            outcome_category: string | null;
+            /** Format: uuid */
+            proposal_id: string;
+            /** Format: uuid */
+            provider_id: string;
+            /** @enum {string|null} */
+            purpose: "investigation" | "remediation" | null;
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
+            /** Format: uuid */
+            resolution_run_id: string;
+            revision: number;
+            /** @enum {string} */
+            status: "queued" | "dispatching" | "applied" | "failed" | "partial" | "unknown";
+            /** Format: uuid */
+            target_id: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         ReportSettingResponse: {
             data: components["schemas"]["ReportSetting"];

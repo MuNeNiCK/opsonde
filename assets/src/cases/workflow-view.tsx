@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { InvestigationMap } from "@/cases/investigation-map";
-import { EvidenceDetails } from "@/cases/detail-components";
+import { ReceiptDetails } from "@/cases/detail-components";
 import { buildLog, type LogEntry, type WorkflowLogInput } from "@/cases/workflow-log";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -286,7 +286,7 @@ function ExecutionLogRow({
               </pre>
             </details>
           )}
-          {entry.evidenceId && <EvidenceDetails id={entry.evidenceId} />}
+          {entry.receipt && <ReceiptDetails {...entry.receipt} />}
         </div>
       )}
     </article>

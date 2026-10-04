@@ -459,6 +459,7 @@ defmodule Opsonde.Cases do
       define :list_operations, action: :read
       define :get_operation, action: :read, get_by: [:id]
       define :operations_for_case, action: :for_case, args: [:case_id]
+      define :operation_summaries_for_case, action: :summaries_for_case, args: [:case_id]
 
       define :recent_method_observations,
         action: :recent_method_observations,
@@ -493,6 +494,7 @@ defmodule Opsonde.Cases do
       define :list_verification_attempts, action: :read
       define :get_verification_attempt, action: :read, get_by: [:id]
       define :verification_attempts_for_case, action: :for_case, args: [:case_id]
+      define :verification_summaries_for_case, action: :summaries_for_case, args: [:case_id]
 
       define :verification_attempt_by_operation,
         action: :by_operation,

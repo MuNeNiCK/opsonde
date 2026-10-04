@@ -8,7 +8,7 @@ type Turn = components["schemas"]["ResolverTurn"];
 type Evidence = components["schemas"]["EvidenceSummary"];
 type Approval = components["schemas"]["Approval"];
 type Review = components["schemas"]["ReviewDecision"];
-type Report = components["schemas"]["Report"];
+type Report = components["schemas"]["ReportSummary"];
 type Target = components["schemas"]["Target"];
 
 export type StageKey =
@@ -39,7 +39,11 @@ export type LogEntry = {
   summary: string;
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
-  evidenceId?: string;
+  receipt?: {
+    kind: "evidence" | "operation" | "verification";
+    id: string;
+    revision: string | number;
+  };
   failed?: boolean;
   reasonLanguage?: string;
 };
@@ -158,7 +162,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       source: item.source,
       summary: presentation.summary,
       facts: presentation.facts,
-      evidenceId: item.id,
+      receipt: { kind: "evidence", id: item.id, revision: item.updated_at },
       failed: item.kind.endsWith("_error"),
     });
   }
@@ -206,7 +210,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   }
 
   for (const item of props.snapshot.operations) {
-    const selectors = compactRecord(item.selectors);
     const operationTargetId = proposalsById.get(item.proposal_id)?.target_id;
     entries.push({
       id: `operation-${item.id}`,
@@ -219,7 +222,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           label: t("cases.workflow.fields.target"),
           value: targetName(operationTargetId),
         },
-        selectors && { label: t("cases.workflow.fields.selectors"), value: selectors },
         item.outcome_category && {
           label: t("cases.workflow.fields.result"),
           value: item.outcome_category,
@@ -229,21 +231,12 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           value: new Date(item.not_before).toLocaleString(),
         },
       ]),
-      technical: {
-        selectors: item.selectors,
-        parameters: item.parameters,
-        outcome_category: item.outcome_category,
-        not_before: item.not_before,
-        reference: item.reference,
-        result: item.result_details,
-      },
+      receipt: { kind: "operation", id: item.id, revision: item.revision },
       failed: ["failed", "partial", "unknown"].includes(item.status),
     });
   }
 
   for (const item of props.snapshot.verification_attempts) {
-    const expected = compactRecord(item.expected);
-    const observed = compactRecord(item.facts);
     entries.push({
       id: `verification-${item.id}`,
       at: item.completed_at ?? item.accepted_at,
@@ -251,15 +244,12 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
       source: t("cases.workflow.sources.verifier"),
       summary: `${item.capability} / ${item.operation} · ${translatedToken(t, "verificationStatus", item.status)}`,
       facts: compactFacts([
-        expected && { label: t("cases.workflow.fields.expected"), value: expected },
-        observed && { label: t("cases.workflow.fields.observed"), value: observed },
+        item.outcome_category && {
+          label: t("cases.workflow.fields.result"),
+          value: item.outcome_category,
+        },
       ]),
-      technical: {
-        expected: item.expected,
-        facts: item.facts,
-        evidence: item.provider_evidence,
-        outcome_category: item.outcome_category,
-      },
+      receipt: { kind: "verification", id: item.id, revision: item.revision },
       failed: ["not_verified", "unknown"].includes(item.status),
     });
   }

@@ -7,6 +7,10 @@ defmodule Opsonde.Cases.Operation do
     data_layer: AshPostgres.DataLayer,
     extensions: [AshStateMachine, AshCloak]
 
+  @summary_fields ~w(id case_id resolution_run_id proposal_id approval_id actor_id target_id access_method_id provider_id status case_generation authority_mode request_kind purpose capability operation dispatch_started_at outcome_category accepted_at not_before completed_at revision inserted_at updated_at)a
+
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "operations"
     repo Opsonde.Repo
@@ -59,6 +63,12 @@ defmodule Opsonde.Cases.Operation do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
       prepare build(sort: [updated_at: :desc, id: :desc], limit: 100)
+    end
+
+    read :summaries_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(select: @summary_fields, sort: [updated_at: :desc, id: :desc], limit: 100)
     end
 
     read :recent_method_observations do
@@ -252,7 +262,7 @@ defmodule Opsonde.Cases.Operation do
       forbid_if always()
     end
 
-    policy action([:read, :for_case]) do
+    policy action([:read, :for_case, :summaries_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

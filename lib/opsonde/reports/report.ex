@@ -6,6 +6,10 @@ defmodule Opsonde.Reports.Report do
     simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id case_id case_revision language outcome content_digest generated_at revision)a
+
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "reports"
     repo Opsonde.Repo
@@ -30,10 +34,10 @@ defmodule Opsonde.Reports.Report do
       filter expr(case_id == ^arg(:case_id) and case_revision == ^arg(:case_revision))
     end
 
-    read :for_case do
+    read :summaries_for_case do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
-      prepare build(sort: [generated_at: :desc, id: :desc])
+      prepare build(select: @summary_fields, sort: [generated_at: :desc, id: :desc], limit: 100)
     end
 
     create :create_record do
@@ -78,7 +82,7 @@ defmodule Opsonde.Reports.Report do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :for_case, :period_summary]) do
+    policy action([:read, :page, :summaries_for_case, :period_summary]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

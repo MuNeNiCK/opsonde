@@ -52,11 +52,21 @@ type Detail = {
   methods: AccessMethod[];
   providers: Provider[];
   accounts: Account[];
+  report: components["schemas"]["Report"] | null;
+  reportError: Error | null;
 };
 
 type CaseState = Pick<
   Detail,
-  "snapshot" | "timeline" | "turns" | "evidence" | "approvals" | "reviews" | "aiInvocations"
+  | "snapshot"
+  | "timeline"
+  | "turns"
+  | "evidence"
+  | "approvals"
+  | "reviews"
+  | "aiInvocations"
+  | "report"
+  | "reportError"
 >;
 type References = Pick<Detail, "targets" | "methods" | "providers" | "accounts">;
 
@@ -107,6 +117,23 @@ async function loadCaseState(caseId: string): Promise<CaseState> {
           .then(apiData),
       ),
     ]);
+  const snapshot = snapshotResponse.data;
+  const currentReport =
+    snapshot.case.status === "resolved"
+      ? snapshot.reports.find((report) => report.case_revision === snapshot.case.revision)
+      : undefined;
+  let reportError: Error | null = null;
+  const report = currentReport
+    ? await apiClient
+        .GET("/api/v1/reports/{id}", { params: { path: { id: currentReport.id } } })
+        .then(apiData)
+        .then((response) => response.data)
+        .catch((error: unknown) => {
+          reportError = error instanceof Error ? error : new Error();
+          return null;
+        })
+    : null;
+
   return {
     snapshot: snapshotResponse.data,
     timeline,
@@ -115,6 +142,8 @@ async function loadCaseState(caseId: string): Promise<CaseState> {
     approvals,
     reviews,
     aiInvocations,
+    report,
+    reportError,
   };
 }
 
@@ -293,10 +322,8 @@ export function CaseDetailPage() {
     (proposal) => proposal.status === "awaiting_human",
   );
   const selectedTarget = detail.targets.find((target) => target.id === incident.selected_target_id);
-  const exactReport = detail.snapshot.reports.find(
-    (report) => report.case_revision === incident.revision,
-  );
-  const complete = incident.status === "resolved" && exactReport !== undefined;
+  const exactReport = detail.report;
+  const complete = incident.status === "resolved" && exactReport !== null;
   const stopReasonText =
     incident.stop_reason === "Signal automation is disabled"
       ? t("cases.stopReasonSignalDisabled")
@@ -717,6 +744,14 @@ export function CaseDetailPage() {
 
       <CaseAIUsage usage={detail.snapshot.ai_usage} invocations={detail.aiInvocations} />
 
+      {detail.reportError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {detail.reportError.message || t("cases.requestFailed")}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {complete ? (
         <>
           <CompletedCaseSummary
@@ -853,7 +888,7 @@ export function CaseDetailPage() {
   );
 }
 
-type Report = CaseSnapshot["reports"][number];
+type Report = components["schemas"]["Report"];
 
 function CompletedCaseSummary({
   conditions,

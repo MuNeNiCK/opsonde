@@ -43,8 +43,16 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "ProposalResponse" => Schemas.data(ref("Proposal")),
       "DecideProposalRequest" => decide_proposal_request(),
       "Operation" => operation(),
+      "OperationSummary" => summary(operation(), Opsonde.Cases.Operation.summary_fields()),
       "OperationResponse" => Schemas.data(ref("Operation")),
       "VerificationAttempt" => verification_attempt(),
+      "VerificationAttemptSummary" =>
+        summary(verification_attempt(), Opsonde.Cases.VerificationAttempt.summary_fields()),
+      "ReportSummary" =>
+        summary(
+          OpsondeWeb.API.V1.OutcomeSchemas.components()["Report"],
+          Opsonde.Reports.Report.summary_fields()
+        ),
       "VerificationAttemptResponse" => Schemas.data(ref("VerificationAttempt")),
       "WorkflowLimits" => limits(),
       "ResolutionCounters" => counters()
@@ -218,9 +226,9 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         condition_history: array(ref("CaseConditionMembership")),
         resolution_runs: array(ref("ResolutionRun")),
         proposals: array(ref("Proposal")),
-        operations: array(ref("Operation")),
-        verification_attempts: array(ref("VerificationAttempt")),
-        reports: array(ref("Report"))
+        operations: array(ref("OperationSummary")),
+        verification_attempts: array(ref("VerificationAttemptSummary")),
+        reports: array(ref("ReportSummary"))
       },
       [
         :case,
@@ -449,6 +457,14 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       ~w(id case_id resolution_run_id turn_id kind source source_ref content observed_at inserted_at updated_at)a,
       false
     )
+  end
+
+  defp summary(schema, fields) do
+    %{
+      schema
+      | properties: Map.take(schema.properties, fields),
+        required: Enum.filter(schema.required, &(&1 in fields))
+    }
   end
 
   defp evidence_summary do

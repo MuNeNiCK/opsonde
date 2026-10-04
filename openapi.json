@@ -1760,6 +1760,146 @@
         ],
         "type": "object"
       },
+      "VerificationAttemptSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "outcome_category": {
+            "maxLength": 120,
+            "nullable": true,
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "verified",
+              "not_verified",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "operation_id",
+          "proposal_id",
+          "actor_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "case_generation",
+          "authority_mode",
+          "tool_id",
+          "capability",
+          "operation",
+          "dispatch_started_at",
+          "outcome_category",
+          "observed_at",
+          "accepted_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "TargetCategory": {
         "additionalProperties": false,
         "properties": {
@@ -2563,7 +2703,7 @@
           },
           "operations": {
             "items": {
-              "$ref": "#/components/schemas/Operation"
+              "$ref": "#/components/schemas/OperationSummary"
             },
             "type": "array"
           },
@@ -2575,7 +2715,7 @@
           },
           "reports": {
             "items": {
-              "$ref": "#/components/schemas/Report"
+              "$ref": "#/components/schemas/ReportSummary"
             },
             "type": "array"
           },
@@ -2587,7 +2727,7 @@
           },
           "verification_attempts": {
             "items": {
-              "$ref": "#/components/schemas/VerificationAttempt"
+              "$ref": "#/components/schemas/VerificationAttemptSummary"
             },
             "type": "array"
           }
@@ -5460,6 +5600,62 @@
         ],
         "type": "object"
       },
+      "ReportSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "content_digest": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "resolved",
+              "needs_attention",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "case_revision",
+          "language",
+          "outcome",
+          "content_digest",
+          "generated_at",
+          "revision"
+        ],
+        "type": "object"
+      },
       "CreateTargetFileRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5877,6 +6073,158 @@
         "required": [
           "data",
           "page"
+        ],
+        "type": "object"
+      },
+      "OperationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "approval_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_generation": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "not_before": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome_category": {
+            "maxLength": 120,
+            "nullable": true,
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "investigation",
+              "remediation"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "request_kind": {
+            "enum": [
+              "observation",
+              "effect"
+            ],
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "applied",
+              "failed",
+              "partial",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "proposal_id",
+          "approval_id",
+          "actor_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "case_generation",
+          "authority_mode",
+          "request_kind",
+          "purpose",
+          "capability",
+          "operation",
+          "dispatch_started_at",
+          "outcome_category",
+          "accepted_at",
+          "not_before",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },

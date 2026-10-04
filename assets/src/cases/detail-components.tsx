@@ -3,6 +3,7 @@ import { CircleAlert, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { apiClient, apiData } from "@/api/client";
+import type { LogEntry } from "@/cases/workflow-log";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
 import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -292,7 +293,9 @@ export function NumberField({
     </div>
   );
 }
-export function EvidenceDetails({ id }: { id: string }) {
+type Receipt = NonNullable<LogEntry["receipt"]>;
+
+export function ReceiptDetails({ kind, id, revision }: Receipt) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
@@ -301,30 +304,53 @@ export function EvidenceDetails({ id }: { id: string }) {
       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
         {t("cases.workflow.technicalDetails")}
       </summary>
-      {open && <EvidenceContent key={id} id={id} />}
+      {open && <ReceiptContent key={`${kind}:${id}:${revision}`} kind={kind} id={id} />}
     </details>
   );
 }
 
-function EvidenceContent({ id }: { id: string }) {
+async function loadReceipt(
+  kind: Receipt["kind"],
+  id: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const options = { params: { path: { id } }, signal };
+  switch (kind) {
+    case "evidence":
+      return apiClient
+        .GET("/api/v1/evidence/{id}", options)
+        .then(apiData)
+        .then((response) => response.data.content);
+    case "operation":
+      return apiClient
+        .GET("/api/v1/operations/{id}", options)
+        .then(apiData)
+        .then((response) => response.data);
+    case "verification":
+      return apiClient
+        .GET("/api/v1/verification-attempts/{id}", options)
+        .then(apiData)
+        .then((response) => response.data);
+  }
+}
+
+function ReceiptContent({ kind, id }: Pick<Receipt, "kind" | "id">) {
   const { t } = useTranslation();
   const [content, setContent] = useState<unknown>();
   const [error, setError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
-    apiClient
-      .GET("/api/v1/evidence/{id}", { params: { path: { id } }, signal: controller.signal })
-      .then(apiData)
+    loadReceipt(kind, id, controller.signal)
       .then((response) => {
-        if (!controller.signal.aborted) setContent(response.data.content);
+        if (!controller.signal.aborted) setContent(response);
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted)
           setError(reason instanceof Error ? reason.message : t("cases.requestFailed"));
       });
     return () => controller.abort();
-  }, [id, t]);
+  }, [kind, id, t]);
 
   if (error)
     return (

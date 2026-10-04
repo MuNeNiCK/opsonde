@@ -6,6 +6,10 @@ defmodule Opsonde.Cases.VerificationAttempt do
     simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id case_id resolution_run_id operation_id proposal_id actor_id target_id access_method_id provider_id status case_generation authority_mode tool_id capability operation dispatch_started_at outcome_category observed_at accepted_at completed_at revision inserted_at updated_at)a
+
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "verification_attempts"
     repo Opsonde.Repo
@@ -24,6 +28,12 @@ defmodule Opsonde.Cases.VerificationAttempt do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
       prepare build(sort: [updated_at: :desc, id: :desc], limit: 100)
+    end
+
+    read :summaries_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      prepare build(select: @summary_fields, sort: [updated_at: :desc, id: :desc], limit: 100)
     end
 
     read :by_operation do
@@ -190,7 +200,7 @@ defmodule Opsonde.Cases.VerificationAttempt do
       forbid_if always()
     end
 
-    policy action([:read, :for_case]) do
+    policy action([:read, :for_case, :summaries_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

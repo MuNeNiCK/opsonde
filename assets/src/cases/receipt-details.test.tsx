@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { EvidenceDetails } from "@/cases/detail-components";
+import { ReceiptDetails } from "@/cases/detail-components";
 import i18n from "@/i18n/config";
 
 const wire = vi.hoisted(() => {
@@ -26,7 +26,7 @@ test("loads exact evidence only when opened and releases it when closed", async 
     expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
     return new Response(JSON.stringify({ data: { content: { details: { payload } } } }));
   });
-  render(<EvidenceDetails id="receipt-1" />);
+  render(<ReceiptDetails kind="evidence" id="receipt-1" revision={1} />);
   expect(wire).not.toHaveBeenCalled();
   const user = userEvent.setup();
   const toggle = screen.getByText("Show technical details");
@@ -47,7 +47,7 @@ test("shows a failed read without sending a write or automatically retrying", as
       status: 500,
     });
   });
-  render(<EvidenceDetails id="receipt-1" />);
+  render(<ReceiptDetails kind="evidence" id="receipt-1" revision={1} />);
   await userEvent.setup().click(screen.getByText("Show technical details"));
   expect((await screen.findByRole("alert")).textContent).toBe("Evidence storage unavailable");
   expect(wire).toHaveBeenCalledTimes(1);
@@ -67,7 +67,7 @@ test("closing a pending read aborts it and a later response cannot populate the 
   wire.mockResolvedValue(
     new Response(JSON.stringify({ data: { content: { message: "fresh receipt" } } })),
   );
-  render(<EvidenceDetails id="receipt-1" />);
+  render(<ReceiptDetails kind="evidence" id="receipt-1" revision={1} />);
   const user = userEvent.setup();
   const toggle = screen.getByText("Show technical details");
   await user.click(toggle);
@@ -80,3 +80,32 @@ test("closing a pending read aborts it and a later response cannot populate the 
   await waitFor(() => expect(wire).toHaveBeenCalledTimes(2));
   expect(screen.queryByText(/stale receipt/)).toBeNull();
 });
+
+test.each([
+  ["operation", "/api/v1/operations/receipt-1"],
+  ["verification", "/api/v1/verification-attempts/receipt-1"],
+] as const)(
+  "reads a complete %s receipt and refreshes an open detail after its revision changes",
+  async (kind, path) => {
+    await i18n.changeLanguage("en");
+    sessionStorage.setItem("opsonde.session", "fixture-token");
+    const reference = " " + "[REDACTED]".repeat(65_534) + " ";
+    let revision = 1;
+    wire.mockImplementation(async (request: Request) => {
+      expect(request.method).toBe("GET");
+      expect(new URL(request.url, "http://localhost").pathname).toBe(path);
+      expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
+      return new Response(JSON.stringify({ data: { reference, revision } }));
+    });
+    const { rerender } = render(<ReceiptDetails kind={kind} id="receipt-1" revision={1} />);
+    expect(wire).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByText("Show technical details"));
+    await waitFor(() => expect(document.querySelector("pre")?.textContent).toContain(reference));
+    revision = 2;
+    rerender(<ReceiptDetails kind={kind} id="receipt-1" revision={2} />);
+    await waitFor(() =>
+      expect(document.querySelector("pre")?.textContent).toContain('"revision": 2'),
+    );
+    expect(wire).toHaveBeenCalledTimes(2);
+  },
+);

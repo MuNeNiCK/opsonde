@@ -181,7 +181,9 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
     }
   end
 
-  defp summary_text(value, length) when is_binary(value), do: String.slice(value, 0, length)
+  defp summary_text(value, length) when is_binary(value),
+    do: value |> String.to_charlist() |> Enum.take(length) |> List.to_string()
+
   defp summary_text(_value, _length), do: nil
 
   defp summary_id(value) do
