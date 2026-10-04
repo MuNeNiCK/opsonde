@@ -76,6 +76,7 @@ defmodule OpsondeWeb.Router do
     get "/ai-usage-role-assignments", AIUsageRoleAssignmentController, :index
 
     get "/management-boundaries", TargetSetupController, :boundaries_index
+    get "/management-boundaries/:id", TargetSetupController, :boundaries_show
     post "/management-boundaries", TargetSetupController, :boundaries_create
     patch "/management-boundaries/:id", TargetSetupController, :boundaries_update
     post "/management-boundaries/:id/deactivate", TargetSetupController, :boundaries_deactivate

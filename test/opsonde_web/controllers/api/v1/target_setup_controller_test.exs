@@ -165,6 +165,147 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
     refute_receive {:check, _, _}
   end
 
+  @tag boundary_choices: true
+  test "boundary pages omit large facts while selected detail preserves them", context do
+    facts = %{"payload" => String.duplicate("x", 65_522)}
+    assert byte_size(Jason.encode!(facts)) == 65_536
+
+    boundaries =
+      for index <- 1..101 do
+        name = String.duplicate("🌏", 116) <> String.pad_leading(Integer.to_string(index), 4, "0")
+
+        Opsonde.Targets.create_management_boundary!(name, String.duplicate("🌏", 80), facts,
+          actor: context.admin
+        )
+      end
+
+    selected = List.last(boundaries)
+    response = get_json("/api/v1/management-boundaries?limit=100", context.viewer_token)
+    page = json_response(response, 200)
+    assert length(page["data"]) == 100
+    assert byte_size(response.resp_body) < 150_000
+    assert Enum.all?(page["data"], &(not Map.has_key?(&1, "facts")))
+    refute Enum.any?(page["data"], &(&1["id"] == selected.id))
+    assert_operation_response(response)
+    query = URI.encode_query(%{"limit" => 100, "after" => page["page"]["next"]})
+
+    tail =
+      get_json("/api/v1/management-boundaries?#{query}", context.viewer_token)
+      |> json_response(200)
+
+    assert Enum.map(tail["data"], & &1["id"]) == [selected.id]
+    assert tail["page"]["next"] == nil
+    path = "/api/v1/management-boundaries/#{selected.id}"
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      response = get_json(path, token)
+      assert json_response(response, 200)["data"]["facts"] == facts
+      assert_operation_response(response)
+    end
+
+    assert response(get_json(path, nil), 401)
+
+    assert response(
+             get_json(
+               "/api/v1/management-boundaries/#{Ecto.UUID.generate()}",
+               context.viewer_token
+             ),
+             404
+           )
+
+    root = Path.join(System.tmp_dir!(), "boundary-cli-#{System.unique_integer([:positive])}")
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    listed =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["boundary", "list", "--limit", "100", "--after", page["page"]["next"]],
+                 runtime
+               ) == 0
+      end)
+
+    assert Jason.decode!(listed)["data"] == tail["data"]
+
+    shown =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["boundary", "show", selected.id], runtime) == 0
+      end)
+
+    assert Jason.decode!(shown)["data"]["facts"] == facts
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE management_boundaries RENAME COLUMN facts TO unavailable_facts"
+    )
+
+    try do
+      assert json_response(
+               get_json("/api/v1/management-boundaries?limit=100", context.viewer_token),
+               200
+             ) == page
+
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Opsonde.Targets.get_management_boundary(selected.id, actor: context.admin)
+
+      assert Exception.message(cause) =~ "does not exist"
+
+      capture_log(fn ->
+        assert json_response(get_json(path, context.viewer_token), 500)["error"]["code"] ==
+                 "internal_error"
+
+        capture_io(:stderr, fn ->
+          assert OpsondeCLI.CLI.run(["boundary", "show", selected.id], runtime) == 4
+        end)
+      end)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE management_boundaries RENAME COLUMN unavailable_facts TO facts"
+      )
+    end
+
+    assert json_response(get_json(path, context.viewer_token), 200)["data"]["facts"] == facts
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE management_boundaries RENAME COLUMN name TO unavailable_name"
+    )
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Opsonde.Targets.page_management_boundaries(actor: context.admin)
+
+      assert Exception.message(cause) =~ "does not exist"
+
+      capture_log(fn ->
+        assert json_response(get_json("/api/v1/management-boundaries", context.viewer_token), 500)[
+                 "error"
+               ]["code"] == "internal_error"
+
+        capture_io(:stderr, fn ->
+          assert OpsondeCLI.CLI.run(["boundary", "list"], runtime) == 4
+        end)
+      end)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE management_boundaries RENAME COLUMN unavailable_name TO name"
+      )
+    end
+
+    assert json_response(
+             get_json("/api/v1/management-boundaries?limit=100", context.viewer_token),
+             200
+           ) == page
+  end
+
   test "Target type catalog publishes custom choices per supported category", context do
     response = get_json("/api/v1/target-types", context.viewer_token)
     assert_operation_response(response)

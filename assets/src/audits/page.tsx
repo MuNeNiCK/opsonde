@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 type AuditRun = components["schemas"]["AuditRun"];
 type AuditSchedule = components["schemas"]["AuditSchedule"];
-type ManagementBoundary = components["schemas"]["ManagementBoundary"];
+type ManagementBoundary = components["schemas"]["ManagementBoundarySummary"];
 type Target = components["schemas"]["Target"];
 
 type Snapshot = {

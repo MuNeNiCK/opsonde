@@ -2,7 +2,7 @@ import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 
 export type Provider = components["schemas"]["Provider"];
-export type ManagementBoundary = components["schemas"]["ManagementBoundary"];
+export type ManagementBoundary = components["schemas"]["ManagementBoundarySummary"];
 export type Target = components["schemas"]["Target"];
 export type ExternalIdentity = components["schemas"]["ExternalIdentity"];
 export type AccessMethod = components["schemas"]["AccessMethod"];

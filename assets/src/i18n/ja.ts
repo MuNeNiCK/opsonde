@@ -37,6 +37,9 @@ const ja = {
       },
     },
     common: {
+      previousPage: "前へ",
+      nextPage: "次へ",
+      pageNumber: "{{page}}ページ",
       language: "言語",
       theme: "テーマ",
       light: "ライト",

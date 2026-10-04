@@ -8,7 +8,13 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
     %{
       "ManagementBoundary" => management_boundary(),
       "ManagementBoundaryResponse" => Schemas.data(ref("ManagementBoundary")),
-      "ManagementBoundaryPage" => Schemas.page(ref("ManagementBoundary")),
+      "ManagementBoundarySummary" =>
+        resource(%{name: string(1, 120), kind: string(1, 80), active: %Schema{type: :boolean}}, [
+          :name,
+          :kind,
+          :active
+        ]),
+      "ManagementBoundaryPage" => Schemas.page(ref("ManagementBoundarySummary")),
       "CreateManagementBoundaryRequest" => create_management_boundary_request(),
       "UpdateManagementBoundaryRequest" => update_management_boundary_request(),
       "DeactivateManagementBoundaryRequest" => deactivate_request(:management_boundary),

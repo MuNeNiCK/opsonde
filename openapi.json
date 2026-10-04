@@ -4734,7 +4734,7 @@
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/ManagementBoundary"
+              "$ref": "#/components/schemas/ManagementBoundarySummary"
             },
             "type": "array"
           },
@@ -7065,6 +7065,50 @@
           "target_revision",
           "inserted_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ManagementBoundarySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "inserted_at",
+          "updated_at",
+          "name",
+          "kind",
+          "active"
         ],
         "type": "object"
       },
@@ -10886,6 +10930,88 @@
       }
     },
     "/api/v1/management-boundaries/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getManagementBoundary",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementBoundaryResponse"
+                }
+              }
+            },
+            "description": "Management boundary"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a management boundary",
+        "tags": [
+          "Targets"
+        ]
+      },
       "patch": {
         "callbacks": {},
         "operationId": "updateManagementBoundary",

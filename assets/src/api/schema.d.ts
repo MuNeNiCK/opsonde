@@ -324,7 +324,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get a management boundary */
+        get: operations["getManagementBoundary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2846,7 +2847,7 @@ export interface components {
             }[];
         };
         ManagementBoundaryPage: {
-            data: components["schemas"]["ManagementBoundary"][];
+            data: components["schemas"]["ManagementBoundarySummary"][];
             page: components["schemas"]["Page"];
         };
         CLISessionApprovalResponse: {
@@ -3441,6 +3442,18 @@ export interface components {
             /** Format: uuid */
             target_id: string | null;
             target_revision: number | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ManagementBoundarySummary: {
+            active: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            kind: string;
+            name: string;
+            revision: number;
             /** Format: date-time */
             updated_at: string;
         };
@@ -5664,6 +5677,73 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getManagementBoundary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Management boundary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementBoundaryResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

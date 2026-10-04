@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, Plus, Server, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
 import { FormSelect } from "@/components/form-select";
@@ -14,7 +14,13 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { ProviderChoiceCard } from "@/providers/choice-card";
 
-type Boundary = components["schemas"]["ManagementBoundary"];
+type Boundary = components["schemas"]["ManagementBoundarySummary"];
+type BoundaryPage = {
+  items: Boundary[];
+  next: string | null;
+  index: number;
+  cursors: Array<string | null>;
+};
 type Catalog = components["schemas"]["TargetTypeCatalog"];
 
 export function TargetCreatePage() {
@@ -23,7 +29,13 @@ export function TargetCreatePage() {
   const { targetType } = useParams();
   const { account } = useAuthentication();
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [boundaries, setBoundaries] = useState<Boundary[] | null>(null);
+  const [boundaries, setBoundaries] = useState<BoundaryPage | null>(null);
+  const [selectedBoundary, setSelectedBoundary] = useState<Pick<
+    Boundary,
+    "id" | "name" | "active"
+  > | null>(null);
+  const [boundaryPending, setBoundaryPending] = useState(false);
+  const boundaryRequest = useRef<AbortController | null>(null);
   const [creatingBoundary, setCreatingBoundary] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -50,21 +62,63 @@ export function TargetCreatePage() {
   });
 
   useEffect(() => {
-    let active = true;
-    Promise.all([loadBoundaries(), apiClient.GET("/api/v1/target-types").then(apiData)])
-      .then(([items, response]) => {
-        if (active) {
-          setBoundaries(items);
-          setCatalog(response.data);
-        }
+    const request = new AbortController();
+    boundaryRequest.current = request;
+    loadBoundaries(null, request.signal)
+      .then((page) => {
+        if (!request.signal.aborted)
+          setBoundaries({ items: page.data, next: page.page.next, index: 0, cursors: [null] });
       })
-      .catch(() => active && setError(t("targets.requestFailed")));
+      .catch(() => {
+        if (!request.signal.aborted) setError(t("targets.requestFailed"));
+      });
+    apiClient
+      .GET("/api/v1/target-types", { signal: request.signal })
+      .then(apiData)
+      .then((response) => {
+        if (!request.signal.aborted) setCatalog(response.data);
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setError(t("targets.requestFailed"));
+      });
     return () => {
-      active = false;
+      request.abort();
+      boundaryRequest.current?.abort();
+      boundaryRequest.current = null;
     };
   }, [t]);
 
   if (catalog && targetType && !choice) return <Navigate to="/targets/new" replace />;
+
+  const boundaryChoices: Array<Pick<Boundary, "id" | "name" | "active">> = [
+    ...(boundaries?.items ?? []),
+  ];
+  if (selectedBoundary && !boundaryChoices.some((item) => item.id === selectedBoundary.id)) {
+    // Only the selected label survives replacing a page.
+    boundaryChoices.push(selectedBoundary);
+  }
+
+  async function changeBoundaryPage(index: number, after: string | null) {
+    boundaryRequest.current?.abort();
+    const request = new AbortController();
+    boundaryRequest.current = request;
+    setBoundaryPending(true);
+    setError("");
+    try {
+      const page = await loadBoundaries(after, request.signal);
+      if (boundaryRequest.current !== request) return;
+      setBoundaries((current) => ({
+        items: page.data,
+        next: page.page.next,
+        index,
+        cursors: [...(current?.cursors.slice(0, index) ?? []), after],
+      }));
+    } catch {
+      if (boundaryRequest.current === request) setError(t("targets.requestFailed"));
+    } finally {
+      if (boundaryRequest.current === request) setBoundaryPending(false);
+    }
+  }
 
   async function createBoundary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,16 +126,19 @@ export function TargetCreatePage() {
     setPending(true);
     setError("");
     try {
-      await apiClient.POST("/api/v1/management-boundaries", {
-        body: {
-          management_boundary: {
-            name: value(form, "name"),
-            kind: value(form, "kind"),
-            facts: {},
+      const created = apiData(
+        await apiClient.POST("/api/v1/management-boundaries", {
+          body: {
+            management_boundary: {
+              name: value(form, "name"),
+              kind: value(form, "kind"),
+              facts: {},
+            },
           },
-        },
-      });
-      setBoundaries(await loadBoundaries());
+        }),
+      ).data;
+      if (!boundaryRequest.current) return;
+      setSelectedBoundary({ id: created.id, name: created.name, active: created.active });
       setCreatingBoundary(false);
       setSuccess(t("targets.boundaryCreated"));
     } catch {
@@ -113,7 +170,7 @@ export function TargetCreatePage() {
               facts: Object.fromEntries(
                 attributes.map((attribute) => [attribute.name.trim(), attribute.value]),
               ),
-              management_boundary_id: value(form, "management_boundary_id") || null,
+              management_boundary_id: selectedBoundary?.id ?? null,
             },
           },
         }),
@@ -145,6 +202,7 @@ export function TargetCreatePage() {
           {canManage && choice && (
             <Button
               variant="outline"
+              disabled={pending || boundaryPending}
               onClick={() => {
                 setCreatingBoundary((current) => !current);
                 setSuccess("");
@@ -225,7 +283,7 @@ export function TargetCreatePage() {
             <CardDescription>{t("targets.boundaryDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={createBoundary}>
+            <form key="boundary" className="grid gap-4 md:grid-cols-2" onSubmit={createBoundary}>
               <Field label={t("targets.name")} name="name" required maxLength={120} />
               <Field
                 label={t("targets.kind")}
@@ -248,18 +306,71 @@ export function TargetCreatePage() {
             <CardDescription>{t("targets.targetCreateGuidance")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
+            <form key="target" className="grid gap-4 md:grid-cols-2" onSubmit={create}>
               <Field label={t("targets.name")} name="name" required maxLength={120} />
               <div className="space-y-2">
                 <Label htmlFor="target-create-boundary">{t("targets.boundary")}</Label>
                 <FormSelect
                   id="target-create-boundary"
                   name="management_boundary_id"
+                  value={selectedBoundary?.id ?? null}
+                  onValueChange={(id) => {
+                    const selected = boundaryChoices.find((item) => item.id === id);
+                    setSelectedBoundary(
+                      selected
+                        ? { id: selected.id, name: selected.name, active: selected.active }
+                        : null,
+                    );
+                  }}
                   placeholder={t("targets.noBoundary")}
-                  options={(boundaries ?? [])
+                  disabled={boundaryPending}
+                  options={boundaryChoices
                     .filter((item) => item.active)
                     .map((item) => ({ value: item.id, label: item.name }))}
                 />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={pending || boundaryPending || !boundaries?.index}
+                    onClick={() =>
+                      boundaries &&
+                      void changeBoundaryPage(
+                        boundaries.index - 1,
+                        boundaries.cursors[boundaries.index - 1],
+                      )
+                    }
+                  >
+                    {t("common.previousPage")}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {t("common.pageNumber", { page: (boundaries?.index ?? 0) + 1 })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={pending || boundaryPending || !boundaries?.next}
+                    onClick={() =>
+                      boundaries?.next &&
+                      void changeBoundaryPage(boundaries.index + 1, boundaries.next)
+                    }
+                  >
+                    {t("common.nextPage")}
+                  </Button>
+                  {!boundaries && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={boundaryPending}
+                      onClick={() => void changeBoundaryPage(0, null)}
+                    >
+                      {t("common.refresh")}
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="md:col-span-2 flex flex-wrap gap-2">
                 <Button
@@ -337,14 +448,13 @@ export function TargetCreatePage() {
   );
 }
 
-function loadBoundaries() {
-  return collectPages((after) =>
-    apiClient
-      .GET("/api/v1/management-boundaries", {
-        params: { query: { limit: 100, after: after ?? undefined } },
-      })
-      .then(apiData),
-  );
+function loadBoundaries(after: string | null, signal: AbortSignal) {
+  return apiClient
+    .GET("/api/v1/management-boundaries", {
+      params: { query: { limit: 50, after: after ?? undefined } },
+      signal,
+    })
+    .then(apiData);
 }
 
 function value(form: FormData, name: string) {

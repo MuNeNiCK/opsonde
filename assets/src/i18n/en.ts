@@ -37,6 +37,9 @@ const en = {
       },
     },
     common: {
+      previousPage: "Previous",
+      nextPage: "Next",
+      pageNumber: "Page {{page}}",
       language: "Language",
       theme: "Theme",
       light: "Light",

@@ -50,6 +50,17 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       ] ++
         @list_errors
 
+  operation :boundaries_show,
+    operation_id: "getManagementBoundary",
+    summary: "Get a management boundary",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [
+        ok:
+          {"Management boundary", "application/json",
+           TargetSchemas.ref("ManagementBoundaryResponse")}
+      ] ++ @show_errors
+
   operation :boundaries_create,
     operation_id: "createManagementBoundary",
     summary: "Create a management boundary",
@@ -323,7 +334,15 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       ] ++ @write_errors
 
   def boundaries_index(conn, params) do
-    page(conn, params, &Targets.page_management_boundaries/1, &TargetSetupJSON.boundary/1)
+    page(conn, params, &Targets.page_management_boundaries/1, fn boundary ->
+      Map.take(boundary, Opsonde.Targets.ManagementBoundary.summary_fields())
+    end)
+  end
+
+  def boundaries_show(conn, %{"id" => id}) do
+    with {:ok, boundary} <- Targets.get_management_boundary(id, actor: conn.assigns.current_user) do
+      Response.data(conn, TargetSetupJSON.boundary(boundary))
+    end
   end
 
   def boundaries_create(conn, %{"management_boundary" => input}) do

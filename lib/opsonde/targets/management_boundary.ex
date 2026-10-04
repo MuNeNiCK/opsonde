@@ -5,6 +5,9 @@ defmodule Opsonde.Targets.ManagementBoundary do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id name kind active revision inserted_at updated_at)a
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "management_boundaries"
     repo Opsonde.Repo
@@ -15,7 +18,7 @@ defmodule Opsonde.Targets.ManagementBoundary do
 
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [inserted_at: :asc, id: :asc])
+      prepare build(select: @summary_fields, sort: [inserted_at: :asc, id: :asc])
     end
 
     create :create do
