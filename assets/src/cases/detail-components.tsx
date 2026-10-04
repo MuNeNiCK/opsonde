@@ -337,6 +337,11 @@ async function loadReceipt(
         .GET("/api/v1/proposals/{id}", options)
         .then(apiData)
         .then((response) => response.data);
+    case "turn":
+      return apiClient
+        .GET("/api/v1/turns/{id}", options)
+        .then(apiData)
+        .then((response) => response.data);
   }
 }
 

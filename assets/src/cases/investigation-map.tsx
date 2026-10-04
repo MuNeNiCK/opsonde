@@ -291,7 +291,7 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
   }
 
   const traversalTurns = turns.flatMap((turn) => {
-    const decision = recordValue(turn.decision);
+    const decision = recordValue(turn.summary);
     const relationship = recordValue(decision?.relationship);
     if (textField(decision, "type") !== "target_traversal" || !relationship) return [];
     const source = textField(relationship, "source_target_id");

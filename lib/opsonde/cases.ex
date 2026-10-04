@@ -319,6 +319,11 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.Turn do
       define :list_turns, action: :read
       define :page_case_turns, action: :page_for_case, args: [:case_id]
+
+      define :latest_turn_condition_context,
+        action: :latest_condition_context,
+        args: [:case_id, :condition_revisions, :field]
+
       define :get_turn, action: :read, get_by: [:id]
 
       define :turn_by_idempotency,

@@ -16,6 +16,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
            Cases.get_case(case_id, Keyword.put(opts, :load, AIInvocation.usage_aggregates())),
          {:ok, history} <- Cases.condition_membership_history_for_case(case_id, authorize?: false),
          {:ok, conditions} <- current_conditions(incident, history),
+         {:ok, condition_context} <- latest_condition_context(incident, conditions, opts),
          {:ok, runs} <- Cases.resolution_runs_for_case(case_id, opts),
          {:ok, proposals} <- Cases.proposal_summaries_for_case(case_id, opts),
          {:ok, operations} <- Cases.operation_summaries_for_case(case_id, opts),
@@ -27,12 +28,35 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
          ai_usage: AIInvocation.usage_summary(incident),
          conditions: conditions,
          condition_history: history,
+         condition_context: condition_context,
          resolution_runs: runs,
          proposals: proposals,
          operations: operations,
          verification_attempts: attempts,
          reports: reports
        }}
+    end
+  end
+
+  defp latest_condition_context(_incident, [], _opts),
+    do: {:ok, %{groups: nil, assessments: nil}}
+
+  defp latest_condition_context(incident, conditions, opts) do
+    revisions =
+      Opsonde.Cases.Case.ConditionContext.condition_revisions(
+        Enum.map(conditions, & &1.condition)
+      )
+
+    with {:ok, groups} <-
+           Cases.latest_turn_condition_context(incident.id, revisions, "condition_groups", opts),
+         {:ok, assessments} <-
+           Cases.latest_turn_condition_context(
+             incident.id,
+             revisions,
+             "condition_assessments",
+             opts
+           ) do
+      {:ok, %{groups: List.first(groups), assessments: List.first(assessments)}}
     end
   end
 

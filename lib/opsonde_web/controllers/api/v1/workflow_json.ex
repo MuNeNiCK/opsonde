@@ -80,6 +80,10 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       ai_usage: snapshot.ai_usage,
       conditions: Enum.map(snapshot.conditions, &condition/1),
       condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
+      condition_context:
+        Map.new(snapshot.condition_context, fn {key, turn} ->
+          {key, turn_condition_context(turn)}
+        end),
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
       proposals:
         Enum.map(snapshot.proposals, &Map.take(&1, Opsonde.Cases.Proposal.summary_fields())),
@@ -235,6 +239,16 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       updated_at: turn.updated_at
     }
   end
+
+  def turn_summary(turn),
+    do: Map.take(turn, Opsonde.Cases.Turn.summary_fields()) |> Map.put(:summary, turn.summary)
+
+  defp turn_condition_context(nil), do: nil
+
+  defp turn_condition_context(turn),
+    do:
+      Map.take(turn, [:id, :ordinal, :revision, :completed_at])
+      |> Map.merge(turn.condition_context)
 
   def evidence(evidence) do
     evidence_record(evidence) |> Map.put(:content, evidence.content)

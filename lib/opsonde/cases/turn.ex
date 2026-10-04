@@ -1,4 +1,8 @@
 defmodule Opsonde.Cases.Turn do
+  @summary_fields ~w(id case_id resolution_run_id ordinal status progress_kind started_at completed_at revision inserted_at updated_at)a
+
+  def summary_fields, do: @summary_fields
+
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Cases,
@@ -24,7 +28,40 @@ defmodule Opsonde.Cases.Turn do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
       pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
-      prepare build(sort: [inserted_at: :desc, id: :desc])
+
+      prepare build(
+                select: @summary_fields,
+                load: [:summary],
+                sort: [inserted_at: :desc, id: :desc]
+              )
+    end
+
+    read :latest_condition_context do
+      argument :case_id, :uuid, allow_nil?: false
+      argument :condition_revisions, {:array, :map}, allow_nil?: false
+
+      argument :field, :string,
+        allow_nil?: false,
+        constraints: [match: ~r/\Acondition_(groups|assessments)\z/]
+
+      filter expr(
+               case_id == ^arg(:case_id) and status == :completed and
+                 fragment(
+                   "? -> 'condition_revisions' = to_jsonb(?::jsonb[])",
+                   result,
+                   ^arg(:condition_revisions)
+                 ) and
+                 fragment("jsonb_typeof(? -> ?) = 'array'", result, ^arg(:field)) and
+                 (^arg(:field) == "condition_groups" or
+                    fragment("? -> ? <> '[]'::jsonb", result, ^arg(:field)))
+             )
+
+      prepare build(
+                select: [:id, :ordinal, :revision, :completed_at],
+                load: [:condition_context],
+                sort: [completed_at: :desc, inserted_at: :desc, id: :desc],
+                limit: 1
+              )
     end
 
     read :by_idempotency do
@@ -141,7 +178,7 @@ defmodule Opsonde.Cases.Turn do
       forbid_if always()
     end
 
-    policy action([:read, :page_for_case]) do
+    policy action([:read, :page_for_case, :latest_condition_context]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
@@ -225,6 +262,47 @@ defmodule Opsonde.Cases.Turn do
       allow_nil? false
       public? true
     end
+  end
+
+  calculations do
+    calculate :summary,
+              :map,
+              expr(
+                fragment(
+                  """
+                  (SELECT jsonb_build_object(
+                    'outcome', left(r.value ->> 'outcome', 120),
+                    'type', left(r.value #>> '{intent,type}', 120),
+                    'reason', left(r.value #>> '{intent,reason}', 500),
+                    'target_id', left(coalesce(r.value #>> '{intent,target_id}', r.value #>> '{intent,next_target_id}', r.value #>> '{intent,relationship,destination_target_id}'), 36),
+                    'capability', left(r.value #>> '{intent,tool,capability}', 120),
+                    'operation', left(r.value #>> '{intent,tool,operation}', 120),
+                    'failure_category', left(r.value ->> 'category', 120),
+                    'failure_message', left(r.value ->> 'message', 500),
+                    'relationship', CASE WHEN jsonb_typeof(r.value #> '{intent,relationship}') = 'object' THEN jsonb_build_object(
+                      'source_target_id', left(r.value #>> '{intent,relationship,source_target_id}', 36),
+                      'destination_target_id', left(r.value #>> '{intent,relationship,destination_target_id}', 36),
+                      'kind', left(r.value #>> '{intent,relationship,kind}', 120)) ELSE NULL END
+                  ) FROM (SELECT ?::jsonb AS value) r)
+                  """,
+                  result
+                )
+              )
+
+    calculate :condition_context,
+              :map,
+              expr(
+                fragment(
+                  """
+                  (SELECT jsonb_build_object(
+                    'condition_revisions', r.value -> 'condition_revisions',
+                    'condition_groups', r.value -> 'condition_groups',
+                    'condition_assessments', r.value -> 'condition_assessments'
+                  ) FROM (SELECT ?::jsonb AS value) r)
+                  """,
+                  result
+                )
+              )
   end
 
   identities do

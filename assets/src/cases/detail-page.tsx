@@ -35,7 +35,7 @@ type CaseEvent = components["schemas"]["CaseEvent"];
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type Evidence = components["schemas"]["EvidenceSummary"];
 type ReviewDecision = components["schemas"]["ReviewDecision"];
-type Turn = components["schemas"]["ResolverTurn"];
+type Turn = components["schemas"]["ResolverTurnSummary"];
 type Proposal = components["schemas"]["Proposal"];
 type ProposalSummary = components["schemas"]["ProposalSummary"];
 type Provider = components["schemas"]["Provider"];
@@ -407,32 +407,10 @@ export function CaseDetailPage() {
     const attributes = first?.summary;
     return typeof attributes?.title === "string" ? attributes.title : condition.predicate;
   };
-  const currentConditionRevisions = JSON.stringify(
-    detail.snapshot.conditions
-      .map((condition) => ({ id: condition.id, revision: condition.revision }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-  );
-  const latestGroupTurn = [...detail.turns]
-    .filter(
-      (turn) =>
-        turn.condition_groups !== null &&
-        turn.condition_revisions !== null &&
-        JSON.stringify([...turn.condition_revisions].sort((a, b) => a.id.localeCompare(b.id))) ===
-          currentConditionRevisions,
-    )
-    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
+  const latestGroupTurn = detail.snapshot.condition_context.groups;
   const conditionHypotheses =
     latestGroupTurn?.condition_groups?.filter((group) => group.assessment !== "unknown") ?? [];
-  const latestAssessmentTurn = [...detail.turns]
-    .filter(
-      (turn) =>
-        turn.condition_assessments !== null &&
-        turn.condition_assessments.length > 0 &&
-        turn.condition_revisions !== null &&
-        JSON.stringify([...turn.condition_revisions].sort((a, b) => a.id.localeCompare(b.id))) ===
-          currentConditionRevisions,
-    )
-    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))[0];
+  const latestAssessmentTurn = detail.snapshot.condition_context.assessments;
   const selectedInCase = selectedConditions.filter((id) =>
     detail.snapshot.conditions.some((item) => item.id === id),
   );
@@ -814,7 +792,7 @@ export function CaseDetailPage() {
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">{item.predicate}</p>
-                      {assessment && (
+                      {assessment && latestAssessmentTurn && (
                         <div className="space-y-1 text-xs">
                           <p className="flex flex-wrap items-center gap-2">
                             <Badge variant="outline">

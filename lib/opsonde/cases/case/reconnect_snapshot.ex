@@ -6,6 +6,7 @@ defmodule Opsonde.Cases.Case.ReconnectSnapshot do
     :ai_usage,
     :conditions,
     :condition_history,
+    :condition_context,
     :resolution_runs,
     :proposals,
     :operations,

@@ -547,7 +547,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Case resolver turns */
+        /** List Case Resolver turn summaries */
         get: operations["listCaseResolverTurns"];
         put?: never;
         post?: never;
@@ -1029,6 +1029,23 @@ export interface paths {
         get?: never;
         /** Set an AI connection's usage and selection priority */
         put: operations["configureAIUsage"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/turns/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a complete Resolver turn */
+        get: operations["getResolverTurn"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1705,7 +1722,7 @@ export interface components {
             };
         };
         ResolverTurnPage: {
-            data: components["schemas"]["ResolverTurn"][];
+            data: components["schemas"]["ResolverTurnSummary"][];
             page: components["schemas"]["Page"];
         };
         AuditRunPage: {
@@ -1982,7 +1999,7 @@ export interface components {
             ordinal: number;
             outcome: string | null;
             /** @enum {string|null} */
-            progress_kind: "evidence" | "hypothesis" | "proposal" | "source_change" | "human_input" | "none" | null;
+            progress_kind: "evidence" | "hypothesis" | "proposal" | "observation_pending" | "delivery_retry" | "source_change" | "human_input" | "none" | null;
             /** Format: uuid */
             resolution_run_id: string;
             revision: number;
@@ -2088,6 +2105,43 @@ export interface components {
             /** Format: uuid */
             target_id: string;
             tool_id: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ResolverTurnSummary: {
+            /** Format: uuid */
+            case_id: string;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            ordinal: number;
+            /** @enum {string|null} */
+            progress_kind: "evidence" | "hypothesis" | "proposal" | "observation_pending" | "delivery_retry" | "source_change" | "human_input" | "none" | null;
+            /** Format: uuid */
+            resolution_run_id: string;
+            revision: number;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            status: "started" | "completed";
+            summary: {
+                capability: string | null;
+                failure_category: string | null;
+                failure_message: string | null;
+                operation: string | null;
+                outcome: string | null;
+                reason: string | null;
+                relationship: {
+                    destination_target_id: string | null;
+                    kind: string | null;
+                    source_target_id: string | null;
+                } | null;
+                target_id: string | null;
+                type: string | null;
+            };
             /** Format: date-time */
             updated_at: string;
         };
@@ -2298,6 +2352,10 @@ export interface components {
         CaseSnapshot: {
             ai_usage: components["schemas"]["CaseAIUsage"];
             case: components["schemas"]["Case"];
+            condition_context: {
+                assessments: components["schemas"]["TurnConditionContext"] | null;
+                groups: components["schemas"]["TurnConditionContext"] | null;
+            };
             condition_history: components["schemas"]["CaseConditionMembership"][];
             conditions: components["schemas"]["CaseCondition"][];
             operations: components["schemas"]["OperationSummary"][];
@@ -2842,6 +2900,35 @@ export interface components {
             max_resolver_turns: number;
             max_target_requests: number;
         };
+        TurnConditionContext: {
+            /** Format: date-time */
+            completed_at: string | null;
+            condition_assessments: {
+                /** Format: uuid */
+                condition_id: string;
+                evidence_ids: string[];
+                reason: string;
+                revision: number;
+                /** @enum {string} */
+                status: "recovered" | "still_failing" | "unknown";
+            }[] | null;
+            condition_groups: {
+                /** @enum {string} */
+                assessment: "related" | "independent" | "unknown";
+                condition_ids: string[];
+                evidence_ids: string[];
+                reason: string | null;
+            }[] | null;
+            condition_revisions: {
+                /** Format: uuid */
+                id: string;
+                revision: number;
+            }[] | null;
+            /** Format: uuid */
+            id: string;
+            ordinal: number;
+            revision: number;
+        };
         Proposal: {
             /** Format: uuid */
             case_id: string;
@@ -3184,6 +3271,9 @@ export interface components {
         };
         DeliveryResponse: {
             data: components["schemas"]["Delivery"];
+        };
+        ResolverTurnResponse: {
+            data: components["schemas"]["ResolverTurn"];
         };
         AIInvocation: {
             cached_tokens: number | null;
@@ -6689,7 +6779,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Resolver-turn page */
+            /** @description Resolver-turn summary page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8950,6 +9040,73 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getResolverTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolver turn */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolverTurnResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

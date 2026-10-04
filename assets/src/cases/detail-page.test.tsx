@@ -121,6 +121,7 @@ const snapshot: components["schemas"]["CaseSnapshot"] = {
   },
   conditions: [],
   condition_history: [],
+  condition_context: { groups: null, assessments: null },
   resolution_runs: [],
   proposals: [],
   operations: [],
@@ -238,6 +239,7 @@ test.each([false, true])(
     await i18n.changeLanguage("en");
     const requests: string[] = [];
     const receiptRequests: Record<string, string[]> = {
+      turns: [],
       proposals: [],
       operations: [],
       "verification-attempts": [],
@@ -245,13 +247,66 @@ test.each([false, true])(
     let delayedRefresh: ((response: Response) => void) | undefined;
     let delayedResponse: Response | undefined;
     let failNext = fails;
+    const conditions: components["schemas"]["CaseCondition"][] = [reportId, oldReportId].map(
+      (id) => ({
+        id,
+        signal_correlation_id: id,
+        target_id: null,
+        predicate: "Service unavailable",
+        subject_ref: {},
+        state: "firing",
+        recovery_status: "needs_observation",
+        recovery_evidence_ids: [],
+        first_fired_at: timestamp,
+        current_occurred_at: timestamp,
+        revision: 1,
+        membership_id: id,
+        attached_at: timestamp,
+      }),
+    );
+    const currentContext: components["schemas"]["TurnConditionContext"] = {
+      id: caseId,
+      ordinal: 9,
+      revision: 1,
+      completed_at: timestamp,
+      condition_revisions: conditions.map(({ id, revision }) => ({ id, revision })),
+      condition_groups: [
+        {
+          condition_ids: conditions.map(({ id }) => id),
+          assessment: "independent",
+          reason: "Current independent causes remain visible",
+          evidence_ids: [],
+        },
+      ],
+      condition_assessments: [
+        {
+          condition_id: reportId,
+          revision: 1,
+          status: "unknown",
+          reason: "Current recovery still requires observation",
+          evidence_ids: [],
+        },
+      ],
+    };
     wire.mockImplementation(async (request: Request) => {
       expect(request.method).toBe("GET");
       const url = new URL(request.url, "http://localhost");
       if (url.pathname === `/api/v1/cases/${caseId}`) {
         return new Response(
           JSON.stringify({
-            data: { ...snapshot, case: { ...snapshot.case, status: "running" }, reports: [] },
+            data: {
+              ...snapshot,
+              case: {
+                ...snapshot.case,
+                trigger_kind: "signal",
+                status: "running",
+                condition_count: 2,
+                firing_condition_count: 2,
+              },
+              conditions,
+              condition_context: { groups: currentContext, assessments: currentContext },
+              reports: [],
+            },
           }),
         );
       }
@@ -260,28 +315,54 @@ test.each([false, true])(
         const after = url.searchParams.get("after");
         receiptRequests[collection].push(after ?? "first");
         if (after) expect(after).toBe(`older-${collection}`);
-        const item = {
-          id: `${collection}-${after ? "old" : "latest"}`,
-          revision: 1,
-          capability: "fixture",
-          operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
-          status:
-            collection === "proposals"
-              ? "authorized"
-              : collection === "operations"
-                ? "applied"
-                : "verified",
-          target_id: collection === "proposals" ? caseId : null,
-          proposal_id: null,
-          outcome_category: null,
-          completed_at: timestamp,
-          updated_at: timestamp,
-          accepted_at: timestamp,
-          inserted_at: timestamp,
-          source_turn_id: caseId,
-          access_method_id: caseId,
-          proposal_digest: "a".repeat(64),
-        };
+        const item =
+          collection === "turns"
+            ? {
+                id: `turns-${after ? "old" : "latest"}`,
+                case_id: caseId,
+                resolution_run_id: caseId,
+                ordinal: after ? 1 : 2,
+                status: "completed",
+                progress_kind: "hypothesis",
+                revision: 1,
+                inserted_at: timestamp,
+                updated_at: timestamp,
+                started_at: timestamp,
+                completed_at: timestamp,
+                summary: {
+                  outcome: "decision",
+                  type: "handoff",
+                  reason: `${after ? "Older" : "Latest"} turns receipt`,
+                  target_id: null,
+                  capability: null,
+                  operation: null,
+                  failure_category: null,
+                  failure_message: null,
+                  relationship: null,
+                },
+              }
+            : {
+                id: `${collection}-${after ? "old" : "latest"}`,
+                revision: 1,
+                capability: "fixture",
+                operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
+                status:
+                  collection === "proposals"
+                    ? "authorized"
+                    : collection === "operations"
+                      ? "applied"
+                      : "verified",
+                target_id: collection === "proposals" ? caseId : null,
+                proposal_id: null,
+                outcome_category: null,
+                completed_at: timestamp,
+                updated_at: timestamp,
+                accepted_at: timestamp,
+                inserted_at: timestamp,
+                source_turn_id: caseId,
+                access_method_id: caseId,
+                proposal_digest: "a".repeat(64),
+              };
         return new Response(
           JSON.stringify({
             data: [item],
@@ -342,6 +423,9 @@ test.each([false, true])(
       </AuthenticationContext.Provider>,
     );
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
+    expect(screen.getByText("Latest turns receipt")).toBeDefined();
+    expect(screen.getByText("Current independent causes remain visible")).toBeDefined();
+    expect(screen.getByText("Current recovery still requires observation")).toBeDefined();
     expect(screen.getByText(/Latest operations receipt/)).toBeDefined();
     expect(screen.getByText(/Latest proposals receipt/)).toBeDefined();
     expect(screen.getByText(/Latest verification-attempts receipt/)).toBeDefined();
@@ -359,6 +443,10 @@ test.each([false, true])(
       await user.click(screen.getByRole("button", { name: "Next" }));
     }
     expect(await screen.findByText("Older window receipt")).toBeDefined();
+    expect(screen.getByText("Older turns receipt")).toBeDefined();
+    expect(screen.queryByText("Latest turns receipt")).toBeNull();
+    expect(screen.getByText("Current independent causes remain visible")).toBeDefined();
+    expect(screen.getByText("Current recovery still requires observation")).toBeDefined();
     expect(screen.getByText(/Older operations receipt/)).toBeDefined();
     expect(screen.getByText(/Older proposals receipt/)).toBeDefined();
     expect(screen.getByText(/Older verification-attempts receipt/)).toBeDefined();

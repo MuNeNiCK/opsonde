@@ -411,7 +411,7 @@
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/ResolverTurn"
+              "$ref": "#/components/schemas/ResolverTurnSummary"
             },
             "type": "array"
           },
@@ -1511,6 +1511,8 @@
               "evidence",
               "hypothesis",
               "proposal",
+              "observation_pending",
+              "delivery_retry",
               "source_change",
               "human_input",
               "none"
@@ -1897,6 +1899,168 @@
           "revision",
           "inserted_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ResolverTurnSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "ordinal": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "progress_kind": {
+            "enum": [
+              "evidence",
+              "hypothesis",
+              "proposal",
+              "observation_pending",
+              "delivery_retry",
+              "source_change",
+              "human_input",
+              "none"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "started",
+              "completed"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": false,
+            "properties": {
+              "capability": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              },
+              "failure_category": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              },
+              "failure_message": {
+                "maxLength": 500,
+                "nullable": true,
+                "type": "string"
+              },
+              "operation": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              },
+              "outcome": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 500,
+                "nullable": true,
+                "type": "string"
+              },
+              "relationship": {
+                "additionalProperties": false,
+                "nullable": true,
+                "properties": {
+                  "destination_target_id": {
+                    "maxLength": 36,
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "maxLength": 120,
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "source_target_id": {
+                    "maxLength": 36,
+                    "nullable": true,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source_target_id",
+                  "destination_target_id",
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "target_id": {
+                "maxLength": 36,
+                "nullable": true,
+                "type": "string"
+              },
+              "type": {
+                "maxLength": 120,
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "type",
+              "reason",
+              "target_id",
+              "capability",
+              "operation",
+              "failure_category",
+              "failure_message",
+              "relationship"
+            ],
+            "type": "object"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "ordinal",
+          "status",
+          "progress_kind",
+          "started_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at",
+          "summary"
         ],
         "type": "object"
       },
@@ -2690,6 +2854,32 @@
           "case": {
             "$ref": "#/components/schemas/Case"
           },
+          "condition_context": {
+            "additionalProperties": false,
+            "properties": {
+              "assessments": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TurnConditionContext"
+                  }
+                ],
+                "nullable": true
+              },
+              "groups": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TurnConditionContext"
+                  }
+                ],
+                "nullable": true
+              }
+            },
+            "required": [
+              "groups",
+              "assessments"
+            ],
+            "type": "object"
+          },
           "condition_history": {
             "items": {
               "$ref": "#/components/schemas/CaseConditionMembership"
@@ -2738,6 +2928,7 @@
           "ai_usage",
           "conditions",
           "condition_history",
+          "condition_context",
           "resolution_runs",
           "proposals",
           "operations",
@@ -4828,6 +5019,148 @@
         ],
         "type": "object"
       },
+      "TurnConditionContext": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "condition_assessments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "condition_id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "reason": {
+                  "maxLength": 500,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "status": {
+                  "enum": [
+                    "recovered",
+                    "still_failing",
+                    "unknown"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "condition_id",
+                "revision",
+                "status",
+                "evidence_ids",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "condition_groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assessment": {
+                  "enum": [
+                    "related",
+                    "independent",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                "condition_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "reason": {
+                  "maxLength": 500,
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "condition_ids",
+                "assessment",
+                "reason",
+                "evidence_ids"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "condition_revisions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "revision"
+              ],
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ordinal": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "condition_revisions",
+          "condition_groups",
+          "condition_assessments",
+          "completed_at",
+          "revision"
+        ],
+        "type": "object"
+      },
       "Proposal": {
         "additionalProperties": false,
         "properties": {
@@ -6146,6 +6479,18 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Delivery"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ResolverTurnResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResolverTurn"
           }
         },
         "required": [
@@ -12013,7 +12358,7 @@
                 }
               }
             },
-            "description": "Resolver-turn page"
+            "description": "Resolver-turn summary page"
           },
           "401": {
             "content": {
@@ -12066,7 +12411,7 @@
             "description": "Request could not be completed"
           }
         },
-        "summary": "List Case resolver turns",
+        "summary": "List Case Resolver turn summaries",
         "tags": [
           "Cases"
         ]
@@ -14988,6 +15333,90 @@
         "summary": "Set an AI connection's usage and selection priority",
         "tags": [
           "Providers"
+        ]
+      }
+    },
+    "/api/v1/turns/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getResolverTurn",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverTurnResponse"
+                }
+              }
+            },
+            "description": "Resolver turn"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get a complete Resolver turn",
+        "tags": [
+          "Cases"
         ]
       }
     },

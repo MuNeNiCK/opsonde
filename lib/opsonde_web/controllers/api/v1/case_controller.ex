@@ -92,10 +92,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
 
   operation :turns,
     operation_id: "listCaseResolverTurns",
-    summary: "List Case resolver turns",
+    summary: "List Case Resolver turn summaries",
     parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
     responses:
-      [ok: {"Resolver-turn page", "application/json", WorkflowSchemas.ref("ResolverTurnPage")}] ++
+      [
+        ok:
+          {"Resolver-turn summary page", "application/json",
+           WorkflowSchemas.ref("ResolverTurnPage")}
+      ] ++
         @show_errors
 
   operation :proposals,
@@ -104,6 +108,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
     parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
     responses:
       [ok: {"Proposal summary page", "application/json", WorkflowSchemas.ref("ProposalPage")}] ++
+        @show_errors
+
+  operation :show_turn,
+    operation_id: "getResolverTurn",
+    summary: "Get a complete Resolver turn",
+    parameters: Schemas.id_parameter(),
+    responses:
+      [ok: {"Resolver turn", "application/json", WorkflowSchemas.ref("ResolverTurnResponse")}] ++
         @show_errors
 
   operation :evidence,
@@ -276,7 +288,13 @@ defmodule OpsondeWeb.API.V1.CaseController do
   end
 
   def turns(conn, %{"id" => id} = params) do
-    page_case_records(conn, params, &Cases.page_case_turns(id, &1), &WorkflowJSON.turn/1)
+    page_case_records(conn, params, &Cases.page_case_turns(id, &1), &WorkflowJSON.turn_summary/1)
+  end
+
+  def show_turn(conn, %{"id" => id}) do
+    with {:ok, turn} <- Cases.get_turn(id, actor: conn.assigns.current_user) do
+      Response.data(conn, WorkflowJSON.turn(turn))
+    end
   end
 
   def evidence(conn, %{"id" => id} = params) do

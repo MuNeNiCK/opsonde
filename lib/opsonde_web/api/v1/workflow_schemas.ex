@@ -30,7 +30,14 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "CaseEvent" => event(),
       "CaseEventPage" => Schemas.page(ref("CaseEvent")),
       "ResolverTurn" => turn(),
-      "ResolverTurnPage" => Schemas.page(ref("ResolverTurn")),
+      "ResolverTurnResponse" => Schemas.data(ref("ResolverTurn")),
+      "ResolverTurnSummary" => turn_summary(),
+      "ResolverTurnPage" => Schemas.page(ref("ResolverTurnSummary")),
+      "TurnConditionContext" =>
+        summary(
+          turn(),
+          ~w(id ordinal revision completed_at condition_revisions condition_groups condition_assessments)a
+        ),
       "Evidence" => evidence(),
       "EvidenceResponse" => Schemas.data(ref("Evidence")),
       "EvidenceSummary" => evidence_summary(),
@@ -224,6 +231,15 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         ai_usage: ref("CaseAIUsage"),
         conditions: array(ref("CaseCondition")),
         condition_history: array(ref("CaseConditionMembership")),
+        condition_context:
+          object(
+            %{
+              groups: %Schema{allOf: [ref("TurnConditionContext")], nullable: true},
+              assessments: %Schema{allOf: [ref("TurnConditionContext")], nullable: true}
+            },
+            [:groups, :assessments],
+            false
+          ),
         resolution_runs: array(ref("ResolutionRun")),
         proposals: array(ref("ProposalSummary")),
         operations: array(ref("OperationSummary")),
@@ -235,6 +251,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         :ai_usage,
         :conditions,
         :condition_history,
+        :condition_context,
         :resolution_runs,
         :proposals,
         :operations,
@@ -436,7 +453,9 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         failure_category: nullable_string(),
         failure_message: nullable_string(),
         progress_kind:
-          nullable_enum(~w(evidence hypothesis proposal source_change human_input none)),
+          nullable_enum(
+            ~w(evidence hypothesis proposal observation_pending delivery_retry source_change human_input none)
+          ),
         started_at: Schemas.timestamp(),
         completed_at: nullable_timestamp(),
         revision: positive_integer(),
@@ -446,6 +465,43 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       ~w(id case_id resolution_run_id ordinal status intent outcome decision condition_revisions condition_groups condition_assessments failure_category failure_message progress_kind started_at completed_at revision inserted_at updated_at)a,
       false
     )
+  end
+
+  defp turn_summary do
+    base = summary(turn(), Opsonde.Cases.Turn.summary_fields())
+
+    presentation =
+      object(
+        %{
+          outcome: nullable_string(120),
+          type: nullable_string(120),
+          reason: nullable_string(500),
+          target_id: nullable_string(36),
+          capability: nullable_string(120),
+          operation: nullable_string(120),
+          failure_category: nullable_string(120),
+          failure_message: nullable_string(500),
+          relationship: %Schema{
+            type: :object,
+            nullable: true,
+            additionalProperties: false,
+            properties: %{
+              source_target_id: nullable_string(36),
+              destination_target_id: nullable_string(36),
+              kind: nullable_string(120)
+            },
+            required: [:source_target_id, :destination_target_id, :kind]
+          }
+        },
+        ~w(outcome type reason target_id capability operation failure_category failure_message relationship)a,
+        false
+      )
+
+    %{
+      base
+      | properties: Map.put(base.properties, :summary, presentation),
+        required: base.required ++ [:summary]
+    }
   end
 
   defp evidence do

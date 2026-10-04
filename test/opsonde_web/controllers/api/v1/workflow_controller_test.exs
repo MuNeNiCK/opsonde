@@ -621,6 +621,15 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       %{
         "outcome" => "decision",
         "condition_revisions" => revisions,
+        "condition_assessments" => [
+          %{
+            "condition_id" => moved["id"],
+            "revision" => moved["revision"],
+            "status" => "still_failing",
+            "evidence_ids" => [],
+            "reason" => "Database service remains unavailable"
+          }
+        ],
         "condition_groups" => [
           %{
             "condition_ids" => Enum.map(revisions, & &1["id"]),
@@ -637,14 +646,79 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       authorize?: false
     )
 
-    turns = get_data!("/api/v1/cases/#{incident.id}/turns", context.viewer_token)
+    # Later history from a different Condition revision cannot replace current AI context.
+    source = Cases.get_turn!(turn.id, authorize?: false)
+    inputs = Map.take(source, Ash.Resource.Info.action(source.__struct__, :create_record).accept)
 
-    assert [
+    for index <- 1..100 do
+      Cases.create_turn_record!(
+        Map.merge(Map.drop(inputs, [:id]), %{
+          ordinal: index + 10_000,
+          idempotency_key: "condition-context-history:#{index}",
+          completed_at: DateTime.add(source.completed_at, index, :microsecond),
+          result: %{
+            "outcome" => "decision",
+            "condition_revisions" => [],
+            "condition_groups" => [],
+            "condition_assessments" => []
+          }
+        }),
+        authorize?: false
+      )
+    end
+
+    snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert snapshot["condition_context"]["groups"]["id"] == turn.id
+    assert snapshot["condition_context"]["assessments"]["id"] == turn.id
+
+    assert snapshot["condition_context"]["assessments"]["condition_assessments"] == [
              %{
-               "condition_revisions" => ^revisions,
-               "condition_groups" => [%{"assessment" => "unknown"}]
+               "condition_id" => moved["id"],
+               "revision" => moved["revision"],
+               "status" => "still_failing",
+               "evidence_ids" => [],
+               "reason" => "Database service remains unavailable"
              }
-           ] = turns
+           ]
+
+    assert snapshot["condition_context"]["groups"]["condition_revisions"] == revisions
+
+    [current_context] =
+      Cases.latest_turn_condition_context!(incident.id, revisions, "condition_groups",
+        actor: context.operator
+      )
+
+    refute Ash.Resource.selected?(current_context, :intent)
+    refute Ash.Resource.selected?(current_context, :result)
+    summaries = get_data!("/api/v1/cases/#{incident.id}/turns", context.viewer_token)
+    refute Enum.any?(summaries, &(&1["id"] == turn.id))
+    refute Map.has_key?(hd(summaries), "decision")
+    full = get_data!("/api/v1/turns/#{turn.id}", context.viewer_token)
+
+    assert %{
+             "condition_revisions" => ^revisions,
+             "condition_groups" => [%{"assessment" => "unknown"}]
+           } = full
+
+    Opsonde.Repo.query!("ALTER TABLE turns RENAME COLUMN result TO unavailable_result")
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Cases.case_reconnect_snapshot(incident.id, actor: context.operator)
+
+      assert Exception.message(cause) =~ "does not exist"
+
+      capture_log(fn ->
+        failed = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+        assert json_response(failed, 500)["error"]["code"] == "internal_error"
+        assert_operation_response(failed)
+      end)
+    after
+      Opsonde.Repo.query!("ALTER TABLE turns RENAME COLUMN unavailable_result TO result")
+    end
+
+    assert get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)["condition_context"] ==
+             snapshot["condition_context"]
 
     parent = Cases.get_case!(incident.id, authorize?: false)
 
@@ -1047,8 +1121,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                %{
                  "ordinal" => 1,
                  "status" => "completed",
-                 "outcome" => "decision",
-                 "decision" => %{"type" => "proposal"},
+                 "summary" => %{"outcome" => "decision", "type" => "proposal"},
                  "progress_kind" => "proposal"
                }
              ],
@@ -1475,21 +1548,52 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       |> Map.drop([:id])
     end
 
+    padded_intent = Map.put(source_turn.intent, "padding", "")
+    intent_padding = String.duplicate("x", 65_536 - byte_size(Jason.encode!(padded_intent)))
+    padded_intent = Map.put(padded_intent, "padding", intent_padding)
+    padded_result = Map.update!(source_turn.result, "intent", &Map.put(&1, "padding", ""))
+    decision_padding = String.duplicate("x", 65_536 - byte_size(Jason.encode!(padded_result)))
+
+    padded_result =
+      Map.update!(padded_result, "intent", &Map.put(&1, "padding", decision_padding))
+
+    assert byte_size(Jason.encode!(padded_intent)) == 65_536
+    assert byte_size(Jason.encode!(padded_result)) == 65_536
+
+    padded_proposal_fields =
+      Map.new(
+        ~w(selectors parameters expected_result verification_intent verification_tool resolver_identity preflight_context)a,
+        fn field ->
+          base = Map.put(Map.fetch!(proposal, field), "padding", "")
+
+          body =
+            Map.put(
+              base,
+              "padding",
+              String.duplicate("x", 65_536 - byte_size(Jason.encode!(base)))
+            )
+
+          assert byte_size(Jason.encode!(body)) == 65_536
+          {field, body}
+        end
+      )
+
     for index <- 1..100 do
       turn =
         Cases.create_turn_record!(
           Map.merge(copy_inputs.(source_turn), %{
             ordinal: index + 1,
-            idempotency_key: "history-capacity:#{index}"
+            idempotency_key: "history-capacity:#{index}",
+            intent: padded_intent,
+            result: padded_result
           }),
           authorize?: false
         )
 
       next_proposal =
         Cases.create_proposal_record!(
-          Map.merge(copy_inputs.(proposal), %{
+          Map.merge(Map.merge(copy_inputs.(proposal), padded_proposal_fields), %{
             source_turn_id: turn.id,
-            parameters: %{"service" => "api", "padding" => String.duplicate("x", 64_000)},
             reserved_operation_id: Ecto.UUID.generate(),
             operation_idempotency_key: "history-capacity:#{index}"
           }),
@@ -1611,6 +1715,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       assert Jason.decode!(reconnected)["data"]["operations"] == snapshot["operations"]
 
       for {collection, original_id, command} <- [
+            {"turns", source_turn.id, "turns"},
             {"proposals", proposal.id, "proposals"},
             {"operations", operation.id, "operations"},
             {"verification-attempts", verification.id, "verifications"}
@@ -1647,63 +1752,103 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         assert [%{"id" => ^original_id}] = Jason.decode!(cli_page)["data"]
         assert get_json("/api/v1/cases/#{incident.id}/#{collection}", nil).status == 401
 
-        if collection == "proposals" do
-          maximum = get_json("/api/v1/cases/#{incident.id}/proposals?limit=500", token)
+        if collection in ["proposals", "turns"] do
+          {singular, column, body_key, read, page_read} =
+            case collection do
+              "proposals" ->
+                {"proposal", "parameters", "parameters", &Cases.get_proposal/2,
+                 &Cases.page_case_proposals/2}
+
+              "turns" ->
+                {"turn", "intent", "intent", &Cases.get_turn/2, &Cases.page_case_turns/2}
+            end
+
+          maximum = get_json("/api/v1/cases/#{incident.id}/#{collection}?limit=500", token)
           assert_operation_response(maximum)
           assert json_response(maximum, 422)["error"]["code"] == "invalid_pagination"
 
-          maximum =
-            Cases.page_case_proposals!(incident.id, actor: context.operator, page: [limit: 500])
+          assert {:ok, maximum} =
+                   page_read.(incident.id, actor: context.operator, page: [limit: 500])
 
           assert length(maximum.results) == 101
-          assert Enum.all?(maximum.results, &(not Ash.Resource.selected?(&1, :parameters)))
+
+          assert Enum.all?(
+                   maximum.results,
+                   &(not Ash.Resource.selected?(&1, String.to_existing_atom(column)))
+                 )
+
+          if collection == "turns",
+            do: assert(Enum.all?(maximum.results, &(not Ash.Resource.selected?(&1, :result))))
 
           selected_id = hd(first_page["data"])["id"]
-          selected = get_json("/api/v1/proposals/#{selected_id}", token)
+          assert get_json("/api/v1/#{collection}/#{selected_id}", nil).status == 401
+          selected = get_json("/api/v1/#{collection}/#{selected_id}", token)
           assert_operation_response(selected)
           selected_body = json_response(selected, 200)["data"]
-          assert selected_body["parameters"]["padding"] == String.duplicate("x", 64_000)
+
+          expected_padding =
+            if collection == "turns",
+              do: intent_padding,
+              else: padded_proposal_fields.parameters["padding"]
+
+          assert selected_body[body_key]["padding"] == expected_padding
+
+          if collection == "turns",
+            do: assert(selected_body["decision"]["padding"] == decision_padding)
+
+          if collection == "proposals" do
+            for field <-
+                  ~w(selectors parameters expected_result verification_intent verification_tool)a do
+              assert selected_body[Atom.to_string(field)] ==
+                       Map.fetch!(padded_proposal_fields, field)
+            end
+          end
 
           exact =
             capture_io(fn ->
-              assert OpsondeCLI.CLI.run(["proposal", "show", selected_id], runtime) == 0
+              assert OpsondeCLI.CLI.run([singular, "show", selected_id], runtime) == 0
             end)
 
           assert Jason.decode!(exact)["data"] == selected_body
 
           Opsonde.Repo.query!(
-            "ALTER TABLE proposals RENAME COLUMN parameters TO unavailable_parameters"
+            "ALTER TABLE #{collection} RENAME COLUMN #{column} TO unavailable_#{column}"
           )
 
           try do
-            assert {:ok, page} = Cases.page_case_proposals(incident.id, actor: context.operator)
+            assert {:ok, page} = page_read.(incident.id, actor: context.operator)
             assert length(page.results) == 100
 
             assert {:error, %Ash.Error.Unknown{} = cause} =
-                     Cases.get_proposal(selected_id, actor: context.operator)
+                     read.(selected_id, actor: context.operator)
 
             assert Exception.message(cause) =~ "does not exist"
 
             capture_log(fn ->
               assert get_json("/api/v1/cases/#{incident.id}", token).status == 200
-              assert get_json("/api/v1/proposals/#{selected_id}", token).status == 500
+              assert get_json("/api/v1/#{collection}/#{selected_id}", token).status == 500
 
               capture_io(:stderr, fn ->
-                assert OpsondeCLI.CLI.run(["proposal", "show", selected_id], runtime) == 4
+                assert OpsondeCLI.CLI.run([singular, "show", selected_id], runtime) == 4
               end)
             end)
           after
             Opsonde.Repo.query!(
-              "ALTER TABLE proposals RENAME COLUMN unavailable_parameters TO parameters"
+              "ALTER TABLE #{collection} RENAME COLUMN unavailable_#{column} TO #{column}"
             )
           end
 
-          assert json_response(get_json("/api/v1/proposals/#{selected_id}", token), 200)["data"] ==
+          assert json_response(get_json("/api/v1/#{collection}/#{selected_id}", token), 200)[
+                   "data"
+                 ] ==
                    selected_body
         end
 
         {table, column, read} =
           case collection do
+            "turns" ->
+              {"turns", "status", &Cases.page_case_turns/2}
+
             "proposals" ->
               {"proposals", "status", &Cases.page_case_proposals/2}
 

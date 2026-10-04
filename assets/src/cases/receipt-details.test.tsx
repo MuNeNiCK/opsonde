@@ -103,13 +103,16 @@ test.each([
   ["operation", "/api/v1/operations/receipt-1"],
   ["verification", "/api/v1/verification-attempts/receipt-1"],
   ["proposal", "/api/v1/proposals/receipt-1"],
+  ["turn", "/api/v1/turns/receipt-1"],
 ] as const)(
   "reads a complete %s receipt and refreshes an open detail after its revision changes",
   async (kind, path) => {
     await i18n.changeLanguage("en");
     sessionStorage.setItem("opsonde.session", "fixture-token");
     const reference =
-      kind === "proposal" ? "x".repeat(64_000) : " " + "[REDACTED]".repeat(65_534) + " ";
+      kind === "proposal" || kind === "turn"
+        ? "x".repeat(64_000)
+        : " " + "[REDACTED]".repeat(65_534) + " ";
     let revision = 1;
     wire.mockImplementation(async (request: Request) => {
       expect(request.method).toBe("GET");
@@ -118,7 +121,9 @@ test.each([
       const data =
         kind === "proposal"
           ? { parameters: { padding: reference }, revision }
-          : { reference, revision };
+          : kind === "turn"
+            ? { intent: { padding: reference }, revision }
+            : { reference, revision };
       return new Response(JSON.stringify({ data }));
     });
     const { rerender } = render(<ReceiptDetails kind={kind} id="receipt-1" revision={1} />);

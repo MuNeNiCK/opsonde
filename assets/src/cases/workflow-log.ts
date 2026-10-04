@@ -4,7 +4,7 @@ import { translatedToken } from "@/cases/detail-utils";
 
 type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type CaseEvent = components["schemas"]["CaseEvent"];
-type Turn = components["schemas"]["ResolverTurn"];
+type Turn = components["schemas"]["ResolverTurnSummary"];
 type Evidence = components["schemas"]["EvidenceSummary"];
 type Approval = components["schemas"]["Approval"];
 type Review = components["schemas"]["ReviewDecision"];
@@ -43,7 +43,7 @@ export type LogEntry = {
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
   receipt?: {
-    kind: "evidence" | "operation" | "verification" | "proposal";
+    kind: "evidence" | "operation" | "verification" | "proposal" | "turn";
     id: string;
     revision: string | number;
   };
@@ -87,22 +87,17 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   }
 
   for (const turn of props.turns) {
-    const decision = recordValue(turn.decision);
+    const decision = turn.summary;
     const reason = textField(decision, "reason");
     const intentType = textField(decision, "type");
-    const tool = recordValue(decision?.tool);
-    const selectedAction = [textField(tool, "capability"), textField(tool, "operation")]
-      .filter(Boolean)
-      .join(" / ");
-    const selectors = compactRecord(decision?.selectors);
+    const selectedAction = [decision.capability, decision.operation].filter(Boolean).join(" / ");
     const relationship = recordValue(decision?.relationship);
     const selectedTargetId =
       textField(decision, "target_id") ||
-      textField(decision, "next_target_id") ||
       textField(relationship, "destination_target_id") ||
       proposalsByTurn.get(turn.id)?.target_id ||
       "";
-    const failure = turn.failure_message ?? "";
+    const failure = decision.failure_message ?? "";
     entries.push({
       id: `turn-${turn.id}`,
       at: turn.completed_at ?? turn.updated_at,
@@ -126,7 +121,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
           label: t("cases.workflow.fields.target"),
           value: targetName(selectedTargetId),
         },
-        selectors && { label: t("cases.workflow.fields.selectors"), value: selectors },
         relationship && {
           label: t("cases.workflow.fields.relationship"),
           value: [
@@ -137,18 +131,12 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
             .filter(Boolean)
             .join(" → "),
         },
-        turn.failure_category && {
+        decision.failure_category && {
           label: t("cases.workflow.fields.failure"),
-          value: translatedToken(t, "failure", turn.failure_category),
+          value: translatedToken(t, "failure", decision.failure_category),
         },
       ]),
-      technical: {
-        intent: turn.intent,
-        decision: turn.decision,
-        outcome: turn.outcome,
-        failure_category: turn.failure_category,
-        failure_message: turn.failure_message,
-      },
+      receipt: { kind: "turn", id: turn.id, revision: turn.revision },
       failed: Boolean(failure),
     });
   }
@@ -317,18 +305,6 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 function textField(record: Record<string, unknown> | null | undefined, key: string) {
   const value = record?.[key];
   return typeof value === "string" && value.length > 0 ? value : "";
-}
-
-function compactRecord(value: unknown) {
-  const record = recordValue(value);
-  if (!record) return "";
-  return Object.entries(record)
-    .filter((entry): entry is [string, string | number | boolean] =>
-      ["string", "number", "boolean"].includes(typeof entry[1]),
-    )
-    .slice(0, 8)
-    .map(([key, item]) => `${key.replaceAll("_", " ")}: ${String(item)}`)
-    .join(" · ");
 }
 
 function compactFacts(
