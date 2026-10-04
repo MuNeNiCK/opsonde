@@ -3606,6 +3606,18 @@
         ],
         "type": "object"
       },
+      "ReportSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReportSummary"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "ProviderRevisionRequest": {
         "properties": {
           "provider": {
@@ -13715,6 +13727,101 @@
         "summary": "Get OIDC availability",
         "tags": [
           "OIDC"
+        ]
+      }
+    },
+    "/api/v1/cases/{case_id}/reports/{case_revision}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getCaseReportRevision",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "path",
+            "name": "case_revision",
+            "required": true,
+            "schema": {
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSummaryResponse"
+                }
+              }
+            },
+            "description": "Report summary"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get the Report summary for an exact Case revision",
+        "tags": [
+          "Reports"
         ]
       }
     },

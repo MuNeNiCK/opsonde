@@ -42,6 +42,18 @@ defmodule Opsonde.Reports.Report do
       filter expr(case_id == ^arg(:case_id) and case_revision == ^arg(:case_revision))
     end
 
+    read :summary_by_case_revision do
+      get? true
+      argument :case_id, :uuid, allow_nil?: false
+
+      argument :case_revision, :integer,
+        allow_nil?: false,
+        constraints: [min: 1, max: 9_223_372_036_854_775_807]
+
+      filter expr(case_id == ^arg(:case_id) and case_revision == ^arg(:case_revision))
+      prepare build(select: @summary_fields, load: @summary_calculations)
+    end
+
     read :summaries_for_case do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
@@ -96,7 +108,7 @@ defmodule Opsonde.Reports.Report do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :summaries_for_case, :period_summary]) do
+    policy action([:read, :page, :summary_by_case_revision, :summaries_for_case, :period_summary]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

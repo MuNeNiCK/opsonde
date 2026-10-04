@@ -133,6 +133,7 @@ defmodule OpsondeCLI.Commands do
     {"audit-run", "show"} => Route.new(:get, "/audit-runs/:id", 1),
     {"report", "list"} => Route.page("/reports"),
     {"report", "show"} => Route.new(:get, "/reports/:id", 1),
+    {"report", "revision"} => Route.new(:get, "/cases/:id/reports/:id", 2),
     {"report", "read"} => Route.new(:get, "/reports/:id", 1, nil, outcome: :report_read),
     {"report", "summary"} =>
       Route.new(:get, "/reports/operations-summary", 0, nil, outcome: :period_summary),

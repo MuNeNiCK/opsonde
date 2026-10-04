@@ -34,6 +34,226 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     }
   end
 
+  @tag report_receipt: true
+  test "an exact Case revision recovers a generated Report beyond the snapshot window without its body",
+       context do
+    incident =
+      post_data!(
+        "/api/v1/cases",
+        %{
+          "case" => %{
+            "trigger_kind" => "manual",
+            "source" => "api",
+            "source_ref" => "report-receipt",
+            "title" => "Report receipt",
+            "severity" => "warning",
+            "initial_context" => %{"desired_outcome" => "Host responds"}
+          }
+        },
+        context.operator_token
+      )
+
+    cancelled =
+      post_json(
+        "/api/v1/cases/#{incident["id"]}/cancel",
+        %{"case" => %{"expected_revision" => 1}},
+        context.operator_token
+      )
+      |> json_response(200)
+
+    report =
+      post_data!(
+        "/api/v1/cases/#{incident["id"]}/reports",
+        %{"report" => %{"expected_case_revision" => cancelled["data"]["revision"]}},
+        context.operator_token
+      )
+
+    large_content = %{"padding" => String.duplicate("x", 10_000_000)}
+
+    large =
+      Reports.create_report_record!(
+        %{
+          case_id: incident["id"],
+          case_revision: 1,
+          language: :en,
+          outcome: :cancelled,
+          content: large_content,
+          content_digest:
+            :crypto.hash(:sha256, Jason.encode!(large_content)) |> Base.encode16(case: :lower),
+          generated_at: DateTime.utc_now()
+        },
+        authorize?: false
+      )
+
+    for revision <- 3..102 do
+      Reports.create_report_record!(
+        %{
+          case_id: incident["id"],
+          case_revision: revision,
+          language: :en,
+          outcome: :cancelled,
+          content: %{},
+          content_digest: :crypto.hash(:sha256, "{}") |> Base.encode16(case: :lower),
+          generated_at: DateTime.add(DateTime.utc_now(), revision)
+        },
+        authorize?: false
+      )
+    end
+
+    response = get_json("/api/v1/cases/#{incident["id"]}/reports/2", context.viewer_token)
+
+    assert %{"data" => %{"id" => id, "case_revision" => 2, "revision" => 1} = summary} =
+             json_response(response, 200)
+
+    assert id == report["id"]
+    assert_operation_response(response)
+
+    assert Enum.sort(Map.keys(summary)) ==
+             Enum.sort(
+               ~w(id case_id case_revision language outcome content_digest generated_at revision operation_count verification_count)
+             )
+
+    assert byte_size(response.resp_body) < 2_000
+    snapshot = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)
+    assert length(snapshot["reports"]) == 100
+    refute Enum.any?(snapshot["reports"], &(&1["id"] in [id, large.id]))
+    large_response = get_json("/api/v1/cases/#{incident["id"]}/reports/1", context.admin_token)
+
+    assert %{"data" => %{"case_revision" => 1, "id" => large_id}} =
+             json_response(large_response, 200)
+
+    assert large_id == large.id
+    assert byte_size(large_response.resp_body) < 2_000
+    assert_operation_response(large_response)
+    missing = get_json("/api/v1/cases/#{incident["id"]}/reports/103", context.viewer_token)
+    assert %{"error" => %{"code" => "not_found"}} = json_response(missing, 404)
+    assert_operation_response(missing)
+  end
+
+  @tag report_receipt: true
+  test "CLI confirms a committed Report after its generation response is lost using only an exact revision GET",
+       context do
+    incident =
+      post_data!(
+        "/api/v1/cases",
+        %{
+          "case" => %{
+            "trigger_kind" => "manual",
+            "source" => "api",
+            "source_ref" => "report-lost-response",
+            "title" => "Report lost response",
+            "severity" => "warning",
+            "initial_context" => %{"desired_outcome" => "Host responds"}
+          }
+        },
+        context.operator_token
+      )
+
+    post_json(
+      "/api/v1/cases/#{incident["id"]}/cancel",
+      %{"case" => %{"expected_revision" => 1}},
+      context.operator_token
+    )
+    |> json_response(200)
+
+    root =
+      Path.join(System.tmp_dir!(), "report-receipt-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.operator_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    owner = self()
+    stub = {__MODULE__, make_ref()}
+
+    Req.Test.stub(stub, fn conn ->
+      send(owner, {:receipt_request, conn.method, conn.request_path})
+      result = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+      if conn.method == "POST" do
+        assert result.status == 201
+        report = Jason.decode!(result.resp_body)["data"]
+        send(owner, {:committed_report, report["id"]})
+
+        %{
+          result
+          | status: 503,
+            resp_body:
+              Jason.encode!(%{
+                "error" => %{"code" => "response_lost", "message" => "Response lost after commit"}
+              })
+        }
+      else
+        result
+      end
+    end)
+
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    capture_io(:stderr, fn ->
+      capture_io([input: Jason.encode!(%{"expected_case_revision" => 2})], fn ->
+        assert OpsondeCLI.CLI.run(["report", "generate", incident["id"], "--input", "-"], runtime) ==
+                 4
+      end)
+    end)
+
+    assert_receive {:committed_report, report_id}
+    assert_receive {:receipt_request, "POST", _}
+
+    output =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["report", "revision", incident["id"], "2"], runtime) == 0
+      end)
+      |> Jason.decode!()
+
+    assert %{"id" => ^report_id, "case_revision" => 2, "revision" => 1} = output["data"]
+    refute Map.has_key?(output["data"], "content")
+    assert_receive {:receipt_request, "GET", path}
+    assert path == "/api/v1/cases/#{incident["id"]}/reports/2"
+    refute_receive {:receipt_request, "POST", _}, 0
+  end
+
+  @tag report_receipt: true
+  test "exact Report receipt reads distinguish missing, invalid, unauthorized and database failures",
+       context do
+    case_id = Ecto.UUID.generate()
+    path = "/api/v1/cases/#{case_id}/reports/1"
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      missing = get_json(path, token)
+      assert %{"error" => %{"code" => "not_found"}} = json_response(missing, 404)
+      assert_operation_response(missing)
+    end
+
+    assert get_json(path, nil).status == 401
+
+    for revision <- ["0", "-1", "bad", "9223372036854775808"] do
+      invalid = get_json("/api/v1/cases/#{case_id}/reports/#{revision}", context.viewer_token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
+      assert_operation_response(invalid)
+    end
+
+    assert get_json("/api/v1/cases/not-a-uuid/reports/1", context.viewer_token).status == 422
+    Opsonde.Repo.query!("ALTER TABLE reports RENAME COLUMN content TO unavailable_content")
+
+    try do
+      capture_log(fn ->
+        failed = get_json(path, context.viewer_token)
+        assert %{"error" => %{"code" => "internal_error"}} = json_response(failed, 500)
+        assert_operation_response(failed)
+      end)
+    after
+      Opsonde.Repo.query!("ALTER TABLE reports RENAME COLUMN unavailable_content TO content")
+    end
+
+    assert get_json(path, context.viewer_token).status == 404
+  end
+
   @tag delivery_summary: true
   test "Report delivery badges and history remain complete when one Report has more than a page of deliveries",
        context do

@@ -171,6 +171,7 @@ defmodule OpsondeWeb.Router do
     get "/reports/operations-summary", ReportController, :summary
     get "/reports/:id", ReportController, :show
     post "/cases/:case_id/reports", ReportController, :generate
+    get "/cases/:case_id/reports/:case_revision", ReportController, :revision
 
     get "/deliveries", DeliveryController, :index
     get "/deliveries/summaries", DeliveryController, :summaries

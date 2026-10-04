@@ -39,6 +39,22 @@ defmodule OpsondeWeb.API.V1.ReportController do
     responses:
       [ok: {"Report", "application/json", OutcomeSchemas.ref("ReportResponse")}] ++ @show_errors
 
+  operation :revision,
+    operation_id: "getCaseReportRevision",
+    summary: "Get the Report summary for an exact Case revision",
+    parameters:
+      Schemas.id_parameter(:case_id) ++
+        [
+          case_revision: [
+            in: :path,
+            required: true,
+            schema: %Schema{type: :integer, minimum: 1, maximum: 9_223_372_036_854_775_807}
+          ]
+        ],
+    responses:
+      [ok: {"Report summary", "application/json", OutcomeSchemas.ref("ReportSummaryResponse")}] ++
+        @show_errors
+
   operation :summary,
     operation_id: "getPeriodOperationsSummary",
     summary: "Summarize Cases and scheduled audits opened in a UTC half-open period",
@@ -89,6 +105,17 @@ defmodule OpsondeWeb.API.V1.ReportController do
   def show(conn, %{"id" => id}) do
     with {:ok, report} <- Reports.get_report(id, actor: conn.assigns.current_user) do
       Response.data(conn, OutcomeJSON.report(report))
+    end
+  end
+
+  def revision(conn, _params) do
+    %{case_id: case_id, case_revision: revision} = OpenApiSpex.params(conn)
+
+    with {:ok, report} <-
+           Reports.report_summary_by_case_revision(case_id, revision,
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, OutcomeJSON.report_summary(report))
     end
   end
 

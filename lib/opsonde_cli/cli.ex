@@ -572,6 +572,7 @@ defmodule OpsondeCLI.CLI do
       opsonde delivery latest --report-ids UUID,UUID
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report list [--ids UUID,UUID] [--limit N] [--after CURSOR]
+      opsonde report revision CASE_ID CASE_REVISION
       opsonde report read ID
       opsonde file list TARGET_ID
       opsonde file show|revoke TARGET_ID FILE_ID

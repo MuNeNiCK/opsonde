@@ -26,6 +26,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "AuditRunPage" => Schemas.page(ref("AuditRun")),
       "Report" => report(),
       "ReportSummary" => report_summary(),
+      "ReportSummaryResponse" => Schemas.data(ref("ReportSummary")),
       "ReportSetting" => report_setting(),
       "ReportSettingResponse" => Schemas.data(ref("ReportSetting")),
       "UpdateReportSettingRequest" => update_report_setting_request(),
