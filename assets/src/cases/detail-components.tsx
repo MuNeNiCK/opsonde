@@ -6,6 +6,7 @@ import { apiClient, apiData } from "@/api/client";
 import type { LogEntry } from "@/cases/workflow-log";
 import { summarizeValue, translatedToken } from "@/cases/detail-utils";
 import { FormSelect } from "@/components/form-select";
+import { TechnicalDetails } from "@/components/technical-details";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -374,21 +375,5 @@ export function DataBlock({ title, value }: { title?: string; value: unknown }) 
       <p className="break-words text-sm">{summarizeValue(value, t("cases.evidenceRecorded"))}</p>
       <TechnicalDetails value={value} title={t("cases.technicalDetails")} />
     </div>
-  );
-}
-
-export function TechnicalDetails({ value, title }: { value: unknown; title: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details className="mt-2" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-        {title}
-      </summary>
-      {open && (
-        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs">
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      )}
-    </details>
   );
 }

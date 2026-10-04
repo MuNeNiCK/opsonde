@@ -6,6 +6,7 @@ import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
 import { FormSelect } from "@/components/form-select";
+import { TechnicalDetails } from "@/components/technical-details";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,30 +28,37 @@ import { CaseReportDocument } from "@/reports/case-document";
 type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
 type Report = components["schemas"]["Report"];
+type ReportSummary = components["schemas"]["ReportSummary"];
 type Provider = components["schemas"]["Provider"];
 type Target = components["schemas"]["Target"];
 type ReportSetting = components["schemas"]["ReportSetting"];
 
 type Snapshot = {
   cases: CaseRecord[];
-  reports: Report[];
+  reports: ReportSummary[];
+  reportNext: string | null;
+  reportIndex: number;
+  reportCursors: (string | null)[];
   deliveries: Delivery[];
   providers: Provider[];
   targets: Target[];
   setting: ReportSetting;
 };
-async function loadSnapshot(): Promise<Snapshot> {
+function loadReportPage(after: string | null) {
+  return apiClient
+    .GET("/api/v1/reports", { params: { query: { limit: 50, after: after ?? undefined } } })
+    .then(apiData);
+}
+async function loadSnapshot(
+  after: string | null,
+): Promise<Omit<Snapshot, "reportIndex" | "reportCursors">> {
   const [cases, reports, deliveries, providers, targets, setting] = await Promise.all([
     collectPages((after) =>
       apiClient
         .GET("/api/v1/cases", { params: { query: { limit: 100, after: after ?? undefined } } })
         .then(apiData),
     ),
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/reports", { params: { query: { limit: 100, after: after ?? undefined } } })
-        .then(apiData),
-    ),
+    loadReportPage(after),
     collectPages((after) =>
       apiClient
         .GET("/api/v1/deliveries", { params: { query: { limit: 100, after: after ?? undefined } } })
@@ -71,7 +79,15 @@ async function loadSnapshot(): Promise<Snapshot> {
       .then(apiData)
       .then((result) => result.data),
   ]);
-  return { cases, reports, deliveries, providers, targets, setting };
+  return {
+    cases,
+    reports: reports.data,
+    reportNext: reports.page.next,
+    deliveries,
+    providers,
+    targets,
+    setting,
+  };
 }
 
 export function ReportPage() {
@@ -85,14 +101,24 @@ export function ReportPage() {
   const [detailReportId, setDetailReportId] = useState("");
   const canAct = account?.role === "admin" || account?.role === "operator";
   const canManageProviders = account?.role === "admin";
-  const refresh = useCallback(async () => setSnapshot(await loadSnapshot()), []);
+  const reportCursor = snapshot?.reportCursors[snapshot.reportIndex] ?? null;
+  const refresh = useCallback(async () => {
+    const next = await loadSnapshot(reportCursor);
+    setSnapshot((current) =>
+      !current
+        ? { ...next, reportIndex: 0, reportCursors: [null] }
+        : current.reportCursors[current.reportIndex] === reportCursor
+          ? { ...current, ...next }
+          : current,
+    );
+  }, [reportCursor]);
 
   useEffect(() => {
     let active = true;
-    loadSnapshot()
-      .then((next) => active && setSnapshot(next))
-      .catch(() => {
-        if (active) setError(t("reports.requestFailed"));
+    loadSnapshot(null)
+      .then((next) => active && setSnapshot({ ...next, reportIndex: 0, reportCursors: [null] }))
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : t("reports.requestFailed"));
       });
     return () => {
       active = false;
@@ -109,6 +135,31 @@ export function ReportPage() {
     const timer = window.setInterval(() => void refresh().catch(() => undefined), 4000);
     return () => window.clearInterval(timer);
   }, [refresh, snapshot?.deliveries]);
+
+  async function changeReportPage(index: number, cursor: string | null) {
+    setPending("page");
+    setError("");
+    try {
+      const page = await loadReportPage(cursor);
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              reports: page.data,
+              reportNext: page.page.next,
+              reportIndex: index,
+              reportCursors: [...current.reportCursors.slice(0, index), cursor],
+            }
+          : current,
+      );
+      setDetailReportId("");
+      setSelectedReportId("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("reports.requestFailed"));
+    } finally {
+      setPending(null);
+    }
+  }
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -259,7 +310,16 @@ export function ReportPage() {
           <Button asChild variant="outline">
             <Link to="/reports/operations">{t("reports.periodTitle")}</Link>
           </Button>
-          <Button variant="outline" onClick={() => void refresh()}>
+          <Button
+            variant="outline"
+            onClick={() =>
+              void refresh()
+                .then(() => setError(""))
+                .catch((cause: unknown) =>
+                  setError(cause instanceof Error ? cause.message : t("reports.requestFailed")),
+                )
+            }
+          >
             <RefreshCw />
             {t("reports.refresh")}
           </Button>
@@ -460,8 +520,8 @@ export function ReportPage() {
                     </TableCell>
                     <TableCell>
                       {t("reports.recordCounts", {
-                        operations: arrayLength(report.content.operations),
-                        verifications: arrayLength(report.content.verifications),
+                        operations: report.operation_count,
+                        verifications: report.verification_count,
                       })}
                     </TableCell>
                     <TableCell>
@@ -523,6 +583,30 @@ export function ReportPage() {
             </TableBody>
           </Table>
         </div>
+        <div className="flex items-center justify-between gap-3">
+          <Button
+            variant="outline"
+            disabled={pending !== null || snapshot.reportIndex === 0}
+            onClick={() =>
+              void changeReportPage(
+                snapshot.reportIndex - 1,
+                snapshot.reportCursors[snapshot.reportIndex - 1],
+              )
+            }
+          >
+            {t("cases.previousPage")}
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            {t("cases.pageNumber", { page: snapshot.reportIndex + 1 })}
+          </span>
+          <Button
+            variant="outline"
+            disabled={pending !== null || !snapshot.reportNext}
+            onClick={() => void changeReportPage(snapshot.reportIndex + 1, snapshot.reportNext)}
+          >
+            {t("cases.nextPage")}
+          </Button>
+        </div>
         {detailReport && (
           <Card id={`report-detail-${detailReport.id}`}>
             <CardHeader>
@@ -540,7 +624,7 @@ export function ReportPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <CaseReportDocument report={detailReport} />
+              <SelectedReportBody key={detailReport.id} id={detailReport.id} />
               <div className="flex flex-wrap gap-2">
                 <Button asChild size="sm" variant="outline">
                   <Link to={`/reports/${detailReport.id}/print`}>
@@ -558,17 +642,6 @@ export function ReportPage() {
                   </Button>
                 )}
               </div>
-              <details>
-                <summary className="cursor-pointer text-sm font-medium">
-                  {t("reports.technicalDetails")}
-                </summary>
-                <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
-                  SHA-256 {detailReport.content_digest}
-                </p>
-                <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
-                  {JSON.stringify(detailReport.content, null, 2)}
-                </pre>
-              </details>
             </CardContent>
           </Card>
         )}
@@ -673,8 +746,43 @@ export function ReportPrintPage() {
   );
 }
 
-function arrayLength(value: unknown) {
-  return Array.isArray(value) ? value.length : 0;
+function SelectedReportBody({ id }: { id: string }) {
+  const { t } = useTranslation();
+  const [report, setReport] = useState<Report | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    apiClient
+      .GET("/api/v1/reports/{id}", {
+        params: { path: { id } },
+        signal: controller.signal,
+      })
+      .then(apiData)
+      .then((result) => {
+        if (!controller.signal.aborted) setReport(result.data);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : t("reports.requestFailed"));
+      });
+    return () => controller.abort();
+  }, [id, t]);
+  if (error)
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  if (!report) return <Loading />;
+  return (
+    <>
+      <CaseReportDocument report={report} />
+      <p className="break-all font-mono text-xs text-muted-foreground">
+        SHA-256 {report.content_digest}
+      </p>
+      <TechnicalDetails title={t("reports.technicalDetails")} value={report.content} />
+    </>
+  );
 }
 
 function Loading() {

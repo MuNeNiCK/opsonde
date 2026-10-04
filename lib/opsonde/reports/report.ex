@@ -7,8 +7,9 @@ defmodule Opsonde.Reports.Report do
     data_layer: AshPostgres.DataLayer
 
   @summary_fields ~w(id case_id case_revision language outcome content_digest generated_at revision)a
+  @summary_calculations [:operation_count, :verification_count]
 
-  def summary_fields, do: @summary_fields
+  def summary_fields, do: @summary_fields ++ @summary_calculations
 
   postgres do
     table "reports"
@@ -24,7 +25,12 @@ defmodule Opsonde.Reports.Report do
 
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [generated_at: :desc, id: :desc])
+
+      prepare build(
+                select: @summary_fields,
+                load: @summary_calculations,
+                sort: [generated_at: :desc, id: :desc]
+              )
     end
 
     read :by_case_revision do
@@ -37,7 +43,13 @@ defmodule Opsonde.Reports.Report do
     read :summaries_for_case do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
-      prepare build(select: @summary_fields, sort: [generated_at: :desc, id: :desc], limit: 100)
+
+      prepare build(
+                select: @summary_fields,
+                load: @summary_calculations,
+                sort: [generated_at: :desc, id: :desc],
+                limit: 100
+              )
     end
 
     create :create_record do
@@ -139,6 +151,16 @@ defmodule Opsonde.Reports.Report do
       allow_nil? false
       public? true
     end
+  end
+
+  calculations do
+    calculate :operation_count,
+              :integer,
+              expr(fragment("COALESCE(jsonb_array_length(? -> 'operations'), 0)", content))
+
+    calculate :verification_count,
+              :integer,
+              expr(fragment("COALESCE(jsonb_array_length(? -> 'verifications'), 0)", content))
   end
 
   identities do

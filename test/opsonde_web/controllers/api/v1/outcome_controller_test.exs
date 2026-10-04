@@ -2,8 +2,9 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   use OpsondeWeb.ConnCase, async: false
 
   import OpenApiSpex.TestAssertions
+  import ExUnit.CaptureIO
 
-  alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Signals, Targets}
+  alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Reports, Signals, Targets}
   alias Opsonde.Notifications.Delivery.Dispatch
   alias Opsonde.Providers.Notification
   alias Opsonde.Providers.Signal
@@ -25,10 +26,164 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     %{
       admin: admin,
       operator: operator,
+      viewer: viewer,
       admin_token: token!(admin.email),
       operator_token: token!(operator.email),
       viewer_token: token!(viewer.email)
     }
+  end
+
+  @tag report_page_capacity: true
+  test "maximum immutable Report bodies remain exact while the public index contains only metadata",
+       context do
+    incident =
+      Cases.open_case!(
+        :manual,
+        "fixture",
+        "report-capacity",
+        "Report capacity",
+        :warning,
+        %{"desired_outcome" => "Inspect retained results"},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    content = %{
+      "outcome_label" => "Resolved",
+      "case" => %{
+        "id" => incident.id,
+        "title" => incident.title,
+        "severity" => "warning",
+        "source" => "fixture",
+        "source_ref" => "report-capacity",
+        "inserted_at" => DateTime.to_iso8601(incident.inserted_at),
+        "updated_at" => DateTime.to_iso8601(incident.updated_at)
+      },
+      "padding" => "",
+      "operations" =>
+        for(_ <- 1..3, do: %{"id" => Ecto.UUID.generate(), "purpose" => "investigation"}),
+      "verifications" =>
+        for(_ <- 1..2, do: %{"id" => Ecto.UUID.generate(), "status" => "verified"})
+    }
+
+    padding = String.duplicate("x", 10_485_760 - byte_size(Jason.encode!(content)))
+    content = Map.put(content, "padding", padding)
+    assert byte_size(Jason.encode!(content)) == 10_485_760
+    digest = :crypto.hash(:sha256, Jason.encode!(content)) |> Base.encode16(case: :lower)
+
+    report_ids =
+      for revision <- 1..51 do
+        Reports.create_report_record!(
+          %{
+            case_id: incident.id,
+            case_revision: revision,
+            language: :en,
+            outcome: :resolved,
+            content: content,
+            content_digest: digest,
+            generated_at: DateTime.add(incident.inserted_at, revision)
+          },
+          authorize?: false
+        ).id
+      end
+
+    page = Reports.page_reports!(actor: context.viewer)
+    assert length(page.results) == 50
+
+    assert Enum.all?(
+             page.results,
+             &match?(%Ash.NotLoaded{type: :attribute, field: :content}, &1.content)
+           )
+
+    response = get_json("/api/v1/reports", context.viewer_token)
+    assert_operation_response(response)
+    assert byte_size(response.resp_body) < 32_000
+    first_page = json_response(response, 200)
+    assert length(first_page["data"]) == 50
+
+    for summary <- first_page["data"] do
+      refute Map.has_key?(summary, "content")
+      refute Map.has_key?(summary, "document")
+      assert summary["operation_count"] == 3
+      assert summary["verification_count"] == 2
+    end
+
+    cursor = first_page["page"]["next"]
+    tail = get_json("/api/v1/reports?after=" <> URI.encode_www_form(cursor), context.viewer_token)
+    assert_operation_response(tail)
+    tail_page = json_response(tail, 200)
+    assert tail_page["page"]["next"] == nil
+
+    assert Enum.sort(Enum.map(first_page["data"] ++ tail_page["data"], & &1["id"])) ==
+             Enum.sort(report_ids)
+
+    full = get_json("/api/v1/reports/#{hd(report_ids)}", context.viewer_token)
+    assert_operation_response(full)
+    assert json_response(full, 200)["data"]["content"]["padding"] == padding
+
+    root = Path.join(System.tmp_dir!(), "report-cli-#{System.unique_integer([:positive])}")
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    listed =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["report", "list"], runtime) == 0
+      end)
+
+    assert byte_size(listed) < 32_000
+    assert Jason.decode!(listed)["data"] == first_page["data"]
+
+    listed_tail =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["report", "list", "--after", cursor], runtime) == 0
+      end)
+
+    assert Jason.decode!(listed_tail)["data"] == tail_page["data"]
+
+    shown =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["report", "show", hd(report_ids)], runtime) == 0
+      end)
+
+    assert Jason.decode!(shown)["data"]["content"]["padding"] == padding
+
+    Opsonde.Repo.query!("ALTER TABLE reports RENAME COLUMN content TO unavailable_content")
+
+    try do
+      assert {:error, %Ash.Error.Unknown{} = cause} = Reports.page_reports(actor: context.viewer)
+      assert Exception.message(cause) =~ "does not exist"
+
+      for path <- ["/api/v1/reports", "/api/v1/reports/#{hd(report_ids)}"] do
+        failed = get_json(path, context.viewer_token)
+        assert json_response(failed, 500)["error"]["code"] == "internal_error"
+        assert_operation_response(failed)
+      end
+
+      for command <- [["report", "list"], ["report", "show", hd(report_ids)]] do
+        failed =
+          capture_io(:stderr, fn ->
+            assert OpsondeCLI.CLI.run(command, runtime) == 4
+          end)
+
+        assert %{"http_status" => 500, "error" => %{"code" => "internal_error"}} =
+                 Jason.decode!(failed)
+      end
+    after
+      Opsonde.Repo.query!("ALTER TABLE reports RENAME COLUMN unavailable_content TO content")
+    end
+
+    assert length(Reports.page_reports!(actor: context.viewer).results) == 50
   end
 
   test "Report setting is readable but only an Admin can change it", context do

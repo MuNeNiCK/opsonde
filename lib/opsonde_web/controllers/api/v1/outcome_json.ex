@@ -87,6 +87,8 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
     }
   end
 
+  def report_summary(report), do: Map.take(report, Opsonde.Reports.Report.summary_fields())
+
   def report_setting(setting) do
     %{
       id: setting.id,

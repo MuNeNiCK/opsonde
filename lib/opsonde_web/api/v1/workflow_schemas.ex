@@ -48,11 +48,6 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "VerificationAttempt" => verification_attempt(),
       "VerificationAttemptSummary" =>
         summary(verification_attempt(), Opsonde.Cases.VerificationAttempt.summary_fields()),
-      "ReportSummary" =>
-        summary(
-          OpsondeWeb.API.V1.OutcomeSchemas.components()["Report"],
-          Opsonde.Reports.Report.summary_fields()
-        ),
       "VerificationAttemptResponse" => Schemas.data(ref("VerificationAttempt")),
       "WorkflowLimits" => limits(),
       "ResolutionCounters" => counters()

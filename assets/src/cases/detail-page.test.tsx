@@ -62,6 +62,8 @@ const reportSummary: components["schemas"]["ReportSummary"] = {
   content_digest: report.content_digest,
   generated_at: timestamp,
   revision: 1,
+  operation_count: 0,
+  verification_count: 0,
 };
 const snapshot: components["schemas"]["CaseSnapshot"] = {
   case: {

@@ -79,7 +79,7 @@ defmodule OpsondeWeb.API.V1.ReportController do
   def index(conn, params) do
     with {:ok, page} <- Pagination.parse(params),
          {:ok, reports} <- Reports.page_reports(page: page, actor: conn.assigns.current_user) do
-      Response.page(conn, reports, &OutcomeJSON.report/1)
+      Response.page(conn, reports, &OutcomeJSON.report_summary/1)
     end
   end
 

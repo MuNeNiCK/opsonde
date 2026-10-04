@@ -5631,6 +5631,10 @@
             ],
             "type": "string"
           },
+          "operation_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "outcome": {
             "enum": [
               "resolved",
@@ -5642,6 +5646,10 @@
           "revision": {
             "minimum": 1,
             "type": "integer"
+          },
+          "verification_count": {
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -5652,7 +5660,9 @@
           "outcome",
           "content_digest",
           "generated_at",
-          "revision"
+          "revision",
+          "operation_count",
+          "verification_count"
         ],
         "type": "object"
       },
@@ -5846,7 +5856,7 @@
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/Report"
+              "$ref": "#/components/schemas/ReportSummary"
             },
             "type": "array"
           },

@@ -3011,9 +3011,11 @@ export interface components {
             id: string;
             /** @enum {string} */
             language: "en" | "ja";
+            operation_count: number;
             /** @enum {string} */
             outcome: "resolved" | "needs_attention" | "cancelled";
             revision: number;
+            verification_count: number;
         };
         CreateTargetFileRequest: {
             file: {
@@ -3053,7 +3055,7 @@ export interface components {
             page: components["schemas"]["Page"];
         };
         ReportPage: {
-            data: components["schemas"]["Report"][];
+            data: components["schemas"]["ReportSummary"][];
             page: components["schemas"]["Page"];
         };
         CurrentSessionResponse: {

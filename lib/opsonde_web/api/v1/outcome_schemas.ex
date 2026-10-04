@@ -25,12 +25,13 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "AuditRunResponse" => Schemas.data(ref("AuditRun")),
       "AuditRunPage" => Schemas.page(ref("AuditRun")),
       "Report" => report(),
+      "ReportSummary" => report_summary(),
       "ReportSetting" => report_setting(),
       "ReportSettingResponse" => Schemas.data(ref("ReportSetting")),
       "UpdateReportSettingRequest" => update_report_setting_request(),
       "ReportDocument" => report_document(),
       "ReportResponse" => Schemas.data(ref("Report")),
-      "ReportPage" => Schemas.page(ref("Report")),
+      "ReportPage" => Schemas.page(ref("ReportSummary")),
       "PeriodSummary" => period_summary(),
       "PeriodSummaryResponse" => Schemas.data(ref("PeriodSummary")),
       "GenerateReportRequest" => generate_report_request(),
@@ -210,6 +211,18 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       ~w(id case_id case_revision language outcome document content content_digest generated_at revision)a,
       false
     )
+  end
+
+  defp report_summary do
+    fields = Opsonde.Reports.Report.summary_fields()
+
+    properties =
+      report().properties
+      |> Map.take(fields)
+      |> Map.put(:operation_count, %Schema{type: :integer, minimum: 0})
+      |> Map.put(:verification_count, %Schema{type: :integer, minimum: 0})
+
+    object(properties, fields, false)
   end
 
   defp report_document do
