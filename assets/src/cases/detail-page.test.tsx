@@ -1,4 +1,5 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import type { components } from "@/api/schema";
@@ -129,6 +130,108 @@ afterEach(() => {
   wire.mockReset();
   sessionStorage.clear();
 });
+
+test.each([false, true])(
+  "history window read failure=%s preserves data and ignores an old refresh after navigation",
+  async (fails) => {
+    await i18n.changeLanguage("en");
+    const requests: string[] = [];
+    let delayedRefresh: ((response: Response) => void) | undefined;
+    let delayedResponse: Response | undefined;
+    let failNext = fails;
+    wire.mockImplementation(async (request: Request) => {
+      expect(request.method).toBe("GET");
+      const url = new URL(request.url, "http://localhost");
+      if (url.pathname === `/api/v1/cases/${caseId}`) {
+        return new Response(
+          JSON.stringify({
+            data: { ...snapshot, case: { ...snapshot.case, status: "running" }, reports: [] },
+          }),
+        );
+      }
+      if (url.pathname.endsWith("/evidence")) {
+        const after = url.searchParams.get("after");
+        requests.push(after ?? "first");
+        if (after && failNext) {
+          failNext = false;
+          return new Response(
+            JSON.stringify({ error: { message: "History storage unavailable" } }),
+            { status: 500 },
+          );
+        }
+        const evidence: components["schemas"]["EvidenceSummary"] = {
+          id: after ? oldReportId : reportId,
+          case_id: caseId,
+          resolution_run_id: caseId,
+          turn_id: null,
+          kind: "observation",
+          source: "fixture",
+          source_ref: "history-window",
+          summary: {
+            status: "applied",
+            category: null,
+            target_id: null,
+            condition_id: null,
+            title: after ? "Older window receipt" : "Latest window receipt",
+            target_label: null,
+          },
+          observed_at: timestamp,
+          inserted_at: timestamp,
+          updated_at: timestamp,
+        };
+        const response = new Response(
+          JSON.stringify({ data: [evidence], page: { next: after ? null : "older-cursor" } }),
+        );
+        if (requests.length === 2 && after === null) {
+          delayedResponse = response;
+          return new Promise<Response>((resolve) => {
+            delayedRefresh = resolve;
+          });
+        }
+        return response;
+      }
+      return new Response(JSON.stringify({ data: [], page: { next: null } }));
+    });
+    render(
+      <AuthenticationContext.Provider value={{ account: { role: "viewer" } } as Authentication}>
+        <MemoryRouter initialEntries={[`/cases/${caseId}`]}>
+          <Routes>
+            <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthenticationContext.Provider>,
+    );
+    expect(await screen.findByText("Latest window receipt")).toBeDefined();
+    expect(requests).toEqual(["first"]);
+    expect(screen.queryByText("Older window receipt")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(delayedRefresh).toBeDefined());
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    if (fails) {
+      expect(await screen.findByText("History storage unavailable")).toBeDefined();
+      expect(screen.getByText("Latest window receipt")).toBeDefined();
+      expect(screen.getByText("Page 1")).toBeDefined();
+      expect(requests).toEqual(["first", "first", "older-cursor"]);
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
+    expect(await screen.findByText("Older window receipt")).toBeDefined();
+    expect(screen.queryByText("Latest window receipt")).toBeNull();
+    const expected = fails
+      ? ["first", "first", "older-cursor", "older-cursor"]
+      : ["first", "first", "older-cursor"];
+    expect(requests).toEqual(expected);
+    await act(async () => {
+      delayedRefresh?.(delayedResponse!);
+    });
+    expect(screen.queryByText("Latest window receipt")).toBeNull();
+    expect(screen.getByText("Older window receipt")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    expect(await screen.findByText("Latest window receipt")).toBeDefined();
+    expect(screen.queryByText("Older window receipt")).toBeNull();
+    expect(requests).toEqual([...expected, "first"]);
+  },
+);
 
 test.each([false, true])(
   "case report read failure=%s keeps the case available and reads only its current report",

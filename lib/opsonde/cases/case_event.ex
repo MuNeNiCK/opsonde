@@ -28,7 +28,7 @@ defmodule Opsonde.Cases.CaseEvent do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
       pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
-      prepare build(sort: [inserted_at: :asc, id: :asc])
+      prepare build(sort: [inserted_at: :desc, id: :desc])
     end
 
     read :by_idempotency do

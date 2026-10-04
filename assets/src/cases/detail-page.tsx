@@ -39,6 +39,10 @@ type Turn = components["schemas"]["ResolverTurn"];
 type Provider = components["schemas"]["Provider"];
 type AccessMethod = components["schemas"]["AccessMethod"];
 type Target = components["schemas"]["Target"];
+type HistoryCursor = Record<
+  "timeline" | "turns" | "evidence" | "approvals" | "reviews" | "aiInvocations",
+  string | null
+>;
 
 type Detail = {
   snapshot: CaseSnapshot;
@@ -54,6 +58,9 @@ type Detail = {
   accounts: Account[];
   report: components["schemas"]["Report"] | null;
   reportError: Error | null;
+  historyNext: HistoryCursor;
+  historyIndex: number;
+  historyCursors: Array<HistoryCursor | undefined>;
 };
 
 type CaseState = Pick<
@@ -67,49 +74,57 @@ type CaseState = Pick<
   | "aiInvocations"
   | "report"
   | "reportError"
+  | "historyNext"
 >;
 type References = Pick<Detail, "targets" | "methods" | "providers" | "accounts">;
 
-async function loadCaseState(caseId: string): Promise<CaseState> {
+function loadHistoryPage<T>(
+  cursor: string | null | undefined,
+  load: (after: string | undefined) => Promise<{ data: T[]; page: { next: string | null } }>,
+) {
+  return cursor === null ? Promise.resolve({ data: [], page: { next: null } }) : load(cursor);
+}
+
+async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<CaseState> {
   const [snapshotResponse, timeline, turns, evidence, approvals, reviews, aiInvocations] =
     await Promise.all([
       apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.timeline, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/timeline", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
           })
           .then(apiData),
       ),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.turns, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/turns", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
           })
           .then(apiData),
       ),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.evidence, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/evidence", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
           })
           .then(apiData),
       ),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.approvals, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/approvals", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
           })
           .then(apiData),
       ),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.reviews, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/review-decisions", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
           })
           .then(apiData),
       ),
-      collectPages((after) =>
+      loadHistoryPage(cursor?.aiInvocations, (after) =>
         apiClient
           .GET("/api/v1/cases/{id}/ai-invocations", {
             params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
@@ -136,14 +151,22 @@ async function loadCaseState(caseId: string): Promise<CaseState> {
 
   return {
     snapshot: snapshotResponse.data,
-    timeline,
-    turns,
-    evidence,
-    approvals,
-    reviews,
-    aiInvocations,
+    timeline: timeline.data,
+    turns: turns.data,
+    evidence: evidence.data,
+    approvals: approvals.data,
+    reviews: reviews.data,
+    aiInvocations: aiInvocations.data,
     report,
     reportError,
+    historyNext: {
+      timeline: timeline.page.next,
+      turns: turns.page.next,
+      evidence: evidence.page.next,
+      approvals: approvals.page.next,
+      reviews: reviews.page.next,
+      aiInvocations: aiInvocations.page.next,
+    },
   };
 }
 
@@ -184,7 +207,7 @@ async function loadDetail(caseId: string, includeAccounts: boolean): Promise<Det
     loadCaseState(caseId),
     loadReferences(includeAccounts),
   ]);
-  return { ...state, ...references };
+  return { ...state, ...references, historyIndex: 0, historyCursors: [undefined] };
 }
 
 export function CaseDetailPage() {
@@ -199,11 +222,39 @@ export function CaseDetailPage() {
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [splitReason, setSplitReason] = useState("");
   const canOperate = account?.role === "admin" || account?.role === "operator";
+  const historyCursor = detail?.historyCursors[detail.historyIndex];
   const refresh = useCallback(async () => {
     if (!caseId) return;
-    const state = await loadCaseState(caseId);
-    setDetail((current) => (current ? { ...current, ...state } : current));
-  }, [caseId]);
+    const state = await loadCaseState(caseId, historyCursor);
+    setDetail((current) =>
+      current?.snapshot.case.id === caseId &&
+      current.historyCursors[current.historyIndex] === historyCursor
+        ? { ...current, ...state }
+        : current,
+    );
+  }, [caseId, historyCursor]);
+
+  async function changeHistoryPage(index: number, cursor?: HistoryCursor) {
+    setPending("history");
+    setError("");
+    try {
+      const state = await loadCaseState(caseId, cursor);
+      setDetail((current) =>
+        current?.snapshot.case.id === caseId
+          ? {
+              ...current,
+              ...state,
+              historyIndex: index,
+              historyCursors: [...current.historyCursors.slice(0, index), cursor],
+            }
+          : current,
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : t("cases.requestFailed"));
+    } finally {
+      setPending(null);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -426,17 +477,46 @@ export function CaseDetailPage() {
   }
 
   const workflow = (
-    <CaseWorkflowView
-      snapshot={detail.snapshot}
-      timeline={detail.timeline}
-      turns={detail.turns}
-      evidence={detail.evidence}
-      approvals={detail.approvals}
-      reviews={detail.reviews}
-      reports={detail.snapshot.reports}
-      targets={detail.targets}
-      methods={detail.methods}
-    />
+    <>
+      <CaseWorkflowView
+        snapshot={detail.snapshot}
+        timeline={detail.timeline}
+        turns={detail.turns}
+        evidence={detail.evidence}
+        approvals={detail.approvals}
+        reviews={detail.reviews}
+        reports={detail.snapshot.reports}
+        targets={detail.targets}
+        methods={detail.methods}
+      />
+      <nav
+        className="flex items-center justify-between gap-3"
+        aria-label={t("cases.workflow.logTitle")}
+      >
+        <Button
+          variant="outline"
+          disabled={pending !== null || detail.historyIndex === 0}
+          onClick={() =>
+            void changeHistoryPage(
+              detail.historyIndex - 1,
+              detail.historyCursors[detail.historyIndex - 1],
+            )
+          }
+        >
+          {t("cases.previousPage")}
+        </Button>
+        <span className="text-sm text-muted-foreground">
+          {t("cases.pageNumber", { page: detail.historyIndex + 1 })}
+        </span>
+        <Button
+          variant="outline"
+          disabled={pending !== null || !Object.values(detail.historyNext).some(Boolean)}
+          onClick={() => void changeHistoryPage(detail.historyIndex + 1, detail.historyNext)}
+        >
+          {t("cases.nextPage")}
+        </Button>
+      </nav>
+    </>
   );
 
   return (

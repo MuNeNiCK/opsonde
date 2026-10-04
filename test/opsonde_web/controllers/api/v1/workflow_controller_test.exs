@@ -324,7 +324,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_receive {:resolve, _state, _request}
     path = "/api/v1/cases/#{incident["id"]}/ai-invocations"
     first_page = get_json(path <> "?limit=1", context.viewer_token) |> json_response(200)
-    assert [%{"input_tokens" => 17, "output_tokens" => 9}] = first_page["data"]
+    assert [%{"input_tokens" => 4, "output_tokens" => 2}] = first_page["data"]
     cursor = first_page["page"]["next"]
     assert is_binary(cursor)
 
@@ -332,7 +332,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       get_json(path <> "?limit=1&after=" <> URI.encode_www_form(cursor), context.viewer_token)
       |> json_response(200)
 
-    assert [%{"input_tokens" => 4, "output_tokens" => 2}] = last_page["data"]
+    assert [%{"input_tokens" => 17, "output_tokens" => 9}] = last_page["data"]
     assert last_page["page"]["next"] == nil
 
     assert %{
@@ -818,10 +818,22 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
 
     assert_operation_response(timeline)
 
-    assert Enum.map(first_events, & &1["type"]) == ["case_opened", "case_claimed"]
+    assert Enum.map(first_events, & &1["type"]) == ["case_cancelled", "case_handed_off"]
     assert is_binary(cursor)
     refute timeline.resp_body =~ "idempotency_key"
     refute Enum.any?(first_events, &Map.has_key?(&1, "data"))
+
+    older_timeline =
+      get_json(
+        "/api/v1/cases/#{incident["id"]}/timeline?limit=2&after=" <>
+          URI.encode_www_form(cursor),
+        context.viewer_token
+      )
+
+    assert_operation_response(older_timeline)
+    older_page = json_response(older_timeline, 200)
+    assert Enum.map(older_page["data"], & &1["type"]) == ["case_claimed", "case_opened"]
+    assert older_page["page"]["next"] == nil
 
     viewer_mutation =
       post_json(
