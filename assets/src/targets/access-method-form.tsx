@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
@@ -28,6 +28,15 @@ export function AccessMethodForm({
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
+  const mounted = useRef(false);
+  const checkRead = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      checkRead.current?.abort();
+    };
+  }, []);
   const [pending, setPending] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<ProviderReference | null>(null);
   const [endpoint, setEndpoint] = useState(method?.endpoint ?? "");
@@ -99,6 +108,7 @@ export function AccessMethodForm({
               },
             }),
           ).data;
+      if (!mounted.current) return;
       if (!method) setRegisteredMethod(registered);
       try {
         const checked = apiData(
@@ -107,34 +117,40 @@ export function AccessMethodForm({
             body: { access_method: { expected_revision: registered.revision } },
           }),
         ).data;
+        if (!mounted.current) return;
         if (!method) {
           setRegisteredMethod(checked);
           return;
         }
       } catch {
+        if (!mounted.current) return;
         if (method) await finish(true);
         else onError(t("targets.requestFailed"));
         return;
       }
       await finish();
     } catch {
-      onError(t("targets.requestFailed"));
+      if (mounted.current) onError(t("targets.requestFailed"));
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
   async function finish(failed = false) {
+    if (!mounted.current) return;
     try {
       await onSaved();
     } catch {
       failed = true;
     }
-    if (failed) onError(t("targets.requestFailed"));
+    if (failed && mounted.current) onError(t("targets.requestFailed"));
   }
 
   async function checkRegisteredMethod() {
-    if (!registeredMethod) return;
+    if (!registeredMethod || !mounted.current) return;
+    checkRead.current?.abort();
+    const controller = new AbortController();
+    checkRead.current = controller;
     setPending(true);
     onError("");
     try {
@@ -142,9 +158,11 @@ export function AccessMethodForm({
         await apiClient
           .GET("/api/v1/access-methods/{id}", {
             params: { path: { id: registeredMethod.id } },
+            signal: controller.signal,
           })
           .then(apiData)
       ).data;
+      if (!mounted.current || controller.signal.aborted) return;
       setRegisteredMethod(current);
       if (!current.check.current) {
         const checked = apiData(
@@ -153,18 +171,18 @@ export function AccessMethodForm({
             body: { access_method: { expected_revision: current.revision } },
           }),
         ).data;
-        setRegisteredMethod(checked);
+        if (mounted.current) setRegisteredMethod(checked);
       }
     } catch {
-      onError(t("targets.requestFailed"));
+      if (mounted.current && !controller.signal.aborted) onError(t("targets.requestFailed"));
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
   async function saveGrants(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!registeredMethod?.check.current) return;
+    if (!registeredMethod?.check.current || !mounted.current) return;
     const form = new FormData(event.currentTarget);
     setPending(true);
     onError("");
@@ -183,12 +201,13 @@ export function AccessMethodForm({
           },
         }),
       ).data;
+      if (!mounted.current) return;
       setRegisteredMethod(saved);
     } catch {
       failed = true;
     }
     await finish(failed);
-    setPending(false);
+    if (mounted.current) setPending(false);
   }
 
   if (registeredMethod)

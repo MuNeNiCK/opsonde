@@ -292,7 +292,10 @@ test.each([
         response: new Response(),
       });
     expect(path).toBe("/api/v1/access-methods/{id}");
-    expect(options).toEqual({ params: { path: { id: "method-1" } } });
+    expect(options).toEqual({
+      params: { path: { id: "method-1" } },
+      signal: expect.any(AbortSignal),
+    });
     if (readFailure) return Promise.reject(new Error("Method storage unavailable"));
     return Promise.resolve({
       data: {
@@ -477,4 +480,80 @@ test("later compatible credentials keep their identity and revision while anothe
   await act(async () => settle(first));
   expect(screen.queryByRole("combobox")).toBeNull();
   expect(post).toHaveBeenCalledTimes(2);
+});
+
+test("leaving registration during the stored Method read cannot start another remote check", async () => {
+  await i18n.changeLanguage("en");
+  const { target, catalog } = fixture();
+  const record = {
+    id: "registered",
+    name: "Chosen method",
+    endpoint: "https://device.example",
+    revision: 1,
+    capabilities: [],
+    check: { current: false, observed_capabilities: [] },
+  };
+  const post = vi.spyOn(apiClient, "POST").mockImplementation(((path: string) => {
+    if (path.endsWith("/check")) return Promise.reject(new Error("Check response lost"));
+    return Promise.resolve({ data: { data: record }, response: new Response() });
+  }) as typeof apiClient.POST);
+  const shown = render(
+    <AccessMethodForm target={target} catalog={catalog} onSaved={vi.fn()} onError={vi.fn()} />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Connection" }));
+  await user.click(screen.getByRole("option", { name: "Shared HTTP credentials · http-api" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Chosen method");
+  await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://device.example");
+  await user.click(screen.getByRole("button", { name: "Add access method" }));
+  await screen.findByRole("button", { name: "Check" });
+  let settle!: (value: { data: { data: typeof record }; response: Response }) => void;
+  let signal: AbortSignal | undefined;
+  vi.spyOn(apiClient, "GET").mockImplementation(((
+    path: string,
+    options: { signal?: AbortSignal },
+  ) => {
+    expect(path).toBe("/api/v1/access-methods/{id}");
+    signal = options.signal;
+    return new Promise<{ data: { data: typeof record }; response: Response }>((resolve) => {
+      settle = resolve;
+    });
+  }) as typeof apiClient.GET);
+  await user.click(screen.getByRole("button", { name: "Check" }));
+  shown.unmount();
+  await act(async () =>
+    settle({ data: { data: { ...record, revision: 2 } }, response: new Response() }),
+  );
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(signal?.aborted).toBe(true);
+});
+
+test("a late registration response after leaving the form starts no remote check or parent refresh", async () => {
+  await i18n.changeLanguage("en");
+  const { target, catalog } = fixture();
+  const record = { id: "registered", revision: 1 };
+  let settle!: (value: { data: { data: typeof record }; response: Response }) => void;
+  const post = vi.spyOn(apiClient, "POST").mockImplementation(
+    (() =>
+      new Promise<{ data: { data: typeof record }; response: Response }>((resolve) => {
+        settle = resolve;
+      })) as typeof apiClient.POST,
+  );
+  const saved = vi.fn();
+  const error = vi.fn();
+  const shown = render(
+    <AccessMethodForm target={target} catalog={catalog} onSaved={saved} onError={error} />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Connection" }));
+  await user.click(screen.getByRole("option", { name: "Shared HTTP credentials · http-api" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Chosen method");
+  await user.type(screen.getByRole("textbox", { name: "Endpoint" }), "https://device.example");
+  await user.click(screen.getByRole("button", { name: "Add access method" }));
+  shown.unmount();
+  error.mockClear();
+  await act(async () => settle({ data: { data: record }, response: new Response() }));
+  expect(post).toHaveBeenCalledOnce();
+  expect(saved).not.toHaveBeenCalled();
+  expect(error).not.toHaveBeenCalled();
 });
