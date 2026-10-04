@@ -339,6 +339,235 @@ defmodule Opsonde.OperationDeliveryTest do
     assert receipt.kind == "observation"
   end
 
+  @tag normalized_capacity: true
+  test "the next Resolver receives the exact maximum normalized investigation receipt without replay",
+       context do
+    parameters = %{"command" => String.duplicate("x", 60_000)}
+    details = %{"payload" => String.duplicate("!", 65_522)}
+    reference = " " <> String.duplicate("!", 65_534) <> " "
+    expected = %{"payload" => String.duplicate("[REDACTED]", 65_522)}
+    expected_reference = " " <> String.duplicate("[REDACTED]", 65_534) <> " "
+
+    {incident, run, proposal} =
+      authorized_proposal!("required-large-result", context,
+        purpose: :investigation,
+        parameters: parameters
+      )
+
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{status: :applied, details: details, reference: reference}}
+                 )
+             )
+
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    receipt = Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+    assert receipt.content["facts"] == expected
+    assert receipt.content["reference"] == expected_reference
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("known investigation was resent") end)
+             )
+
+    for index <- 1..101 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "optional-receipt-note-#{index}",
+        "operator_note",
+        "fixture",
+        "note-#{index}",
+        %{"note" => index},
+        DateTime.utc_now(),
+        authorize?: false
+      )
+    end
+
+    refute Enum.any?(
+             Cases.resolver_evidence_window!(incident.id, run.id, authorize?: false),
+             &(&1.id == receipt.id)
+           )
+
+    with_projection_read_fault("evidences", "kind", "text", receipt.id, fn ->
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               ResolverDelivery.run(turn.id,
+                 ai_invocation: %{
+                   respond: fn _ -> flunk("AI ran without its required receipt") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+    end)
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The exact returned payload satisfies the requested outcome",
+                        evidence_ids: [receipt.id],
+                        desired_outcome_claims: [
+                          %{
+                            "symptom_id" => request.case_symptom.id,
+                            "evidence_id" => receipt.id,
+                            "fact_keys" => ["payload"],
+                            "reason" => "The actual payload is available for assessment"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 3}
+                    }}
+                 end
+               }
+             )
+
+    assert_received {:resolve, _, request}
+    observed = Enum.find(request.evidence, &(&1.id == receipt.id))
+    assert observed, "the continuation receipt must reach the Resolver"
+    assert observed.content == receipt.content
+    assert observed.content["parameters"] == parameters
+    assert observed.content["facts"] == expected
+    assert observed.content["reference"] == expected_reference
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{respond: fn _ -> flunk("saved paid AI result was resent") end}
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 10
+
+    assert Cases.route_downstream_decision!(turn.id, authorize?: false).pending_intent["action"] ==
+             "review_recovery"
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      purpose_assessment: :remediation,
+                      verdict: :approved,
+                      reason: "The cited payload directly supports the desired outcome",
+                      desired_outcome_assessment: %{
+                        "symptom_id" => request.case_symptom.id,
+                        "desired_outcome" => request.case_symptom.desired_outcome,
+                        "evidence_ids" => [receipt.id],
+                        "status" => "supported",
+                        "reason" => "The independent assessment used the exact receipt"
+                      },
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_received {:review_recovery, %{model: "reviewer-model"}, review_request}
+
+    assert Enum.find(review_request.cited_evidence, &(&1.id == receipt.id)).content ==
+             receipt.content
+
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :resolved
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{respond: fn _ -> flunk("saved Reviewer result was resent") end}
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 16
+  end
+
+  @tag normalized_capacity: true
+  test "the proposal Reviewer receives the exact large cited receipt and proposed request",
+       context do
+    configure_mode!(context.admin, :auto)
+    parameters = %{"command" => String.duplicate("x", 60_000)}
+
+    {incident, run, proposal} =
+      authorized_proposal!("large-proposal-review", context,
+        purpose: :investigation,
+        parameters: parameters
+      )
+
+    review = fn id ->
+      Opsonde.Cases.Proposal.ReviewDelivery.run(id,
+        ai_invocation: %{
+          test_pid: self(),
+          respond: fn _request ->
+            {:ok,
+             %AI.ReviewDecision{
+               verdict: :approved,
+               purpose_assessment: :investigation,
+               reason: "The exact proposal collects additional evidence",
+               usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+             }}
+          end
+        }
+      )
+    end
+
+    assert :ok = review.(proposal.id)
+    assert_received {:review, %{model: "reviewer-model"}, initial_review}
+    assert initial_review.proposal.parameters == parameters
+    source_result = Cases.get_turn!(proposal.source_turn_id, authorize?: false).result
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.EffectResult{
+                      status: :applied,
+                      details: %{"payload" => String.duplicate("!", 65_522)},
+                      reference: " " <> String.duplicate("!", 65_534) <> " "
+                    }}
+                 )
+             )
+
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    receipt = Cases.get_evidence!(current.pending_intent["evidence_id"], actor: context.operator)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+    result = put_in(source_result, ["intent", "evidence_ids"], [receipt.id])
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      result,
+      :proposal,
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+      "Review the cited result and follow-up request",
+      authorize?: false
+    )
+
+    fresh = Cases.materialize_proposal!(turn.id, authorize?: false)
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    assert :ok = review.(fresh.id)
+    assert_received {:review, %{model: "reviewer-model"}, request}
+    assert request.proposal.parameters == parameters
+    assert Enum.find(request.cited_evidence, &(&1.id == receipt.id)).content == receipt.content
+    assert Cases.get_proposal!(fresh.id, actor: context.operator).status == :authorized
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(fresh.id,
+               ai_invocation: %{respond: fn _ -> flunk("saved proposal review was resent") end}
+             )
+  end
+
   test "large admitted request and result survive an Evidence save failure without resending",
        context do
     parameters = %{"service" => "api", "padding" => String.duplicate("x", 60_000)}

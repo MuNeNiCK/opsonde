@@ -439,8 +439,15 @@ defmodule Opsonde.ProposalAuthorityTest do
       )
     end
 
-    assert {:error, %AI.Error{category: :disclosure_limit}} =
-             ReviewProjection.build(cited_reviewing.id, selection)
+    assert {:ok, bounded, _context} = ReviewProjection.build(cited_reviewing.id, selection)
+
+    assert Enum.find(bounded.cited_evidence, &(&1.id == first.id)).content["status"] ==
+             "unavailable"
+
+    assert Enum.find(bounded.context_evidence, &(&1.id == second.id)).content["status"] ==
+             "unavailable"
+
+    assert Enum.count(bounded.context_evidence, &get_in(&1.content, ["facts", "padding"])) == 1
   end
 
   test "Readonly records a recommendation and pauses without Approval or effect", context do

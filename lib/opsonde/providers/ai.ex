@@ -1,7 +1,9 @@
 defmodule Opsonde.Providers.AI do
   @moduledoc false
 
-  @resolver_disclosure_limits %{max_items: 100, max_bytes: 65_536}
+  @max_input_bytes 2_097_152
+  @optional_context_bytes 65_536
+  @resolver_disclosure_limits %{max_items: 100, max_bytes: @max_input_bytes}
   @resolver_reason_codepoints 500
   @max_output_bytes 65_536
   @reviewer_reason_codepoints 1_000
@@ -9,6 +11,8 @@ defmodule Opsonde.Providers.AI do
   @file_read_bytes 8_192
 
   def resolver_disclosure_limits, do: @resolver_disclosure_limits
+  def max_input_bytes, do: @max_input_bytes
+  def optional_context_bytes, do: @optional_context_bytes
   def resolver_reason_codepoints, do: @resolver_reason_codepoints
   def max_output_bytes, do: @max_output_bytes
   def reviewer_reason_codepoints, do: @reviewer_reason_codepoints
@@ -742,21 +746,16 @@ defmodule Opsonde.Providers.AI do
   end
 
   def resolver_disclosure_size(%ResolverRequest{} = request) do
-    encoded = %{
-      context: %{
-        objective: request.objective,
-        operating_instructions: request.operating_instructions,
-        case_symptom: request.case_symptom,
-        alert_state: request.alert_state,
-        report_language: request.report_language,
-        retry_context: request.retry_context,
-        traversable_relation_ids: request.traversable_relation_ids,
-        recovery_evidence_ids: request.recovery_evidence_ids
-      },
-      items: Enum.map(resolver_disclosure_items(request), &plain_value/1)
-    }
+    request
+    |> plain_value()
+    |> Map.put(:file_read_options, plain_value(file_read_options(request)))
+    |> encoded_input_size()
+  end
 
-    case Jason.encode(encoded) do
+  def input_size(request), do: request |> plain_value() |> encoded_input_size()
+
+  defp encoded_input_size(value) do
+    case Jason.encode(value) do
       {:ok, value} -> byte_size(value)
       {:error, _error} -> :infinity
     end

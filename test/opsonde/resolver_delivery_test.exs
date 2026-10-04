@@ -862,21 +862,23 @@ defmodule Opsonde.ResolverDeliveryTest do
 
     file_decision!(turn, source, reference)
 
-    Cases.append_evidence!(
-      turn.case_id,
-      run.id,
-      nil,
-      "optional-long-context",
-      "observation",
-      "fixture",
-      "optional",
-      %{
-        "target_id" => reference["target_id"],
-        "facts" => %{"optional_data" => String.duplicate("x", 62000)}
-      },
-      DateTime.utc_now(),
-      authorize?: false
-    )
+    for index <- 1..2 do
+      Cases.append_evidence!(
+        turn.case_id,
+        run.id,
+        nil,
+        "optional-long-context-#{index}",
+        "observation",
+        "fixture",
+        "optional-#{index}",
+        %{
+          "target_id" => reference["target_id"],
+          "facts" => %{"optional_data" => String.duplicate("x", 62000)}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+    end
 
     assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
 
@@ -892,12 +894,12 @@ defmodule Opsonde.ResolverDeliveryTest do
                    receipt = Enum.find(request.evidence, &(&1.kind == "file_read"))
                    assert receipt.content["value"] == bytes
                    assert receipt.content["encoding"] == "utf8"
-                   assert AI.resolver_disclosure_size(request) <= 65536
+                   assert AI.resolver_disclosure_size(request) <= AI.max_input_bytes()
 
-                   refute Enum.any?(
+                   assert Enum.count(
                             request.evidence,
                             &get_in(&1.content, ["facts", "optional_data"])
-                          )
+                          ) <= 1
 
                    {:ok,
                     %AI.ResolverDecision{

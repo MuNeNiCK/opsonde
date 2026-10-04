@@ -27,27 +27,29 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
            EvidenceProjection.file_contents(incident, run, context_evidence) do
       intent = turn.result["intent"]
 
-      request = %AI.RecoveryReviewRequest{
-        provider_revision: selection.provider_revision,
-        session_id: "recovery-reviewer:#{turn.id}",
-        resolver_session_id: "resolver:#{run.id}",
-        case_id: incident.id,
-        objective: objective(incident),
-        report_language: incident.report_language,
-        conditions: conditions,
-        case_symptom: CaseSymptom.current(incident),
-        source_evidence: source_evidence,
-        cited_evidence: cited_evidence,
-        context_evidence: context_evidence,
-        conclusion: %AI.RecoveryConclusion{
-          reason: intent["reason"],
-          evidence_ids: intent["evidence_ids"],
-          condition_claims: Map.get(intent, "condition_claims", []),
-          desired_outcome_claims: Map.get(intent, "desired_outcome_claims", [])
-        },
-        retry_context: retry_context,
-        budget: budget(run)
-      }
+      request =
+        %AI.RecoveryReviewRequest{
+          provider_revision: selection.provider_revision,
+          session_id: "recovery-reviewer:#{turn.id}",
+          resolver_session_id: "resolver:#{run.id}",
+          case_id: incident.id,
+          objective: objective(incident),
+          report_language: incident.report_language,
+          conditions: conditions,
+          case_symptom: CaseSymptom.current(incident),
+          source_evidence: source_evidence,
+          cited_evidence: cited_evidence,
+          context_evidence: context_evidence,
+          conclusion: %AI.RecoveryConclusion{
+            reason: intent["reason"],
+            evidence_ids: intent["evidence_ids"],
+            condition_claims: Map.get(intent, "condition_claims", []),
+            desired_outcome_claims: Map.get(intent, "desired_outcome_claims", [])
+          },
+          retry_context: retry_context,
+          budget: budget(run)
+        }
+        |> EvidenceProjection.bound_review_context()
 
       case AI.Validator.validate_request(:review_recovery, request) do
         :ok ->

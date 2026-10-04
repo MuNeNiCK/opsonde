@@ -47,26 +47,28 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
              evidence ++ context_evidence,
              recovery_ids
            ) do
-      request = %AI.ReviewRequest{
-        provider_revision: selection.provider_revision,
-        session_id: "reviewer:#{proposal.id}",
-        resolver_session_id: "resolver:#{run.id}",
-        case_id: incident.id,
-        resolution_run_id: run.id,
-        recovery_evidence_ids: recovery_ids,
-        objective: objective(incident),
-        report_language: incident.report_language,
-        operating_instructions: target.operating_instructions,
-        proposal: review_proposal(proposal),
-        conditions: conditions,
-        source_evidence: source_evidence,
-        cited_evidence: evidence,
-        context_evidence: context_evidence,
-        initial_target_id: incident.initial_target_id,
-        target_relations: target_relations,
-        retry_context: retry_context,
-        budget: budget(run)
-      }
+      request =
+        %AI.ReviewRequest{
+          provider_revision: selection.provider_revision,
+          session_id: "reviewer:#{proposal.id}",
+          resolver_session_id: "resolver:#{run.id}",
+          case_id: incident.id,
+          resolution_run_id: run.id,
+          recovery_evidence_ids: recovery_ids,
+          objective: objective(incident),
+          report_language: incident.report_language,
+          operating_instructions: target.operating_instructions,
+          proposal: review_proposal(proposal),
+          conditions: conditions,
+          source_evidence: source_evidence,
+          cited_evidence: evidence,
+          context_evidence: context_evidence,
+          initial_target_id: incident.initial_target_id,
+          target_relations: target_relations,
+          retry_context: retry_context,
+          budget: budget(run)
+        }
+        |> EvidenceProjection.bound_review_context()
 
       case AI.Validator.validate_request(:review, request) do
         :ok ->

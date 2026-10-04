@@ -4,6 +4,42 @@ defmodule Opsonde.Cases.Evidence.Projection do
   alias Opsonde.Cases
   alias Opsonde.Providers.AI
 
+  def bound_review_context(request) do
+    required_ids =
+      MapSet.new(
+        Map.get(request, :recovery_evidence_ids, []) ++
+          Enum.flat_map(
+            request.conditions,
+            &(&1.recovery_evidence_ids ++ &1.failed_observation_ids)
+          )
+      )
+
+    {required, optional} =
+      Enum.split_with(request.context_evidence, &MapSet.member?(required_ids, &1.id))
+
+    base = %{request | context_evidence: required}
+    required_size = AI.input_size(base)
+
+    if required_size <= AI.max_input_bytes() do
+      maximum = min(AI.max_input_bytes(), required_size + AI.optional_context_bytes())
+
+      Enum.reduce(optional, base, fn item, current ->
+        candidate = %{current | context_evidence: current.context_evidence ++ [item]}
+
+        if AI.input_size(candidate) <= maximum and review_items(candidate) <= 100,
+          do: candidate,
+          else: current
+      end)
+    else
+      base
+    end
+  end
+
+  defp review_items(request) do
+    length(request.conditions) + length(request.source_evidence) + length(request.cited_evidence) +
+      length(request.context_evidence) + length(Map.get(request, :target_relations, []))
+  end
+
   def recent(case_id, cited_ids) do
     with {:ok, evidence} <- Cases.review_context_evidence(case_id, authorize?: false) do
       {:ok, project(evidence, cited_ids)}

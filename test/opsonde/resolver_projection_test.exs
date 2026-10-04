@@ -403,7 +403,20 @@ defmodule Opsonde.ResolverProjectionTest do
         actor: context.operator
       )
 
-    started = start!(incident, searched.run, "preselection-turn")
+    started =
+      Cases.start_turn!(
+        incident.id,
+        searched.run.id,
+        "preselection-turn",
+        %{
+          "objective" => "Select a returned Target",
+          "source" => "target_search",
+          "evidence_id" => searched.value.id
+        },
+        %{"action" => "continue"},
+        "Review Target search",
+        authorize?: false
+      )
 
     assert {:ok, request, _context} =
              ResolverProjection.build(started.value.id, selection())
@@ -449,7 +462,8 @@ defmodule Opsonde.ResolverProjectionTest do
     assert :ok = AI.Validator.validate_request(:resolve, request)
   end
 
-  test "projection keeps structured facts and bounds only indispensable diagnostics", context do
+  test "selected observations and verification retain their exact facts and diagnostics",
+       context do
     {incident, run} = open!("compact-evidence", context.operator, context.target)
 
     applied =
@@ -542,21 +556,22 @@ defmodule Opsonde.ResolverProjectionTest do
 
     projected_applied = Enum.find(request.evidence, &(&1.id == applied.id))
     assert projected_applied.content["facts"] == %{"active_state" => "inactive"}
-    refute Map.has_key?(projected_applied.content, "details")
-    refute Map.has_key?(projected_applied.content, "diagnostics")
+    assert projected_applied.content == applied.content
+    assert projected_applied.content["details"]["stdout"]["value"] == String.duplicate("x", 8_000)
 
     projected_failed = Enum.find(request.evidence, &(&1.id == failed.id))
-    assert projected_failed.content["diagnostics"]["exit_status"] == 1
-    assert projected_failed.content["diagnostics"]["stderr"]["truncated"]
+    assert projected_failed.content == failed.content
+    assert projected_failed.content["details"]["exit_status"] == 1
 
-    assert String.starts_with?(
-             projected_failed.content["diagnostics"]["stderr"]["value"],
-             "Interactive authentication required"
-           )
+    assert projected_failed.content["details"]["stderr"]["value"] ==
+             "Interactive authentication required\n" <> String.duplicate("x", 4_000)
 
     projected_verification = Enum.find(request.evidence, &(&1.id == verification.id))
     assert projected_verification.content["facts"] == %{"active_state" => "inactive"}
-    refute Map.has_key?(projected_verification.content, "provider_evidence")
+    assert projected_verification.content == verification.content
+
+    assert projected_verification.content["provider_evidence"]["raw"] ==
+             String.duplicate("x", 8_000)
   end
 
   test "projection gives the Resolver bounded feedback for a rejected schema", context do

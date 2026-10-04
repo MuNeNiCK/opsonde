@@ -7,7 +7,7 @@ defmodule Opsonde.Providers.AI.Validator do
 
   @max_output_bytes AI.max_output_bytes()
   @max_review_items 100
-  @max_review_bytes 65_536
+  @max_review_bytes AI.max_input_bytes()
 
   def validate_request(:resolve, %AI.ResolverRequest{} = request) do
     cond do
@@ -33,7 +33,7 @@ defmodule Opsonde.Providers.AI.Validator do
       review_exhausted?(request.budget) ->
         {:error, ai_error(:budget_exhausted, "AI budget is exhausted")}
 
-      review_size(request) > @max_review_bytes ->
+      AI.input_size(request) > @max_review_bytes ->
         {:error, ai_error(:disclosure_limit, "AI Reviewer disclosure limit was exceeded")}
 
       true ->
@@ -49,7 +49,7 @@ defmodule Opsonde.Providers.AI.Validator do
       review_exhausted?(request.budget) ->
         {:error, ai_error(:budget_exhausted, "AI budget is exhausted")}
 
-      recovery_review_size(request) > @max_review_bytes ->
+      AI.input_size(request) > @max_review_bytes ->
         {:error, ai_error(:disclosure_limit, "Recovery Reviewer disclosure limit was exceeded")}
 
       true ->
@@ -86,7 +86,7 @@ defmodule Opsonde.Providers.AI.Validator do
        when is_list(source_evidence) and is_list(cited_evidence) and is_list(context_evidence) do
     if is_list(request.conditions) and is_list(request.target_relations) and
          length(source_evidence) + length(cited_evidence) + length(context_evidence) +
-           length(request.target_relations) <=
+           length(request.target_relations) + length(request.conditions) <=
            @max_review_items and
          Enum.all?(source_evidence ++ cited_evidence ++ context_evidence, &valid_evidence?/1) and
          valid_review_relations?(request) do
@@ -172,23 +172,6 @@ defmodule Opsonde.Providers.AI.Validator do
   end
 
   defp valid_recovery_review_request?(_request), do: false
-
-  defp recovery_review_size(request) do
-    encoded = %{
-      objective: request.objective,
-      case_symptom: request.case_symptom,
-      conditions: Enum.map(request.conditions, &plain_value/1),
-      source_evidence: Enum.map(request.source_evidence, &plain_value/1),
-      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
-      context_evidence: Enum.map(request.context_evidence, &plain_value/1),
-      conclusion: plain_value(request.conclusion)
-    }
-
-    case Jason.encode(encoded) do
-      {:ok, value} -> byte_size(value)
-      {:error, _error} -> :infinity
-    end
-  end
 
   defp valid_review_relations?(%AI.ReviewRequest{
          initial_target_id: initial_id,
@@ -511,28 +494,6 @@ defmodule Opsonde.Providers.AI.Validator do
 
     case Jason.encode(%{context: context, items: encoded_items}) do
       {:ok, encoded} -> byte_size(encoded)
-      {:error, _error} -> :infinity
-    end
-  end
-
-  defp review_size(request) do
-    encoded = %{
-      resolution_run_id: request.resolution_run_id,
-      recovery_evidence_ids: request.recovery_evidence_ids,
-      objective: request.objective,
-      operating_instructions: request.operating_instructions,
-      proposal: plain_value(request.proposal),
-      conditions: Enum.map(request.conditions, &plain_value/1),
-      source_evidence: Enum.map(request.source_evidence, &plain_value/1),
-      cited_evidence: Enum.map(request.cited_evidence, &plain_value/1),
-      context_evidence: Enum.map(request.context_evidence, &plain_value/1),
-      initial_target_id: request.initial_target_id,
-      target_relations: Enum.map(request.target_relations, &plain_value/1),
-      retry_context: request.retry_context
-    }
-
-    case Jason.encode(encoded) do
-      {:ok, value} -> byte_size(value)
       {:error, _error} -> :infinity
     end
   end

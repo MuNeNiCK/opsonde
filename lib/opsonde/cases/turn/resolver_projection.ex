@@ -10,8 +10,6 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
   alias Opsonde.Cases.Evidence.Projection, as: EvidenceProjection
   alias Opsonde.Providers.AI
 
-  @diagnostic_text_limit 2_000
-
   @spec build(String.t(), AI.Selection.t()) ::
           {:ok, AI.ResolverRequest.t(), InvocationContext.t()} | {:error, term()}
   def build(turn_id, %AI.Selection{role: :resolver} = selection) do
@@ -21,6 +19,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          :ok <- eligible(incident, run, turn),
          {:ok, evidence} <-
            Cases.resolver_evidence_window(incident.id, run.id, authorize?: false),
+         {:ok, continuation_evidence} <- continuation_evidence(incident, run, turn),
          {:ok, {conditions, recovery_ids}} <- ConditionContext.current_condition_context(incident),
          {:ok, recovery_evidence} <-
            current_recovery_evidence(
@@ -28,7 +27,10 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
              Enum.uniq(recovery_ids ++ Enum.flat_map(conditions, & &1.failed_observation_ids))
            ),
          {:ok, source_context} <-
-           source_context(incident, Enum.uniq_by(recovery_evidence ++ evidence, & &1.id)),
+           source_context(
+             incident,
+             Enum.uniq_by(continuation_evidence ++ recovery_evidence ++ evidence, & &1.id)
+           ),
          {:ok, target} <- selected_target(incident),
          {:ok, historical_evidence} <- prior_run_evidence(incident, run, target),
          {:ok, recent_recovery_review} <- recent_recovery_review(incident),
@@ -38,7 +40,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
          {:ok, continuity} <- EvidenceProjection.file_contents(incident, run, continuity),
          {:ok, manual_recovery_ids} <-
            ConditionRecovery.manual_evidence_ids(incident, run, target, continuity),
-         request <-
+         {:ok, request} <-
            request(
              selection,
              incident,
@@ -72,6 +74,32 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
 
   def build(_turn_id, _selection),
     do: {:error, "Resolver AI selection is invalid"}
+
+  defp continuation_ids(turn) do
+    [
+      turn.intent["evidence_id"],
+      turn.intent["verification_evidence_id"],
+      turn.intent["file_read_evidence_id"]
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp continuation_evidence(incident, run, turn) do
+    Enum.reduce_while(continuation_ids(turn), {:ok, []}, fn id, {:ok, loaded} ->
+      case Cases.get_evidence(id, authorize?: false) do
+        {:ok, %{case_id: case_id, resolution_run_id: run_id} = item}
+        when case_id == incident.id and run_id == run.id ->
+          {:cont, {:ok, loaded ++ [item]}}
+
+        {:error, error} ->
+          {:halt, {:error, error}}
+
+        _unavailable ->
+          {:halt, {:error, "Continuation Evidence is unavailable for this Case and Run"}}
+      end
+    end)
+  end
 
   defp requested_file_visible(request, turn) do
     requested = turn.intent["file_read_evidence_id"]
@@ -551,20 +579,84 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       proposal_tools: []
     }
 
-    {source_evidence, other_evidence} =
-      Enum.split_with(evidence, &(&1.kind == "signal_event"))
+    required_ids =
+      MapSet.new(
+        continuation_ids(turn) ++
+          recovery_ids ++
+          Enum.flat_map(conditions, & &1.failed_observation_ids)
+      )
 
-    {file_reads, other_evidence} =
-      Enum.split_with(other_evidence, &(&1.kind == "file_read"))
+    {required, optional} =
+      Enum.split_with(
+        evidence,
+        &(&1.kind == "signal_event" or MapSet.member?(required_ids, &1.id))
+      )
 
-    file_reads = Enum.sort_by(file_reads, &(&1.id != turn.intent["file_read_evidence_id"]))
+    required_targets =
+      (base.disclosure.allowed_target_ids ++ Enum.map(required, & &1.content["target_id"]))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    required_request =
+      %{
+        base
+        | evidence: Enum.map(required, &project_evidence(&1, required_targets)),
+          target_candidates:
+            required |> Enum.filter(&candidate_evidence?/1) |> Enum.flat_map(&candidates/1)
+      }
+      |> normalize_disclosure()
+      |> mark_recovery_proofs(recovery_ids)
+
+    required_size = AI.resolver_disclosure_size(required_request)
+
+    if required_size <= limits.max_bytes and
+         length(AI.resolver_disclosure_items(required_request)) <= limits.max_items do
+      optional_limit = min(limits.max_bytes, required_size + AI.optional_context_bytes())
+
+      request = %{
+        required_request
+        | disclosure: %{required_request.disclosure | max_bytes: optional_limit}
+      }
+
+      {:ok,
+       optional_request(
+         request,
+         optional,
+         historical_evidence,
+         conditions,
+         recovery_ids,
+         relations,
+         traversable_relation_ids,
+         observations,
+         proposals,
+         limits
+       )}
+    else
+      {:error,
+       AI.Error.exception(
+         category: :disclosure_limit,
+         message: "Required Resolver input exceeds the AI input capacity",
+         dispatched?: false
+       )}
+    end
+  end
+
+  defp optional_request(
+         base,
+         optional,
+         historical_evidence,
+         conditions,
+         recovery_ids,
+         relations,
+         traversable_relation_ids,
+         observations,
+         proposals,
+         limits
+       ) do
+    {file_reads, other_evidence} = Enum.split_with(optional, &(&1.kind == "file_read"))
 
     base
     |> add_items(:evidence, generic_evidence(file_reads, base.disclosure.allowed_target_ids))
-    |> add_items(
-      :evidence,
-      generic_evidence(source_evidence, base.disclosure.allowed_target_ids)
-    )
     |> add_mapped_condition_candidates(conditions)
     |> add_candidate_group(other_evidence)
     |> add_items(:target_relations, relations)
@@ -593,6 +685,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
       %{current | proposal_tools: AI.available_proposal_tools(current)}
     end)
     |> normalize_disclosure()
+    |> then(&%{&1 | disclosure: %{&1.disclosure | max_bytes: limits.max_bytes}})
     |> mark_recovery_proofs(recovery_ids)
     |> mark_visible_failed_observations()
     |> then(fn current ->
@@ -723,11 +816,16 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
   defp remaining(maximum, consumed), do: max(maximum - consumed, 0)
 
   defp add_candidate_group(request, evidence) do
-    case Enum.find(evidence, &candidate_evidence?/1) do
-      nil ->
+    already_disclosed? = Enum.any?(request.evidence, &(&1.kind == "target_candidates"))
+
+    case {already_disclosed?, Enum.find(evidence, &candidate_evidence?/1)} do
+      {true, _item} ->
         request
 
-      item ->
+      {false, nil} ->
+        request
+
+      {false, item} ->
         candidates = candidates(item)
 
         compact = %AI.Evidence{
@@ -823,86 +921,23 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     evidence
     |> Enum.reject(&candidate_evidence?/1)
     |> compact_repeated_operations()
-    |> Enum.map(fn item ->
-      %AI.Evidence{
-        id: item.id,
-        kind: item.kind,
-        target_id: evidence_target_id(item, allowed_target_ids),
-        observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
-        content: projected_evidence_content(item)
-      }
-    end)
+    |> Enum.map(&project_evidence(&1, allowed_target_ids))
   end
 
-  defp projected_evidence_content(%{kind: kind, content: content})
-       when kind in ["observation", "operation_outcome"] do
-    facts = content["facts"]
+  defp project_evidence(item, allowed_target_ids) do
+    content =
+      if candidate_evidence?(item),
+        do: Map.put(item.content, "candidate_ids", Enum.map(candidates(item), & &1.id)),
+        else: item.content
 
-    projected =
-      Map.take(content, [
-        "access_method_id",
-        "capability",
-        "category",
-        "facts",
-        "operation",
-        "parameters",
-        "reference",
-        "request_kind",
-        "purpose",
-        "selectors",
-        "status",
-        "target_id",
-        "tool_id"
-      ])
-
-    if content["status"] != "applied" or not is_map(facts) or map_size(facts) == 0 do
-      diagnostics = Map.merge(if(is_map(facts), do: facts, else: %{}), content["details"] || %{})
-      maybe_put_diagnostics(projected, diagnostics)
-    else
-      projected
-    end
-  end
-
-  defp projected_evidence_content(%{kind: "target_verification", content: content}) do
-    Map.take(content, [
-      "access_method_id",
-      "category",
-      "expected",
-      "facts",
-      "operation_id",
-      "status",
-      "target_id"
-    ])
-  end
-
-  defp projected_evidence_content(%{content: content}), do: content
-
-  defp maybe_put_diagnostics(projected, details) when is_map(details) do
-    diagnostics =
-      details
-      |> Map.take(["exit_status", "message"])
-      |> maybe_put_stream("stderr", details["stderr"])
-      |> maybe_put_stream("stdout", details["stdout"])
-
-    if map_size(diagnostics) == 0,
-      do: projected,
-      else: Map.put(projected, "diagnostics", diagnostics)
-  end
-
-  defp maybe_put_diagnostics(projected, _details), do: projected
-
-  defp maybe_put_stream(diagnostics, key, %{"value" => value} = stream)
-       when is_binary(value) do
-    compact = %{
-      "encoding" => stream["encoding"],
-      "value" => String.slice(value, 0, @diagnostic_text_limit),
-      "truncated" => String.length(value) > @diagnostic_text_limit
+    %AI.Evidence{
+      id: item.id,
+      kind: item.kind,
+      target_id: evidence_target_id(item, allowed_target_ids),
+      observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
+      content: content
     }
-
-    Map.put(diagnostics, key, compact)
   end
-
-  defp maybe_put_stream(diagnostics, _key, _stream), do: diagnostics
 
   defp compact_repeated_operations(evidence) do
     {compacted, _signatures} =
@@ -967,7 +1002,7 @@ defmodule Opsonde.Cases.Turn.ResolverProjection do
     limits = AI.resolver_disclosure_limits()
 
     if length(AI.resolver_disclosure_items(candidate)) <= limits.max_items and
-         AI.resolver_disclosure_size(candidate) <= limits.max_bytes and
+         AI.resolver_disclosure_size(candidate) <= request.disclosure.max_bytes and
          length(candidate.disclosure.allowed_target_ids) <= limits.max_items and
          length(candidate.disclosure.allowed_evidence_kinds) <= limits.max_items do
       {:ok, candidate}
