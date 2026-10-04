@@ -931,7 +931,9 @@ const en = {
       automaticAdminOnly: "Only administrators can change this setting.",
       automaticOn: "On",
       automaticOff: "Off",
-      automaticUpdateFailed: "The setting could not be saved. Its current state was reloaded.",
+      automaticUnknown: "Could not confirm the setting change. Check the current state.",
+      automaticReceiptUnavailable:
+        "The setting request could not be saved or read. No change will be sent.",
       title: "Reports",
       description: "Create Case reports and deliver them through verified destinations.",
       requestFailed: "The request failed. Review the values and connection, then try again.",

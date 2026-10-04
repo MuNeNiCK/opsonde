@@ -13,6 +13,89 @@ const wire = vi.hoisted(() => {
   return fetch;
 });
 
+test("Report windows resolve only current Case and Target labels and latest delivery counts without whole catalogs", async () => {
+  await i18n.changeLanguage("en");
+  const uuid = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const reads: URL[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    const url = new URL(request.url);
+    reads.push(url);
+    if (
+      ["/api/v1/cases", "/api/v1/targets", "/api/v1/providers", "/api/v1/deliveries"].includes(
+        url.pathname,
+      )
+    )
+      return Response.json(
+        { error: { message: "Whole catalog reads are forbidden" } },
+        { status: 500 },
+      );
+    if (url.pathname === "/api/v1/reports") {
+      expect(url.searchParams.get("limit")).toBe("50");
+      const indices = url.searchParams.has("after")
+        ? [51]
+        : Array.from({ length: 50 }, (_, n) => n + 1);
+      return Response.json({
+        data: indices.map((n) => ({ ...summary, id: uuid(n + 1000), case_id: uuid(n + 2000) })),
+        page: { next: url.searchParams.has("after") ? null : "report-tail" },
+      });
+    }
+    if (url.pathname === "/api/v1/cases/summaries") {
+      const ids = url.searchParams.get("ids")!.split(",");
+      expect(ids.length).toBeLessThanOrEqual(50);
+      return Response.json({
+        data: ids.map((caseId) => {
+          const n = Number(caseId.slice(-12)) - 2000;
+          return {
+            ...reportCase(n),
+            id: caseId,
+            title: `Window Case ${n}`,
+            selected_target_id: uuid(n + 3000),
+          };
+        }),
+        page: { next: null },
+      });
+    }
+    if (url.pathname === "/api/v1/targets/summaries") {
+      const ids = url.searchParams.get("ids")!.split(",");
+      expect(ids.length).toBeLessThanOrEqual(50);
+      return Response.json({
+        data: ids.map((targetId) => ({
+          id: targetId,
+          name: `Window Target ${Number(targetId.slice(-12)) - 3000}`,
+        })),
+        page: { next: null },
+      });
+    }
+    if (url.pathname === "/api/v1/deliveries/latest") {
+      const ids = url.searchParams.get("report_ids")!.split(",");
+      expect(ids.length).toBeLessThanOrEqual(50);
+      return Response.json({
+        data: ids.map((reportId) => ({
+          report_id: reportId,
+          status: "delivered",
+          attempt_count: 51,
+        })),
+      });
+    }
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  await screen.findByRole("link", { name: "Window Case 1" });
+  const history = screen.getByRole("region", { name: "Report history" });
+  await userEvent.setup().click(within(history).getByRole("button", { name: "Next" }));
+  await within(history).findByRole("link", { name: "Window Target 51" });
+  expect(within(history).getByRole("link", { name: "Window Case 51" })).toBeTruthy();
+  expect(within(history).queryByRole("link", { name: "Window Case 1" })).toBeNull();
+  expect(within(history).getByText("×51")).toBeTruthy();
+  expect(
+    reads
+      .filter((url) => url.pathname === "/api/v1/cases/summaries")
+      .map((url) => url.searchParams.get("ids")!.split(",").length),
+  ).toEqual([50, 1]);
+});
+
 test("failed report page and body reads preserve history, and closing aborts a pending body", async () => {
   await i18n.changeLanguage("en");
   let bodyRequest: Request | undefined;
@@ -546,6 +629,385 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+test("an unconfirmed automatic setting change survives reload and is checked without another PUT", async () => {
+  await i18n.changeLanguage("en");
+  let current = setting;
+  const writes: unknown[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/report-setting") {
+      if (request.method === "PUT") {
+        writes.push(await request.json());
+        current = { ...setting, revision: 2, automatic_case_reports_enabled: true };
+        return Response.json({ error: { message: "Setting response lost" } }, { status: 503 });
+      }
+      return Response.json({ data: current });
+    }
+    return Response.json({ data: [], page: { next: null } });
+  });
+  const editor = () => (
+    <AuthenticationContext.Provider
+      value={{ account: { id: "admin-1", role: "admin" } } as Authentication}
+    >
+      <MemoryRouter>
+        <ReportPage />
+      </MemoryRouter>
+    </AuthenticationContext.Provider>
+  );
+  const view = render(editor());
+  const user = userEvent.setup();
+  const toggle = await screen.findByRole("switch", { name: "Off" });
+  await waitFor(() => expect(toggle.getAttribute("aria-disabled")).not.toBe("true"));
+  await user.click(toggle);
+  await screen.findByText("Could not confirm the setting change. Check the current state.");
+  expect(writes).toEqual([
+    { report_setting: { expected_revision: 1, automatic_case_reports_enabled: true } },
+  ]);
+  view.unmount();
+  render(editor());
+  const currentToggle = await screen.findByRole("switch", { name: "On" });
+  expect(currentToggle.getAttribute("aria-disabled")).toBe("true");
+  await user.click(screen.getByRole("button", { name: "Check result" }));
+  await waitFor(() => expect(currentToggle.getAttribute("aria-disabled")).not.toBe("true"));
+  expect(writes).toHaveLength(1);
+  expect(currentToggle.getAttribute("aria-checked")).toBe("true");
+});
+
+test("a failed referenced Case read keeps the last complete Report window and aborts its sibling read before retry", async () => {
+  await i18n.changeLanguage("en");
+  let tailFails = true;
+  let caseReads = 0;
+  let sibling: Request | undefined;
+  let finishSibling: ((response: Response) => void) | undefined;
+  wire.mockImplementation(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/reports")
+      return Response.json({
+        data: [{ ...summary, id: url.searchParams.has("after") ? olderId : reportId }],
+        page: { next: url.searchParams.has("after") ? null : "older-reports" },
+      });
+    if (url.pathname === "/api/v1/cases/summaries") {
+      caseReads++;
+      if (caseReads > 1 && tailFails)
+        return Response.json(
+          { error: { message: "Case references unavailable" } },
+          { status: 500 },
+        );
+      return Response.json({
+        data: [{ ...reportCase(1), id: caseId, title: "Complete window Case" }],
+        page: { next: null },
+      });
+    }
+    if (
+      url.pathname === "/api/v1/deliveries/latest" &&
+      url.searchParams.get("report_ids") === olderId &&
+      tailFails
+    ) {
+      sibling = request;
+      return new Promise<Response>((resolve) => {
+        finishSibling = resolve;
+      });
+    }
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const history = await screen.findByRole("region", { name: "Report history" });
+  const user = userEvent.setup();
+  await user.click(within(history).getByRole("button", { name: "Next" }));
+  await screen.findByText("Case references unavailable");
+  expect(sibling?.signal.aborted).toBe(true);
+  expect(within(history).getByText("Page 1")).toBeTruthy();
+  expect(document.getElementById(`report-${reportId}`)).not.toBeNull();
+  expect(document.getElementById(`report-${olderId}`)).toBeNull();
+  tailFails = false;
+  await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  await within(history).findByText("Page 2");
+  await act(async () => {
+    finishSibling?.(
+      Response.json({ data: [{ report_id: olderId, status: "failed", attempt_count: 99 }] }),
+    );
+  });
+  expect(screen.queryByText("×99")).toBeNull();
+  expect(document.getElementById(`report-${reportId}`)).toBeNull();
+  expect(document.getElementById(`report-${olderId}`)).not.toBeNull();
+});
+
+test.each(["unchanged", "opposite", "foreign", "unavailable"])(
+  "an automatic setting read with %s evidence keeps the original request blocked",
+  async (condition) => {
+    await i18n.changeLanguage("en");
+    let puts = 0;
+    let gets = 0;
+    let receipt = false;
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/api/v1/report-setting") {
+        if (request.method === "PUT") {
+          puts++;
+          receipt = true;
+          return Response.json({ error: { message: "Response lost" } }, { status: 503 });
+        }
+        gets++;
+        if (receipt && condition === "unavailable")
+          return Response.json(
+            { error: { message: "Setting storage unavailable" } },
+            { status: 500 },
+          );
+        return Response.json({
+          data: !receipt
+            ? setting
+            : {
+                ...setting,
+                id: condition === "foreign" ? olderId : setting.id,
+                revision: condition === "unchanged" ? 1 : 2,
+                automatic_case_reports_enabled: condition !== "opposite",
+              },
+        });
+      }
+      return Response.json({ data: [], page: { next: null } });
+    });
+    render(
+      <AuthenticationContext.Provider
+        value={{ account: { id: "admin-1", role: "admin" } } as Authentication}
+      >
+        <MemoryRouter>
+          <ReportPage />
+        </MemoryRouter>
+      </AuthenticationContext.Provider>,
+    );
+    const user = userEvent.setup();
+    const toggle = await screen.findByRole("switch", { name: "Off" });
+    await user.click(toggle);
+    const panel = screen.getByRole("region", { name: "Automatic Case reports" });
+    const check = await within(panel).findByRole("button", { name: "Check result" });
+    await waitFor(() => expect((check as HTMLButtonElement).disabled).toBe(false));
+    await user.click(check);
+    await waitFor(() =>
+      expect(
+        (within(panel).getByRole("button", { name: "Check result" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    expect(within(panel).getByRole("switch").getAttribute("aria-disabled")).toBe("true");
+    expect(puts).toBe(1);
+    expect(gets).toBe(2);
+  },
+);
+
+test("automatic setting sends nothing when its original revision cannot be saved", async () => {
+  await i18n.changeLanguage("en");
+  let puts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "PUT") puts++;
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: "admin-1", role: "admin" } } as Authentication}
+    >
+      <MemoryRouter>
+        <ReportPage />
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  const toggle = await screen.findByRole("switch", { name: "Off" });
+  const storage = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => {
+    throw new Error("Storage unavailable");
+  });
+  try {
+    await userEvent.setup().click(toggle);
+    await screen.findByText(
+      "The setting request could not be saved or read. No change will be sent.",
+    );
+    expect(puts).toBe(0);
+  } finally {
+    storage.mockRestore();
+  }
+});
+
+test("an accepted setting response cancels an older overlapping refresh instead of reverting the displayed value", async () => {
+  await i18n.changeLanguage("en");
+  let accept: ((response: Response) => void) | undefined;
+  let finishOldRead: ((response: Response) => void) | undefined;
+  let oldRead: Request | undefined;
+  let reads = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/report-setting") {
+      if (request.method === "PUT")
+        return new Promise<Response>((resolve) => {
+          accept = resolve;
+        });
+      reads++;
+      if (reads === 2) {
+        oldRead = request;
+        return new Promise<Response>((resolve) => {
+          finishOldRead = resolve;
+        });
+      }
+      return Response.json({ data: setting });
+    }
+    return Response.json({ data: [], page: { next: null } });
+  });
+  render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: "admin-1", role: "admin" } } as Authentication}
+    >
+      <MemoryRouter>
+        <ReportPage />
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("switch", { name: "Off" }));
+  await waitFor(() => expect(accept).toBeDefined());
+  await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  await waitFor(() => expect(oldRead).toBeDefined());
+  await act(async () => {
+    accept?.(
+      Response.json({ data: { ...setting, revision: 2, automatic_case_reports_enabled: true } }),
+    );
+  });
+  await screen.findByRole("switch", { name: "On" });
+  expect(oldRead?.signal.aborted).toBe(true);
+  await act(async () => {
+    finishOldRead?.(Response.json({ data: setting }));
+  });
+  expect(screen.getByRole("switch", { name: "On" }).getAttribute("aria-checked")).toBe("true");
+  expect(screen.queryByRole("button", { name: "Check result" })).toBeNull();
+});
+
+test("changing accounts aborts pending Report references, selected body and setting reads and ignores their late responses", async () => {
+  await i18n.changeLanguage("en");
+  let changed = false;
+  let caseReads = 0;
+  const oldReads: Request[] = [];
+  const finish: Array<() => void> = [];
+  wire.mockImplementation(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/reports")
+      return Response.json({
+        data: [{ ...summary, id: changed ? olderId : reportId }],
+        page: { next: null },
+      });
+    if (url.pathname === "/api/v1/cases/summaries") {
+      caseReads++;
+      if (!changed && caseReads === 2) {
+        oldReads.push(request);
+        return new Promise<Response>((resolve) => {
+          finish.push(() =>
+            resolve(
+              Response.json({
+                data: [{ ...reportCase(1), id: caseId, title: "Old private Case" }],
+                page: { next: null },
+              }),
+            ),
+          );
+        });
+      }
+      return Response.json({
+        data: [
+          {
+            ...reportCase(1),
+            id: caseId,
+            title: changed ? "New account Case" : "Old private Case",
+          },
+        ],
+        page: { next: null },
+      });
+    }
+    if (
+      (!changed && url.pathname === "/api/v1/report-setting") ||
+      url.pathname === `/api/v1/reports/${reportId}`
+    ) {
+      oldReads.push(request);
+      return new Promise<Response>((resolve) => {
+        finish.push(() =>
+          resolve(
+            Response.json({
+              data:
+                url.pathname === "/api/v1/report-setting"
+                  ? { ...setting, automatic_case_reports_enabled: true }
+                  : full,
+            }),
+          ),
+        );
+      });
+    }
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  const view = showReportEditor();
+  const user = userEvent.setup();
+  await screen.findByRole("link", { name: "Old private Case" });
+  await user.click(screen.getByRole("button", { name: "Details" }));
+  await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  await waitFor(() => expect(oldReads).toHaveLength(3));
+  changed = true;
+  view.rerender(reportEditor("operator-2"));
+  await screen.findByRole("link", { name: "New account Case" });
+  expect(oldReads.every((request) => request.signal.aborted)).toBe(true);
+  await act(async () => {
+    finish.forEach((resolve) => resolve());
+  });
+  expect(screen.queryByText("Old private Case")).toBeNull();
+  expect(screen.queryByText("The selected recovery was verified.")).toBeNull();
+  expect(screen.getByRole("switch", { name: "Off" }).getAttribute("aria-checked")).toBe("false");
+  expect(document.getElementById(`report-${reportId}`)).toBeNull();
+});
+
+test.each([409, 503])(
+  "a late setting response with status %s preserves the correct request when accounts change",
+  async (status) => {
+    await i18n.changeLanguage("en");
+    let finish: ((response: Response) => void) | undefined;
+    let puts = 0;
+    wire.mockImplementation(async (request: Request) => {
+      if (request.method === "PUT") {
+        puts++;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      if (new URL(request.url).pathname === "/api/v1/report-setting")
+        return Response.json({ data: setting });
+      return Response.json({ data: [], page: { next: null } });
+    });
+    const editor = (id: string) => (
+      <AuthenticationContext.Provider value={{ account: { id, role: "admin" } } as Authentication}>
+        <MemoryRouter>
+          <ReportPage />
+        </MemoryRouter>
+      </AuthenticationContext.Provider>
+    );
+    const view = render(editor("admin-1"));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "Off" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    view.rerender(editor("admin-2"));
+    await screen.findByRole("switch", { name: "Off" });
+    await act(async () => {
+      finish?.(Response.json({ error: { message: "Old account response" } }, { status }));
+    });
+    expect(screen.queryByText("Old account response")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check result" })).toBeNull();
+    view.rerender(editor("admin-1"));
+    const toggle = await screen.findByRole("switch", { name: "Off" });
+    if (status === 503) {
+      expect(screen.getByRole("button", { name: "Check result" })).toBeTruthy();
+      expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    } else {
+      expect(screen.queryByRole("button", { name: "Check result" })).toBeNull();
+      expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
+    }
+    expect(puts).toBe(1);
+  },
+);
+
 test("report history reads one metadata page and loads only the selected body", async () => {
   await i18n.changeLanguage("en");
   sessionStorage.setItem("opsonde.session", "fixture-token");
@@ -628,6 +1090,57 @@ test("report history reads one metadata page and loads only the selected body", 
     "/api/v1/reports?limit=50&after=older-reports",
     "/api/v1/reports?limit=50",
   ]);
+});
+
+test("generation accepted after navigating refreshes the current Report window without returning to the submission page", async () => {
+  await i18n.changeLanguage("en");
+  let accept: ((response: Response) => void) | undefined;
+  const reportReads: Array<string | null> = [];
+  let posts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      posts++;
+      return new Promise<Response>((resolve) => {
+        accept = resolve;
+      });
+    }
+    if (url.pathname === "/api/v1/reports") {
+      const cursor = url.searchParams.get("after");
+      reportReads.push(cursor);
+      return Response.json({
+        data: [{ ...summary, id: cursor ? olderId : reportId }],
+        page: { next: cursor ? null : "older-reports" },
+      });
+    }
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const user = await chooseCompletedCase();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await waitFor(() => expect(accept).toBeDefined());
+  const history = screen.getByRole("region", { name: "Report history" });
+  await user.click(within(history).getByRole("button", { name: "Next" }));
+  await within(history).findByText("Page 2");
+  await act(async () => {
+    accept?.(
+      Response.json(
+        {
+          data: { ...summary, case_id: reportCase(51).id, case_revision: 7 },
+        },
+        { status: 201 },
+      ),
+    );
+  });
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Completed Case" })).toBeNull());
+  expect(within(history).getByText("Page 2")).toBeTruthy();
+  expect(reportReads).toEqual([null, "older-reports", "older-reports"]);
+  expect(posts).toBe(1);
+  expect(document.getElementById(`report-${reportId}`)).toBeNull();
+  expect(document.getElementById(`report-${olderId}`)).not.toBeNull();
 });
 
 test("a refresh started on the first report page cannot replace a newly selected page", async () => {

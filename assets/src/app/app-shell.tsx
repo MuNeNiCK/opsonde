@@ -148,7 +148,7 @@ export function AppShell() {
           </DropdownMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset id="main-content" tabIndex={-1}>
+      <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
         <header className="flex h-14 items-center justify-between border-b px-4">
           <SidebarTrigger aria-label={t("common.toggleNavigation")} />
           <div className="flex items-center gap-1 text-sm text-muted-foreground">

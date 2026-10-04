@@ -916,6 +916,82 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert length(Reports.page_reports!(actor: context.viewer).results) == 50
   end
 
+  @tag report_setting_recovery: true
+  test "Report setting storage failure preserves the revision and a lost accepted response is readable without another update",
+       context do
+    path = "/api/v1/report-setting"
+    original = get_data!(path, context.admin_token)
+
+    body = %{
+      "report_setting" => %{
+        "expected_revision" => original["revision"],
+        "automatic_case_reports_enabled" => false
+      }
+    }
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_report_setting() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'report setting storage unavailable'; END;
+    $$
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER reject_report_setting BEFORE UPDATE ON report_settings FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_report_setting()"
+    )
+
+    try do
+      capture_log(fn ->
+        failed = request(:put, path, body, context.admin_token)
+        assert %{"error" => %{"code" => "internal_error"}} = json_response(failed, 500)
+      end)
+    after
+      Opsonde.Repo.query!("DROP TRIGGER reject_report_setting ON report_settings")
+    end
+
+    assert get_data!(path, context.admin_token) == original
+
+    owner = self()
+    stub = {__MODULE__, make_ref()}
+
+    Req.Test.stub(stub, fn conn ->
+      send(owner, {:setting_request, conn.method})
+      result = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+      if conn.method == "PUT" do
+        assert result.status == 200
+
+        %{
+          result
+          | status: 503,
+            resp_body:
+              Jason.encode!(%{
+                "error" => %{"code" => "response_lost", "message" => "Response lost after commit"}
+              })
+        }
+      else
+        result
+      end
+    end)
+
+    connection =
+      Req.new(
+        base_url: "https://opsonde.example",
+        headers: [{"authorization", "Bearer #{context.admin_token}"}],
+        plug: {Req.Test, stub},
+        retry: false
+      )
+
+    assert {:ok, %{status: 503}} = Req.put(connection, url: path, json: body)
+    assert_receive {:setting_request, "PUT"}
+    assert {:ok, %{status: 200, body: %{"data" => recovered}}} = Req.get(connection, url: path)
+    assert recovered["id"] == original["id"]
+    assert recovered["revision"] == original["revision"] + 1
+    assert recovered["automatic_case_reports_enabled"] == false
+    assert recovered["changed_by_id"] == context.admin.id
+    assert_receive {:setting_request, "GET"}
+    refute_receive {:setting_request, "PUT"}, 0
+  end
+
   test "Report setting is readable but only an Admin can change it", context do
     path = "/api/v1/report-setting"
     shown = get_json(path, context.viewer_token)
