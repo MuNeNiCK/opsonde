@@ -75,6 +75,203 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
            |> get_in(["data", Access.at(0), "check", "status"]) == "passed"
   end
 
+  @tag target_scope: true
+  test "management Method pages retain unchecked connections and page only the selected Target",
+       context do
+    other = create_target!(context.admin_token, "other-host", "host", "custom-os", nil)
+    selected = create_target!(context.admin_token, "selected-host", "host", "custom-os", nil)
+    create_access_method!(context, other, "unrelated", "ssh", [])
+    inactive = create_access_method!(context, selected, "inactive", "ssh", [])
+
+    post_json(
+      "/api/v1/access-methods/#{inactive["id"]}/deactivate",
+      %{"access_method" => %{"expected_revision" => inactive["revision"]}},
+      context.admin_token
+    )
+    |> json_response(200)
+
+    methods =
+      for index <- 1..101 do
+        create_access_method!(context, selected, "unchecked-#{index}", "ssh", [])
+      end
+
+    path = "/api/v1/access-methods?target_id=#{selected["id"]}&active=true&limit=100"
+    first = get_json(path, context.viewer_token) |> json_response(200)
+    assert Enum.map(first["data"], & &1["id"]) == Enum.map(Enum.take(methods, 100), & &1["id"])
+    assert Enum.all?(first["data"], &(&1["check"]["current"] == false))
+    assert first["page"]["next"]
+
+    next =
+      get_json(
+        path <> "&after=" <> URI.encode_www_form(first["page"]["next"]),
+        context.viewer_token
+      )
+
+    assert json_response(next, 200)["data"] == [List.last(methods)]
+    assert json_response(next, 200)["page"]["next"] == nil
+    assert_operation_response(next)
+  end
+
+  @tag target_scope: true
+  test "identity pages exclude other Targets before applying the cursor", context do
+    selected = create_target!(context.admin_token, "identity-host", "host", "custom-os", nil)
+    other = create_target!(context.admin_token, "other-identity-host", "host", "custom-os", nil)
+    alias Opsonde.Targets
+
+    Targets.create_external_identity!(other["id"], "inventory", "hostname", "other",
+      actor: context.admin
+    )
+
+    inactive =
+      Targets.create_external_identity!(selected["id"], "inventory", "hostname", "inactive",
+        actor: context.admin
+      )
+
+    Targets.deactivate_external_identity!(inactive, inactive.revision, actor: context.admin)
+
+    identities =
+      for index <- 1..101 do
+        Targets.create_external_identity!(
+          selected["id"],
+          "inventory",
+          "hostname",
+          "host-#{index}",
+          actor: context.admin
+        )
+      end
+
+    path = "/api/v1/external-identities?target_id=#{selected["id"]}&active=true&limit=100"
+    first = get_json(path, context.operator_token) |> json_response(200)
+    assert Enum.map(first["data"], & &1["id"]) == Enum.map(Enum.take(identities, 100), & &1.id)
+
+    next =
+      get_json(
+        path <> "&after=" <> URI.encode_www_form(first["page"]["next"]),
+        context.operator_token
+      )
+
+    assert [%{"id" => id, "revision" => 1}] = json_response(next, 200)["data"]
+    assert id == List.last(identities).id
+    assert json_response(next, 200)["page"]["next"] == nil
+    assert_operation_response(next)
+
+    assert [%{"id" => inactive_id, "revision" => 2}] =
+             get_json(String.replace(path, "active=true", "active=false"), context.viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+
+    assert inactive_id == inactive.id
+  end
+
+  @tag relationship_scope: true
+  test "relationship pages include both directions without hiding expired active records",
+       context do
+    alias Opsonde.Targets
+    selected = create_target!(context.admin_token, "relation-host", "host", "custom-os", nil)
+    other = create_target!(context.admin_token, "relation-peer", "host", "custom-os", nil)
+    unrelated = create_target!(context.admin_token, "unrelated-host", "host", "custom-os", nil)
+
+    Targets.create_relationship!(other["id"], unrelated["id"], "unrelated", %{}, nil,
+      actor: context.admin
+    )
+
+    inactive =
+      Targets.create_relationship!(selected["id"], other["id"], "inactive", %{}, nil,
+        actor: context.admin
+      )
+
+    Targets.deactivate_relationship!(inactive, inactive.revision, actor: context.admin)
+
+    relationships =
+      for index <- 1..101 do
+        {source, destination} =
+          if rem(index, 2) == 0, do: {other, selected}, else: {selected, other}
+
+        Targets.create_relationship!(
+          source["id"],
+          destination["id"],
+          "edge-#{index}",
+          %{"index" => index},
+          ~U[2000-01-01 00:00:00Z],
+          actor: context.admin
+        )
+      end
+
+    path = "/api/v1/target-relationships?target_id=#{selected["id"]}&active=true&limit=100"
+    first = get_json(path, context.viewer_token) |> json_response(200)
+    assert Enum.map(first["data"], & &1["id"]) == Enum.map(Enum.take(relationships, 100), & &1.id)
+    assert Enum.any?(first["data"], &(&1["source_target_id"] == selected["id"]))
+    assert Enum.any?(first["data"], &(&1["destination_target_id"] == selected["id"]))
+
+    next =
+      get_json(
+        path <> "&after=" <> URI.encode_www_form(first["page"]["next"]),
+        context.viewer_token
+      )
+
+    assert [%{"id" => id, "facts" => %{"index" => 101}}] = json_response(next, 200)["data"]
+    assert id == List.last(relationships).id
+    assert json_response(next, 200)["page"]["next"] == nil
+    assert_operation_response(next)
+  end
+
+  @tag target_scope_contract: true
+  test "scoped management pages preserve read roles and reject malformed scope", context do
+    target = create_target!(context.admin_token, "scope-contract", "host", "custom-os", nil)
+    method = create_access_method!(context, target, "scope-contract", "ssh", [])
+
+    identity =
+      post_data!(
+        "/api/v1/external-identities",
+        %{
+          "external_identity" => %{
+            "target_id" => target["id"],
+            "source" => "inventory",
+            "kind" => "hostname",
+            "value" => "scope-contract"
+          }
+        },
+        context.admin_token
+      )
+
+    peer = create_target!(context.admin_token, "scope-contract-peer", "host", "custom-os", nil)
+    relationship = create_relationship!(context.admin_token, peer, target, "connected_to")
+
+    for {path, record} <- [
+          {"/api/v1/access-methods", method},
+          {"/api/v1/external-identities", identity},
+          {"/api/v1/target-relationships", relationship}
+        ] do
+      scoped = path <> "?target_id=#{target["id"]}&active=true"
+
+      for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+        response = get_json(scoped, token)
+        assert json_response(response, 200)["data"] == [record]
+        assert_operation_response(response)
+      end
+
+      assert response(get_json(scoped, nil), 401)
+
+      for {query, code} <- [
+            {"target_id=not-a-uuid", "validation_failed"},
+            {"active=unknown", "validation_failed"},
+            {"limit=101", "invalid_pagination"},
+            {"after=", "invalid_pagination"}
+          ] do
+        response = get_json(path <> "?" <> query, context.viewer_token)
+        assert json_response(response, 422)["error"]["code"] == code
+        assert_operation_response(response)
+      end
+
+      assert get_json(
+               path <> "?target_id=#{Ecto.UUID.generate()}&active=true",
+               context.viewer_token
+             )
+             |> json_response(200)
+             |> Map.fetch!("data") == []
+    end
+  end
+
   @tag method_detail: true
   test "registered Method detail is reachable beyond the first global page", context do
     target = create_target!(context.admin_token, "method-detail", "host", "custom-os", nil)

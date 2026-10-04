@@ -53,6 +53,14 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
 
   def ref(name), do: Schemas.reference(name)
 
+  def management_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        {:target_id, [in: :query, schema: Schemas.uuid()]},
+        {:active, [in: :query, schema: %Schema{type: :boolean}]}
+      ]
+  end
+
   defp management_boundary do
     resource(
       %{

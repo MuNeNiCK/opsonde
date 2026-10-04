@@ -19,8 +19,16 @@ defmodule Opsonde.Targets.AccessMethod do
     defaults [:read]
 
     read :page do
+      argument :target_id, :uuid
+      argument :active, :boolean
+
+      filter expr(
+               (is_nil(^arg(:target_id)) or target_id == ^arg(:target_id)) and
+                 (is_nil(^arg(:active)) or active == ^arg(:active))
+             )
+
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [inserted_at: :asc, id: :asc])
+      prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc])
     end
 
     read :available_for_target do

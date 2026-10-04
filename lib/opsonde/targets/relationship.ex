@@ -19,6 +19,15 @@ defmodule Opsonde.Targets.Relationship do
     defaults [:read]
 
     read :page do
+      argument :target_id, :uuid
+      argument :active, :boolean
+
+      filter expr(
+               (is_nil(^arg(:target_id)) or source_target_id == ^arg(:target_id) or
+                  destination_target_id == ^arg(:target_id)) and
+                 (is_nil(^arg(:active)) or active == ^arg(:active))
+             )
+
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(sort: [inserted_at: :asc, id: :asc])
     end

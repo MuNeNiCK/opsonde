@@ -163,7 +163,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   operation :identities_index,
     operation_id: "listExternalIdentities",
     summary: "List external identities",
-    parameters: Schemas.pagination_parameters(),
+    parameters: TargetSchemas.management_page_parameters(),
     responses:
       [
         ok:
@@ -215,7 +215,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   operation :access_methods_index,
     operation_id: "listAccessMethods",
     summary: "List Access Methods",
-    parameters: Schemas.pagination_parameters(),
+    parameters: TargetSchemas.management_page_parameters(),
     responses:
       [ok: {"Access Method page", "application/json", TargetSchemas.ref("AccessMethodPage")}] ++
         @list_errors
@@ -284,7 +284,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   operation :relationships_index,
     operation_id: "listTargetRelationships",
     summary: "List Target relationships",
-    parameters: Schemas.pagination_parameters(),
+    parameters: TargetSchemas.management_page_parameters(),
     responses:
       [
         ok:
@@ -443,7 +443,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   def targets_deactivate(_conn, _params), do: {:error, :bad_request}
 
   def identities_index(conn, params) do
-    page(conn, params, &Targets.page_external_identities/1, &TargetSetupJSON.identity/1)
+    page(
+      conn,
+      params,
+      &Targets.page_external_identities(Map.take(params, ~w(target_id active)), &1),
+      &TargetSetupJSON.identity/1
+    )
   end
 
   def identities_create(conn, %{"external_identity" => input}) do
@@ -489,7 +494,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   def identities_deactivate(_conn, _params), do: {:error, :bad_request}
 
   def access_methods_index(conn, params) do
-    page(conn, params, &Targets.page_access_methods/1, &TargetSetupJSON.access_method/1)
+    page(
+      conn,
+      params,
+      &Targets.page_access_methods(Map.take(params, ~w(target_id active)), &1),
+      &TargetSetupJSON.access_method/1
+    )
   end
 
   def access_methods_show(conn, %{"id" => id}) do
@@ -574,7 +584,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   def access_methods_check(_conn, _params), do: {:error, :bad_request}
 
   def relationships_index(conn, params) do
-    page(conn, params, &Targets.page_relationships/1, &TargetSetupJSON.relationship/1)
+    page(
+      conn,
+      params,
+      &Targets.page_relationships(Map.take(params, ~w(target_id active)), &1),
+      &TargetSetupJSON.relationship/1
+    )
   end
 
   def relationships_create(conn, %{"relationship" => input}) do

@@ -10067,6 +10067,25 @@
               "minLength": 1,
               "type": "string"
             }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -11410,6 +11429,25 @@
               "maxLength": 16384,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -13280,6 +13318,25 @@
               "maxLength": 16384,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

@@ -2,6 +2,7 @@ defmodule OpsondeCLI.TargetAPITest do
   use OpsondeWeb.ConnCase, async: false
 
   import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Providers, Targets}
   alias OpsondeCLI.{CLI, Config}
@@ -346,6 +347,157 @@ defmodule OpsondeCLI.TargetAPITest do
     assert reread["check"]["status"] == "passed"
     assert reread["capabilities"] == []
     refute error =~ "private-cli-token"
+  end
+
+  @tag target_scope_cli: true
+  test "CLI scopes management lists and keeps their cursor and inactive selection", context do
+    provider =
+      Providers.create_provider!(
+        "scope",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "scope-fixture-token"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    selected =
+      Targets.create_target!("scope-host", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    other =
+      Targets.create_target!("scope-peer", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    unrelated =
+      Targets.create_target!("scope-unrelated", "host", "custom-os", %{}, nil,
+        actor: context.admin
+      )
+
+    for {target, label} <- [
+          {other, "unrelated"},
+          {selected, "inactive"},
+          {selected, "first"},
+          {selected, "second"}
+        ] do
+      method =
+        Targets.create_access_method!(
+          target.id,
+          provider.id,
+          label,
+          "ssh",
+          "ssh://192.0.2.1:22",
+          provider.revision,
+          if(label == "second", do: 0, else: 100),
+          [],
+          actor: context.admin
+        )
+
+      identity =
+        Targets.create_external_identity!(target.id, "inventory", "hostname", label,
+          actor: context.admin
+        )
+
+      {source, destination} =
+        case label do
+          "unrelated" -> {other, unrelated}
+          "second" -> {other, selected}
+          _ -> {selected, other}
+        end
+
+      relation =
+        Targets.create_relationship!(source.id, destination.id, label, %{}, nil,
+          actor: context.admin
+        )
+
+      if label == "inactive" do
+        Targets.deactivate_access_method!(method, method.revision, actor: context.admin)
+        Targets.deactivate_external_identity!(identity, identity.revision, actor: context.admin)
+        Targets.deactivate_relationship!(relation, relation.revision, actor: context.admin)
+      end
+    end
+
+    for {resource, label_key, first_name, second_name} <- [
+          {"access-method", "name", "second", "first"},
+          {"identity", "value", "first", "second"},
+          {"relationship", "kind", "first", "second"}
+        ] do
+      args = [resource, "list", "--target-id", selected.id, "--active", "--limit", "1"]
+      first = capture_io(fn -> assert CLI.run(args, context.runtime) == 0 end) |> Jason.decode!()
+      assert [%{^label_key => ^first_name}] = first["data"]
+      assert first["page"]["next"]
+
+      tail =
+        capture_io(fn ->
+          assert CLI.run(args ++ ["--after", first["page"]["next"]], context.runtime) == 0
+        end)
+        |> Jason.decode!()
+
+      assert [%{^label_key => ^second_name}] = tail["data"]
+      assert tail["page"]["next"] == nil
+
+      assert [%{^label_key => "inactive", "revision" => 2}] =
+               cli_data!(context, [resource, "list", "--target-id", selected.id, "--no-active"])
+    end
+  end
+
+  @tag target_scope_fault: true
+  test "scoped public reads preserve storage faults instead of reporting an empty collection",
+       context do
+    selected =
+      Targets.create_target!("fault-host", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    for {resource, path, table, action} <- [
+          {"access-method", "/access-methods", "access_methods", &Targets.page_access_methods/2},
+          {"identity", "/external-identities", "external_identities",
+           &Targets.page_external_identities/2},
+          {"relationship", "/target-relationships", "relationships",
+           &Targets.page_relationships/2}
+        ] do
+      Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN revision TO unavailable_revision")
+
+      try do
+        assert {:error, %Ash.Error.Unknown{} = cause} =
+                 action.(%{target_id: selected.id, active: true},
+                   actor: context.admin,
+                   page: [limit: 1]
+                 )
+
+        assert Exception.message(cause) =~ "does not exist"
+
+        capture_log(fn ->
+          response =
+            OpsondeCLI.Client.request(client!(context), :get, path, nil,
+              target_id: selected.id,
+              active: true
+            )
+
+          assert {:error, :http, 500, %{"error" => %{"code" => "internal_error"}}} = response
+
+          error =
+            capture_io(:stderr, fn ->
+              assert CLI.run(
+                       [resource, "list", "--target-id", selected.id, "--active"],
+                       context.runtime
+                     ) == 4
+            end)
+
+          assert Jason.decode!(error)["error"]["code"] == "internal_error"
+        end)
+      after
+        Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN unavailable_revision TO revision")
+      end
+
+      assert cli_data!(context, [resource, "list", "--target-id", selected.id, "--active"]) == []
+    end
+  end
+
+  defp client!(context) do
+    {:ok, config} = Config.load(context.runtime[:config_path])
+
+    {:ok, client} =
+      OpsondeCLI.Client.new(config["server"], config["token"], context.runtime[:request_options])
+
+    client
   end
 
   defp cli_data!(context, args, input \\ nil) do
