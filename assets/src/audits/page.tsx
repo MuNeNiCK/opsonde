@@ -1,19 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
-import { FormMultiSelect, FormSelect } from "@/components/form-select";
+import { AuditCreateForm } from "@/audits/create-form";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 
 type AuditRun = components["schemas"]["AuditRun"];
 type AuditSchedule = components["schemas"]["AuditSchedule"];
@@ -61,7 +58,6 @@ export function AuditPage() {
   const { t, i18n } = useTranslation();
   const { account } = useAuthentication();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [scope, setScope] = useState<"targets" | "boundary">("targets");
   const [pending, setPending] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<string | null>(null);
@@ -81,45 +77,6 @@ export function AuditPage() {
       active = false;
     };
   }, [t]);
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const targetIds = scope === "targets" ? form.getAll("target_ids").map(String) : [];
-    const boundary = scope === "boundary" ? formValue(form, "management_boundary_id") : null;
-    if ((scope === "targets" && targetIds.length === 0) || (scope === "boundary" && !boundary)) {
-      setError(t("audits.scopeRequired"));
-      return;
-    }
-
-    setPending("create");
-    setError("");
-    try {
-      await apiClient.POST("/api/v1/audit-schedules", {
-        body: {
-          audit_schedule: {
-            registration_id: crypto.randomUUID(),
-            name: formValue(form, "name"),
-            desired_outcome: formValue(form, "desired_outcome"),
-            timezone: formValue(form, "timezone"),
-            cron_expression: formValue(form, "cron_expression"),
-            report_language: formValue(form, "report_language") === "ja" ? "ja" : "en",
-            target_ids: targetIds,
-            management_boundary_id: boundary || null,
-          },
-        },
-      });
-      formElement.reset();
-      setScope("targets");
-      setShowCreate(false);
-      await refresh();
-    } catch {
-      setError(t("audits.requestFailed"));
-    } finally {
-      setPending(null);
-    }
-  }
 
   async function deactivate(schedule: AuditSchedule) {
     setPending(schedule.id);
@@ -174,91 +131,14 @@ export function AuditPage() {
         </Alert>
       )}
 
-      {canManage && showCreate && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("audits.addSchedule")}</CardTitle>
-            <CardDescription>{t("audits.scheduleDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={create}>
-              <Field id="audit-name" name="name" label={t("audits.name")} />
-              <Field
-                id="audit-timezone"
-                name="timezone"
-                label={t("audits.timezone")}
-                defaultValue={Intl.DateTimeFormat().resolvedOptions().timeZone}
-              />
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="audit-desired-outcome">{t("audits.desiredOutcome")}</Label>
-                <Textarea id="audit-desired-outcome" name="desired_outcome" required />
-              </div>
-              <Field
-                id="audit-cron"
-                name="cron_expression"
-                label={t("audits.cron")}
-                defaultValue="0 * * * *"
-              />
-              <div className="space-y-2">
-                <Label htmlFor="audit-language">{t("audits.reportLanguage")}</Label>
-                <FormSelect
-                  id="audit-language"
-                  name="report_language"
-                  defaultValue={i18n.resolvedLanguage === "ja" ? "ja" : "en"}
-                  options={[
-                    { value: "en", label: "English" },
-                    { value: "ja", label: "日本語" },
-                  ]}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="audit-scope">{t("audits.scope")}</Label>
-                <FormSelect
-                  id="audit-scope"
-                  value={scope}
-                  onValueChange={(value) => value && setScope(value as "targets" | "boundary")}
-                  options={[
-                    { value: "targets", label: t("audits.selectedTargets") },
-                    { value: "boundary", label: t("audits.managementBoundary") },
-                  ]}
-                />
-              </div>
-              {scope === "targets" ? (
-                <div className="space-y-2">
-                  <Label htmlFor="audit-targets">{t("audits.targets")}</Label>
-                  <FormMultiSelect
-                    id="audit-targets"
-                    name="target_ids"
-                    required
-                    placeholder={t("audits.targets")}
-                    options={snapshot.targets
-                      .filter((target) => target.active)
-                      .map((target) => ({ value: target.id, label: target.name }))}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label htmlFor="audit-boundary">{t("audits.managementBoundary")}</Label>
-                  <FormSelect
-                    id="audit-boundary"
-                    name="management_boundary_id"
-                    required
-                    placeholder={t("audits.chooseBoundary")}
-                    options={snapshot.boundaries
-                      .filter((item) => item.active)
-                      .map((item) => ({ value: item.id, label: item.name }))}
-                  />
-                </div>
-              )}
-              <div className="md:col-span-2">
-                <Button type="submit" disabled={pending !== null}>
-                  {pending === "create" && <Spinner />}
-                  {t("audits.create")}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+      {canManage && (
+        <AuditCreateForm
+          open={showCreate}
+          onCreated={async () => {
+            await refresh();
+            setShowCreate(false);
+          }}
+        />
       )}
 
       <section className="space-y-4">
@@ -429,28 +309,6 @@ function Metric({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 break-words">{value}</dd>
     </div>
   );
-}
-function Field({
-  id,
-  name,
-  label,
-  defaultValue,
-}: {
-  id: string;
-  name: string;
-  label: string;
-  defaultValue?: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <Input id={id} name={name} defaultValue={defaultValue} required />
-    </div>
-  );
-}
-function formValue(form: FormData, name: string) {
-  const value = form.get(name);
-  return typeof value === "string" ? value : "";
 }
 function formatDate(value: string, locale = "en") {
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(

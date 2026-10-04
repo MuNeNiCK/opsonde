@@ -899,6 +899,12 @@ const en = {
       chooseBoundary: "Choose a boundary",
       scopeRequired: "Select at least one Target or one management boundary.",
       create: "Create schedule",
+      creationUnknown: "Registration could not be confirmed.",
+      creationSaveFailed: "Could not save the request. No schedule was submitted.",
+      creationReceiptUnavailable:
+        "The saved registration request could not be read. No new schedule will be submitted.",
+      checkRegistration: "Check registration result",
+      registrationConfirmed: "Registered: {{name}}",
       schedules: "Schedules",
       active: "Active",
       inactive: "Inactive",
