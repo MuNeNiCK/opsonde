@@ -33,6 +33,8 @@ export function PagedSelect<T extends { id: string; name: string }>({
     <div className="space-y-2" role="group" aria-label={label}>
       <Label htmlFor={id}>{label}</Label>
       <FormSelect
+        // Reset the Select's item registration when an off-page selection is replaced.
+        key={selected?.id ?? ""}
         id={id}
         value={selected?.id ?? ""}
         placeholder={placeholder}

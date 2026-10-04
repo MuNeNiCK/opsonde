@@ -1,9 +1,13 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
+import { PageControls } from "@/components/page-controls";
+import { PagedSelect } from "@/components/paged-select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,63 +16,110 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 
-type Provider = components["schemas"]["Provider"];
+type Provider = components["schemas"]["ProviderSummary"];
 type InventoryImport = components["schemas"]["InventoryImport"];
-type InventoryImportRow = components["schemas"]["InventoryImportRow"];
-
-type Props = {
-  providers: Provider[];
-  imports: InventoryImport[];
-  canManage: boolean;
-  onRefresh: () => Promise<void>;
-  onError: (message: string) => void;
-};
 
 function value(form: FormData, name: string) {
   const entry = form.get(name);
   return typeof entry === "string" ? entry : "";
 }
 
-export function InventoryImportSection({
-  providers,
-  imports,
-  canManage,
-  onRefresh,
-  onError,
-}: Props) {
+export function InventoryImportSection({ canManage }: { canManage: boolean }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(imports[0]?.id ?? null);
-  const [rows, setRows] = useState<InventoryImportRow[]>([]);
-  const inventoryProviders = providers.filter(
-    (provider) =>
-      provider.kind === "inventory" &&
-      provider.enabled &&
-      provider.check.status === "passed" &&
-      provider.check.checked_revision === provider.revision,
-  );
-  const selected = imports.find((item) => item.id === selectedId) ?? null;
-
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
+  const [error, setError] = useState("");
+  const [header, setHeader] = useState<{
+    id: string;
+    record: InventoryImport | null;
+    error: unknown;
+  } | null>(null);
+  const mounted = useRef(false);
+  const selectedRead = useRef<AbortController | null>(null);
   useEffect(() => {
-    if (!selectedId) return;
-    let active = true;
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/inventory-imports/{id}/rows", {
-          params: { path: { id: selectedId }, query: { limit: 100, after: after ?? undefined } },
-        })
-        .then(apiData),
-    )
-      .then((next) => {
-        if (active) setRows(next);
-      })
-      .catch(() => {
-        if (active) onError(t("targets.requestFailed"));
-      });
+    mounted.current = true;
     return () => {
-      active = false;
+      mounted.current = false;
+      selectedRead.current?.abort();
     };
-  }, [onError, selectedId, t]);
+  }, []);
+  const history = usePagedData(
+    useCallback(async (after: string | undefined, signal: AbortSignal) => {
+      const result = apiData(
+        await apiClient.GET("/api/v1/inventory-imports", {
+          params: { query: { limit: 50, after } },
+          signal,
+        }),
+      );
+      if (!signal.aborted) setSelectedId((current) => current ?? result.data[0]?.id ?? null);
+      return result;
+    }, []),
+  );
+  const rowPage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) => {
+        if (!selectedId) return Promise.resolve({ data: [], page: { next: null } });
+        return apiClient
+          .GET("/api/v1/inventory-imports/{id}/rows/summaries", {
+            params: { path: { id: selectedId }, query: { limit: 50, after } },
+            signal,
+          })
+          .then(apiData);
+      },
+      [selectedId],
+    ),
+  );
+  const loadProviders = useCallback(async (after: string | undefined, signal: AbortSignal) => {
+    const result = apiData(
+      await apiClient.GET("/api/v1/providers/summaries", {
+        params: { query: { kinds: ["inventory"], eligible: true, limit: 50, after } },
+        querySerializer: commaSeparatedQuery,
+        signal,
+      }),
+    );
+    if (!signal.aborted) setSelectedProvider((current) => current ?? result.data[0] ?? null);
+    return result;
+  }, []);
+  const readSelected = useCallback(async () => {
+    if (!selectedId || !mounted.current) return;
+    selectedRead.current?.abort();
+    const controller = new AbortController();
+    selectedRead.current = controller;
+    return Promise.resolve()
+      .then(() =>
+        apiClient.GET("/api/v1/inventory-imports/{id}", {
+          params: { path: { id: selectedId } },
+          signal: controller.signal,
+        }),
+      )
+      .then(apiData)
+      .then((result) => {
+        if (!controller.signal.aborted)
+          setHeader({ id: selectedId, record: result.data, error: null });
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) {
+          setHeader((previous) => ({
+            id: selectedId,
+            record: previous?.id === selectedId ? previous.record : null,
+            error: cause,
+          }));
+          throw cause;
+        }
+      });
+  }, [selectedId]);
+  useEffect(() => {
+    void readSelected().catch(() => {});
+    return () => selectedRead.current?.abort();
+  }, [readSelected]);
+  const currentHeader = header?.id === selectedId ? header : null;
+  const selected = currentHeader?.record ?? null;
+  const rows = rowPage.view?.data ?? [];
+  async function refresh() {
+    setError("");
+    await Promise.allSettled([history.retry(), readSelected(), rowPage.retry()]);
+  }
 
   async function mutate(
     key: string,
@@ -76,16 +127,19 @@ export function InventoryImportSection({
     form?: HTMLFormElement,
   ) {
     setPending(key);
-    onError("");
+    setError("");
     try {
       const next = await action();
+      if (!mounted.current) return;
+      selectedRead.current?.abort();
       setSelectedId(next.id);
+      setHeader({ id: next.id, record: next, error: null });
       form?.reset();
-      await onRefresh();
+      await history.retry();
     } catch {
-      onError(t("targets.requestFailed"));
+      if (mounted.current) setError(t("targets.requestFailed"));
     } finally {
-      setPending(null);
+      if (mounted.current) setPending(null);
     }
   }
 
@@ -113,7 +167,7 @@ export function InventoryImportSection({
     event.preventDefault();
     const element = event.currentTarget;
     const form = new FormData(element);
-    const provider = inventoryProviders.find((item) => item.id === value(form, "provider_id"));
+    const provider = selectedProvider;
     if (!provider) return;
     await mutate(
       "provider-preview",
@@ -165,6 +219,19 @@ export function InventoryImportSection({
         <p className="mt-1 text-sm text-muted-foreground">{t("targets.importDescription")}</p>
       </div>
 
+      {!!(error || history.error || currentHeader?.error || rowPage.error) && (
+        <Alert variant="destructive">
+          <AlertDescription>{error || t("targets.requestFailed")}</AlertDescription>
+        </Alert>
+      )}
+      <Button
+        variant="outline"
+        disabled={pending !== null || history.pending || rowPage.pending}
+        onClick={() => void refresh()}
+      >
+        {t("common.refresh")}
+      </Button>
+
       {canManage && (
         <div className="grid gap-4 xl:grid-cols-2">
           <Card className="min-w-0">
@@ -207,16 +274,13 @@ export function InventoryImportSection({
             <CardContent>
               <form className="grid min-w-0 gap-4 md:grid-cols-2" onSubmit={previewProvider}>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="import-provider">{t("targets.connection")}</Label>
-                  <FormSelect
+                  <PagedSelect
                     id="import-provider"
-                    name="provider_id"
-                    required
-                    defaultValue={inventoryProviders[0]?.id}
-                    options={inventoryProviders.map((provider) => ({
-                      value: provider.id,
-                      label: provider.name,
-                    }))}
+                    label={t("targets.connection")}
+                    selected={selectedProvider}
+                    onChange={setSelectedProvider}
+                    load={loadProviders}
+                    disabled={pending !== null}
                   />
                 </div>
                 <div className="space-y-2">
@@ -250,7 +314,7 @@ export function InventoryImportSection({
                 <Button
                   type="submit"
                   className="md:col-span-2 md:w-fit"
-                  disabled={pending !== null || inventoryProviders.length === 0}
+                  disabled={pending !== null || !selectedProvider}
                 >
                   {pending === "provider-preview" ? <Spinner /> : <Plus />}
                   {t("targets.preview")}
@@ -266,15 +330,26 @@ export function InventoryImportSection({
           <CardHeader>
             <CardTitle>{t("targets.importHistory")}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {imports.length === 0 && (
+          <CardContent className="space-y-2" role="region" aria-label={t("targets.importHistory")}>
+            {history.pending && <Spinner />}
+            {history.view && (
+              <PageControls
+                index={history.view.index}
+                hasNext={!!history.view.page.next}
+                pending={history.pending}
+                previous={history.previous}
+                next={history.next}
+              />
+            )}
+            {history.view?.data.length === 0 && !history.pending && !history.error && (
               <p className="text-sm text-muted-foreground">{t("targets.noImports")}</p>
             )}
-            {imports.map((item) => (
+            {history.view?.data.map((item) => (
               <Button
                 key={item.id}
                 variant={item.id === selectedId ? "secondary" : "ghost"}
                 className="h-auto w-full justify-between py-3"
+                disabled={pending !== null || history.pending}
                 onClick={() => setSelectedId(item.id)}
               >
                 <span className="min-w-0 truncate">{item.source}</span>
@@ -299,19 +374,36 @@ export function InventoryImportSection({
                 )}
               </div>
               {canManage && selected?.status === "previewed" && selected.error_count === 0 && (
-                <Button disabled={pending !== null} onClick={() => void applySelected()}>
+                <Button
+                  disabled={pending !== null || !!currentHeader?.error}
+                  onClick={() => void applySelected()}
+                >
                   {pending === `apply-${selected.id}` && <Spinner />}
                   {t("targets.apply")}
                 </Button>
               )}
             </div>
           </CardHeader>
-          <CardContent>
-            {!selected ? (
+          <CardContent role="region" aria-label={t("targets.importPreview")}>
+            {selectedId && !currentHeader && <Spinner />}
+            {rowPage.pending && selectedId && <Spinner />}
+            {selected && rowPage.view && (
+              <PageControls
+                index={rowPage.view.index}
+                hasNext={!!rowPage.view.page.next}
+                pending={rowPage.pending}
+                previous={rowPage.previous}
+                next={rowPage.next}
+              />
+            )}
+            {!selectedId ? (
               <p className="text-sm text-muted-foreground">{t("targets.selectImport")}</p>
-            ) : rows.length === 0 ? (
+            ) : selected &&
+              !rowPage.pending &&
+              !rowPage.error &&
+              rowPage.view?.data.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t("targets.noImportRows")}</p>
-            ) : (
+            ) : selected ? (
               <div className="space-y-2">
                 {rows.map((row) => (
                   <div key={row.id} className="rounded-md border p-3 text-sm">
@@ -333,7 +425,7 @@ export function InventoryImportSection({
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       </div>
