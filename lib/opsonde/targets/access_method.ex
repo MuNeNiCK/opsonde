@@ -28,7 +28,14 @@ defmodule Opsonde.Targets.AccessMethod do
              )
 
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc])
+
+      prepare build(
+                select:
+                  ~w(id target_id provider_id name method endpoint provider_revision priority
+                     capabilities check_status check_message checked_at checked_target_revision
+                     observed_capabilities active revision inserted_at updated_at)a,
+                sort: [priority: :asc, inserted_at: :asc, id: :asc]
+              )
     end
 
     read :available_for_target do

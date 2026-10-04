@@ -322,6 +322,46 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   end
 
   @tag target_scope: true
+  @tag method_projection: true
+  test "management Method pages do not hydrate the execution catalog and preserve checked state",
+       context do
+    target = create_target!(context.admin_token, "projection-host", "host", "custom-os", nil)
+    method = create_access_method!(context, target, "projection-method", "ssh", [])
+
+    checked =
+      post_json(
+        "/api/v1/access-methods/#{method["id"]}/check",
+        %{"access_method" => %{"expected_revision" => method["revision"]}},
+        context.admin_token
+      )
+      |> json_response(200)
+      |> Map.fetch!("data")
+
+    assert checked["check"]["current"] == true
+
+    assert {:ok, page} =
+             Opsonde.Targets.page_access_methods(
+               %{target_id: target["id"], active: true},
+               actor: context.admin,
+               page: [limit: 50]
+             )
+
+    assert [row] = page.results
+    assert row.check_current == true
+    refute Ash.Resource.selected?(row, :operation_catalog)
+    refute Ash.Resource.selected?(row, :check_attempt_id)
+
+    response =
+      get_json(
+        "/api/v1/access-methods?target_id=#{target["id"]}&active=true&limit=50",
+        context.viewer_token
+      )
+
+    assert json_response(response, 200)["data"] == [checked]
+    assert_operation_response(response)
+  end
+
+  @tag target_scope: true
   test "identity pages exclude other Targets before applying the cursor", context do
     selected = create_target!(context.admin_token, "identity-host", "host", "custom-os", nil)
     other = create_target!(context.admin_token, "other-identity-host", "host", "custom-os", nil)
