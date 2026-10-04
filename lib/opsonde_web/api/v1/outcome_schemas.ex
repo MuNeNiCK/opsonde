@@ -169,6 +169,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
     wrapped(
       :audit_schedule,
       %{
+        registration_id: Schemas.uuid(),
         name: string(1, 120),
         desired_outcome: string(1, 2_000),
         timezone: string(1, 120),
@@ -177,7 +178,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
         target_ids: %Schema{type: :array, items: Schemas.uuid()},
         management_boundary_id: nullable_uuid()
       },
-      ~w(name desired_outcome timezone cron_expression report_language)a
+      ~w(registration_id name desired_outcome timezone cron_expression report_language)a
     )
   end
 

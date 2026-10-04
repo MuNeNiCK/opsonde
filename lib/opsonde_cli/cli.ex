@@ -182,6 +182,10 @@ defmodule OpsondeCLI.CLI do
         {%Route{method: :post, path: "/providers"}, %{"provider" => %{"registration_id" => id}}} ->
           %{"registration_id" => id}
 
+        {%Route{method: :post, path: "/audit-schedules"},
+         %{"audit_schedule" => %{"registration_id" => id}}} ->
+          %{"registration_id" => id}
+
         _other ->
           %{}
       end
@@ -350,7 +354,7 @@ defmodule OpsondeCLI.CLI do
          {:ok, encoded} <- read_input(path, runtime_options),
          {:ok, decoded} when is_map(decoded) <- Jason.decode(encoded) do
       input =
-        if route.method == :post and route.path == "/providers",
+        if route.method == :post and route.path in ["/providers", "/audit-schedules"],
           do: Map.put_new_lazy(decoded, "registration_id", &Ash.UUID.generate/0),
           else: decoded
 
@@ -546,7 +550,11 @@ defmodule OpsondeCLI.CLI do
       |> Map.merge(context)
     )
 
-    if status == 401, do: 3, else: 4
+    cond do
+      context["outcome"] == "unknown" -> Map.fetch!(@exit, :unknown)
+      status == 401 -> 3
+      true -> 4
+    end
   end
 
   defp transport_error(message, context \\ %{}) do

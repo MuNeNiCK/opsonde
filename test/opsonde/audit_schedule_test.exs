@@ -52,6 +52,7 @@ defmodule Opsonde.AuditScheduleTest do
   test "an audit schedule cannot persist an empty desired outcome", context do
     assert {:error, %Ash.Error.Invalid{}} =
              Audits.schedule_audit(
+               Ash.UUID.generate(),
                "empty-outcome-audit",
                "  ",
                "Etc/UTC",
@@ -246,6 +247,7 @@ defmodule Opsonde.AuditScheduleTest do
   test "only an administrator can create a valid one-scope schedule", context do
     assert {:error, %Ash.Error.Forbidden{}} =
              Audits.schedule_audit(
+               Ash.UUID.generate(),
                "viewer-audit",
                "Inspect storage health",
                "Etc/UTC",
@@ -258,6 +260,7 @@ defmodule Opsonde.AuditScheduleTest do
 
     assert {:error, _error} =
              Audits.schedule_audit(
+               Ash.UUID.generate(),
                "two-scopes",
                "Inspect storage health",
                "Etc/UTC",
@@ -270,6 +273,7 @@ defmodule Opsonde.AuditScheduleTest do
 
     assert {:error, _error} =
              Audits.schedule_audit(
+               Ash.UUID.generate(),
                "no-scope",
                "Inspect storage health",
                "Etc/UTC",
@@ -283,6 +287,7 @@ defmodule Opsonde.AuditScheduleTest do
 
   defp schedule!(context, name, language, target_ids, boundary_id) do
     Audits.schedule_audit!(
+      Ash.UUID.generate(),
       name,
       "Inspect storage health",
       "Etc/UTC",

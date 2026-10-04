@@ -3495,6 +3495,8 @@ export interface components {
                 /** Format: uuid */
                 management_boundary_id?: string | null;
                 name: string;
+                /** Format: uuid */
+                registration_id: string;
                 /** @enum {string} */
                 report_language: "en" | "ja";
                 target_ids?: string[];

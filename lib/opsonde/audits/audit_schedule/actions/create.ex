@@ -93,6 +93,7 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
   defp create_record(arguments, next_run_at) do
     Audits.create_audit_schedule_record(
       %{
+        registration_id: arguments.registration_id,
         name: arguments.name,
         objective: arguments.objective,
         timezone: arguments.timezone,
@@ -108,8 +109,15 @@ defmodule Opsonde.Audits.AuditSchedule.Actions.Create do
   end
 
   defp enqueue(schedule) do
-    schedule
-    |> Opsonde.Audits.AuditSchedule.WakeWorker.job()
-    |> Oban.insert()
+    result =
+      schedule
+      |> Opsonde.Audits.AuditSchedule.WakeWorker.job()
+      |> Oban.insert(retry: false, on_exhausted: :log)
+
+    case result do
+      {:ok, %Oban.Job{id: id} = job} when is_integer(id) -> {:ok, job}
+      {:ok, _unsaved_job} -> {:error, :audit_wake_job_not_saved}
+      {:error, _error} = error -> error
+    end
   end
 end

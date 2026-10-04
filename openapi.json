@@ -6520,6 +6520,10 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "registration_id": {
+                "format": "uuid",
+                "type": "string"
+              },
               "report_language": {
                 "enum": [
                   "en",
@@ -6541,6 +6545,7 @@
               }
             },
             "required": [
+              "registration_id",
               "name",
               "desired_outcome",
               "timezone",

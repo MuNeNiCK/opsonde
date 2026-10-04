@@ -81,7 +81,7 @@ defmodule OpsondeCLI.TargetAPITest do
         capture_io(Jason.encode!(input), fn ->
           stderr =
             capture_io(:stderr, fn ->
-              assert CLI.run(["provider", "create", "--input", "-"], context.runtime) == 4
+              assert CLI.run(["provider", "create", "--input", "-"], context.runtime) == 15
             end)
 
           send(owner, {:error_output, stderr})

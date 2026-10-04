@@ -96,6 +96,7 @@ defmodule Opsonde.PeriodReportTest do
     schedule =
       Audits.create_audit_schedule_record!(
         %{
+          registration_id: Ash.UUID.generate(),
           name: "period-audit",
           objective: "Inspect service",
           timezone: "Etc/UTC",

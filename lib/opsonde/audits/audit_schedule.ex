@@ -43,6 +43,9 @@ defmodule Opsonde.Audits.AuditSchedule do
     end
 
     create :create_record do
+      argument :registration_id, :uuid, allow_nil?: false
+      change set_attribute(:id, arg(:registration_id))
+
       accept [
         :name,
         :objective,
@@ -78,6 +81,8 @@ defmodule Opsonde.Audits.AuditSchedule do
     action :schedule, :struct do
       constraints instance_of: __MODULE__
       transaction? false
+
+      argument :registration_id, :uuid, allow_nil?: false
 
       argument :name, :string,
         allow_nil?: false,

@@ -15,6 +15,7 @@ defmodule Opsonde.Audits do
       define :schedule_audit,
         action: :schedule,
         args: [
+          :registration_id,
           :name,
           :objective,
           :timezone,

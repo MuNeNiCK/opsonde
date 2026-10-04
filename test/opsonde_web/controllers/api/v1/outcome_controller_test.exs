@@ -34,6 +34,226 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     }
   end
 
+  @tag audit_registration: true
+  test "caller identity locates the exact Audit schedule without permitting an overwrite",
+       context do
+    boundary =
+      Targets.create_management_boundary!("registered-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    id = "20000000-0000-4000-8000-000000000051"
+
+    input = %{"audit_schedule" => audit_registration(boundary.id, id)}
+
+    created = post_json("/api/v1/audit-schedules", input, context.admin_token)
+    assert %{"data" => %{"id" => ^id, "revision" => 1}} = json_response(created, 201)
+    assert_operation_response(created)
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      selected = get_json("/api/v1/audit-schedules/#{id}", token)
+
+      assert %{"data" => %{"id" => ^id, "name" => "Original audit"}} =
+               json_response(selected, 200)
+
+      assert_operation_response(selected)
+    end
+
+    conflicting = put_in(input, ["audit_schedule", "name"], "Different audit")
+
+    assert %{"error" => %{"code" => "conflict"}} =
+             post_json("/api/v1/audit-schedules", conflicting, context.admin_token)
+             |> json_response(409)
+
+    assert %{"data" => %{"name" => "Original audit", "revision" => 1}} =
+             get_json("/api/v1/audit-schedules/#{id}", context.admin_token) |> json_response(200)
+  end
+
+  @tag audit_registration: true
+  test "Audit registration requires a valid original identity and current creation authority",
+       context do
+    boundary =
+      Targets.create_management_boundary!("unregistered-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    id = "20000000-0000-4000-8000-000000000052"
+    input = audit_registration(boundary.id, id)
+
+    for {invalid, status} <- [
+          {Map.delete(input, "registration_id"), 400},
+          {%{input | "registration_id" => "not-a-uuid"}, 422},
+          {%{input | "registration_id" => nil}, 422}
+        ] do
+      assert %{"error" => _} =
+               post_json(
+                 "/api/v1/audit-schedules",
+                 %{"audit_schedule" => invalid},
+                 context.admin_token
+               )
+               |> json_response(status)
+    end
+
+    for token <- [context.operator_token, context.viewer_token] do
+      assert %{"error" => %{"code" => "forbidden"}} =
+               post_json("/api/v1/audit-schedules", %{"audit_schedule" => input}, token)
+               |> json_response(403)
+    end
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             get_json("/api/v1/audit-schedules/#{id}", context.admin_token) |> json_response(404)
+  end
+
+  @tag audit_registration: true
+  test "Audit schedule and wake job storage failures cannot leave an accepted schedule",
+       context do
+    boundary =
+      Targets.create_management_boundary!("failed-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_audit_registration() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'audit registration storage unavailable'; END;
+    $$
+    """)
+
+    for table <- ["audit_schedules", "oban_jobs"] do
+      id = Ash.UUID.generate()
+      input = %{"audit_schedule" => audit_registration(boundary.id, id)}
+
+      Opsonde.Repo.query!(
+        "CREATE TRIGGER reject_audit_registration BEFORE INSERT ON #{table} FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_audit_registration()"
+      )
+
+      try do
+        capture_log(fn ->
+          assert %{"error" => %{"code" => "internal_error"}} =
+                   post_json("/api/v1/audit-schedules", input, context.admin_token)
+                   |> json_response(500)
+        end)
+      after
+        Opsonde.Repo.query!("DROP TRIGGER IF EXISTS reject_audit_registration ON #{table}")
+      end
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               get_json("/api/v1/audit-schedules/#{id}", context.admin_token)
+               |> json_response(404)
+    end
+  end
+
+  @tag audit_registration: true
+  test "Audit registration rejects a wake job acknowledgement without a saved job", context do
+    boundary =
+      Targets.create_management_boundary!("missing-job-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    id = "20000000-0000-4000-8000-000000000054"
+    input = %{"audit_schedule" => audit_registration(boundary.id, id)}
+
+    Opsonde.Repo.query!("""
+    CREATE FUNCTION pg_temp.omit_audit_wake_job() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RETURN NULL; END;
+    $$
+    """)
+
+    Opsonde.Repo.query!(
+      "CREATE TRIGGER omit_audit_wake_job BEFORE INSERT ON oban_jobs FOR EACH ROW EXECUTE FUNCTION pg_temp.omit_audit_wake_job()"
+    )
+
+    try do
+      assert %{"error" => %{"code" => "internal_error"}} =
+               post_json("/api/v1/audit-schedules", input, context.admin_token)
+               |> json_response(500)
+    after
+      Opsonde.Repo.query!("DROP TRIGGER omit_audit_wake_job ON oban_jobs")
+    end
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             get_json("/api/v1/audit-schedules/#{id}", context.admin_token) |> json_response(404)
+  end
+
+  @tag audit_registration: true
+  test "CLI retains chosen and generated Audit identities after commit response loss without replay",
+       context do
+    boundary =
+      Targets.create_management_boundary!("lost-audit-boundary", "datacenter", %{},
+        actor: context.admin
+      )
+
+    root =
+      Path.join(System.tmp_dir!(), "audit-registration-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.admin_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    owner = self()
+    stub = {__MODULE__, make_ref()}
+
+    Req.Test.stub(stub, fn conn ->
+      send(owner, {:audit_request, conn.method})
+      result = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+      if conn.method == "POST" do
+        assert result.status == 201
+        send(owner, {:accepted_audit, Jason.decode!(result.resp_body)["data"]["id"]})
+
+        %{
+          result
+          | status: 503,
+            resp_body:
+              Jason.encode!(%{
+                "error" => %{"code" => "response_lost", "message" => "Response lost after commit"}
+              })
+        }
+      else
+        result
+      end
+    end)
+
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+    chosen_id = "20000000-0000-4000-8000-000000000053"
+
+    for id <- [chosen_id, nil] do
+      input =
+        audit_registration(boundary.id, id)
+        |> Map.put("name", if(id, do: "Original audit", else: "Generated audit"))
+
+      input = if id, do: input, else: Map.delete(input, "registration_id")
+
+      lost =
+        capture_io(:stderr, fn ->
+          capture_io([input: Jason.encode!(input)], fn ->
+            assert OpsondeCLI.CLI.run(["audit", "schedule", "--input", "-"], runtime) == 15
+          end)
+        end)
+        |> Jason.decode!()
+
+      assert %{"outcome" => "unknown", "registration_id" => retained_id} = lost
+      if id, do: assert(retained_id == chosen_id)
+      assert_receive {:accepted_audit, ^retained_id}
+      assert_receive {:audit_request, "POST"}
+
+      recovered =
+        capture_io(fn ->
+          assert OpsondeCLI.CLI.run(["audit", "show", retained_id], runtime) == 0
+        end)
+        |> Jason.decode!()
+
+      assert %{"data" => %{"id" => ^retained_id, "revision" => 1}} = recovered
+      assert recovered["data"]["name"] == input["name"]
+      assert_receive {:audit_request, "GET"}
+      refute_receive {:audit_request, "POST"}, 0
+    end
+  end
+
   @tag audit_summaries: true
   test "Audit metadata cursors reach schedule and run 51 while selected scope and diagnostics stay on exact reads",
        context do
@@ -56,6 +276,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
           "/api/v1/audit-schedules",
           %{
             "audit_schedule" => %{
+              "registration_id" => Ash.UUID.generate(),
               "name" => "Audit summary #{n}",
               "desired_outcome" => "Boundary health is normal",
               "timezone" => "Etc/UTC",
@@ -1514,6 +1735,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "/api/v1/audit-schedules",
         %{
           "audit_schedule" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "hourly-storage-audit",
             "desired_outcome" => "Storage health is normal",
             "timezone" => "Etc/UTC",
@@ -1577,6 +1799,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
     empty_schedule =
       Audits.schedule_audit!(
+        Ash.UUID.generate(),
         "empty-scope-audit",
         "Inspect empty scope",
         "Etc/UTC",
@@ -1624,6 +1847,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
         "/api/v1/audit-schedules",
         %{
           "audit_schedule" => %{
+            "registration_id" => Ash.UUID.generate(),
             "name" => "invalid-audit",
             "desired_outcome" => "Storage health is normal",
             "timezone" => "invalid/timezone",
@@ -1837,6 +2061,19 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       )
 
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(too_long, 422)
+  end
+
+  defp audit_registration(boundary_id, id) do
+    %{
+      "registration_id" => id,
+      "name" => "Original audit",
+      "desired_outcome" => "Storage health is normal",
+      "timezone" => "Etc/UTC",
+      "cron_expression" => "0 * * * *",
+      "report_language" => "en",
+      "management_boundary_id" => boundary_id,
+      "target_ids" => []
+    }
   end
 
   defp post_data!(path, body, token) do

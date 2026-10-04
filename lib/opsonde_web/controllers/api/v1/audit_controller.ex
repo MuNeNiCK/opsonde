@@ -126,6 +126,7 @@ defmodule OpsondeWeb.API.V1.AuditController do
   def schedule(conn, %{"audit_schedule" => input}) do
     with {:ok, schedule} <-
            Audits.schedule_audit(
+             input["registration_id"],
              input["name"],
              input["desired_outcome"],
              input["timezone"],

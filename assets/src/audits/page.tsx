@@ -99,6 +99,7 @@ export function AuditPage() {
       await apiClient.POST("/api/v1/audit-schedules", {
         body: {
           audit_schedule: {
+            registration_id: crypto.randomUUID(),
             name: formValue(form, "name"),
             desired_outcome: formValue(form, "desired_outcome"),
             timezone: formValue(form, "timezone"),
