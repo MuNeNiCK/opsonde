@@ -44,6 +44,18 @@ defmodule OpsondeWeb.API.V1.TargetSetupJSON do
     }
   end
 
+  def target_summary(target) do
+    target
+    |> Map.take(Opsonde.Targets.Target.management_fields())
+    |> Map.put(
+      :methods,
+      Enum.map(
+        target.access_methods,
+        &Map.take(&1, Opsonde.Targets.AccessMethod.management_fields())
+      )
+    )
+  end
+
   def access_method(method) do
     %{
       id: method.id,

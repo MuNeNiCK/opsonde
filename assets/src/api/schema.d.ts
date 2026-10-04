@@ -143,6 +143,23 @@ export interface paths {
         patch: operations["updateAccessMethod"];
         trace?: never;
     };
+    "/api/v1/targets/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Target management metadata with complete counts */
+        get: operations["listTargetSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{id}/resume": {
         parameters: {
             query?: never;
@@ -2785,6 +2802,21 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        TargetSummary: {
+            active: boolean;
+            has_operating_instructions: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** Format: uuid */
+            management_boundary_id: string | null;
+            method_count: number;
+            methods: components["schemas"]["AccessMethodSummary"][];
+            name: string;
+            relationship_count: number;
+            revision: number;
+            type_id: string;
+        };
         DeactivateManagementBoundaryRequest: {
             management_boundary: {
                 expected_revision: number;
@@ -3357,6 +3389,10 @@ export interface components {
                 name?: string;
             };
         };
+        TargetSummaryPage: {
+            data: components["schemas"]["TargetSummary"][];
+            page: components["schemas"]["Page"];
+        };
         DeliveryResponse: {
             data: components["schemas"]["Delivery"];
         };
@@ -3396,6 +3432,15 @@ export interface components {
             usage_status: "reported" | "unknown" | "pending" | "not_dispatched";
         };
         SignalWebhookValidationError: components["schemas"]["SignalWebhookError"] | components["schemas"]["ErrorResponse"];
+        AccessMethodSummary: {
+            endpoint: string;
+            /** Format: uuid */
+            id: string;
+            method: string;
+            priority: number;
+            /** Format: uuid */
+            target_id: string;
+        };
         DeliveryPage: {
             data: components["schemas"]["Delivery"][];
             page: components["schemas"]["Page"];
@@ -4656,6 +4701,68 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listTargetSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+                active?: boolean;
+                query?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Target management page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

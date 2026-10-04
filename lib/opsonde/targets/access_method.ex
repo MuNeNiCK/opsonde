@@ -5,6 +5,9 @@ defmodule Opsonde.Targets.AccessMethod do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @management_fields ~w(id target_id method endpoint priority)a
+  def management_fields, do: @management_fields
+
   postgres do
     table "access_methods"
     repo Opsonde.Repo
@@ -17,6 +20,16 @@ defmodule Opsonde.Targets.AccessMethod do
 
   actions do
     defaults [:read]
+
+    read :management_summary do
+      filter expr(active == true)
+
+      prepare build(
+                select: @management_fields,
+                sort: [priority: :asc, inserted_at: :asc, id: :asc],
+                limit: 2
+              )
+    end
 
     read :page do
       argument :target_id, :uuid
@@ -201,7 +214,7 @@ defmodule Opsonde.Targets.AccessMethod do
       forbid_if always()
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :management_summary]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
@@ -209,7 +222,8 @@ defmodule Opsonde.Targets.AccessMethod do
   end
 
   preparations do
-    prepare build(load: [:check_current])
+    prepare build(load: [:check_current]),
+      where: [action_is([:read, :page, :available_for_target, :available, :for_use])]
   end
 
   changes do

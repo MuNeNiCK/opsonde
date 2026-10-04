@@ -7,6 +7,8 @@ defmodule Opsonde.Targets.Target do
 
   @reference_fields ~w(id name kind type_id active revision management_boundary_id)a
   def reference_fields, do: @reference_fields
+  @management_calculations [:method_count, :relationship_count, :has_operating_instructions]
+  def management_fields, do: @reference_fields ++ @management_calculations
 
   postgres do
     table "targets"
@@ -42,6 +44,51 @@ defmodule Opsonde.Targets.Target do
 
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(select: @reference_fields, sort: [inserted_at: :asc, id: :asc])
+    end
+
+    read :management_page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      argument :active, :boolean
+
+      argument :query, :string,
+        constraints: [
+          allow_empty?: true,
+          max_length: Opsonde.Targets.SearchQuery.max_codepoints()
+        ]
+
+      filter expr(
+               (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:active)) or active == ^arg(:active)) and
+                 (is_nil(^arg(:query)) or
+                    contains(string_downcase(name), string_downcase(^arg(:query))) or
+                    contains(string_downcase(kind), string_downcase(^arg(:query))) or
+                    contains(string_downcase(type_id), string_downcase(^arg(:query))))
+             )
+
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+
+      prepare build(
+                select: @reference_fields,
+                load: @management_calculations,
+                sort: [name: :asc, id: :asc]
+              )
+
+      prepare fn query, context ->
+        methods =
+          Ash.Query.for_read(Opsonde.Targets.AccessMethod, :management_summary, %{},
+            actor: context.actor
+          )
+
+        query
+        |> Ash.Query.load(access_methods: methods)
+        |> Ash.Query.around_transaction(fn query, callback ->
+          try do
+            callback.(query)
+          rescue
+            error in Ash.Error.Unknown -> {:error, error}
+          end
+        end)
+      end
     end
 
     read :search_index do
@@ -121,7 +168,7 @@ defmodule Opsonde.Targets.Target do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :reference_page]) do
+    policy action([:read, :page, :reference_page, :management_page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
@@ -198,6 +245,28 @@ defmodule Opsonde.Targets.Target do
 
     has_many :incoming_relationships, Opsonde.Targets.Relationship do
       destination_attribute :destination_target_id
+    end
+  end
+
+  calculations do
+    calculate :method_count,
+              :integer,
+              expr(count(access_methods, query: [filter: expr(active == true)]))
+
+    calculate :relationship_count,
+              :integer,
+              expr(outgoing_relationship_count + incoming_relationship_count)
+
+    calculate :has_operating_instructions, :boolean, expr(operating_instructions != "")
+  end
+
+  aggregates do
+    count :outgoing_relationship_count, :outgoing_relationships do
+      filter expr(active == true)
+    end
+
+    count :incoming_relationship_count, :incoming_relationships do
+      filter expr(active == true)
     end
   end
 end

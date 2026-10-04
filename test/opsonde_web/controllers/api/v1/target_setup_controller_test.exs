@@ -322,6 +322,237 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
   end
 
   @tag target_scope: true
+  @tag target_summaries: true
+  test "Target management summaries count complete collections and limit Methods per Target",
+       context do
+    alias Opsonde.Targets
+    busy = create_target!(context.admin_token, "A busy host", "host", "custom-os", nil)
+    selected = create_target!(context.admin_token, "B selected host", "host", "custom-os", nil)
+    peer = create_target!(context.admin_token, "C related host", "host", "custom-os", nil)
+
+    for index <- 1..101 do
+      create_access_method!(context, busy, "busy-#{index}", "ssh", [])
+    end
+
+    regular = create_access_method!(context, selected, "regular", "ssh", [])
+    preferred = create_access_method!(context, selected, "preferred", "ssh", [])
+    create_access_method!(context, selected, "third", "ssh", [])
+    inactive = create_access_method!(context, selected, "inactive", "ssh", [])
+
+    Targets.update_access_method!(preferred["id"], preferred["revision"], %{priority: 0},
+      actor: context.admin
+    )
+
+    Targets.deactivate_access_method!(inactive["id"], inactive["revision"], actor: context.admin)
+
+    Targets.create_relationship!(selected["id"], peer["id"], "hosted_by", %{}, nil,
+      actor: context.admin
+    )
+
+    Targets.create_relationship!(
+      peer["id"],
+      selected["id"],
+      "connected_to",
+      %{},
+      ~U[2000-01-01 00:00:00Z],
+      actor: context.admin
+    )
+
+    retired =
+      Targets.create_relationship!(selected["id"], busy["id"], "connected_to", %{}, nil,
+        actor: context.admin
+      )
+
+    Targets.deactivate_relationship!(retired, retired.revision, actor: context.admin)
+
+    Targets.update_target!(
+      selected["id"],
+      selected["revision"],
+      %{operating_instructions: "Preserve boot disk"},
+      actor: context.admin
+    )
+
+    response = get_json("/api/v1/targets/summaries?active=true&limit=3", context.viewer_token)
+
+    assert %{"data" => [busy_summary, selected_summary, peer_summary], "page" => %{"next" => nil}} =
+             json_response(response, 200)
+
+    assert busy_summary["method_count"] == 101
+    assert length(busy_summary["methods"]) == 2
+    assert selected_summary["method_count"] == 3
+    assert selected_summary["relationship_count"] == 2
+    assert selected_summary["has_operating_instructions"] == true
+    assert selected_summary["revision"] == 2
+    assert Enum.map(selected_summary["methods"], & &1["id"]) == [preferred["id"], regular["id"]]
+    assert peer_summary["method_count"] == 0
+    assert peer_summary["relationship_count"] == 2
+    assert peer_summary["methods"] == []
+    assert peer_summary["has_operating_instructions"] == false
+    refute Map.has_key?(selected_summary, "facts")
+    refute Map.has_key?(selected_summary, "operating_instructions")
+    assert_operation_response(response)
+  end
+
+  @tag target_scope: true
+  @tag target_summaries: true
+  test "Target summary paging and search omit full detail while retaining complete counts",
+       context do
+    alias Opsonde.Targets
+    facts = %{"needle-only-in-facts" => String.duplicate("x", 64983)}
+
+    targets =
+      for index <- 1..101 do
+        suffix = "HOST-" <> String.pad_leading(Integer.to_string(index), 3, "0")
+
+        target =
+          Targets.create_target!(
+            String.duplicate("𠮷", 120 - String.length(suffix)) <> suffix,
+            "host",
+            "custom-os",
+            facts,
+            nil,
+            actor: context.admin
+          )
+
+        for connection <- 1..2 do
+          Targets.create_access_method!(
+            target.id,
+            context.target_provider.id,
+            "connection-#{connection}",
+            "ssh",
+            "ssh://192.0.2.10:22",
+            context.target_provider.revision,
+            connection,
+            [],
+            actor: context.admin
+          )
+        end
+
+        Targets.update_target!(
+          target,
+          target.revision,
+          %{operating_instructions: String.duplicate("🌏", 4000)},
+          actor: context.admin
+        )
+      end
+
+    selected = List.last(targets)
+
+    first =
+      get_json(
+        "/api/v1/targets/summaries?active=true&query=CuStOm-Os&limit=100",
+        context.viewer_token
+      )
+
+    assert length(json_response(first, 200)["data"]) == 100
+    assert byte_size(first.resp_body) < 150_000
+
+    assert Enum.all?(
+             json_response(first, 200)["data"],
+             &(&1["has_operating_instructions"] == true)
+           )
+
+    assert Enum.all?(
+             json_response(first, 200)["data"],
+             &(&1["method_count"] == 2 and length(&1["methods"]) == 2)
+           )
+
+    assert_operation_response(first)
+    refute Enum.any?(json_response(first, 200)["data"], &(&1["id"] == selected.id))
+    cursor = json_response(first, 200)["page"]["next"]
+
+    tail =
+      get_json(
+        "/api/v1/targets/summaries?active=true&query=CuStOm-Os&limit=100&after=" <>
+          URI.encode_www_form(cursor),
+        context.viewer_token
+      )
+
+    assert [%{"id" => selected_id, "methods" => [_, _], "method_count" => 2}] =
+             json_response(tail, 200)["data"]
+
+    assert selected_id == selected.id
+    assert json_response(tail, 200)["page"]["next"] == nil
+    assert_operation_response(tail)
+
+    exact =
+      get_json(
+        "/api/v1/targets/summaries?ids=#{selected.id}&query=HOST-101",
+        context.viewer_token
+      )
+
+    assert [%{"id" => selected_id, "revision" => 2}] = json_response(exact, 200)["data"]
+    assert selected_id == selected.id
+
+    updated =
+      Targets.update_target!(selected, selected.revision, %{name: "Renamed host"},
+        actor: context.admin
+      )
+
+    assert [%{"name" => "Renamed host", "revision" => 3}] =
+             get_json("/api/v1/targets/summaries?ids=#{updated.id}", context.viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+
+    assert get_json("/api/v1/targets/summaries?query=needle-only-in-facts", context.viewer_token)
+           |> json_response(200)
+           |> Map.fetch!("data") == []
+
+    assert get_json("/api/v1/targets/#{updated.id}", context.viewer_token)
+           |> json_response(200)
+           |> get_in(["data", "facts"]) == facts
+  end
+
+  @tag target_summaries: true
+  test "Target summary filters authorize reads and search literal inventory labels", context do
+    selected = create_target!(context.admin_token, "Host_% literal", "host", "custom-os", nil)
+    other = create_target!(context.admin_token, "Host other", "host", "custom-os", nil)
+    path = "/api/v1/targets/summaries"
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      response = get_json(path <> "?query=" <> URI.encode_www_form("_%"), token)
+      assert [%{"id" => id}] = json_response(response, 200)["data"]
+      assert id == selected["id"]
+      assert_operation_response(response)
+    end
+
+    assert response(get_json(path, nil), 401)
+
+    for query <- [
+          "ids=not-a-uuid",
+          "ids=",
+          "active=invalid",
+          "ids=" <> Enum.map_join(1..101, ",", fn _ -> Ecto.UUID.generate() end),
+          "query=" <> String.duplicate("x", 201)
+        ] do
+      invalid = get_json(path <> "?" <> query, context.viewer_token)
+      assert json_response(invalid, 422)["error"]["code"] == "validation_failed"
+      assert_operation_response(invalid)
+    end
+
+    for query <- ["after=invalid", "limit=101"] do
+      invalid_page = get_json(path <> "?" <> query, context.viewer_token)
+      assert json_response(invalid_page, 422)["error"]["code"] == "invalid_pagination"
+      assert_operation_response(invalid_page)
+    end
+
+    assert json_response(
+             get_json(path <> "?ids=#{Ecto.UUID.generate()}", context.viewer_token),
+             200
+           )["data"] == []
+
+    assert length(json_response(get_json(path <> "?query=", context.viewer_token), 200)["data"]) ==
+             2
+
+    Opsonde.Targets.deactivate_target!(other["id"], other["revision"], actor: context.admin)
+
+    assert [%{"id" => id, "active" => false, "revision" => 2}] =
+             json_response(get_json(path <> "?active=false", context.viewer_token), 200)["data"]
+
+    assert id == other["id"]
+  end
+
+  @tag target_scope: true
   @tag method_projection: true
   test "management Method pages do not hydrate the execution catalog and preserve checked state",
        context do

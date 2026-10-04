@@ -4335,6 +4335,74 @@
         ],
         "type": "object"
       },
+      "TargetSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "has_operating_instructions": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "management_boundary_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "method_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/AccessMethodSummary"
+            },
+            "maxItems": 2,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "relationship_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "type_id",
+          "active",
+          "revision",
+          "management_boundary_id",
+          "method_count",
+          "relationship_count",
+          "has_operating_instructions",
+          "methods"
+        ],
+        "type": "object"
+      },
       "DeactivateManagementBoundaryRequest": {
         "properties": {
           "management_boundary": {
@@ -6627,6 +6695,25 @@
         ],
         "type": "object"
       },
+      "TargetSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TargetSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "DeliveryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6782,6 +6869,42 @@
             "$ref": "#/components/schemas/ErrorResponse"
           }
         ]
+      },
+      "AccessMethodSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "priority": {
+            "maximum": 10000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target_id",
+          "method",
+          "endpoint",
+          "priority"
+        ],
+        "type": "object"
       },
       "DeliveryPage": {
         "additionalProperties": false,
@@ -9666,6 +9789,129 @@
           }
         },
         "summary": "Update an Access Method",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
+    "/api/v1/targets/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listTargetSummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 0,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetSummaryPage"
+                }
+              }
+            },
+            "description": "Target management page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Target management metadata with complete counts",
         "tags": [
           "Targets"
         ]

@@ -131,6 +131,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       ] ++
         @list_errors
 
+  operation :target_summaries,
+    operation_id: "listTargetSummaries",
+    summary: "List Target management metadata with complete counts",
+    parameters: TargetSchemas.summary_page_parameters(),
+    responses:
+      [ok: {"Target management page", "application/json", TargetSchemas.ref("TargetSummaryPage")}] ++
+        @list_errors
+
   operation :targets_show,
     operation_id: "getTarget",
     summary: "Get a Target",
@@ -415,6 +423,17 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
     with {:ok, target} <- Targets.get_target(id, actor: conn.assigns.current_user) do
       Response.data(conn, TargetSetupJSON.target(target))
     end
+  end
+
+  def target_summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :active, :query])
+
+    page(
+      conn,
+      params,
+      &Targets.page_target_summaries(input, &1),
+      &TargetSetupJSON.target_summary/1
+    )
   end
 
   def targets_create(conn, %{"target" => input}) do

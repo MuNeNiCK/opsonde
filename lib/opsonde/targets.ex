@@ -16,6 +16,7 @@ defmodule Opsonde.Targets do
       define :list_targets, action: :read
       define :page_targets, action: :page
       define :page_target_references, action: :reference_page
+      define :page_target_summaries, action: :management_page
       define :get_target, action: :read, get_by: [:id]
 
       define :create_target,

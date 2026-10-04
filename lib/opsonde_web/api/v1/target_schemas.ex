@@ -41,6 +41,49 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
           false
         ),
       "TargetReferencePage" => Schemas.page(ref("TargetReference")),
+      "TargetSummary" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            name: string(1, 120),
+            kind: string(1, 80),
+            type_id: string(1, 120),
+            active: %Schema{type: :boolean},
+            revision: positive_integer(),
+            management_boundary_id: %Schema{type: :string, format: :uuid, nullable: true},
+            method_count: %Schema{type: :integer, minimum: 0},
+            relationship_count: %Schema{type: :integer, minimum: 0},
+            has_operating_instructions: %Schema{type: :boolean},
+            methods: %Schema{type: :array, items: ref("AccessMethodSummary"), maxItems: 2}
+          },
+          [
+            :id,
+            :name,
+            :kind,
+            :type_id,
+            :active,
+            :revision,
+            :management_boundary_id,
+            :method_count,
+            :relationship_count,
+            :has_operating_instructions,
+            :methods
+          ],
+          false
+        ),
+      "TargetSummaryPage" => Schemas.page(ref("TargetSummary")),
+      "AccessMethodSummary" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            target_id: Schemas.uuid(),
+            method: string(1, 120),
+            endpoint: string(1, 1024),
+            priority: %Schema{type: :integer, minimum: 0, maximum: 10000}
+          },
+          [:id, :target_id, :method, :endpoint, :priority],
+          false
+        ),
       "CreateTargetRequest" => create_target_request(),
       "UpdateTargetRequest" => update_target_request(),
       "DeactivateTargetRequest" => deactivate_request(:target),
@@ -82,6 +125,15 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       [
         {:target_id, [in: :query, schema: Schemas.uuid()]},
         {:active, [in: :query, schema: %Schema{type: :boolean}]}
+      ]
+  end
+
+  def summary_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        Schemas.reference_ids_parameter(),
+        {:active, [in: :query, schema: %Schema{type: :boolean}]},
+        {:query, [in: :query, schema: string(0, Opsonde.Targets.SearchQuery.max_codepoints())]}
       ]
   end
 

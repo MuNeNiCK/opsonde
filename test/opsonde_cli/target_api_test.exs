@@ -492,6 +492,78 @@ defmodule OpsondeCLI.TargetAPITest do
   end
 
   @tag references_cli: true
+  @tag target_summaries_cli: true
+  test "CLI pages searchable management metadata and reads current summaries by ID", context do
+    first = Targets.create_target!("Host A", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    selected =
+      Targets.create_target!("Host Z", "host", "custom-os", %{"private" => "not metadata"}, nil,
+        actor: context.admin
+      )
+
+    selected =
+      Targets.update_target!(selected, 1, %{operating_instructions: "Preserve boot disk"},
+        actor: context.admin
+      )
+
+    inactive =
+      Targets.create_target!("Host inactive", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    inactive = Targets.deactivate_target!(inactive, 1, actor: context.admin)
+
+    listed =
+      capture_io(fn ->
+        assert CLI.run(
+                 ["target", "summaries", "--active", "--query", "HOST", "--limit", "1"],
+                 context.runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => first_id, "method_count" => 0, "has_operating_instructions" => false}] =
+             listed["data"]
+
+    assert first_id == first.id
+    assert listed["page"]["next"]
+
+    tail =
+      capture_io(fn ->
+        assert CLI.run(
+                 [
+                   "target",
+                   "summaries",
+                   "--active",
+                   "--query",
+                   "HOST",
+                   "--limit",
+                   "1",
+                   "--after",
+                   listed["page"]["next"]
+                 ],
+                 context.runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => selected_id, "revision" => 2, "has_operating_instructions" => true}] =
+             tail["data"]
+
+    assert selected_id == selected.id
+    assert tail["page"]["next"] == nil
+
+    assert [%{"id" => selected_id}] =
+             cli_data!(context, ["target", "summaries", "--ids", selected.id])
+
+    assert selected_id == selected.id
+
+    assert [%{"id" => inactive_id, "active" => false, "revision" => 2}] =
+             cli_data!(context, ["target", "summaries", "--no-active", "--ids", inactive.id])
+
+    assert inactive_id == inactive.id
+    refute Jason.encode!(tail) =~ "private"
+  end
+
+  @tag references_cli: true
   test "CLI reads current references by ID and pages eligible choices before retaining detail",
        context do
     selected =
@@ -679,6 +751,120 @@ defmodule OpsondeCLI.TargetAPITest do
       end
 
       assert [%{"id" => ^id}] = cli_data!(context, [resource, "references", "--ids", id])
+    end
+  end
+
+  @tag target_summaries_cli: true
+  test "management summaries omit detail storage and preserve count or endpoint read failures",
+       context do
+    provider =
+      Providers.create_provider!(
+        "Summary connection",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "fixture-private"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!("Summary host", "host", "custom-os", %{"private" => "detail"}, nil,
+        actor: context.admin
+      )
+
+    peer =
+      Targets.create_target!("Summary peer", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "SSH",
+        "ssh",
+        "ssh://192.0.2.10:22",
+        provider.revision,
+        100,
+        [],
+        actor: context.admin
+      )
+
+    Targets.create_relationship!(target.id, peer.id, "connected_to", %{}, nil,
+      actor: context.admin
+    )
+
+    id = target.id
+    method_id = method.id
+    args = ["target", "summaries", "--ids", id]
+    expected = cli_data!(context, args)
+
+    assert [
+             %{
+               "method_count" => 1,
+               "relationship_count" => 1,
+               "methods" => [%{"id" => ^method_id}]
+             }
+           ] = expected
+
+    for {table, column, required?} <- [
+          {"targets", "facts", false},
+          {"targets", "search_text", false},
+          {"access_methods", "operation_catalog", false},
+          {"access_methods", "check_attempt_id", false},
+          {"relationships", "facts", false},
+          {"providers", "configuration", false},
+          {"providers", "encrypted_credentials", false},
+          {"targets", "name", true},
+          {"targets", "operating_instructions", true},
+          {"access_methods", "endpoint", true},
+          {"access_methods", "active", true},
+          {"relationships", "active", true}
+        ] do
+      Opsonde.Repo.query!(
+        "ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_summary_column"
+      )
+
+      try do
+        if required? do
+          assert {:error, %Ash.Error.Unknown{} = cause} =
+                   Targets.page_target_summaries(%{ids: [id]},
+                     actor: context.admin,
+                     page: [limit: 100]
+                   )
+
+          assert Exception.message(cause) =~ "does not exist"
+
+          capture_log(fn ->
+            assert {:error, :http, 500, %{"error" => %{"code" => "internal_error"}}} =
+                     OpsondeCLI.Client.request(client!(context), :get, "/targets/summaries", nil,
+                       ids: id
+                     )
+
+            error = capture_io(:stderr, fn -> assert CLI.run(args, context.runtime) == 4 end)
+            assert Jason.decode!(error)["error"]["code"] == "internal_error"
+          end)
+        else
+          assert {:ok, %Ash.Page.Keyset{results: [%{id: ^id, access_methods: [method]} = row]}} =
+                   Targets.page_target_summaries(%{ids: [id]},
+                     actor: context.admin,
+                     page: [limit: 100]
+                   )
+
+          assert row.method_count == 1
+          assert row.relationship_count == 1
+          refute Ash.Resource.selected?(row, :facts)
+          refute Ash.Resource.selected?(row, :operating_instructions)
+          refute Ash.Resource.selected?(method, :operation_catalog)
+          refute Ash.Resource.selected?(method, :check_attempt_id)
+          assert cli_data!(context, args) == expected
+        end
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE #{table} RENAME COLUMN unavailable_summary_column TO #{column}"
+        )
+      end
+
+      assert cli_data!(context, args) == expected
     end
   end
 
