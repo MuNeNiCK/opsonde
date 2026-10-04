@@ -934,6 +934,11 @@ const ja = {
       enable: "有効化",
       disable: "無効化",
       noConnections: "通知先は未登録です。",
+      destinationOperationUnknown:
+        "通知先の操作結果を確認できませんでした。現在の結果を確認してください。",
+      destinationOperationSaveFailed:
+        "要求を保存できませんでした。通知先の操作は送信していません。",
+      destinationOperationConfirmed: "通知先の操作結果を確認しました：{{name}}",
       generate: "レポートを生成",
       generateDescription: "Case revisionと言語を固定したレポートを保存します。",
       case: "完了したCase",

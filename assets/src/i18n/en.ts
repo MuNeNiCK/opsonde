@@ -954,6 +954,11 @@ const en = {
       enable: "Enable",
       disable: "Disable",
       noConnections: "No notification destinations are registered.",
+      destinationOperationUnknown:
+        "Could not confirm the destination operation. Check the current result.",
+      destinationOperationSaveFailed:
+        "Could not save the request. No destination operation was submitted.",
+      destinationOperationConfirmed: "Destination operation confirmed: {{name}}",
       generate: "Generate report",
       generateDescription: "The Case revision and its report language are captured permanently.",
       case: "Completed Case",

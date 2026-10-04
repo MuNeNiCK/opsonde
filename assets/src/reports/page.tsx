@@ -301,14 +301,7 @@ export function ReportPage() {
         </div>
       </section>
 
-      {panel === "destinations" && (
-        <NotificationProviderSection
-          providers={snapshot.providers}
-          canManage={canManageProviders}
-          onRefresh={refresh}
-          onError={setError}
-        />
-      )}
+      {panel === "destinations" && <NotificationProviderSection canManage={canManageProviders} />}
 
       {canAct && (panel === "generate" || panel === "deliver") && (
         <section id="report-action">
