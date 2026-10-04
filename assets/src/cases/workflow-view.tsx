@@ -1,7 +1,6 @@
 import {
   BellRing,
   Check,
-  ChevronRight,
   CircleAlert,
   CircleDashed,
   FileText,
@@ -14,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { InvestigationMap } from "@/cases/investigation-map";
-import { ReceiptDetails } from "@/cases/detail-components";
+import { ReceiptDetails, TechnicalDetails } from "@/cases/detail-components";
 import { buildLog, type LogEntry, type WorkflowLogInput } from "@/cases/workflow-log";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -276,15 +275,10 @@ function ExecutionLogRow({
             </dl>
           )}
           {entry.technical !== undefined && (
-            <details className="group">
-              <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-                <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-                {t("cases.workflow.technicalDetails")}
-              </summary>
-              <pre className="mt-2 max-h-52 overflow-auto rounded-md bg-muted/45 p-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
-                {JSON.stringify(entry.technical, null, 2)}
-              </pre>
-            </details>
+            <TechnicalDetails
+              value={entry.technical}
+              title={t("cases.workflow.technicalDetails")}
+            />
           )}
           {entry.receipt && <ReceiptDetails {...entry.receipt} />}
         </div>

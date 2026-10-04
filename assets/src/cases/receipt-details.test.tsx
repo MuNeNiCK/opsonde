@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { ReceiptDetails } from "@/cases/detail-components";
+import { DataBlock, ReceiptDetails } from "@/cases/detail-components";
 import i18n from "@/i18n/config";
 
 const wire = vi.hoisted(() => {
@@ -14,6 +14,24 @@ afterEach(() => {
   cleanup();
   wire.mockReset();
   sessionStorage.clear();
+});
+
+test("closed proposal details do not encode or mount their complete technical value", async () => {
+  await i18n.changeLanguage("en");
+  const payload = "x".repeat(65_536);
+  const encode = vi.fn(() => ({ payload }));
+  render(<DataBlock value={{ summary: "Saved request", toJSON: encode }} />);
+  expect(screen.getByText("Saved request")).toBeDefined();
+  expect(encode).not.toHaveBeenCalled();
+  expect(document.querySelector("pre")).toBeNull();
+  const user = userEvent.setup();
+  const toggle = screen.getByText("Technical details");
+  await user.click(toggle);
+  await waitFor(() => expect(document.querySelector("pre")?.textContent).toContain(payload));
+  expect(encode).toHaveBeenCalledTimes(1);
+  await user.click(toggle);
+  await waitFor(() => expect(document.querySelector("pre")).toBeNull());
+  expect(encode).toHaveBeenCalledTimes(1);
 });
 
 test("loads exact evidence only when opened and releases it when closed", async () => {
