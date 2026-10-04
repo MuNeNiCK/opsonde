@@ -35,35 +35,17 @@ defmodule OpsondeWeb.API.V1.CaseController do
   operation :index,
     operation_id: "listCases",
     summary: "List Cases",
-    parameters:
-      Schemas.pagination_parameters() ++
-        [
-          query: [
-            in: :query,
-            schema: %OpenApiSpex.Schema{
-              type: :string,
-              minLength: 1,
-              maxLength: Opsonde.Targets.SearchQuery.max_codepoints()
-            }
-          ],
-          status: [
-            in: :query,
-            schema: %OpenApiSpex.Schema{
-              type: :string,
-              enum: ~w(running needs_attention resolved cancelled)
-            }
-          ],
-          sort: [
-            in: :query,
-            schema: %OpenApiSpex.Schema{
-              type: :string,
-              enum: ~w(updated_desc updated_asc severity_desc),
-              default: "updated_desc"
-            }
-          ]
-        ],
+    parameters: WorkflowSchemas.case_page_parameters(),
     responses:
       [ok: {"Case page", "application/json", WorkflowSchemas.ref("CasePage")}] ++ @list_errors
+
+  operation :summaries,
+    operation_id: "listCaseSummaries",
+    summary: "List Case summaries",
+    parameters: WorkflowSchemas.case_page_parameters() ++ [Schemas.reference_ids_parameter()],
+    responses:
+      [ok: {"Case summary page", "application/json", WorkflowSchemas.ref("CaseSummaryPage")}] ++
+        @list_errors
 
   operation :show,
     operation_id: "getCase",
@@ -261,6 +243,16 @@ defmodule OpsondeWeb.API.V1.CaseController do
              actor: conn.assigns.current_user
            ) do
       Response.page(conn, cases, &WorkflowJSON.case_record/1)
+    end
+  end
+
+  def summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :query, :status, :sort])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, cases} <-
+           Cases.page_case_summaries(input, page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, cases, &WorkflowJSON.case_summary/1)
     end
   end
 

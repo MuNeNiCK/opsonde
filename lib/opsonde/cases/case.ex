@@ -6,6 +6,10 @@ defmodule Opsonde.Cases.Case do
     simple_notifiers: [Opsonde.Cases.Case.RealtimeNotifier],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id title status report_language revision initial_target_id selected_target_id inserted_at updated_at)a
+
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "cases"
     repo Opsonde.Repo
@@ -73,13 +77,23 @@ defmodule Opsonde.Cases.Case do
         default: :updated_desc,
         constraints: [one_of: [:updated_desc, :updated_asc, :severity_desc]]
 
-      filter expr(
-               (is_nil(^arg(:query)) or contains(title, ^arg(:query)) or
-                  contains(source, ^arg(:query)) or contains(source_ref, ^arg(:query))) and
-                 (is_nil(^arg(:status)) or status == ^arg(:status))
-             )
-
       prepare Opsonde.Cases.Case.Preparations.Queue
+    end
+
+    read :summaries do
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      argument :query, :ci_string, constraints: [min_length: 1, max_length: 200]
+
+      argument :status, :atom,
+        constraints: [one_of: [:running, :needs_attention, :resolved, :cancelled]]
+
+      argument :sort, :atom,
+        allow_nil?: false,
+        default: :updated_desc,
+        constraints: [one_of: [:updated_desc, :updated_asc, :severity_desc]]
+
+      prepare {Opsonde.Cases.Case.Preparations.Queue, summary?: true}
     end
 
     read :by_trigger do
@@ -740,7 +754,7 @@ defmodule Opsonde.Cases.Case do
       forbid_if always()
     end
 
-    policy action([:read, :page, :report_period, :reconnect]) do
+    policy action([:read, :page, :summaries, :report_period, :reconnect]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

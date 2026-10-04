@@ -1038,6 +1038,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case summaries */
+        get: operations["listCaseSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reports/operations-summary": {
         parameters: {
             query?: never;
@@ -2035,6 +2052,10 @@ export interface components {
         SignalWebhookAccepted: {
             receipt_id: string;
         };
+        CaseSummaryPage: {
+            data: components["schemas"]["CaseSummary"][];
+            page: components["schemas"]["Page"];
+        };
         PeriodSummaryResponse: {
             data: components["schemas"]["PeriodSummary"];
         };
@@ -2588,6 +2609,24 @@ export interface components {
             started_at: string;
             /** @enum {string} */
             status: "running" | "needs_attention" | "completed" | "cancelled" | "superseded";
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CaseSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            initial_target_id: string | null;
+            /** Format: date-time */
+            inserted_at: string;
+            /** @enum {string} */
+            report_language: "en" | "ja";
+            revision: number;
+            /** Format: uuid */
+            selected_target_id: string | null;
+            /** @enum {string} */
+            status: "running" | "needs_attention" | "resolved" | "cancelled";
+            title: string;
             /** Format: date-time */
             updated_at: string;
         };
@@ -9335,6 +9374,69 @@ export interface operations {
             };
             /** @description Request body is invalid */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCaseSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                query?: string;
+                status?: "running" | "needs_attention" | "resolved" | "cancelled";
+                sort?: "updated_desc" | "updated_asc" | "severity_desc";
+                ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Case summary page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

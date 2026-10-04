@@ -128,6 +128,7 @@ defmodule OpsondeWeb.Router do
     put "/authority-setting", AuthoritySettingController, :update
 
     get "/cases", CaseController, :index
+    get "/cases/summaries", CaseController, :summaries
     post "/cases", CaseController, :create
     get "/cases/:id", CaseController, :show
     get "/cases/:id/timeline", CaseController, :timeline

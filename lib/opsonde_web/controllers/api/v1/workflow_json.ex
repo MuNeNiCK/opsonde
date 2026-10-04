@@ -24,6 +24,8 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
     }
   end
 
+  def case_summary(incident), do: Map.take(incident, Opsonde.Cases.Case.summary_fields())
+
   def case_record(incident) do
     action = operator_action(incident)
 

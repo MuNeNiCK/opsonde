@@ -94,6 +94,7 @@ defmodule OpsondeCLI.Commands do
     {"authority", "show"} => Route.new(:get, "/authority-setting"),
     {"authority", "set"} => Route.new(:put, "/authority-setting", 0, "authority_setting"),
     {"case", "list"} => Route.page("/cases"),
+    {"case", "summaries"} => Route.page("/cases/summaries"),
     {"case", "show"} => Route.new(:get, "/cases/:id", 1, nil, outcome: :case),
     {"case", "create"} => Route.new(:post, "/cases", 0, "case", outcome: :case_record),
     {"case", "timeline"} => Route.page("/cases/:id/timeline", 1),

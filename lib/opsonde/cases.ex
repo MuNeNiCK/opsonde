@@ -34,6 +34,7 @@ defmodule Opsonde.Cases do
         args: [:invocation_context]
 
       define :list_cases, action: :read
+      define :page_case_summaries, action: :summaries
       define :report_cases, action: :report_period, args: [:from, :to, :target_id]
 
       define :page_cases,

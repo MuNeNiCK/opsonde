@@ -28,6 +28,8 @@ defmodule OpsondeCLI.CLI do
     ids: :string,
     roles: :string,
     query: :string,
+    status: :string,
+    sort: :string,
     kind: :string,
     kinds: :string,
     eligible: :boolean,
@@ -399,6 +401,16 @@ defmodule OpsondeCLI.CLI do
     |> maybe_query(:query, options[:query])
   end
 
+  defp query(%Route{path: "/cases/summaries"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:query, options[:query])
+    |> maybe_query(:status, options[:status])
+    |> maybe_query(:sort, options[:sort])
+  end
+
   defp query(%Route{page?: true, path: "/accounts"}, options) do
     []
     |> maybe_query(:limit, options[:limit])
@@ -534,6 +546,7 @@ defmodule OpsondeCLI.CLI do
       opsonde target summaries [--ids UUID,UUID] [--active|--no-active] [--query TEXT] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
       opsonde case ai-invocations ID [--limit N] [--after CURSOR]
+      opsonde case summaries [--ids UUID,UUID] [--query TEXT] [--status STATUS] [--sort SORT] [--limit N] [--after CURSOR]
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report read ID
       opsonde file list TARGET_ID

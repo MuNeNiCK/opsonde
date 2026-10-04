@@ -13,6 +13,8 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "Case" => case_record(),
       "CaseResponse" => Schemas.data(ref("Case")),
       "CasePage" => Schemas.page(ref("Case")),
+      "CaseSummary" => summary(case_record(), Opsonde.Cases.Case.summary_fields()),
+      "CaseSummaryPage" => Schemas.page(ref("CaseSummary")),
       "CreateCaseRequest" => create_case_request(),
       "CaseRevisionRequest" => case_revision_request(),
       "SplitCaseRequest" => split_case_request(),
@@ -67,6 +69,25 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  def case_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        query: [in: :query, schema: %Schema{type: :string, minLength: 1, maxLength: 200}],
+        status: [
+          in: :query,
+          schema: %Schema{type: :string, enum: ~w(running needs_attention resolved cancelled)}
+        ],
+        sort: [
+          in: :query,
+          schema: %Schema{
+            type: :string,
+            enum: ~w(updated_desc updated_asc severity_desc),
+            default: "updated_desc"
+          }
+        ]
+      ]
+  end
 
   defp authority_setting do
     object(

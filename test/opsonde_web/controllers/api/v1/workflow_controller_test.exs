@@ -513,6 +513,251 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert %{"error" => %{"code" => "validation_failed"}} = json_response(invalid, 422)
   end
 
+  @tag case_summary: true
+  test "Case summary identities and choices are scoped before paging without full investigation context",
+       context do
+    target =
+      post_json(
+        "/api/v1/targets",
+        %{
+          "target" => %{
+            "name" => "Report reference host",
+            "kind" => "host",
+            "type_id" => "custom-os"
+          }
+        },
+        context.admin_token
+      )
+      |> json_response(201)
+      |> Map.fetch!("data")
+
+    older =
+      post_json(
+        "/api/v1/cases",
+        %{
+          "case" => %{
+            "trigger_kind" => "manual",
+            "source" => "api",
+            "source_ref" => "summary-older",
+            "title" => "Older report candidate",
+            "severity" => "warning",
+            "initial_target_id" => target["id"],
+            "initial_context" => %{
+              "desired_outcome" => "Target responds as expected",
+              "padding" => String.duplicate("x", 30_000)
+            }
+          }
+        },
+        context.operator_token
+      )
+      |> json_response(201)
+      |> Map.fetch!("data")
+
+    newer = open_case!(context.operator_token, "summary-newer", "critical")
+    path = "/api/v1/cases/summaries"
+    first = get_json(path <> "?limit=1&sort=updated_asc", context.viewer_token)
+
+    assert %{"data" => [%{"id" => older_id} = item], "page" => %{"next" => cursor}} =
+             json_response(first, 200)
+
+    assert older_id == older["id"]
+    assert is_binary(cursor)
+    assert_operation_response(first)
+
+    assert Enum.sort(Map.keys(item)) ==
+             ~w(id title status report_language revision initial_target_id selected_target_id inserted_at updated_at)
+             |> Enum.sort()
+
+    assert item["initial_target_id"] == target["id"]
+    assert item["selected_target_id"] == target["id"]
+    assert byte_size(first.resp_body) < 2_000
+
+    next =
+      get_json(
+        path <> "?limit=1&sort=updated_asc&after=" <> URI.encode_www_form(cursor),
+        context.viewer_token
+      )
+
+    assert %{"data" => [%{"id" => newer_id}], "page" => %{"next" => nil}} =
+             json_response(next, 200)
+
+    assert newer_id == newer["id"]
+    assert_operation_response(next)
+
+    known = get_json(path <> "?ids=#{older_id}&limit=1", context.viewer_token)
+    assert json_response(known, 200)["data"] == [item]
+    assert_operation_response(known)
+
+    sorted =
+      get_json(
+        path <> "?ids=#{older_id},#{newer_id}&query=API&status=running&sort=severity_desc&limit=1",
+        context.operator_token
+      )
+
+    assert [%{"id" => ^newer_id}] = json_response(sorted, 200)["data"]
+    assert_operation_response(sorted)
+    missing = get_json(path <> "?ids=#{Ecto.UUID.generate()}", context.admin_token)
+    assert json_response(missing, 200)["data"] == []
+
+    cancelled =
+      post_json(
+        "/api/v1/cases/#{older_id}/cancel",
+        %{"case" => %{"expected_revision" => 1}},
+        context.operator_token
+      )
+
+    assert %{"data" => %{"revision" => 2, "status" => "cancelled"}} =
+             json_response(cancelled, 200)
+
+    changed = get_json(path <> "?ids=#{older_id}&status=cancelled", context.viewer_token)
+
+    assert [%{"id" => ^older_id, "status" => "cancelled", "revision" => 2}] =
+             json_response(changed, 200)["data"]
+
+    assert_operation_response(changed)
+
+    assert json_response(
+             get_json(path <> "?ids=#{older_id}&status=running", context.viewer_token),
+             200
+           )["data"] == []
+
+    assert json_response(get_json("/api/v1/cases?query=summary-newer", context.viewer_token), 200)[
+             "data"
+           ]
+           |> hd()
+           |> Map.has_key?("initial_context")
+  end
+
+  @tag case_summary: true
+  test "remote CLI resolves a Case beyond the first choice page through the authenticated summary read",
+       context do
+    selected = open_case!(context.operator_token, "summary-cli-selected", "warning")
+    for index <- 1..50, do: open_case!(context.operator_token, "summary-cli-#{index}", "critical")
+
+    first = get_json("/api/v1/cases/summaries", context.viewer_token) |> json_response(200)
+    assert length(first["data"]) == 50
+    refute Enum.any?(first["data"], &(&1["id"] == selected["id"]))
+    assert is_binary(first["page"]["next"])
+
+    root = Path.join(System.tmp_dir!(), "case-summary-cli-#{System.unique_integer([:positive])}")
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    output =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 [
+                   "case",
+                   "summaries",
+                   "--ids",
+                   selected["id"],
+                   "--query",
+                   "summary-cli-selected",
+                   "--status",
+                   "running",
+                   "--sort",
+                   "severity_desc",
+                   "--limit",
+                   "1"
+                 ],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => id, "revision" => 1, "status" => "running"} = item] = output["data"]
+    assert id == selected["id"]
+    assert output["page"]["next"] == nil
+    refute Map.has_key?(item, "initial_context")
+
+    next =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["case", "summaries", "--after", first["page"]["next"]],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => ^id}] = next["data"]
+    assert next["page"]["next"] == nil
+  end
+
+  @tag case_summary: true
+  test "Case summary reads enforce bounds and retain database failures instead of reporting empty choices",
+       context do
+    incident = open_case!(context.operator_token, "summary-read-failure", "critical")
+    path = "/api/v1/cases/summaries"
+    ids = [incident["id"] | for(_ <- 1..99, do: Ecto.UUID.generate())]
+
+    assert [%{"id" => id}] =
+             json_response(
+               get_json(path <> "?ids=" <> Enum.join(ids, ","), context.viewer_token),
+               200
+             )["data"]
+
+    assert id == incident["id"]
+    assert get_json(path, nil).status == 401
+
+    for query <- [
+          "ids=",
+          "ids=not-a-uuid",
+          "ids=" <> Enum.join([Ecto.UUID.generate() | ids], ","),
+          "query=",
+          "query=" <> String.duplicate("x", 201),
+          "status=unknown",
+          "sort=unknown"
+        ] do
+      failed = get_json(path <> "?" <> query, context.admin_token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(failed, 422)
+      assert_operation_response(failed)
+    end
+
+    for query <- ["after=", "limit=101"] do
+      assert %{"error" => %{"code" => "invalid_pagination"}} =
+               json_response(get_json(path <> "?" <> query, context.admin_token), 422)
+    end
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE cases RENAME COLUMN initial_context TO unavailable_initial_context"
+    )
+
+    try do
+      projected = get_json(path <> "?ids=#{id}&sort=severity_desc", context.viewer_token)
+      assert [%{"id" => ^id}] = json_response(projected, 200)["data"]
+      assert_operation_response(projected)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE cases RENAME COLUMN unavailable_initial_context TO initial_context"
+      )
+    end
+
+    Opsonde.Repo.query!("ALTER TABLE cases RENAME COLUMN title TO unavailable_title")
+
+    try do
+      capture_log(fn ->
+        failed = get_json(path <> "?ids=#{id}", context.viewer_token)
+        assert %{"error" => %{"code" => "internal_error"}} = json_response(failed, 500)
+        refute Map.has_key?(json_response(failed, 500), "data")
+      end)
+    after
+      Opsonde.Repo.query!("ALTER TABLE cases RENAME COLUMN unavailable_title TO title")
+    end
+
+    assert [%{"id" => ^id}] =
+             json_response(get_json(path <> "?ids=#{id}", context.viewer_token), 200)["data"]
+  end
+
   @tag condition_history_capacity: true
   test "authenticated Case snapshot and split expose native Condition ownership", context do
     current = Cases.current_authority_setting!(actor: context.admin)
