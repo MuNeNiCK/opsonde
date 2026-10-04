@@ -34,6 +34,342 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     }
   end
 
+  @tag audit_summaries: true
+  test "Audit metadata cursors reach schedule and run 51 while selected scope and diagnostics stay on exact reads",
+       context do
+    boundary =
+      Targets.create_management_boundary!(
+        "audit-summary-boundary",
+        "datacenter",
+        %{"private" => "boundary-facts"},
+        actor: context.admin
+      )
+
+    target =
+      Targets.create_target!("audit-summary-target", "host", "linux", %{}, nil,
+        actor: context.admin
+      )
+
+    schedules =
+      for n <- 1..51 do
+        post_data!(
+          "/api/v1/audit-schedules",
+          %{
+            "audit_schedule" => %{
+              "name" => "Audit summary #{n}",
+              "desired_outcome" => "Boundary health is normal",
+              "timezone" => "Etc/UTC",
+              "cron_expression" => "0 * * * *",
+              "report_language" => "en",
+              "management_boundary_id" => if(n == 1, do: nil, else: boundary.id),
+              "target_ids" => if(n == 1, do: [target.id], else: [])
+            }
+          },
+          context.admin_token
+        )
+      end
+
+    schedule = List.last(schedules)
+
+    runs =
+      for n <- 1..51 do
+        Audits.create_audit_run_record!(
+          %{
+            audit_schedule_id: schedule["id"],
+            schedule_revision: 1,
+            target_key: "fixture-target-#{n}",
+            scheduled_for: DateTime.add(~U[2026-10-05 01:00:00Z], n),
+            status: if(n == 51, do: :queued, else: :failed),
+            reason: if(n == 51, do: nil, else: "Selected diagnosis #{n}"),
+            completed_at: if(n == 51, do: nil, else: ~U[2026-10-05 02:00:00Z])
+          },
+          authorize?: false
+        )
+      end
+
+    first = get_json("/api/v1/audit-schedules/summaries", context.viewer_token)
+    first_page = json_response(first, 200)
+    assert_operation_response(first)
+    assert length(first_page["data"]) == 50
+    assert hd(first_page["data"])["id"] == schedule["id"]
+
+    for row <- first_page["data"] do
+      refute Map.has_key?(row, "desired_outcome")
+      refute Map.has_key?(row, "target_ids")
+      assert row["management_boundary_id"] == boundary.id
+    end
+
+    tail =
+      get_json(
+        "/api/v1/audit-schedules/summaries?after=#{URI.encode_www_form(first_page["page"]["next"])}",
+        context.viewer_token
+      )
+
+    assert %{"data" => [%{"id" => tail_id}], "page" => %{"next" => nil}} =
+             json_response(tail, 200)
+
+    assert tail_id == hd(schedules)["id"]
+    assert_operation_response(tail)
+    selected = get_data!("/api/v1/audit-schedules/#{tail_id}", context.viewer_token)
+    assert selected["desired_outcome"] == "Boundary health is normal"
+    assert selected["target_ids"] == [target.id]
+
+    first_runs = get_json("/api/v1/audit-runs/summaries", context.viewer_token)
+    run_page = json_response(first_runs, 200)
+    assert_operation_response(first_runs)
+    assert length(run_page["data"]) == 50
+    assert hd(run_page["data"])["id"] == List.last(runs).id
+
+    for row <- run_page["data"] do
+      refute Map.has_key?(row, "reason")
+      assert row["status"] == if(row["id"] == List.last(runs).id, do: "queued", else: "failed")
+      assert row["audit_schedule_id"] == schedule["id"]
+    end
+
+    run_tail =
+      get_json(
+        "/api/v1/audit-runs/summaries?after=#{URI.encode_www_form(run_page["page"]["next"])}",
+        context.viewer_token
+      )
+
+    assert %{"data" => [%{"id" => run_tail_id}], "page" => %{"next" => nil}} =
+             json_response(run_tail, 200)
+
+    assert run_tail_id == hd(runs).id
+
+    assert get_data!("/api/v1/audit-runs/#{run_tail_id}", context.viewer_token)["reason"] ==
+             "Selected diagnosis 1"
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "fixture",
+        "audit-summary-case",
+        "Audit follow-up",
+        :warning,
+        %{"desired_outcome" => "Infrastructure health is normal"},
+        nil,
+        :en,
+        actor: context.operator
+      )
+
+    linked_run = List.last(runs)
+
+    Audits.record_audit_run_outcome!(
+      linked_run,
+      1,
+      %{
+        status: :case_opened,
+        case_id: incident.id,
+        case_revision: incident.revision,
+        completed_at: ~U[2026-10-05 02:00:00Z]
+      },
+      authorize?: false
+    )
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      assert [%{"case_id" => case_id, "case_revision" => 1, "status" => "case_opened"}] =
+               get_data!("/api/v1/audit-runs/summaries?ids=#{linked_run.id}", token)
+
+      assert case_id == incident.id
+    end
+
+    root =
+      Path.join(System.tmp_dir!(), "audit-metadata-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    shown =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["audit", "summaries", "--after", first_page["page"]["next"]],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => ^tail_id, "name" => "Audit summary 1"}] = shown["data"]
+    refute Map.has_key?(hd(shown["data"]), "target_ids")
+
+    linked =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["audit-run", "summaries", "--ids", linked_run.id], runtime) ==
+                 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => linked_id, "case_id" => case_id}] = linked["data"]
+    assert linked_id == linked_run.id
+    assert case_id == incident.id
+
+    for {command, id} <- [
+          {"audit", hd(schedules)["id"]},
+          {"audit-run", hd(runs).id}
+        ] do
+      selected_page =
+        capture_io(fn ->
+          assert OpsondeCLI.CLI.run([command, "summaries", "--ids", id], runtime) == 0
+        end)
+        |> Jason.decode!()
+
+      assert [%{"id" => selected_id}] = selected_page["data"]
+      assert selected_id == id
+    end
+
+    for {table, columns, path} <- [
+          {"audit_schedules", ["objective", "target_ids"], "/api/v1/audit-schedules/summaries"},
+          {"audit_runs", ["reason"], "/api/v1/audit-runs/summaries"}
+        ] do
+      for column <- columns,
+          do:
+            Opsonde.Repo.query!(
+              "ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_#{column}"
+            )
+
+      try do
+        response = get_json(path, context.viewer_token)
+        assert length(json_response(response, 200)["data"]) == 50
+      after
+        for column <- columns,
+            do:
+              Opsonde.Repo.query!(
+                "ALTER TABLE #{table} RENAME COLUMN unavailable_#{column} TO #{column}"
+              )
+      end
+    end
+  end
+
+  @tag audit_summaries: true
+  test "known boundary summaries are scoped and filtered before pagination without loading facts",
+       context do
+    boundaries =
+      for n <- 1..51 do
+        Targets.create_management_boundary!(
+          "Known audit boundary #{n}",
+          "datacenter",
+          %{"private" => "scope-facts"},
+          actor: context.admin
+        )
+      end
+
+    first = hd(boundaries)
+    last = List.last(boundaries)
+    Targets.deactivate_management_boundary!(first, 1, actor: context.admin)
+    ids = "#{first.id},#{last.id}"
+
+    for token <- [context.viewer_token, context.operator_token, context.admin_token] do
+      selected = get_data!("/api/v1/management-boundaries?ids=#{ids}&active=true&limit=1", token)
+      assert [%{"id" => selected_id}] = selected
+      assert selected_id == last.id
+      refute Map.has_key?(hd(selected), "facts")
+
+      assert get_data!("/api/v1/management-boundaries?ids=#{first.id}&active=false", token)
+             |> hd()
+             |> Map.fetch!("id") == first.id
+    end
+
+    assert get_data!(
+             "/api/v1/management-boundaries?ids=#{Ash.UUID.generate()}",
+             context.viewer_token
+           ) == []
+
+    root =
+      Path.join(System.tmp_dir!(), "audit-boundary-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+
+    shown =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["boundary", "list", "--ids", ids, "--active", "--limit", "1"],
+                 config_path: config_path,
+                 request_options: [plug: {Req.Test, stub}]
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => selected_id, "name" => "Known audit boundary 51"}] = shown["data"]
+    assert selected_id == last.id
+
+    Opsonde.Repo.query!(
+      "ALTER TABLE management_boundaries RENAME COLUMN facts TO unavailable_facts"
+    )
+
+    try do
+      assert [%{"id" => selected_id}] =
+               get_data!("/api/v1/management-boundaries?ids=#{last.id}", context.viewer_token)
+
+      assert selected_id == last.id
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE management_boundaries RENAME COLUMN unavailable_facts TO facts"
+      )
+    end
+  end
+
+  @tag audit_summaries: true
+  test "Audit summary bounds and required storage faults remain truthful under public authorization",
+       context do
+    for path <- [
+          "/api/v1/audit-schedules/summaries",
+          "/api/v1/audit-runs/summaries",
+          "/api/v1/management-boundaries"
+        ] do
+      assert %{"error" => %{"code" => "unauthenticated"}} =
+               get_json(path, nil) |> json_response(401)
+
+      for invalid <- [
+            "ids=",
+            "ids=bad",
+            "ids=" <> Enum.map_join(1..101, ",", fn _ -> Ash.UUID.generate() end),
+            "limit=101",
+            "after="
+          ] do
+        assert %{"error" => %{}} =
+                 get_json(path <> "?" <> invalid, context.viewer_token) |> json_response(422)
+      end
+    end
+
+    for {table, column, path} <- [
+          {"audit_schedules", "name", "/api/v1/audit-schedules/summaries"},
+          {"audit_runs", "status", "/api/v1/audit-runs/summaries"},
+          {"management_boundaries", "name", "/api/v1/management-boundaries"}
+        ] do
+      Opsonde.Repo.query!("ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_#{column}")
+
+      try do
+        capture_log(fn ->
+          assert %{"error" => %{"code" => "internal_error"}} =
+                   get_json(path, context.viewer_token) |> json_response(500)
+        end)
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE #{table} RENAME COLUMN unavailable_#{column} TO #{column}"
+        )
+      end
+    end
+  end
+
   @tag report_receipt: true
   test "an exact Case revision recovers a generated Report beyond the snapshot window without its body",
        context do

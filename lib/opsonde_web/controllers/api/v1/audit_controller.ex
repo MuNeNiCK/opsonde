@@ -54,6 +54,28 @@ defmodule OpsondeWeb.API.V1.AuditController do
            OutcomeSchemas.ref("AuditScheduleResponse")}
       ] ++ @write_errors
 
+  operation :schedule_summaries,
+    operation_id: "listAuditScheduleSummaries",
+    summary: "List audit schedule metadata",
+    parameters: Schemas.pagination_parameters() ++ [Schemas.reference_ids_parameter()],
+    responses:
+      [
+        ok:
+          {"Audit schedule metadata page", "application/json",
+           OutcomeSchemas.ref("AuditScheduleSummaryPage")}
+      ] ++ @list_errors
+
+  operation :run_summaries,
+    operation_id: "listAuditRunSummaries",
+    summary: "List audit run metadata",
+    parameters: Schemas.pagination_parameters() ++ [Schemas.reference_ids_parameter()],
+    responses:
+      [
+        ok:
+          {"Audit run metadata page", "application/json",
+           OutcomeSchemas.ref("AuditRunSummaryPage")}
+      ] ++ @list_errors
+
   operation :show_schedule,
     operation_id: "getAuditSchedule",
     summary: "Get an audit schedule",
@@ -118,6 +140,29 @@ defmodule OpsondeWeb.API.V1.AuditController do
   end
 
   def schedule(_conn, _params), do: {:error, :bad_request}
+
+  def schedule_summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, schedules} <-
+           Audits.page_audit_schedule_summaries(input,
+             page: page,
+             actor: conn.assigns.current_user
+           ) do
+      Response.page(conn, schedules, &Map.take(&1, Opsonde.Audits.AuditSchedule.summary_fields()))
+    end
+  end
+
+  def run_summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, runs} <-
+           Audits.page_audit_run_summaries(input, page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, runs, &Map.take(&1, Opsonde.Audits.AuditRun.summary_fields()))
+    end
+  end
 
   def show_schedule(conn, %{"id" => id}) do
     with {:ok, schedule} <- Audits.get_audit_schedule(id, actor: conn.assigns.current_user) do

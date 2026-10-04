@@ -17,6 +17,14 @@ defmodule Opsonde.Targets.ManagementBoundary do
     defaults [:read]
 
     read :page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      argument :active, :boolean
+
+      filter expr(
+               (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:active)) or active == ^arg(:active))
+             )
+
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(select: @summary_fields, sort: [inserted_at: :asc, id: :asc])
     end

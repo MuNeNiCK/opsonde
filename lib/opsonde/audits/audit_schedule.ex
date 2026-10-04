@@ -5,6 +5,9 @@ defmodule Opsonde.Audits.AuditSchedule do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id name timezone cron_expression report_language management_boundary_id active next_run_at revision inserted_at updated_at)a
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "audit_schedules"
     repo Opsonde.Repo
@@ -30,6 +33,13 @@ defmodule Opsonde.Audits.AuditSchedule do
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(sort: [inserted_at: :desc, id: :desc])
+    end
+
+    read :summaries do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      filter expr(is_nil(^arg(:ids)) or id in ^arg(:ids))
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @summary_fields, sort: [inserted_at: :desc, id: :desc])
     end
 
     create :create_record do
@@ -117,7 +127,7 @@ defmodule Opsonde.Audits.AuditSchedule do
       forbid_if always()
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :summaries]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

@@ -41,7 +41,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   operation :boundaries_index,
     operation_id: "listManagementBoundaries",
     summary: "List management boundaries",
-    parameters: Schemas.pagination_parameters(),
+    parameters:
+      Schemas.pagination_parameters() ++
+        [
+          Schemas.reference_ids_parameter(),
+          {:active, [in: :query, schema: %OpenApiSpex.Schema{type: :boolean}]}
+        ],
     responses:
       [
         ok:
@@ -352,7 +357,9 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       ] ++ @write_errors
 
   def boundaries_index(conn, params) do
-    page(conn, params, &Targets.page_management_boundaries/1, fn boundary ->
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :active])
+
+    page(conn, params, &Targets.page_management_boundaries(input, &1), fn boundary ->
       Map.take(boundary, Opsonde.Targets.ManagementBoundary.summary_fields())
     end)
   end

@@ -476,6 +476,25 @@
         ],
         "type": "object"
       },
+      "AuditRunSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuditRunSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "ReportResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4667,6 +4686,25 @@
         ],
         "type": "object"
       },
+      "AuditScheduleSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuditScheduleSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "VerificationAttemptResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5462,6 +5500,103 @@
           "max_related_targets",
           "max_ai_usage_units",
           "max_no_progress_turns"
+        ],
+        "type": "object"
+      },
+      "AuditRunSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "audit_schedule_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "case_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "schedule_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "case_opened",
+              "skipped",
+              "cancelled",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "target_key": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "target_revision": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "audit_schedule_id",
+          "schedule_revision",
+          "target_key",
+          "target_id",
+          "target_revision",
+          "case_id",
+          "case_revision",
+          "scheduled_for",
+          "status",
+          "started_at",
+          "completed_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -6417,6 +6552,75 @@
         },
         "required": [
           "audit_schedule"
+        ],
+        "type": "object"
+      },
+      "AuditScheduleSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "cron_expression": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "management_boundary_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "report_language": {
+            "enum": [
+              "en",
+              "ja"
+            ],
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timezone": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "timezone",
+          "cron_expression",
+          "report_language",
+          "management_boundary_id",
+          "active",
+          "next_run_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -16329,6 +16533,109 @@
         ]
       }
     },
+    "/api/v1/audit-schedules/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAuditScheduleSummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditScheduleSummaryPage"
+                }
+              }
+            },
+            "description": "Audit schedule metadata page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List audit schedule metadata",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/targets/{id}": {
       "get": {
         "callbacks": {},
@@ -17740,6 +18047,109 @@
         ]
       }
     },
+    "/api/v1/audit-runs/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listAuditRunSummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditRunSummaryPage"
+                }
+              }
+            },
+            "description": "Audit run metadata page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List audit run metadata",
+        "tags": [
+          "Audits"
+        ]
+      }
+    },
     "/api/v1/access-methods/{id}/deactivate": {
       "post": {
         "callbacks": {},
@@ -17966,6 +18376,32 @@
               "maxLength": 16384,
               "minLength": 1,
               "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

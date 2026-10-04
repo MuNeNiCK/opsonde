@@ -125,11 +125,13 @@ defmodule OpsondeCLI.Commands do
     {"signal", "show"} => Route.new(:get, "/signal-receipts/:id", 1),
     {"signal", "events"} => Route.page("/signal-receipts/:id/events", 1),
     {"audit", "list"} => Route.page("/audit-schedules"),
+    {"audit", "summaries"} => Route.page("/audit-schedules/summaries"),
     {"audit", "schedule"} => Route.new(:post, "/audit-schedules", 0, "audit_schedule"),
     {"audit", "show"} => Route.new(:get, "/audit-schedules/:id", 1),
     {"audit", "deactivate"} =>
       Route.new(:post, "/audit-schedules/:id/deactivate", 1, "audit_schedule"),
     {"audit-run", "list"} => Route.page("/audit-runs"),
+    {"audit-run", "summaries"} => Route.page("/audit-runs/summaries"),
     {"audit-run", "show"} => Route.new(:get, "/audit-runs/:id", 1),
     {"report", "list"} => Route.page("/reports"),
     {"report", "show"} => Route.new(:get, "/reports/:id", 1),

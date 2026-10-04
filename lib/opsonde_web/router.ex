@@ -159,10 +159,12 @@ defmodule OpsondeWeb.Router do
     get "/signal-receipts/:id/events", SignalReceiptController, :events
 
     get "/audit-schedules", AuditController, :schedules
+    get "/audit-schedules/summaries", AuditController, :schedule_summaries
     post "/audit-schedules", AuditController, :schedule
     get "/audit-schedules/:id", AuditController, :show_schedule
     post "/audit-schedules/:id/deactivate", AuditController, :deactivate
     get "/audit-runs", AuditController, :runs
+    get "/audit-runs/summaries", AuditController, :run_summaries
     get "/audit-runs/:id", AuditController, :show_run
 
     get "/reports", ReportController, :index

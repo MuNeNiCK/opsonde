@@ -19,11 +19,15 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "AuditSchedule" => audit_schedule(),
       "AuditScheduleResponse" => Schemas.data(ref("AuditSchedule")),
       "AuditSchedulePage" => Schemas.page(ref("AuditSchedule")),
+      "AuditScheduleSummary" => audit_schedule_summary(),
+      "AuditScheduleSummaryPage" => Schemas.page(ref("AuditScheduleSummary")),
       "CreateAuditScheduleRequest" => create_audit_schedule_request(),
       "DeactivateAuditScheduleRequest" => deactivate_audit_schedule_request(),
       "AuditRun" => audit_run(),
       "AuditRunResponse" => Schemas.data(ref("AuditRun")),
       "AuditRunPage" => Schemas.page(ref("AuditRun")),
+      "AuditRunSummary" => audit_run_summary(),
+      "AuditRunSummaryPage" => Schemas.page(ref("AuditRunSummary")),
       "Report" => report(),
       "ReportSummary" => report_summary(),
       "ReportSummaryResponse" => Schemas.data(ref("ReportSummary")),
@@ -175,6 +179,18 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       },
       ~w(name desired_outcome timezone cron_expression report_language)a
     )
+  end
+
+  defp audit_schedule_summary do
+    schema = audit_schedule()
+    fields = Opsonde.Audits.AuditSchedule.summary_fields()
+    %{schema | properties: Map.take(schema.properties, fields), required: fields}
+  end
+
+  defp audit_run_summary do
+    schema = audit_run()
+    fields = Opsonde.Audits.AuditRun.summary_fields()
+    %{schema | properties: Map.take(schema.properties, fields), required: fields}
   end
 
   defp deactivate_audit_schedule_request do

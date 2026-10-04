@@ -448,11 +448,20 @@ defmodule OpsondeCLI.CLI do
   defp query(%Route{path: "/deliveries/receipt"}, options),
     do: maybe_query([], :idempotency_key, options[:idempotency_key])
 
-  defp query(%Route{path: "/reports"}, options) do
+  defp query(%Route{path: path}, options)
+       when path in ["/reports", "/audit-schedules/summaries", "/audit-runs/summaries"] do
     []
     |> maybe_query(:limit, options[:limit])
     |> maybe_query(:after, options[:after])
     |> maybe_query(:ids, options[:ids])
+  end
+
+  defp query(%Route{path: "/management-boundaries"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:active, options[:active])
   end
 
   defp query(%Route{page?: true, path: "/accounts"}, options) do
@@ -584,6 +593,8 @@ defmodule OpsondeCLI.CLI do
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde identity|relationship list [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
       opsonde access-method list [--ids UUID,UUID] [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde boundary list [--ids UUID,UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde audit|audit-run summaries [--ids UUID,UUID] [--limit N] [--after CURSOR]
       opsonde account list [--ids UUID,UUID] [--roles admin,operator,viewer] [--limit N] [--after CURSOR]
       opsonde provider references [--ids UUID,UUID] [--kind KIND] [--enabled|--no-enabled] [--adapter-types TYPE,TYPE] [--limit N] [--after CURSOR]
       opsonde target references [--ids UUID,UUID] [--active|--no-active] [--exclude-id UUID] [--limit N] [--after CURSOR]

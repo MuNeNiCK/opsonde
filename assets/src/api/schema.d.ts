@@ -1020,6 +1020,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit-schedules/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List audit schedule metadata */
+        get: operations["listAuditScheduleSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/targets/{id}": {
         parameters: {
             query?: never;
@@ -1234,6 +1251,23 @@ export interface paths {
         };
         /** Get an audit run */
         get: operations["getAuditRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit-runs/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List audit run metadata */
+        get: operations["listAuditRunSummaries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1925,6 +1959,10 @@ export interface components {
         };
         ErrorResponse: {
             error: components["schemas"]["Error"];
+        };
+        AuditRunSummaryPage: {
+            data: components["schemas"]["AuditRunSummary"][];
+            page: components["schemas"]["Page"];
         };
         ReportResponse: {
             data: components["schemas"]["Report"];
@@ -2998,6 +3036,10 @@ export interface components {
             data: components["schemas"]["AIInvocation"][];
             page: components["schemas"]["Page"];
         };
+        AuditScheduleSummaryPage: {
+            data: components["schemas"]["AuditScheduleSummary"][];
+            page: components["schemas"]["Page"];
+        };
         VerificationAttemptResponse: {
             data: components["schemas"]["VerificationAttempt"];
         };
@@ -3191,6 +3233,33 @@ export interface components {
             max_related_targets: number;
             max_resolver_turns: number;
             max_target_requests: number;
+        };
+        AuditRunSummary: {
+            /** Format: uuid */
+            audit_schedule_id: string;
+            /** Format: uuid */
+            case_id: string | null;
+            case_revision: number | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            revision: number;
+            schedule_revision: number;
+            /** Format: date-time */
+            scheduled_for: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** @enum {string} */
+            status: "queued" | "running" | "case_opened" | "skipped" | "cancelled" | "failed";
+            /** Format: uuid */
+            target_id: string | null;
+            target_key: string;
+            target_revision: number | null;
+            /** Format: date-time */
+            updated_at: string;
         };
         TurnConditionContext: {
             /** Format: date-time */
@@ -3431,6 +3500,25 @@ export interface components {
                 target_ids?: string[];
                 timezone: string;
             };
+        };
+        AuditScheduleSummary: {
+            active: boolean;
+            cron_expression: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            /** Format: uuid */
+            management_boundary_id: string | null;
+            name: string;
+            /** Format: date-time */
+            next_run_at: string;
+            /** @enum {string} */
+            report_language: "en" | "ja";
+            revision: number;
+            timezone: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         TargetFilePage: {
             data: components["schemas"]["TargetFile"][];
@@ -9393,6 +9481,66 @@ export interface operations {
             };
         };
     };
+    listAuditScheduleSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit schedule metadata page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditScheduleSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getTarget: {
         parameters: {
             query?: never;
@@ -10391,6 +10539,66 @@ export interface operations {
             };
         };
     };
+    listAuditRunSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit run metadata page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRunSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     deactivateAccessMethod: {
         parameters: {
             query?: never;
@@ -10545,6 +10753,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 after?: string;
+                ids?: string[];
+                active?: boolean;
             };
             header?: never;
             path?: never;

@@ -6,6 +6,7 @@ defmodule Opsonde.Audits do
     resource Opsonde.Audits.AuditSchedule do
       define :list_audit_schedules, action: :read
       define :page_audit_schedules, action: :page
+      define :page_audit_schedule_summaries, action: :summaries
       define :get_audit_schedule, action: :read, get_by: [:id]
       define :create_audit_schedule_record, action: :create_record
       define :advance_audit_schedule_record, action: :advance_record, args: [:expected_revision]
@@ -32,6 +33,7 @@ defmodule Opsonde.Audits do
       define :list_audit_runs, action: :read
       define :report_audit_runs, action: :report_period, args: [:from, :to, :target_id]
       define :page_audit_runs, action: :page
+      define :page_audit_run_summaries, action: :summaries
       define :get_audit_run, action: :read, get_by: [:id]
 
       define :audit_runs_for_occurrence,
