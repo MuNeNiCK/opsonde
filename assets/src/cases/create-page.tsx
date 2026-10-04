@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
 import { FormSelect } from "@/components/form-select";
 import { PageControls } from "@/components/page-controls";
+import { PagedSelect } from "@/components/paged-select";
 import { usePagedData } from "@/api/use-paged-data";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,18 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { fileReference, getTargetFile, type TargetFile } from "@/targets/file-transfer";
 
-type Target = components["schemas"]["Target"];
+type Target = components["schemas"]["TargetSummary"];
+
+async function loadTarget(id: string, signal: AbortSignal) {
+  const result = await apiClient
+    .GET("/api/v1/targets/summaries", {
+      params: { query: { ids: [id], limit: 1 } },
+      querySerializer: commaSeparatedQuery,
+      signal,
+    })
+    .then(apiData);
+  return result.data[0] ?? null;
+}
 
 export function CaseCreatePage() {
   const { t } = useTranslation();
@@ -25,11 +37,17 @@ export function CaseCreatePage() {
   const [search] = useSearchParams();
   const { account } = useAuthentication();
   const [sourceRef] = useState(() => crypto.randomUUID());
-  const [targets, setTargets] = useState<Target[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [targetId, setTargetId] = useState(search.get("target") ?? "");
   const [fileId, setFileId] = useState(search.get("file") ?? "");
+  const [targetSelection, setTargetSelection] = useState<{
+    id: string;
+    target: Target | null;
+    revision: number;
+    error: boolean;
+  } | null>(null);
+  const [refreshTarget, setRefreshTarget] = useState(0);
   const [selection, setSelection] = useState<{
     targetId: string;
     id: string;
@@ -40,8 +58,24 @@ export function CaseCreatePage() {
   const [refreshFile, setRefreshFile] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const mounted = useRef(false);
+  const targetRead = useRef<AbortController | null>(null);
   const submissionRead = useRef<AbortController | null>(null);
   const canOperate = account?.role === "admin" || account?.role === "operator";
+  const currentTarget = targetSelection?.id === targetId ? targetSelection : null;
+  const loadingTarget = !!targetId && (!currentTarget || currentTarget.revision !== refreshTarget);
+  const targetError = currentTarget?.revision === refreshTarget && currentTarget.error;
+  const unavailableTarget =
+    !!targetId && !loadingTarget && !targetError && !currentTarget?.target?.active;
+  const loadTargetPage = useCallback(
+    (after: string | undefined, signal: AbortSignal) =>
+      apiClient
+        .GET("/api/v1/targets/summaries", {
+          params: { query: { active: true, limit: 50, after } },
+          signal,
+        })
+        .then(apiData),
+    [],
+  );
   const selected = selection?.targetId === targetId && selection.id === fileId ? selection : null;
   const filePage = usePagedData(
     useCallback(
@@ -95,18 +129,25 @@ export function CaseCreatePage() {
   }, [nextExpiry, now]);
 
   useEffect(() => {
-    let active = true;
-    collectPages((after) =>
-      apiClient
-        .GET("/api/v1/targets", { params: { query: { limit: 100, after: after ?? undefined } } })
-        .then(apiData),
-    )
-      .then((items) => active && setTargets(items.filter((item) => item.active)))
-      .catch(() => active && setError(t("cases.requestFailed")));
-    return () => {
-      active = false;
-    };
-  }, [t]);
+    if (!targetId || !canOperate) return;
+    const controller = new AbortController();
+    targetRead.current = controller;
+    void loadTarget(targetId, controller.signal)
+      .then((target) => {
+        if (!controller.signal.aborted)
+          setTargetSelection({ id: targetId, target, revision: refreshTarget, error: false });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setTargetSelection((previous) => ({
+            id: targetId,
+            target: previous?.id === targetId ? previous.target : null,
+            revision: refreshTarget,
+            error: true,
+          }));
+      });
+    return () => controller.abort();
+  }, [targetId, canOperate, refreshTarget]);
 
   useEffect(() => {
     if (!targetId || !fileId || !canOperate) return;
@@ -147,6 +188,13 @@ export function CaseCreatePage() {
     const controller = new AbortController();
     submissionRead.current = controller;
     try {
+      if (targetId) {
+        targetRead.current?.abort();
+        const target = await loadTarget(targetId, controller.signal);
+        if (controller.signal.aborted) return;
+        setTargetSelection({ id: targetId, target, revision: refreshTarget, error: false });
+        if (!target?.active) throw Error("target_unavailable");
+      }
       let attachment = null;
       if (fileId) {
         const file = await getTargetFile(targetId, fileId, controller.signal);
@@ -182,7 +230,9 @@ export function CaseCreatePage() {
         setError(
           cause instanceof Error && cause.message === "unavailable"
             ? t("files.unavailable")
-            : t("cases.requestFailed"),
+            : cause instanceof Error && cause.message === "target_unavailable"
+              ? t("targets.targetNotFound")
+              : t("cases.requestFailed"),
         );
     } finally {
       if (mounted.current) setPending(false);
@@ -237,19 +287,57 @@ export function CaseCreatePage() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="case-target">{t("cases.initialTarget")}</Label>
-                  <FormSelect
+                  <PagedSelect
                     id="case-target"
-                    name="initial_target_id"
+                    label={t("cases.initialTarget")}
                     placeholder={t("cases.findTarget")}
-                    value={targetId || null}
+                    selected={currentTarget?.target ?? null}
+                    load={loadTargetPage}
                     disabled={pending}
-                    onValueChange={(value) => {
-                      setTargetId(value ?? "");
+                    onChange={(target) => {
+                      setTargetId(target?.id ?? "");
                       setFileId("");
+                      setTargetSelection(
+                        target
+                          ? { id: target.id, target, revision: refreshTarget, error: false }
+                          : null,
+                      );
                     }}
-                    options={targets.map((target) => ({ value: target.id, label: target.name }))}
                   />
+                  {loadingTarget && <Spinner />}
+                  {targetId && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={pending}
+                        onClick={() => {
+                          setTargetId("");
+                          setFileId("");
+                          setTargetSelection(null);
+                        }}
+                      >
+                        {t("cases.findTarget")}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={pending || loadingTarget}
+                        onClick={() => setRefreshTarget((revision) => revision + 1)}
+                      >
+                        {t("common.refresh")}
+                      </Button>
+                    </div>
+                  )}
+                  {(targetError || unavailableTarget) && (
+                    <Alert variant="destructive">
+                      <AlertDescription>
+                        {t(targetError ? "targets.requestFailed" : "targets.targetNotFound")}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="case-severity">{t("cases.manualSeverity")}</Label>
@@ -314,7 +402,15 @@ export function CaseCreatePage() {
               )}
               <Button
                 type="submit"
-                disabled={pending || loadingFile || unavailableFile || fileError}
+                disabled={
+                  pending ||
+                  loadingTarget ||
+                  targetError ||
+                  unavailableTarget ||
+                  loadingFile ||
+                  unavailableFile ||
+                  fileError
+                }
               >
                 {pending && <Spinner />}
                 {t("cases.createManual")}

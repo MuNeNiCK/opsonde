@@ -62,7 +62,7 @@ test("Case attachment keeps the linked file outside the current metadata page", 
   let knownReads = 0;
   wire.mockImplementation(async (request: Request) => {
     const url = new URL(request.url);
-    if (url.pathname === "/api/v1/targets")
+    if (url.pathname === "/api/v1/targets/summaries")
       return Response.json({
         data: [{ id: "target-1", name: "Device", active: true }],
         page: { next: null },
@@ -117,7 +117,7 @@ test("Case attachment reaches a ready file after an incomplete page and retains 
   wire.mockImplementation(async (request: Request) => {
     const url = new URL(request.url);
     if (request.method !== "GET") writes.push(request.method);
-    if (url.pathname === "/api/v1/targets")
+    if (url.pathname === "/api/v1/targets/summaries")
       return Response.json({
         data: [{ id: "target-1", name: "Device", active: true }],
         page: { next: null },
@@ -177,7 +177,7 @@ test("Case attachment read failure requires a read-only refresh and expired file
   wire.mockImplementation(async (request: Request) => {
     const path = new URL(request.url).pathname;
     if (request.method !== "GET") writes.push(request.method);
-    if (path === "/api/v1/targets")
+    if (path === "/api/v1/targets/summaries")
       return Response.json({
         data: [{ id: "target-1", name: "Device", active: true }],
         page: { next: null },
@@ -219,7 +219,7 @@ test("Case attachment expires according to its exact metadata even when its page
   await i18n.changeLanguage("en");
   wire.mockImplementation((request: Request) => {
     const path = new URL(request.url).pathname;
-    if (path === "/api/v1/targets")
+    if (path === "/api/v1/targets/summaries")
       return Promise.resolve(
         Response.json({
           data: [{ id: "target-1", name: "Device", active: true }],
@@ -307,12 +307,16 @@ test("Changing the Case Target releases the old selected file and ignores its la
   let submitted: Record<string, unknown> | undefined;
   wire.mockImplementation(async (request: Request) => {
     const path = new URL(request.url).pathname;
-    if (path === "/api/v1/targets")
+    if (path === "/api/v1/targets/summaries")
       return Response.json({
         data: [
           { id: "target-1", name: "Device 1", active: true },
           { id: "target-2", name: "Device 2", active: true },
-        ],
+        ].filter(
+          (target) =>
+            !new URL(request.url).searchParams.has("ids") ||
+            target.id === new URL(request.url).searchParams.get("ids"),
+        ),
         page: { next: null },
       });
     if (path.endsWith("/files")) return Response.json({ data: [], page: { next: null } });
@@ -358,7 +362,7 @@ test("Leaving Case creation during attachment recheck prevents a later Case subm
   wire.mockImplementation(async (request: Request) => {
     const path = new URL(request.url).pathname;
     if (request.method !== "GET") writes.push(request.method);
-    if (path === "/api/v1/targets")
+    if (path === "/api/v1/targets/summaries")
       return Response.json({
         data: [{ id: "target-1", name: "Device", active: true }],
         page: { next: null },
@@ -500,7 +504,7 @@ test("Case creation refetches a selected ready file and submits its exact refere
   let submitted: Record<string, unknown> | undefined;
   wire.mockImplementation(async (request: Request) => {
     const path = new URL(request.url, "http://localhost").pathname;
-    if (path === "/api/v1/targets")
+    if (path === "/api/v1/targets/summaries")
       return new Response(
         JSON.stringify({
           data: [{ id: "target-1", name: "device", active: true }],

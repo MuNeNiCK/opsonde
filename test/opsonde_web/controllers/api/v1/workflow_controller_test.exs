@@ -92,6 +92,59 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
              |> Enum.map(&Map.take(&1, ["status", "ordinal"]))
   end
 
+  test "manual Case submission preserves a Target selected through the summary API", context do
+    created =
+      post_json(
+        "/api/v1/targets",
+        %{
+          "target" => %{
+            "name" => "Summary-selected host",
+            "kind" => "host",
+            "type_id" => "custom-os",
+            "facts" => %{}
+          }
+        },
+        context.admin_token
+      )
+      |> json_response(201)
+
+    target_id = created["data"]["id"]
+
+    summary =
+      get_json("/api/v1/targets/summaries?ids=#{target_id}&limit=1", context.operator_token)
+
+    assert_operation_response(summary)
+    assert [%{"id" => ^target_id, "active" => true}] = json_response(summary, 200)["data"]
+
+    body = %{
+      "case" => %{
+        "trigger_kind" => "manual",
+        "source" => "web",
+        "source_ref" => "summary-selected-case",
+        "title" => "Investigate selected host",
+        "severity" => "warning",
+        "initial_target_id" => target_id,
+        "initial_context" => %{"desired_outcome" => "Restore host availability"}
+      }
+    }
+
+    response = post_json("/api/v1/cases", body, context.operator_token)
+    assert_operation_response(response)
+
+    assert %{
+             "data" => %{
+               "id" => id,
+               "initial_target_id" => ^target_id,
+               "selected_target_id" => ^target_id
+             }
+           } = json_response(response, 201)
+
+    snapshot = get_data!("/api/v1/cases/#{id}", context.viewer_token)
+    assert snapshot["case"]["initial_target_id"] == target_id
+    assert snapshot["case"]["selected_target_id"] == target_id
+    assert snapshot["case"]["case_symptom"]["desired_outcome"] == "Restore host availability"
+  end
+
   test "public Case creation publishes its changes only after commit", context do
     body = %{
       "case" => %{
