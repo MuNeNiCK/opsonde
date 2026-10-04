@@ -35,15 +35,26 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
     else
       query = Ash.Query.filter(resource, id in ^Enum.uniq(ids))
       summary? = calculation_opts[:summary?] == true
+      recovery_metadata? = calculation_opts[:recovery_metadata?] == true
 
       query =
-        if summary? do
+        if summary? or recovery_metadata? do
           fields = [:case_id, :resolution_run_id, :target_id, :status, :outcome_category]
 
           fields =
             case resource do
               Operation -> fields ++ [:purpose, :completed_at]
               VerificationAttempt -> fields ++ [:observed_at]
+            end
+
+          fields =
+            if recovery_metadata? do
+              case resource do
+                Operation -> fields ++ [:capability, :operation, :selectors]
+                VerificationAttempt -> fields ++ [:operation_id]
+              end
+            else
+              fields
             end
 
           Ash.Query.select(query, fields)
@@ -55,7 +66,7 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
 
       result =
         case resource do
-          Operation when not summary? ->
+          Operation when not summary? and not recovery_metadata? ->
             Cases.list_operations(Keyword.put(opts, :load, [:proposal]))
 
           Operation ->
@@ -92,14 +103,25 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
          true <- operation.status in [:applied, :failed, :partial, :unknown],
          true <- evidence.observed_at == operation.completed_at,
          true <- evidence.kind == operation_kind(operation) do
-      if opts[:summary?] do
-        {:ok, source_summary(operation)}
-      else
-        full_operation_content(operation)
+      cond do
+        opts[:summary?] -> {:ok, source_summary(operation)}
+        opts[:recovery_metadata?] -> {:ok, operation_metadata(operation)}
+        true -> full_operation_content(operation)
       end
     else
       _invalid -> invalid_source("Evidence has no matching terminal Operation receipt")
     end
+  end
+
+  defp operation_metadata(operation) do
+    %{
+      "status" => to_string(operation.status),
+      "category" => operation.outcome_category,
+      "capability" => operation.capability,
+      "operation" => operation.operation,
+      "selectors" => operation.selectors,
+      "target_id" => operation.target_id
+    }
   end
 
   defp full_operation_content(operation) do
@@ -112,23 +134,17 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
          else: {facts || %{}, details}
 
     {:ok,
-     %{
-       "status" => to_string(operation.status),
-       "category" => operation.outcome_category,
+     Map.merge(operation_metadata(operation), %{
        "reference" => operation.reference,
        "request_kind" => to_string(operation.request_kind),
        "purpose" => to_string(operation.purpose),
-       "capability" => operation.capability,
-       "operation" => operation.operation,
-       "selectors" => operation.selectors,
        "parameters" => operation.parameters,
        "details" => details,
        "facts" => facts,
        "tool_id" => operation.proposal.tool_id,
-       "target_id" => operation.target_id,
        "access_method_id" => operation.access_method_id,
        "access_method_revision" => operation.access_method_revision
-     }}
+     })}
   end
 
   defp verification_content(evidence, source, opts) do
@@ -137,24 +153,34 @@ defmodule Opsonde.Cases.Evidence.Calculations.Content do
          true <- attempt.status in [:verified, :not_verified, :unknown],
          true <- evidence.observed_at == attempt.observed_at,
          true <- evidence.kind == "target_verification" do
-      if opts[:summary?] do
-        {:ok, source_summary(attempt)}
-      else
-        {:ok,
-         %{
-           "status" => to_string(attempt.status),
-           "category" => attempt.outcome_category,
-           "facts" => attempt.facts,
-           "provider_evidence" => attempt.provider_evidence,
-           "expected" => attempt.expected,
-           "operation_id" => attempt.operation_id,
-           "target_id" => attempt.target_id,
-           "access_method_id" => attempt.access_method_id
-         }}
+      cond do
+        opts[:summary?] ->
+          {:ok, source_summary(attempt)}
+
+        opts[:recovery_metadata?] ->
+          {:ok, verification_metadata(attempt)}
+
+        true ->
+          {:ok,
+           Map.merge(verification_metadata(attempt), %{
+             "facts" => attempt.facts,
+             "provider_evidence" => attempt.provider_evidence,
+             "expected" => attempt.expected,
+             "access_method_id" => attempt.access_method_id
+           })}
       end
     else
       _invalid -> invalid_source("Evidence has no matching terminal Verification receipt")
     end
+  end
+
+  defp verification_metadata(attempt) do
+    %{
+      "status" => to_string(attempt.status),
+      "category" => attempt.outcome_category,
+      "operation_id" => attempt.operation_id,
+      "target_id" => attempt.target_id
+    }
   end
 
   defp source_summary(source) do

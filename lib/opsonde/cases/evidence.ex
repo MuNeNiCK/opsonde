@@ -105,6 +105,7 @@ defmodule Opsonde.Cases.Evidence do
              )
 
       prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 257)
+      prepare build(load: [:recovery_metadata])
     end
 
     read :by_idempotency do
@@ -212,7 +213,7 @@ defmodule Opsonde.Cases.Evidence do
 
   preparations do
     prepare build(load: [:content]) do
-      where negate(action_is(:page_for_case))
+      where negate(action_is([:page_for_case, :condition_assessment_candidates]))
     end
   end
 
@@ -277,6 +278,10 @@ defmodule Opsonde.Cases.Evidence do
   end
 
   calculations do
+    calculate :recovery_metadata,
+              :map,
+              {Opsonde.Cases.Evidence.Calculations.Content, recovery_metadata?: true}
+
     calculate :summary, :map, {Opsonde.Cases.Evidence.Calculations.Content, summary?: true} do
       public? true
     end

@@ -3932,6 +3932,7 @@ defmodule Opsonde.OperationDeliveryTest do
     assert [_turn] = Cases.started_turns_for_run!(run.id, authorize?: false)
   end
 
+  @tag recovery_metadata: true
   test "a later effect on one Condition does not stale another recovered Condition",
        context do
     enable_signal_automation!(context.admin)
@@ -4011,6 +4012,30 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok, verified_result(%{"unit" => "api.service", "active_state" => "active"})}
                  )
              )
+
+    snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
+    assert_receive {:verify, _, _}
+
+    receipt =
+      Cases.page_case_evidence!(incident.id, actor: context.operator).results
+      |> Enum.find(&(&1.source_ref == attempt.id and &1.source == "verification"))
+
+    Repo.query!("ALTER TABLE verification_attempts RENAME COLUMN facts TO unavailable_facts")
+
+    try do
+      assert {:ok, metadata_snapshot} =
+               Cases.case_reconnect_snapshot(incident.id, actor: context.operator)
+
+      assert metadata_snapshot.conditions == snapshot.conditions
+
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Cases.get_evidence(receipt.id, authorize?: false)
+
+      assert Exception.message(cause) =~ "does not exist"
+      refute_receive {:verify, _, _}
+    after
+      Repo.query!("ALTER TABLE verification_attempts RENAME COLUMN unavailable_facts TO facts")
+    end
 
     current = Cases.get_case!(incident.id, authorize?: false)
     run = Cases.active_resolution_run!(current.id, authorize?: false)
@@ -4676,7 +4701,7 @@ defmodule Opsonde.OperationDeliveryTest do
              1
   end
 
-  @tag late_recovery_evidence_read_fault: true
+  @tag late_recovery_evidence_read_fault: true, recovery_metadata: true
   test "a recovered Condition retries unreadable recovery Evidence before concluding",
        context do
     enable_signal_automation!(context.admin)
@@ -4698,7 +4723,11 @@ defmodule Opsonde.OperationDeliveryTest do
                    {:ok,
                     %Target.Observation{
                       observed_at: observed_at,
-                      facts: %{"unit" => "api.service", "active_state" => "active"},
+                      facts: %{
+                        "unit" => "api.service",
+                        "active_state" => "active",
+                        "padding" => String.duplicate("x", 64_000)
+                      },
                       evidence: [%{"check" => "fresh"}]
                     }}
                  )
@@ -4722,6 +4751,37 @@ defmodule Opsonde.OperationDeliveryTest do
     before_run = Cases.get_resolution_run!(run.id, authorize?: false)
     before_turn = Cases.get_turn!(turn.id, authorize?: false)
     before_invocations = Cases.list_ai_invocations!(authorize?: false)
+
+    snapshot = Cases.case_reconnect_snapshot!(incident.id, actor: context.operator)
+
+    assert [%{assessment: %{status: :ready_for_review, evidence_ids: [recovery_id]}}] =
+             snapshot.conditions
+
+    assert recovery_id == evidence.id
+
+    Repo.query!(
+      "ALTER TABLE operations RENAME COLUMN result_details TO unavailable_result_details"
+    )
+
+    try do
+      assert {:ok, metadata_snapshot} =
+               Cases.case_reconnect_snapshot(incident.id, actor: context.operator)
+
+      assert metadata_snapshot.conditions == snapshot.conditions
+
+      assert {:error, %Ash.Error.Unknown{} = cause} =
+               Cases.get_evidence(evidence.id, authorize?: false)
+
+      assert Exception.message(cause) =~ "does not exist"
+      assert {:error, %Ash.Error.Unknown{}} = ResolverProjection.build(turn.id, selection)
+      assert Cases.list_ai_invocations!(authorize?: false) == before_invocations
+      refute_receive {:observe, _, _}
+      refute_receive {:resolve, _, _}
+    after
+      Repo.query!(
+        "ALTER TABLE operations RENAME COLUMN unavailable_result_details TO result_details"
+      )
+    end
 
     with_projection_read_fault("evidences", "content", "jsonb", evidence.id, fn ->
       assert {:error, %Ash.Error.Unknown{} = error} =

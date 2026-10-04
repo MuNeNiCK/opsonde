@@ -14,6 +14,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   @max_evidence 256
   @max_lineage_depth 32
   @max_citations_per_condition 3
+  @observation_source_fields ~w(id case_id purpose status dispatch_started_at target_id target_revision capability operation selectors)a
 
   # Evidence availability does not decide whether the fault recovered.
   def assess_current(incident, exclude_operation_id \\ nil) do
@@ -196,19 +197,28 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
 
   def ready_for_review?(_assessments), do: false
 
-  defp current_evidence(%{kind: "file_read"} = evidence, condition, baseline, target_revision) do
+  defp current_evidence(
+         %{kind: "file_read"} = evidence,
+         condition,
+         baseline,
+         target_revision,
+         _metadata
+       ) do
     case Cases.file_read_source(evidence.id, evidence.case_id, authorize?: false) do
-      {:ok, source} -> current_evidence(source, condition, baseline, target_revision)
-      {:error, error} -> unavailable_source(error)
+      {:ok, source} ->
+        current_evidence(source, condition, baseline, target_revision, source.content)
+
+      {:error, error} ->
+        unavailable_source(error)
     end
   end
 
-  defp current_evidence(evidence, condition, baseline, target_revision)
+  defp current_evidence(evidence, condition, baseline, target_revision, metadata)
        when is_struct(baseline, DateTime) do
     if DateTime.compare(evidence.observed_at, baseline) != :lt and
          DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt and
-         evidence.content["target_id"] == condition.target_id do
-      valid_operation_evidence(evidence, condition, target_revision)
+         metadata["target_id"] == condition.target_id do
+      valid_operation_evidence(evidence, condition, target_revision, metadata)
     else
       {:ok, false}
     end
@@ -228,10 +238,19 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
             with {:ok, failed_evidence} <-
                    select_evidence(
                      evidence,
-                     &current_failed_observation(&1, condition, after_at, revision)
+                     &current_failed_observation(
+                       &1,
+                       condition,
+                       after_at,
+                       revision,
+                       &1.recovery_metadata
+                     )
                    ),
                  {:ok, current_evidence} <-
-                   select_evidence(evidence, &current_evidence(&1, condition, after_at, revision)) do
+                   select_evidence(
+                     evidence,
+                     &current_evidence(&1, condition, after_at, revision, &1.recovery_metadata)
+                   ) do
               failed_ids =
                 failed_evidence
                 |> Enum.uniq_by(&citation_scope/1)
@@ -357,7 +376,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   defp citation_scope(%{kind: "file_read", id: id}), do: {"file_read", id}
 
   defp citation_scope(evidence) do
-    content = evidence.content
+    content = evidence.recovery_metadata
 
     {evidence.kind, content["capability"], content["operation"], content["selectors"]}
   end
@@ -387,16 +406,20 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     end
   end
 
-  defp current_failed_observation(evidence, condition, baseline, target_revision) do
+  defp current_failed_observation(evidence, condition, baseline, target_revision, metadata) do
     with true <- DateTime.compare(evidence.observed_at, baseline) != :lt,
          true <- DateTime.compare(evidence.observed_at, condition.current_occurred_at) != :lt,
          true <-
            evidence.kind == "observation" and
              evidence.source == "operation" and
-             evidence.content["target_id"] == condition.target_id and
-             evidence.content["status"] == "failed",
+             metadata["target_id"] == condition.target_id and
+             metadata["status"] == "failed",
          {:ok, %{} = operation} <-
-           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
+           Cases.get_operation(evidence.source_ref,
+             authorize?: false,
+             not_found_error?: false,
+             query: [select: @observation_source_fields]
+           ),
          true <- operation.id == evidence.source_ref and operation.case_id == evidence.case_id,
          true <-
            operation.purpose == :investigation and operation.status == :failed and
@@ -405,9 +428,9 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
            operation.target_id == condition.target_id and
              operation.target_revision == target_revision,
          true <-
-           operation.capability == evidence.content["capability"] and
-             operation.operation == evidence.content["operation"] and
-             operation.selectors == evidence.content["selectors"] do
+           operation.capability == metadata["capability"] and
+             operation.operation == metadata["operation"] and
+             operation.selectors == metadata["selectors"] do
       {:ok, true}
     else
       {:error, _error} = error -> error
@@ -416,14 +439,19 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp valid_operation_evidence(
-         %{kind: "observation", source: "operation", content: content} = evidence,
+         %{kind: "observation", source: "operation"} = evidence,
          condition,
-         revision
+         revision,
+         content
        ) do
     with true <- content["status"] == "applied",
          true <- content["target_id"] == condition.target_id,
          {:ok, %{} = operation} <-
-           Cases.get_operation(evidence.source_ref, authorize?: false, not_found_error?: false),
+           Cases.get_operation(evidence.source_ref,
+             authorize?: false,
+             not_found_error?: false,
+             query: [select: @observation_source_fields]
+           ),
          true <- operation.purpose == :investigation and operation.status == :applied,
          true <- operation.case_id == evidence.case_id and operation.id == evidence.source_ref,
          true <-
@@ -439,15 +467,17 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   end
 
   defp valid_operation_evidence(
-         %{kind: "target_verification", source: "verification", content: content} = evidence,
+         %{kind: "target_verification", source: "verification"} = evidence,
          condition,
-         revision
+         revision,
+         content
        ) do
     with true <- content["status"] == "verified" and content["target_id"] == condition.target_id,
          {:ok, %{} = operation} <-
            Cases.get_operation(content["operation_id"],
              authorize?: false,
-             not_found_error?: false
+             not_found_error?: false,
+             query: [select: [:id, :case_id, :purpose, :status, :target_id, :target_revision]]
            ),
          true <- operation.purpose == :remediation and operation.status == :applied,
          true <-
@@ -456,7 +486,8 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
          {:ok, %{} = attempt} <-
            Cases.verification_attempt_by_operation(operation.id,
              authorize?: false,
-             not_found_error?: false
+             not_found_error?: false,
+             query: [select: [:status, :target_id, :target_revision, :observed_at]]
            ),
          true <- attempt.status == :verified and attempt.target_id == condition.target_id,
          true <-
@@ -468,7 +499,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     end
   end
 
-  defp valid_operation_evidence(_evidence, _condition, _revision), do: {:ok, false}
+  defp valid_operation_evidence(_evidence, _condition, _revision, _content), do: {:ok, false}
 
   defp invalid(message),
     do: {:error, Ash.Error.Changes.InvalidChanges.exception(message: message)}
