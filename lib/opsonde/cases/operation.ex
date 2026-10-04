@@ -71,6 +71,13 @@ defmodule Opsonde.Cases.Operation do
       prepare build(select: @summary_fields, sort: [updated_at: :desc, id: :desc], limit: 100)
     end
 
+    read :page_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(select: @summary_fields, sort: [inserted_at: :desc, id: :desc])
+    end
+
     read :recent_method_observations do
       argument :case_id, :uuid, allow_nil?: false
       argument :resolution_run_id, :uuid, allow_nil?: false
@@ -262,7 +269,7 @@ defmodule Opsonde.Cases.Operation do
       forbid_if always()
     end
 
-    policy action([:read, :for_case, :summaries_for_case]) do
+    policy action([:read, :for_case, :summaries_for_case, :page_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

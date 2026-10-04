@@ -138,6 +138,10 @@ test.each([false, true])(
   async (fails) => {
     await i18n.changeLanguage("en");
     const requests: string[] = [];
+    const receiptRequests: Record<string, string[]> = {
+      operations: [],
+      "verification-attempts": [],
+    };
     let delayedRefresh: ((response: Response) => void) | undefined;
     let delayedResponse: Response | undefined;
     let failNext = fails;
@@ -148,6 +152,31 @@ test.each([false, true])(
         return new Response(
           JSON.stringify({
             data: { ...snapshot, case: { ...snapshot.case, status: "running" }, reports: [] },
+          }),
+        );
+      }
+      const collection = url.pathname.split("/").at(-1)!;
+      if (collection in receiptRequests) {
+        const after = url.searchParams.get("after");
+        receiptRequests[collection].push(after ?? "first");
+        if (after) expect(after).toBe(`older-${collection}`);
+        const item = {
+          id: `${collection}-${after ? "old" : "latest"}`,
+          revision: 1,
+          capability: "fixture",
+          operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
+          status: collection === "operations" ? "applied" : "verified",
+          target_id: null,
+          proposal_id: null,
+          outcome_category: null,
+          completed_at: timestamp,
+          updated_at: timestamp,
+          accepted_at: timestamp,
+        };
+        return new Response(
+          JSON.stringify({
+            data: [item],
+            page: { next: after ? null : `older-${collection}` },
           }),
         );
       }
@@ -204,6 +233,8 @@ test.each([false, true])(
       </AuthenticationContext.Provider>,
     );
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
+    expect(screen.getByText(/Latest operations receipt/)).toBeDefined();
+    expect(screen.getByText(/Latest verification-attempts receipt/)).toBeDefined();
     expect(requests).toEqual(["first"]);
     expect(screen.queryByText("Older window receipt")).toBeNull();
     const user = userEvent.setup();
@@ -218,6 +249,10 @@ test.each([false, true])(
       await user.click(screen.getByRole("button", { name: "Next" }));
     }
     expect(await screen.findByText("Older window receipt")).toBeDefined();
+    expect(screen.getByText(/Older operations receipt/)).toBeDefined();
+    expect(screen.getByText(/Older verification-attempts receipt/)).toBeDefined();
+    expect(screen.queryByText(/Latest operations receipt/)).toBeNull();
+    expect(screen.queryByText(/Latest verification-attempts receipt/)).toBeNull();
     expect(screen.queryByText("Latest window receipt")).toBeNull();
     const expected = fails
       ? ["first", "first", "older-cursor", "older-cursor"]
@@ -228,10 +263,18 @@ test.each([false, true])(
     });
     expect(screen.queryByText("Latest window receipt")).toBeNull();
     expect(screen.getByText("Older window receipt")).toBeDefined();
+    expect(screen.queryByText(/Latest operations receipt/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Previous" }));
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
     expect(screen.queryByText("Older window receipt")).toBeNull();
     expect(requests).toEqual([...expected, "first"]);
+    for (const [collection, calls] of Object.entries(receiptRequests)) {
+      expect(calls).toEqual(
+        expected
+          .map((cursor) => (cursor === "first" ? cursor : `older-${collection}`))
+          .concat("first"),
+      );
+    }
   },
 );
 

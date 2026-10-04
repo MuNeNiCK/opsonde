@@ -27,6 +27,8 @@ export type WorkflowLogInput = {
   evidence: Evidence[];
   approvals: Approval[];
   reviews: Review[];
+  operations: components["schemas"]["OperationSummary"][];
+  verifications: components["schemas"]["VerificationAttemptSummary"][];
   reports: Report[];
   targets: Target[];
 };
@@ -67,9 +69,6 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   const targetNames = new Map(props.targets.map((target) => [target.id, target.name]));
   const proposalsByTurn = new Map(
     props.snapshot.proposals.map((proposal) => [proposal.source_turn_id, proposal]),
-  );
-  const proposalsById = new Map(
-    props.snapshot.proposals.map((proposal) => [proposal.id, proposal]),
   );
   const targetName = (id: string) => targetNames.get(id) ?? id;
   const reasonLanguage = t(`cases.workflow.languages.${props.snapshot.case.report_language}`);
@@ -209,8 +208,8 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
     });
   }
 
-  for (const item of props.snapshot.operations) {
-    const operationTargetId = proposalsById.get(item.proposal_id)?.target_id;
+  for (const item of props.operations) {
+    const operationTargetId = item.target_id;
     entries.push({
       id: `operation-${item.id}`,
       at: item.completed_at ?? item.updated_at,
@@ -236,7 +235,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
     });
   }
 
-  for (const item of props.snapshot.verification_attempts) {
+  for (const item of props.verifications) {
     entries.push({
       id: `verification-${item.id}`,
       at: item.completed_at ?? item.accepted_at,

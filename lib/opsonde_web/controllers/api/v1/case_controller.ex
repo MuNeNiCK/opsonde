@@ -106,6 +106,26 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Evidence page", "application/json", WorkflowSchemas.ref("EvidencePage")}] ++
         @show_errors
 
+  operation :operations,
+    operation_id: "listCaseOperations",
+    summary: "List Case operation summaries",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Operation page", "application/json", WorkflowSchemas.ref("OperationPage")}] ++
+        @show_errors
+
+  operation :verifications,
+    operation_id: "listCaseVerifications",
+    summary: "List Case verification summaries",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Verification page", "application/json",
+           WorkflowSchemas.ref("VerificationAttemptPage")}
+      ] ++
+        @show_errors
+
   operation :show_evidence,
     operation_id: "getEvidence",
     summary: "Get complete Case evidence",
@@ -264,6 +284,18 @@ defmodule OpsondeWeb.API.V1.CaseController do
     with {:ok, evidence} <- Cases.get_evidence(id, actor: conn.assigns.current_user) do
       Response.data(conn, WorkflowJSON.evidence(evidence))
     end
+  end
+
+  def operations(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_operations(id, &1), fn record ->
+      Map.take(record, Opsonde.Cases.Operation.summary_fields())
+    end)
+  end
+
+  def verifications(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_verifications(id, &1), fn record ->
+      Map.take(record, Opsonde.Cases.VerificationAttempt.summary_fields())
+    end)
   end
 
   def ai_invocations(conn, %{"id" => id} = params) do

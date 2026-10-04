@@ -40,7 +40,14 @@ type Provider = components["schemas"]["Provider"];
 type AccessMethod = components["schemas"]["AccessMethod"];
 type Target = components["schemas"]["Target"];
 type HistoryCursor = Record<
-  "timeline" | "turns" | "evidence" | "approvals" | "reviews" | "aiInvocations",
+  | "timeline"
+  | "turns"
+  | "evidence"
+  | "approvals"
+  | "reviews"
+  | "aiInvocations"
+  | "operations"
+  | "verifications",
   string | null
 >;
 
@@ -52,6 +59,8 @@ type Detail = {
   approvals: Approval[];
   reviews: ReviewDecision[];
   aiInvocations: components["schemas"]["AIInvocation"][];
+  operations: components["schemas"]["OperationSummary"][];
+  verifications: components["schemas"]["VerificationAttemptSummary"][];
   targets: Target[];
   methods: AccessMethod[];
   providers: Provider[];
@@ -72,6 +81,8 @@ type CaseState = Pick<
   | "approvals"
   | "reviews"
   | "aiInvocations"
+  | "operations"
+  | "verifications"
   | "report"
   | "reportError"
   | "historyNext"
@@ -86,52 +97,75 @@ function loadHistoryPage<T>(
 }
 
 async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<CaseState> {
-  const [snapshotResponse, timeline, turns, evidence, approvals, reviews, aiInvocations] =
-    await Promise.all([
-      apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
-      loadHistoryPage(cursor?.timeline, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/timeline", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      loadHistoryPage(cursor?.turns, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/turns", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      loadHistoryPage(cursor?.evidence, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/evidence", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      loadHistoryPage(cursor?.approvals, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/approvals", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      loadHistoryPage(cursor?.reviews, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/review-decisions", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-      loadHistoryPage(cursor?.aiInvocations, (after) =>
-        apiClient
-          .GET("/api/v1/cases/{id}/ai-invocations", {
-            params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
-          })
-          .then(apiData),
-      ),
-    ]);
+  const [
+    snapshotResponse,
+    timeline,
+    turns,
+    evidence,
+    approvals,
+    reviews,
+    aiInvocations,
+    operations,
+    verifications,
+  ] = await Promise.all([
+    apiClient.GET("/api/v1/cases/{id}", { params: { path: { id: caseId } } }).then(apiData),
+    loadHistoryPage(cursor?.timeline, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/timeline", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.turns, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/turns", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.evidence, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/evidence", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.approvals, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/approvals", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.reviews, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/review-decisions", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.aiInvocations, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/ai-invocations", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.operations, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/operations", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.verifications, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/verification-attempts", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+  ]);
   const snapshot = snapshotResponse.data;
   const currentReport =
     snapshot.case.status === "resolved"
@@ -157,6 +191,8 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     approvals: approvals.data,
     reviews: reviews.data,
     aiInvocations: aiInvocations.data,
+    operations: operations.data,
+    verifications: verifications.data,
     report,
     reportError,
     historyNext: {
@@ -166,6 +202,8 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
       approvals: approvals.page.next,
       reviews: reviews.page.next,
       aiInvocations: aiInvocations.page.next,
+      operations: operations.page.next,
+      verifications: verifications.page.next,
     },
   };
 }
@@ -485,6 +523,8 @@ export function CaseDetailPage() {
         evidence={detail.evidence}
         approvals={detail.approvals}
         reviews={detail.reviews}
+        operations={detail.operations}
+        verifications={detail.verifications}
         reports={detail.snapshot.reports}
         targets={detail.targets}
         methods={detail.methods}

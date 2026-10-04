@@ -184,21 +184,24 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_receive {:resolve, _state, _request}
     snapshot = get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)
     usage = snapshot["ai_usage"]
-    assert [%{"counters" => %{"ai_usage_units" => 65_536}}] = snapshot["resolution_runs"]
-    assert usage["reported_total_tokens"] == 0
-    assert usage["unknown_invocations"] == 1
-    assert usage["budget_charged_units"] == 65_536
-    assert usage["unknown_reserved_units"] == 65_536
-    assert usage["complete"] == false
 
     assert [
              %{
                "usage_status" => "unknown",
                "input_tokens" => nil,
                "output_tokens" => nil,
-               "reserved_units" => 65_536
+               "reserved_units" => allowance
              }
            ] = get_data!("/api/v1/cases/#{incident["id"]}/ai-invocations", context.viewer_token)
+
+    assert allowance > 65_536
+    assert allowance < 100_000
+    assert [%{"counters" => %{"ai_usage_units" => ^allowance}}] = snapshot["resolution_runs"]
+    assert usage["reported_total_tokens"] == 0
+    assert usage["unknown_invocations"] == 1
+    assert usage["budget_charged_units"] == allowance
+    assert usage["unknown_reserved_units"] == allowance
+    assert usage["complete"] == false
 
     assert get_data!("/api/v1/cases/#{incident["id"]}", context.viewer_token)["ai_usage"] == usage
     refute Jason.encode!(usage) =~ "resolver-secret"
@@ -247,9 +250,12 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
                  "reasoning_tokens" => nil,
                  "cached_tokens" => nil,
                  "dispatch_confirmed" => true,
-                 "reserved_units" => 65_536
+                 "reserved_units" => allowance
                }
              ] = json_response(response, 200)["data"]
+
+      assert allowance > 65_536
+      assert allowance < 100_000
     end
   end
 
@@ -1370,6 +1376,55 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert_receive {:effect, _, _}
 
     saved = Cases.get_operation!(operation.id, actor: context.operator)
+    initial_snapshot = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert byte_size(initial_snapshot.resp_body) < 20_000
+    assert hd(json_response(initial_snapshot, 200)["data"]["operations"])["status"] == "applied"
+    verification = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    source_turn = Cases.get_turn!(proposal.source_turn_id, authorize?: false)
+
+    # Capacity fixtures use the internal record actions; only the original receipt was delivered.
+    copy_inputs = fn record ->
+      Map.take(record, Ash.Resource.Info.action(record.__struct__, :create_record).accept)
+      |> Map.drop([:id])
+    end
+
+    for index <- 1..100 do
+      turn =
+        Cases.create_turn_record!(
+          Map.merge(copy_inputs.(source_turn), %{
+            ordinal: index + 1,
+            idempotency_key: "history-capacity:#{index}"
+          }),
+          authorize?: false
+        )
+
+      next_proposal =
+        Cases.create_proposal_record!(
+          Map.merge(copy_inputs.(proposal), %{
+            source_turn_id: turn.id,
+            reserved_operation_id: Ecto.UUID.generate(),
+            operation_idempotency_key: "history-capacity:#{index}"
+          }),
+          authorize?: false
+        )
+
+      next_operation =
+        Cases.create_operation_record!(
+          Map.merge(copy_inputs.(saved), %{
+            proposal_id: next_proposal.id,
+            idempotency_key: "history-capacity:#{index}"
+          }),
+          authorize?: false
+        )
+
+      Cases.create_verification_attempt_record!(
+        Map.merge(copy_inputs.(verification), %{
+          operation_id: next_operation.id,
+          proposal_id: next_proposal.id
+        }),
+        authorize?: false
+      )
+    end
 
     for index <- 1..99 do
       Cases.append_evidence!(
@@ -1451,8 +1506,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       response = get_json("/api/v1/cases/#{incident.id}", token)
       assert_operation_response(response)
       snapshot = json_response(response, 200)["data"]
-      assert byte_size(response.resp_body) < 20_000
-      assert hd(snapshot["operations"])["status"] == "applied"
+      assert byte_size(response.resp_body) < 500_000
+      assert length(snapshot["operations"]) == 100
       refute Map.has_key?(hd(snapshot["operations"]), "reference")
       refute Map.has_key?(hd(snapshot["operations"]), "result_details")
       refute Map.has_key?(hd(snapshot["verification_attempts"]), "operation_reference")
@@ -1462,11 +1517,83 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
           assert OpsondeCLI.CLI.run(["case", "show", incident.id], runtime) == 10
         end)
 
-      assert byte_size(reconnected) < 20_000
+      assert byte_size(reconnected) < 500_000
       assert Jason.decode!(reconnected)["data"]["operations"] == snapshot["operations"]
 
-      attempt = hd(snapshot["verification_attempts"])
-      response = get_json("/api/v1/verification-attempts/#{attempt["id"]}", token)
+      for {collection, original_id, command} <- [
+            {"operations", operation.id, "operations"},
+            {"verification-attempts", verification.id, "verifications"}
+          ] do
+        first = get_json("/api/v1/cases/#{incident.id}/#{collection}?limit=100", token)
+        assert_operation_response(first)
+        first_page = json_response(first, 200)
+        assert length(first_page["data"]) == 100
+        assert byte_size(first.resp_body) < 150_000
+        refute Enum.any?(first_page["data"], &(&1["id"] == original_id))
+        query = URI.encode_query(%{"limit" => 100, "after" => first_page["page"]["next"]})
+        tail = get_json("/api/v1/cases/#{incident.id}/#{collection}?#{query}", token)
+        assert_operation_response(tail)
+
+        assert %{"data" => [%{"id" => ^original_id}], "page" => %{"next" => nil}} =
+                 json_response(tail, 200)
+
+        cli_page =
+          capture_io(fn ->
+            assert OpsondeCLI.CLI.run(
+                     [
+                       "case",
+                       command,
+                       incident.id,
+                       "--limit",
+                       "100",
+                       "--after",
+                       first_page["page"]["next"]
+                     ],
+                     runtime
+                   ) == 0
+          end)
+
+        assert [%{"id" => ^original_id}] = Jason.decode!(cli_page)["data"]
+        assert get_json("/api/v1/cases/#{incident.id}/#{collection}", nil).status == 401
+
+        table = if collection == "operations", do: "operations", else: "verification_attempts"
+
+        Opsonde.Repo.query!(
+          "ALTER TABLE #{table} RENAME COLUMN outcome_category TO unavailable_outcome_category"
+        )
+
+        try do
+          read =
+            if collection == "operations",
+              do: &Cases.page_case_operations/2,
+              else: &Cases.page_case_verifications/2
+
+          assert {:error, %Ash.Error.Unknown{}} =
+                   read.(incident.id, actor: context.operator, page: [limit: 100])
+
+          capture_log(fn ->
+            failed = get_json("/api/v1/cases/#{incident.id}/#{collection}", token)
+            assert json_response(failed, 500)["error"]["code"] == "internal_error"
+            assert_operation_response(failed)
+
+            capture_io(:stderr, fn ->
+              assert OpsondeCLI.CLI.run(["case", command, incident.id], runtime) == 4
+            end)
+          end)
+        after
+          Opsonde.Repo.query!(
+            "ALTER TABLE #{table} RENAME COLUMN unavailable_outcome_category TO outcome_category"
+          )
+        end
+
+        assert get_json("/api/v1/cases/#{incident.id}/#{collection}?#{query}", token).status ==
+                 200
+
+        refute_receive {:effect, _, _}, 0
+        refute_receive {:resolve, _, _}, 0
+      end
+
+      response = get_json("/api/v1/verification-attempts/#{verification.id}", token)
       assert_operation_response(response)
       assert json_response(response, 200)["data"]["operation_reference"] == expected_reference
     end

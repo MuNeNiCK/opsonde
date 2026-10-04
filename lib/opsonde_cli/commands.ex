@@ -91,6 +91,8 @@ defmodule OpsondeCLI.Commands do
     {"case", "create"} => Route.new(:post, "/cases", 0, "case", outcome: :case_record),
     {"case", "timeline"} => Route.page("/cases/:id/timeline", 1),
     {"case", "turns"} => Route.page("/cases/:id/turns", 1),
+    {"case", "operations"} => Route.page("/cases/:id/operations", 1),
+    {"case", "verifications"} => Route.page("/cases/:id/verification-attempts", 1),
     {"case", "ai-invocations"} => Route.page("/cases/:id/ai-invocations", 1),
     {"case", "evidence"} => Route.page("/cases/:id/evidence", 1),
     {"evidence", "show"} => Route.new(:get, "/evidence/:id", 1),

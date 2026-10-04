@@ -45,10 +45,12 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "Operation" => operation(),
       "OperationSummary" => summary(operation(), Opsonde.Cases.Operation.summary_fields()),
       "OperationResponse" => Schemas.data(ref("Operation")),
+      "OperationPage" => Schemas.page(ref("OperationSummary")),
       "VerificationAttempt" => verification_attempt(),
       "VerificationAttemptSummary" =>
         summary(verification_attempt(), Opsonde.Cases.VerificationAttempt.summary_fields()),
       "VerificationAttemptResponse" => Schemas.data(ref("VerificationAttempt")),
+      "VerificationAttemptPage" => Schemas.page(ref("VerificationAttemptSummary")),
       "WorkflowLimits" => limits(),
       "ResolutionCounters" => counters()
     }
