@@ -2984,6 +2984,25 @@
         ],
         "type": "object"
       },
+      "ProviderReferencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderReference"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "OperationPage": {
         "additionalProperties": false,
         "properties": {
@@ -3131,6 +3150,52 @@
         },
         "required": [
           "target"
+        ],
+        "type": "object"
+      },
+      "TargetReference": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "management_boundary_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "type_id",
+          "active",
+          "revision",
+          "management_boundary_id"
         ],
         "type": "object"
       },
@@ -3309,6 +3374,25 @@
         ],
         "type": "object"
       },
+      "TargetReferencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TargetReference"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "ProviderRevisionRequest": {
         "properties": {
           "provider": {
@@ -3326,6 +3410,63 @@
         },
         "required": [
           "provider"
+        ],
+        "type": "object"
+      },
+      "ProviderReference": {
+        "additionalProperties": false,
+        "properties": {
+          "access_method_profile": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method"
+            ],
+            "type": "object"
+          },
+          "adapter_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ai",
+              "signal",
+              "target",
+              "inventory",
+              "notification"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "adapter_type",
+          "enabled",
+          "revision"
         ],
         "type": "object"
       },
@@ -13951,6 +14092,128 @@
         ]
       }
     },
+    "/api/v1/targets/references": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listTargetReferences",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "exclude_id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetReferencePage"
+                }
+              }
+            },
+            "description": "Target reference page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Target reference metadata",
+        "tags": [
+          "Targets"
+        ]
+      }
+    },
     "/api/v1/cases/{id}/proposals": {
       "get": {
         "callbacks": {},
@@ -15388,6 +15651,152 @@
         "summary": "Summarize Cases and scheduled audits opened in a UTC half-open period",
         "tags": [
           "Reports"
+        ]
+      }
+    },
+    "/api/v1/providers/references": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listProviderReferences",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "enum": [
+                "ai",
+                "signal",
+                "target",
+                "inventory",
+                "notification"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "enabled",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "adapter_types",
+            "required": false,
+            "schema": {
+              "items": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderReferencePage"
+                }
+              }
+            },
+            "description": "Provider reference page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Provider reference metadata",
+        "tags": [
+          "Providers"
         ]
       }
     },

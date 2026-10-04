@@ -765,6 +765,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/targets/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Target reference metadata */
+        get: operations["listTargetReferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{id}/proposals": {
         parameters: {
             query?: never;
@@ -996,6 +1013,23 @@ export interface paths {
         };
         /** Summarize Cases and scheduled audits opened in a UTC half-open period */
         get: operations["getPeriodOperationsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Provider reference metadata */
+        get: operations["listProviderReferences"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2396,6 +2430,10 @@ export interface components {
                 name?: string;
             };
         };
+        ProviderReferencePage: {
+            data: components["schemas"]["ProviderReference"][];
+            page: components["schemas"]["Page"];
+        };
         OperationPage: {
             data: components["schemas"]["OperationSummary"][];
             page: components["schemas"]["Page"];
@@ -2430,6 +2468,17 @@ export interface components {
             target: {
                 expected_revision: number;
             };
+        };
+        TargetReference: {
+            active: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** Format: uuid */
+            management_boundary_id: string | null;
+            name: string;
+            revision: number;
+            type_id: string;
         };
         TargetPage: {
             data: components["schemas"]["Target"][];
@@ -2475,10 +2524,27 @@ export interface components {
             data: components["schemas"]["ProposalSummary"][];
             page: components["schemas"]["Page"];
         };
+        TargetReferencePage: {
+            data: components["schemas"]["TargetReference"][];
+            page: components["schemas"]["Page"];
+        };
         ProviderRevisionRequest: {
             provider: {
                 expected_revision: number;
             };
+        };
+        ProviderReference: {
+            access_method_profile?: {
+                method: string;
+            };
+            adapter_type: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "ai" | "signal" | "target" | "inventory" | "notification";
+            name: string;
+            revision: number;
         };
         ProviderInventoryPreviewRequest: {
             inventory_import: {
@@ -7969,6 +8035,68 @@ export interface operations {
             };
         };
     };
+    listTargetReferences: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+                active?: boolean;
+                exclude_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Target reference page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetReferencePage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listCaseProposals: {
         parameters: {
             query?: {
@@ -9012,6 +9140,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listProviderReferences: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+                kind?: "ai" | "signal" | "target" | "inventory" | "notification";
+                enabled?: boolean;
+                adapter_types?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider reference page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderReferencePage"];
                 };
             };
             /** @description Authentication is required */

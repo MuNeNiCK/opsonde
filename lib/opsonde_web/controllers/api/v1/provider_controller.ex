@@ -32,6 +32,23 @@ defmodule OpsondeWeb.API.V1.ProviderController do
           :internal_server_error
         ])
 
+  operation :references,
+    operation_id: "listProviderReferences",
+    summary: "List Provider reference metadata",
+    parameters: ProviderSchemas.reference_page_parameters(),
+    responses:
+      [
+        ok:
+          {"Provider reference page", "application/json",
+           ProviderSchemas.ref("ProviderReferencePage")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   operation :show,
     operation_id: "getProvider",
     summary: "Get a Provider",
@@ -209,6 +226,16 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   end
 
   def services(conn, _params), do: Response.data(conn, ReqLLM.services())
+
+  def references(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :kind, :enabled, :adapter_types])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, providers} <-
+           Providers.page_provider_references(input, page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, providers, &ProviderJSON.reference/1)
+    end
+  end
 
   def show(conn, %{"id" => id}) do
     with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user) do

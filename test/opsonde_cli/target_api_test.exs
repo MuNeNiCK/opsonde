@@ -491,6 +491,197 @@ defmodule OpsondeCLI.TargetAPITest do
     end
   end
 
+  @tag references_cli: true
+  test "CLI reads current references by ID and pages eligible choices before retaining detail",
+       context do
+    selected =
+      Targets.create_target!(
+        "Reference host",
+        "host",
+        "custom-os",
+        %{"blob" => String.duplicate("x", 65_000)},
+        nil,
+        actor: context.admin
+      )
+
+    peer =
+      Targets.create_target!("Reference peer", "host", "custom-os", %{}, nil,
+        actor: context.admin
+      )
+
+    disabled =
+      Providers.create_provider!(
+        "Disabled SSH",
+        :target,
+        "ssh",
+        %{"blob" => String.duplicate("x", 65_525)},
+        %{"password" => "fixture-private"},
+        actor: context.admin
+      )
+
+    provider =
+      Providers.create_provider!(
+        "Enabled HTTP",
+        :target,
+        "http-api",
+        %{},
+        %{"bearer_token" => "fixture-private"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    refs =
+      cli_data!(context, ["provider", "references", "--ids", "#{provider.id},#{disabled.id}"])
+
+    assert Enum.map(refs, & &1["id"]) == [disabled.id, provider.id]
+    assert Enum.all?(refs, &(not Map.has_key?(&1, "configuration")))
+
+    assert [
+             %{
+               "id" => provider_id,
+               "revision" => 1,
+               "access_method_profile" => %{"method" => "http"}
+             }
+           ] =
+             cli_data!(context, [
+               "provider",
+               "references",
+               "--kind",
+               "target",
+               "--enabled",
+               "--adapter-types",
+               "http-api,ssh"
+             ])
+
+    assert provider_id == provider.id
+
+    assert [%{"id" => disabled_id}] =
+             cli_data!(context, [
+               "provider",
+               "references",
+               "--kind",
+               "target",
+               "--no-enabled",
+               "--adapter-types",
+               "ssh"
+             ])
+
+    assert disabled_id == disabled.id
+    args = ["target", "references", "--active", "--limit", "1"]
+    first = capture_io(fn -> assert CLI.run(args, context.runtime) == 0 end) |> Jason.decode!()
+    assert [%{"id" => selected_id}] = first["data"]
+    assert selected_id == selected.id
+    refute Map.has_key?(hd(first["data"]), "facts")
+
+    tail =
+      capture_io(fn ->
+        assert CLI.run(args ++ ["--after", first["page"]["next"]], context.runtime) == 0
+      end)
+      |> Jason.decode!()
+
+    assert [%{"id" => peer_id}] = tail["data"]
+    assert peer_id == peer.id
+    assert tail["page"]["next"] == nil
+
+    assert [%{"id" => ^peer_id}] =
+             cli_data!(context, [
+               "target",
+               "references",
+               "--ids",
+               "#{peer.id},#{selected.id}",
+               "--exclude-id",
+               selected.id
+             ])
+  end
+
+  @tag reference_fault: true
+  test "reference reads omit unused storage and preserve required metadata faults", context do
+    provider =
+      Providers.create_provider!(
+        "Reference fault",
+        :target,
+        "fixture-target",
+        %{"blob" => String.duplicate("x", 65_525)},
+        %{"token" => "fixture-private"},
+        actor: context.admin
+      )
+
+    target =
+      Targets.create_target!(
+        "Reference fault",
+        "host",
+        "custom-os",
+        %{"blob" => String.duplicate("x", 65_000)},
+        nil,
+        actor: context.admin
+      )
+
+    for {resource, table, id, page, get, column} <- [
+          {"provider", "providers", provider.id, &Providers.page_provider_references/2,
+           &Providers.get_active_provider/2, "configuration"},
+          {"provider", "providers", provider.id, &Providers.page_provider_references/2,
+           &Providers.get_active_provider/2, "encrypted_credentials"},
+          {"target", "targets", target.id, &Targets.page_target_references/2,
+           &Targets.get_target/2, "facts"},
+          {"target", "targets", target.id, &Targets.page_target_references/2,
+           &Targets.get_target/2, "operating_instructions"},
+          {"provider", "providers", provider.id, &Providers.page_provider_references/2,
+           &Providers.get_active_provider/2, "name"},
+          {"target", "targets", target.id, &Targets.page_target_references/2,
+           &Targets.get_target/2, "name"}
+        ] do
+      Opsonde.Repo.query!(
+        "ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_reference_column"
+      )
+
+      try do
+        if column == "name" do
+          assert {:error, %Ash.Error.Unknown{} = cause} =
+                   page.(%{ids: [id]}, actor: context.admin, page: [limit: 100])
+
+          assert Exception.message(cause) =~ "does not exist"
+
+          capture_log(fn ->
+            assert {:error, :http, 500, %{"error" => %{"code" => "internal_error"}}} =
+                     OpsondeCLI.Client.request(
+                       client!(context),
+                       :get,
+                       "/#{table}/references",
+                       nil,
+                       ids: id
+                     )
+
+            error =
+              capture_io(:stderr, fn ->
+                assert CLI.run([resource, "references", "--ids", id], context.runtime) == 4
+              end)
+
+            assert Jason.decode!(error)["error"]["code"] == "internal_error"
+          end)
+        else
+          assert {:ok, %Ash.Page.Keyset{results: [%{id: ^id}]}} =
+                   page.(%{ids: [id]}, actor: context.admin, page: [limit: 100])
+
+          assert [%{"id" => ^id}] = cli_data!(context, [resource, "references", "--ids", id])
+          # Public detail keeps the complete record contract and reports the real failure.
+          assert {:error, %Ash.Error.Unknown{} = cause} = get.(id, actor: context.admin)
+          assert Exception.message(cause) =~ "does not exist"
+
+          capture_log(fn ->
+            assert {:error, :http, 500, %{"error" => %{"code" => "internal_error"}}} =
+                     OpsondeCLI.Client.request(client!(context), :get, "/#{table}/#{id}")
+          end)
+        end
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE #{table} RENAME COLUMN unavailable_reference_column TO #{column}"
+        )
+      end
+
+      assert [%{"id" => ^id}] = cli_data!(context, [resource, "references", "--ids", id])
+    end
+  end
+
   defp client!(context) do
     {:ok, config} = Config.load(context.runtime[:config_path])
 

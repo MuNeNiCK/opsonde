@@ -25,6 +25,7 @@ defmodule OpsondeCLI.Commands do
     {"account", "create"} => Route.new(:post, "/accounts", 0, "account"),
     {"account", "change-role"} => Route.new(:patch, "/accounts/:id/role", 1, "account"),
     {"provider", "list"} => Route.page("/providers"),
+    {"provider", "references"} => Route.page("/providers/references"),
     {"provider", "services"} => Route.new(:get, "/ai-services"),
     {"provider", "show"} => Route.new(:get, "/providers/:id", 1),
     {"provider", "create"} => Route.new(:post, "/providers", 0, "provider"),
@@ -45,6 +46,7 @@ defmodule OpsondeCLI.Commands do
     {"boundary", "deactivate"} =>
       Route.new(:post, "/management-boundaries/:id/deactivate", 1, "management_boundary"),
     {"target", "list"} => Route.page("/targets"),
+    {"target", "references"} => Route.page("/targets/references"),
     {"target-type", "list"} => Route.new(:get, "/target-types"),
     {"target", "show"} => Route.new(:get, "/targets/:id", 1),
     {"target", "create"} => Route.new(:post, "/targets", 0, "target"),

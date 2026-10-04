@@ -9,6 +9,21 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
       "Provider" => provider(),
       "ProviderResponse" => Schemas.data(ref("Provider")),
       "ProviderPage" => Schemas.page(ref("Provider")),
+      "ProviderReference" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            name: %Schema{type: :string, minLength: 1, maxLength: 120},
+            kind: provider_kind(),
+            adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
+            enabled: %Schema{type: :boolean},
+            revision: positive_integer(),
+            access_method_profile: access_method_profile()
+          },
+          [:id, :name, :kind, :adapter_type, :enabled, :revision],
+          false
+        ),
+      "ProviderReferencePage" => Schemas.page(ref("ProviderReference")),
       "AIServiceCatalogResponse" => Schemas.data(%Schema{type: :array, items: ref("AIService")}),
       "AIService" => ai_service(),
       "CreateProviderRequest" => create_provider_request(),
@@ -24,6 +39,27 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  def reference_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        Schemas.reference_ids_parameter(),
+        {:kind, [in: :query, schema: provider_kind()]},
+        {:enabled, [in: :query, schema: %Schema{type: :boolean}]},
+        {:adapter_types,
+         [
+           in: :query,
+           style: :form,
+           explode: false,
+           schema: %Schema{
+             type: :array,
+             minItems: 1,
+             maxItems: 100,
+             items: %Schema{type: :string, minLength: 1, maxLength: 120}
+           }
+         ]}
+      ]
+  end
 
   defp ai_service do
     object(

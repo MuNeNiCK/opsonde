@@ -110,6 +110,16 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
       [ok: {"Target page", "application/json", TargetSchemas.ref("TargetPage")}] ++
         @list_errors
 
+  operation :target_references,
+    operation_id: "listTargetReferences",
+    summary: "List Target reference metadata",
+    parameters: TargetSchemas.reference_page_parameters(),
+    responses:
+      [
+        ok:
+          {"Target reference page", "application/json", TargetSchemas.ref("TargetReferencePage")}
+      ] ++ @list_errors
+
   operation :target_types,
     operation_id: "listTargetTypes",
     summary: "List supported Target types and categories",
@@ -391,6 +401,14 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
     with {:ok, catalog} <- Targets.list_target_types(actor: conn.assigns.current_user) do
       Response.data(conn, catalog)
     end
+  end
+
+  def target_references(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :active, :exclude_id])
+
+    page(conn, params, &Targets.page_target_references(input, &1), fn target ->
+      Map.take(target, Opsonde.Targets.Target.reference_fields())
+    end)
   end
 
   def targets_show(conn, %{"id" => id}) do

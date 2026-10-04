@@ -26,6 +26,21 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
       "TargetTypeCatalogResponse" => Schemas.data(ref("TargetTypeCatalog")),
       "TargetResponse" => Schemas.data(ref("Target")),
       "TargetPage" => Schemas.page(ref("Target")),
+      "TargetReference" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            name: string(1, 120),
+            kind: string(1, 80),
+            type_id: string(1, 120),
+            active: %Schema{type: :boolean},
+            revision: positive_integer(),
+            management_boundary_id: %Schema{type: :string, format: :uuid, nullable: true}
+          },
+          [:id, :name, :kind, :type_id, :active, :revision, :management_boundary_id],
+          false
+        ),
+      "TargetReferencePage" => Schemas.page(ref("TargetReference")),
       "CreateTargetRequest" => create_target_request(),
       "UpdateTargetRequest" => update_target_request(),
       "DeactivateTargetRequest" => deactivate_request(:target),
@@ -52,6 +67,15 @@ defmodule OpsondeWeb.API.V1.TargetSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  def reference_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        Schemas.reference_ids_parameter(),
+        {:active, [in: :query, schema: %Schema{type: :boolean}]},
+        {:exclude_id, [in: :query, schema: Schemas.uuid()]}
+      ]
+  end
 
   def management_page_parameters do
     Schemas.pagination_parameters() ++

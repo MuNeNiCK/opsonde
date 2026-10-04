@@ -5,6 +5,12 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
   alias Opsonde.Providers.Registry
   alias Opsonde.Providers.Target.AccessMethodProfile
 
+  def reference(provider) do
+    provider
+    |> Map.take(Providers.Provider.reference_fields())
+    |> with_access_method_profile(provider)
+  end
+
   def data(provider) do
     record = %{
       id: provider.id,
@@ -25,6 +31,10 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
       updated_at: provider.updated_at
     }
 
+    with_access_method_profile(record, provider)
+  end
+
+  defp with_access_method_profile(record, provider) do
     case access_method_profile(provider) do
       nil -> record
       profile -> Map.put(record, :access_method_profile, profile)

@@ -75,6 +75,215 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
            |> get_in(["data", Access.at(0), "check", "status"]) == "passed"
   end
 
+  @tag provider_references: true
+  test "Provider references page compatible metadata without loading stored configuration",
+       context do
+    configuration = %{"blob" => String.duplicate("x", 65_525)}
+
+    providers =
+      for index <- 1..100 do
+        suffix = Integer.to_string(index)
+
+        Providers.create_provider!(
+          String.duplicate("𠮷", 120 - String.length(suffix)) <> suffix,
+          :target,
+          "fixture-target",
+          configuration,
+          %{"token" => @provider_secret},
+          actor: context.admin
+        )
+      end
+
+    selected =
+      Providers.create_provider!(
+        "Selected SSH",
+        :target,
+        "ssh",
+        configuration,
+        %{"password" => @provider_secret},
+        actor: context.admin
+      )
+
+    path =
+      "/api/v1/providers/references?kind=target&enabled=false&adapter_types=fixture-target,ssh&limit=100"
+
+    first = get_json(path, context.viewer_token)
+    page = json_response(first, 200)
+    assert length(page["data"]) == 100
+    assert byte_size(first.resp_body) < 150_000
+    assert Enum.map(page["data"], & &1["id"]) == Enum.map(providers, & &1.id)
+
+    assert Enum.all?(
+             page["data"],
+             &(Enum.sort(Map.keys(&1)) == ~w(adapter_type enabled id kind name revision))
+           )
+
+    tail =
+      get_json(
+        path <> "&after=" <> URI.encode_www_form(page["page"]["next"]),
+        context.viewer_token
+      )
+
+    assert [%{"id" => id, "access_method_profile" => %{"method" => "ssh"}}] =
+             json_response(tail, 200)["data"]
+
+    assert id == selected.id
+    assert json_response(tail, 200)["page"]["next"] == nil
+    assert_operation_response(tail)
+
+    known =
+      get_json(
+        "/api/v1/providers/references?ids=#{selected.id},#{hd(providers).id}&limit=100",
+        context.viewer_token
+      )
+
+    assert Enum.map(json_response(known, 200)["data"], & &1["id"]) == [
+             hd(providers).id,
+             selected.id
+           ]
+
+    assert get_json("/api/v1/providers/#{selected.id}", context.viewer_token)
+           |> json_response(200)
+           |> get_in(["data", "configuration"]) == configuration
+
+    Providers.update_provider!(selected, selected.revision, %{name: "Current SSH"},
+      actor: context.admin
+    )
+
+    assert [%{"id" => ^id, "name" => "Current SSH", "revision" => 2}] =
+             get_json("/api/v1/providers/references?ids=#{id}", context.viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+  end
+
+  @tag target_references: true
+  test "Target references retain arbitrary destinations beyond the first page without facts",
+       context do
+    alias Opsonde.Targets
+    facts = %{"blob" => String.duplicate("x", 65_000)}
+
+    targets =
+      for index <- 1..101 do
+        suffix = Integer.to_string(index)
+
+        Targets.create_target!(
+          String.duplicate("𠮷", 120 - String.length(suffix)) <> suffix,
+          "host",
+          "custom-os",
+          facts,
+          nil,
+          %{operating_instructions: String.duplicate("𠮷", 4_000)},
+          actor: context.admin
+        )
+      end
+
+    inactive =
+      Targets.create_target!("Inactive target", "host", "custom-os", facts, nil,
+        actor: context.admin
+      )
+
+    Targets.deactivate_target!(inactive, inactive.revision, actor: context.admin)
+    path = "/api/v1/targets/references?active=true&limit=100"
+    first = get_json(path, context.viewer_token)
+    page = json_response(first, 200)
+    assert byte_size(first.resp_body) < 150_000
+    assert Enum.map(page["data"], & &1["id"]) == Enum.map(Enum.take(targets, 100), & &1.id)
+
+    assert Enum.all?(
+             page["data"],
+             &(Enum.sort(Map.keys(&1)) ==
+                 ~w(active id kind management_boundary_id name revision type_id))
+           )
+
+    tail =
+      get_json(
+        path <> "&after=" <> URI.encode_www_form(page["page"]["next"]),
+        context.viewer_token
+      )
+
+    assert [%{"id" => id}] = json_response(tail, 200)["data"]
+    assert id == List.last(targets).id
+    assert json_response(tail, 200)["page"]["next"] == nil
+    assert_operation_response(tail)
+    selected = List.last(targets)
+
+    known =
+      get_json(
+        "/api/v1/targets/references?ids=#{selected.id},#{inactive.id}&limit=100",
+        context.viewer_token
+      )
+
+    assert Enum.map(json_response(known, 200)["data"], & &1["id"]) == [selected.id, inactive.id]
+
+    excluded =
+      get_json(
+        "/api/v1/targets/references?ids=#{selected.id},#{hd(targets).id}&exclude_id=#{hd(targets).id}",
+        context.viewer_token
+      )
+
+    assert Enum.map(json_response(excluded, 200)["data"], & &1["id"]) == [selected.id]
+
+    assert get_json("/api/v1/targets/#{selected.id}", context.viewer_token)
+           |> json_response(200)
+           |> get_in(["data", "facts"]) == facts
+
+    Targets.update_target!(selected, selected.revision, %{name: "Current Target"},
+      actor: context.admin
+    )
+
+    assert [%{"id" => ^id, "name" => "Current Target", "revision" => 2}] =
+             get_json("/api/v1/targets/references?ids=#{id}", context.viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+  end
+
+  @tag target_scope: true
+  @tag reference_contract: true
+  test "reference filters keep existing read roles and reject invalid or oversized ID sets",
+       context do
+    target = create_target!(context.admin_token, "reference-contract", "host", "custom-os", nil)
+
+    for {path, id} <- [
+          {"/api/v1/providers/references", context.target_provider.id},
+          {"/api/v1/targets/references", target["id"]}
+        ] do
+      for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+        response = get_json(path <> "?ids=#{id}", token)
+        assert [%{"id" => ^id}] = json_response(response, 200)["data"]
+        assert_operation_response(response)
+      end
+
+      assert response(get_json(path <> "?ids=#{id}", nil), 401)
+
+      for query <- [
+            "ids=not-a-uuid",
+            "ids=",
+            "ids=" <> Enum.map_join(1..101, ",", fn _ -> Ecto.UUID.generate() end)
+          ] do
+        invalid = get_json(path <> "?" <> query, context.viewer_token)
+        assert json_response(invalid, 422)["error"]["code"] == "validation_failed"
+        assert_operation_response(invalid)
+      end
+
+      assert json_response(
+               get_json(path <> "?ids=#{Ecto.UUID.generate()}", context.viewer_token),
+               200
+             )["data"] == []
+    end
+
+    for query <- ["kind=unsupported", "enabled=invalid", "adapter_types="] do
+      assert get_json("/api/v1/providers/references?" <> query, context.viewer_token)
+             |> json_response(422)
+             |> get_in(["error", "code"]) == "validation_failed"
+    end
+
+    for query <- ["active=invalid", "exclude_id=not-a-uuid"] do
+      assert get_json("/api/v1/targets/references?" <> query, context.viewer_token)
+             |> json_response(422)
+             |> get_in(["error", "code"]) == "validation_failed"
+    end
+  end
+
   @tag target_scope: true
   test "management Method pages retain unchecked connections and page only the selected Target",
        context do

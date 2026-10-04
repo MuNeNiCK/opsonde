@@ -65,6 +65,16 @@ defmodule OpsondeWeb.API.Schemas do
     ]
   end
 
+  def reference_ids_parameter do
+    {:ids,
+     [
+       in: :query,
+       style: :form,
+       explode: false,
+       schema: %Schema{type: :array, items: uuid(), minItems: 1, maxItems: 100}
+     ]}
+  end
+
   def data(value) do
     %Schema{
       type: :object,

@@ -62,6 +62,7 @@ defmodule OpsondeWeb.Router do
     post "/cli/session-requests/:id/deny", CLISessionController, :deny
 
     get "/providers", ProviderController, :index
+    get "/providers/references", ProviderController, :references
     get "/ai-services", ProviderController, :services
     post "/providers", ProviderController, :create
     get "/providers/:id", ProviderController, :show
@@ -83,6 +84,7 @@ defmodule OpsondeWeb.Router do
 
     get "/target-types", TargetSetupController, :target_types
     get "/targets", TargetSetupController, :targets_index
+    get "/targets/references", TargetSetupController, :target_references
     post "/targets", TargetSetupController, :targets_create
     get "/targets/:id", TargetSetupController, :targets_show
     patch "/targets/:id", TargetSetupController, :targets_update

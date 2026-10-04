@@ -5,6 +5,9 @@ defmodule Opsonde.Targets.Target do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @reference_fields ~w(id name kind type_id active revision management_boundary_id)a
+  def reference_fields, do: @reference_fields
+
   postgres do
     table "targets"
     repo Opsonde.Repo
@@ -24,6 +27,21 @@ defmodule Opsonde.Targets.Target do
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
+    read :reference_page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      argument :active, :boolean
+      argument :exclude_id, :uuid
+
+      filter expr(
+               (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:active)) or active == ^arg(:active)) and
+                 (is_nil(^arg(:exclude_id)) or id != ^arg(:exclude_id))
+             )
+
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @reference_fields, sort: [inserted_at: :asc, id: :asc])
     end
 
     read :search_index do
@@ -103,7 +121,7 @@ defmodule Opsonde.Targets.Target do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :reference_page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

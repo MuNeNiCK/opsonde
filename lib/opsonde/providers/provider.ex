@@ -6,6 +6,9 @@ defmodule Opsonde.Providers.Provider do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @reference_fields ~w(id name kind adapter_type enabled revision)a
+  def reference_fields, do: @reference_fields
+
   cloak do
     vault(Opsonde.Vault)
     attributes([:credentials])
@@ -36,6 +39,29 @@ defmodule Opsonde.Providers.Provider do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       filter expr(is_nil(retired_at))
       prepare build(sort: [inserted_at: :asc, id: :asc])
+    end
+
+    read :reference_page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+
+      argument :kind, :atom,
+        constraints: [one_of: [:ai, :signal, :target, :inventory, :notification]]
+
+      argument :enabled, :boolean
+
+      argument :adapter_types, {:array, :string},
+        constraints: [min_length: 1, max_length: 100, items: [min_length: 1, max_length: 120]]
+
+      filter expr(
+               is_nil(retired_at) and
+                 (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:kind)) or kind == ^arg(:kind)) and
+                 (is_nil(^arg(:enabled)) or enabled == ^arg(:enabled)) and
+                 (is_nil(^arg(:adapter_types)) or adapter_type in ^arg(:adapter_types))
+             )
+
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @reference_fields, sort: [inserted_at: :asc, id: :asc])
     end
 
     read :active do
@@ -453,7 +479,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :active]) do
+    policy action([:read, :page, :active, :reference_page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

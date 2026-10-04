@@ -25,6 +25,11 @@ defmodule OpsondeCLI.CLI do
     to: :string,
     target_id: :string,
     active: :boolean,
+    ids: :string,
+    kind: :string,
+    enabled: :boolean,
+    adapter_types: :string,
+    exclude_id: :string,
     interval: :integer,
     timeout: :integer,
     server: :string,
@@ -353,6 +358,25 @@ defmodule OpsondeCLI.CLI do
     end
   end
 
+  defp query(%Route{path: "/providers/references"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:kind, options[:kind])
+    |> maybe_query(:enabled, options[:enabled])
+    |> maybe_query(:adapter_types, options[:adapter_types])
+  end
+
+  defp query(%Route{path: "/targets/references"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:active, options[:active])
+    |> maybe_query(:exclude_id, options[:exclude_id])
+  end
+
   defp query(%Route{page?: true, path: path}, options)
        when path in ["/access-methods", "/external-identities", "/target-relationships"] do
     []
@@ -472,6 +496,8 @@ defmodule OpsondeCLI.CLI do
       opsonde provider services
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde identity|access-method|relationship list [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde provider references [--ids UUID,UUID] [--kind KIND] [--enabled|--no-enabled] [--adapter-types TYPE,TYPE] [--limit N] [--after CURSOR]
+      opsonde target references [--ids UUID,UUID] [--active|--no-active] [--exclude-id UUID] [--limit N] [--after CURSOR]
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
       opsonde case ai-invocations ID [--limit N] [--after CURSOR]
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
