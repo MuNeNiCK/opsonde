@@ -540,6 +540,22 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     assert length(snapshot["conditions"]) == 2
     assert length(snapshot["condition_history"]) == 2
 
+    Opsonde.Repo.query!(
+      "ALTER TABLE operations RENAME COLUMN result_details TO unavailable_result_details"
+    )
+
+    try do
+      capture_log(fn ->
+        metadata_only = get_json("/api/v1/cases/#{incident.id}", context.viewer_token)
+        assert json_response(metadata_only, 200)["data"]["conditions"] == snapshot["conditions"]
+        assert_operation_response(metadata_only)
+      end)
+    after
+      Opsonde.Repo.query!(
+        "ALTER TABLE operations RENAME COLUMN unavailable_result_details TO result_details"
+      )
+    end
+
     root = Path.join(System.tmp_dir!(), "condition-cli-#{System.unique_integer([:positive])}")
     config_path = Path.join(root, "config.json")
 

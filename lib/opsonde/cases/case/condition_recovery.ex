@@ -69,7 +69,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
   def baseline_for_case(incident) do
     inherited = inherited_baseline(incident)
 
-    with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+    with {:ok, operations} <- Cases.operation_summaries_for_case(incident.id, authorize?: false),
          true <- length(operations) < 100 || invalid("Operation history exceeds recovery bound") do
       operations
       |> Enum.filter(&affects_recovery?/1)
@@ -292,7 +292,7 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
     if MapSet.member?(seen, incident.id) do
       invalid("Case split lineage contains a cycle")
     else
-      with {:ok, operations} <- Cases.operations_for_case(incident.id, authorize?: false),
+      with {:ok, operations} <- Cases.operation_summaries_for_case(incident.id, authorize?: false),
            true <-
              length(operations) < 100 || invalid("Operation history exceeds recovery bound"),
            {:ok, effects} <- scoped_effects(operations, exclude_operation_id),
@@ -323,7 +323,10 @@ defmodule Opsonde.Cases.Case.ConditionRecovery do
       operation.id != exclude_operation_id and affects_recovery?(operation)
     end)
     |> Enum.reduce_while({:ok, []}, fn operation, {:ok, effects} ->
-      case Cases.get_proposal(operation.proposal_id, authorize?: false) do
+      case Cases.get_proposal(operation.proposal_id,
+             authorize?: false,
+             query: Ash.Query.select(Opsonde.Cases.Proposal, [:affected_conditions])
+           ) do
         {:ok, proposal} when is_list(proposal.affected_conditions) ->
           ids = Enum.map(proposal.affected_conditions, & &1["condition_id"])
           {:cont, {:ok, [{operation, ids} | effects]}}
