@@ -31,7 +31,7 @@ defmodule OpsondeWeb.API.V1.AccountController do
   operation :index,
     operation_id: "listAccounts",
     summary: "List accounts",
-    parameters: OpsondeWeb.API.Schemas.pagination_parameters(),
+    parameters: AccountSchemas.page_parameters(),
     responses:
       [ok: {"Account page", "application/json", AccountSchemas.ref("AccountPage")}] ++
         OpsondeWeb.API.Schemas.errors([
@@ -109,9 +109,11 @@ defmodule OpsondeWeb.API.V1.AccountController do
   def bootstrap(_conn, _params), do: {:error, :bad_request}
 
   def index(conn, params) do
+    filters = OpenApiSpex.params(conn) |> Map.take([:ids, :roles])
+
     with {:ok, page} <- Pagination.parse(params),
          {:ok, users} <-
-           Accounts.list_users(page: page, actor: conn.assigns.current_user) do
+           Accounts.list_users(filters, page: page, actor: conn.assigns.current_user) do
       Response.page(conn, users, &AccountJSON.data/1)
     end
   end

@@ -33,6 +33,25 @@ defmodule OpsondeWeb.API.V1.AccountSchemas do
 
   def ref(name), do: Schemas.reference(name)
 
+  def page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        Schemas.reference_ids_parameter(),
+        {:roles,
+         [
+           in: :query,
+           style: :form,
+           explode: false,
+           schema: %Schema{
+             type: :array,
+             items: %Schema{type: :string, enum: ~w(admin operator viewer)},
+             minItems: 1,
+             maxItems: 3
+           }
+         ]}
+      ]
+  end
+
   defp account do
     object(
       %{

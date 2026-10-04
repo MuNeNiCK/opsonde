@@ -26,6 +26,7 @@ defmodule OpsondeCLI.CLI do
     target_id: :string,
     active: :boolean,
     ids: :string,
+    roles: :string,
     query: :string,
     kind: :string,
     kinds: :string,
@@ -398,6 +399,14 @@ defmodule OpsondeCLI.CLI do
     |> maybe_query(:query, options[:query])
   end
 
+  defp query(%Route{page?: true, path: "/accounts"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:roles, options[:roles])
+  end
+
   defp query(%Route{page?: true, path: path}, options)
        when path in ["/access-methods", "/external-identities", "/target-relationships"] do
     []
@@ -519,6 +528,7 @@ defmodule OpsondeCLI.CLI do
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
       opsonde identity|relationship list [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
       opsonde access-method list [--ids UUID,UUID] [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde account list [--ids UUID,UUID] [--roles admin,operator,viewer] [--limit N] [--after CURSOR]
       opsonde provider references [--ids UUID,UUID] [--kind KIND] [--enabled|--no-enabled] [--adapter-types TYPE,TYPE] [--limit N] [--after CURSOR]
       opsonde target references [--ids UUID,UUID] [--active|--no-active] [--exclude-id UUID] [--limit N] [--after CURSOR]
       opsonde target summaries [--ids UUID,UUID] [--active|--no-active] [--query TEXT] [--limit N] [--after CURSOR]

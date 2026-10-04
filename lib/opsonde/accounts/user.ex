@@ -40,8 +40,22 @@ defmodule Opsonde.Accounts.User do
     defaults [:read]
 
     read :page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+
+      argument :roles, {:array, :atom},
+        constraints: [min_length: 1, max_length: 3, items: [one_of: [:admin, :operator, :viewer]]]
+
+      filter expr(
+               (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:roles)) or role in ^arg(:roles))
+             )
+
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(sort: [inserted_at: :asc, id: :asc])
+
+      prepare build(
+                select: ~w(id email role role_version preferred_language inserted_at updated_at)a,
+                sort: [inserted_at: :asc, id: :asc]
+              )
     end
 
     read :get_by_subject do

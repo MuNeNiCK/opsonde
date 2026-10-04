@@ -316,6 +316,138 @@ defmodule OpsondeWeb.API.V1.AccountSessionControllerTest do
     assert %{"data" => %{"account" => %{"id" => ^operator_id}}} = json_response(own_account, 200)
   end
 
+  @tag account_filters: true
+  test "account identity and eligible-role filters apply before paging and retain changed owners" do
+    bootstrap = bootstrap_admin!()
+    admin_id = bootstrap["data"]["id"]
+    token = token!(sign_in("api-admin@example.com", @password))
+
+    accounts =
+      for {name, role} <- [{"reader", "viewer"}, {"owner", "operator"}, {"peer", "operator"}] do
+        post_json(
+          "/api/v1/accounts",
+          %{
+            "account" => %{
+              "email" => "#{name}@example.com",
+              "password" => @password,
+              "role" => role
+            }
+          },
+          token
+        )
+        |> json_response(201)
+        |> Map.fetch!("data")
+      end
+
+    [viewer, owner, peer] = accounts
+    path = "/api/v1/accounts?roles=operator,admin&limit=2"
+    first = get_json(path, token)
+    assert_operation_response(first)
+
+    assert %{"data" => [%{"id" => ^admin_id}, %{"id" => owner_id}], "page" => %{"next" => cursor}} =
+             json_response(first, 200)
+
+    assert owner_id == owner["id"]
+    assert is_binary(cursor)
+    tail = get_json(path <> "&after=" <> URI.encode_www_form(cursor), token)
+    assert_operation_response(tail)
+
+    assert %{"data" => [%{"id" => peer_id}], "page" => %{"next" => nil}} =
+             json_response(tail, 200)
+
+    assert peer_id == peer["id"]
+
+    known = get_json("/api/v1/accounts?ids=#{owner_id}&limit=1", token)
+    assert [%{"id" => ^owner_id, "role" => "operator"}] = json_response(known, 200)["data"]
+
+    patch_json("/api/v1/accounts/#{owner_id}/role", %{"account" => %{"role" => "viewer"}}, token)
+    |> json_response(200)
+
+    changed = get_json("/api/v1/accounts?ids=#{owner_id}&limit=1", token)
+    assert_operation_response(changed)
+
+    assert [%{"id" => ^owner_id, "role" => "viewer", "role_version" => 2} = row] =
+             json_response(changed, 200)["data"]
+
+    assert Enum.sort(Map.keys(row)) ==
+             ~w(email id inserted_at preferred_language role role_version updated_at)
+
+    assert [] =
+             get_json("/api/v1/accounts?ids=#{owner_id}&roles=operator,admin", token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+
+    viewer_token = token!(sign_in(viewer["email"], @password))
+    restricted = get_json("/api/v1/accounts?ids=#{viewer["id"]},#{peer_id}", viewer_token)
+    assert [%{"id" => viewer_id}] = json_response(restricted, 200)["data"]
+    assert viewer_id == viewer["id"]
+
+    assert [] =
+             get_json("/api/v1/accounts?ids=#{peer_id}", viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+
+    assert [] =
+             get_json("/api/v1/accounts?ids=#{Ecto.UUID.generate()}", token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+  end
+
+  @tag account_filters: true
+  test "account filters are bounded, validate roles and retain authenticated self-only reads" do
+    bootstrap_admin!()
+    token = token!(sign_in("api-admin@example.com", @password))
+    path = "/api/v1/accounts"
+    assert response(get_json(path <> "?roles=admin", nil), 401)
+
+    for query <- [
+          "ids=not-a-uuid",
+          "ids=",
+          "ids=" <> Enum.map_join(1..101, ",", fn _ -> Ecto.UUID.generate() end),
+          "roles=owner",
+          "roles=",
+          "roles=admin,operator,viewer,admin"
+        ] do
+      response = get_json(path <> "?" <> query, token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(response, 422)
+    end
+
+    ids = for _ <- 1..100, do: Ecto.UUID.generate()
+
+    response =
+      get_json(path <> "?ids=" <> Enum.join(ids, ",") <> "&roles=admin,operator,viewer", token)
+
+    assert_operation_response(response)
+    assert [] = json_response(response, 200)["data"]
+
+    actor = Accounts.sign_in!("api-admin@example.com", @password, authorize?: true)
+
+    assert {:ok, %{results: []}} =
+             Accounts.list_users(%{ids: ids, roles: [:admin, :operator, :viewer]}, actor: actor)
+
+    for filters <- [
+          %{ids: [Ecto.UUID.generate() | ids]},
+          %{ids: ["not-a-uuid"]},
+          %{roles: [:owner]},
+          %{roles: [:admin, :operator, :viewer, :admin]}
+        ] do
+      assert {:error, %Ash.Error.Invalid{}} = Accounts.list_users(filters, actor: actor)
+    end
+
+    operator =
+      Accounts.create_user!("self-operator@example.com", @password, :operator, actor: actor)
+
+    operator_token = token!(sign_in(to_string(operator.email), @password))
+    scoped = get_json(path <> "?roles=admin,operator", operator_token)
+    assert [%{"id" => operator_id}] = json_response(scoped, 200)["data"]
+    assert operator_id == operator.id
+
+    assert [] =
+             get_json(path <> "?ids=#{actor.id}", operator_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+  end
+
   defp bootstrap_admin! do
     post_json("/api/v1/accounts/bootstrap", %{
       "account" => %{

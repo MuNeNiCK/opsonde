@@ -12799,6 +12799,44 @@
               "minLength": 1,
               "type": "string"
             }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "roles",
+            "required": false,
+            "schema": {
+              "items": {
+                "enum": [
+                  "admin",
+                  "operator",
+                  "viewer"
+                ],
+                "type": "string"
+              },
+              "maxItems": 3,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
           }
         ],
         "responses": {

@@ -6898,6 +6898,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 after?: string;
+                ids?: string[];
+                roles?: ("admin" | "operator" | "viewer")[];
             };
             header?: never;
             path?: never;

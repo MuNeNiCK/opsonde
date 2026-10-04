@@ -8,6 +8,7 @@ defmodule OpsondeCLI.AccountAPITest do
 
   @password "correct horse battery staple"
 
+  @tag account_filters: true
   test "remote CLI pages accounts and changes the selected tail account through the authenticated API" do
     Accounts.bootstrap!("account-cli-admin@example.com", @password, @password, authorize?: true)
 
@@ -82,5 +83,33 @@ defmodule OpsondeCLI.AccountAPITest do
 
     refute refreshed =~ @password
     refute refreshed =~ token
+
+    exact =
+      capture_io(fn ->
+        assert CLI.run(["account", "list", "--ids", selected_id, "--limit", "1"], runtime) == 0
+      end)
+
+    assert %{"data" => [%{"id" => ^selected_id, "role" => "viewer"}], "page" => %{"next" => nil}} =
+             Jason.decode!(exact)
+
+    eligible =
+      capture_io(fn ->
+        assert CLI.run(["account", "list", "--roles", "operator", "--limit", "1"], runtime) == 0
+      end)
+
+    assert %{
+             "data" => [%{"email" => "account-cli-1@example.com", "role" => "operator"}],
+             "page" => %{"next" => nil}
+           } = Jason.decode!(eligible)
+
+    intersection =
+      capture_io(fn ->
+        assert CLI.run(
+                 ["account", "list", "--ids", selected_id, "--roles", "operator,admin"],
+                 runtime
+               ) == 0
+      end)
+
+    assert %{"data" => [], "page" => %{"next" => nil}} = Jason.decode!(intersection)
   end
 end
