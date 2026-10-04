@@ -20,18 +20,28 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
       configuration: provider.configuration,
       revision: provider.revision,
       enabled: provider.enabled,
-      check: %{
-        status: provider.check_status,
-        category: provider.check_category,
-        message: provider.check_message,
-        checked_revision: provider.checked_revision,
-        checked_at: provider.checked_at
-      },
+      check: check(provider),
       inserted_at: provider.inserted_at,
       updated_at: provider.updated_at
     }
 
     with_access_method_profile(record, provider)
+  end
+
+  def summary(provider) do
+    provider
+    |> Map.take(Providers.Provider.reference_fields())
+    |> Map.put(:check, check(provider))
+  end
+
+  defp check(provider) do
+    %{
+      status: provider.check_status,
+      category: provider.check_category,
+      message: provider.check_message,
+      checked_revision: provider.checked_revision,
+      checked_at: provider.checked_at
+    }
   end
 
   defp with_access_method_profile(record, provider) do

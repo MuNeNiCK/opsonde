@@ -28,6 +28,104 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     }
   end
 
+  @tag provider_summaries: true
+  test "management pages filter Provider kinds and eligible choices before pagination", context do
+    create_provider!(
+      context.admin_token,
+      "Unrelated AI",
+      "ai",
+      "fixture-ai",
+      %{"model" => "fixture"},
+      %{"api_key" => "private"}
+    )
+
+    target =
+      create_provider!(context.admin_token, "Target connection", "target", "http-api", %{}, %{})
+
+    inventory =
+      create_provider!(
+        context.admin_token,
+        "Inventory connection",
+        "inventory",
+        "fixture-inventory",
+        %{"source" => "reachable"},
+        %{"token" => "private"}
+      )
+
+    first =
+      get_json("/api/v1/providers/summaries?kinds=target,inventory&limit=1", context.viewer_token)
+
+    assert %{"data" => [summary], "page" => %{"next" => cursor}} = json_response(first, 200)
+    assert_operation_response(first)
+    assert summary["id"] == target["id"]
+
+    assert Map.keys(summary) |> Enum.sort() ==
+             ~w(adapter_type check enabled id kind name revision)
+
+    assert summary["check"]["status"] == nil
+
+    tail =
+      get_json(
+        "/api/v1/providers/summaries?kinds=target,inventory&limit=1&after=#{URI.encode_www_form(cursor)}",
+        context.operator_token
+      )
+
+    assert %{"data" => [%{"id" => inventory_id}], "page" => %{"next" => nil}} =
+             json_response(tail, 200)
+
+    assert inventory_id == inventory["id"]
+
+    enabled =
+      post_json(
+        "/api/v1/providers/#{target["id"]}/enable",
+        %{"provider" => %{"expected_revision" => 1}},
+        context.admin_token
+      )
+
+    assert json_response(enabled, 200)["data"]["enabled"]
+
+    assert %{"data" => []} =
+             get_json(
+               "/api/v1/providers/summaries?kinds=inventory&eligible=true",
+               context.viewer_token
+             )
+             |> json_response(200)
+
+    checked =
+      post_json(
+        "/api/v1/providers/#{inventory_id}/check",
+        %{"provider" => %{"expected_revision" => 1}},
+        context.admin_token
+      )
+
+    assert json_response(checked, 200)["data"]["check"]["status"] == "passed"
+
+    post_json(
+      "/api/v1/providers/#{inventory_id}/enable",
+      %{"provider" => %{"expected_revision" => 1}},
+      context.admin_token
+    )
+    |> json_response(200)
+
+    eligible =
+      get_json(
+        "/api/v1/providers/summaries?kinds=inventory&eligible=true&limit=1",
+        context.viewer_token
+      )
+
+    assert %{
+             "data" => [
+               %{
+                 "id" => ^inventory_id,
+                 "check" => %{"status" => "passed", "checked_revision" => 1}
+               }
+             ]
+           } = json_response(eligible, 200)
+
+    assert_operation_response(eligible)
+    assert_secret_free(eligible, ["private", "configuration", "credentials"])
+  end
+
   test "authenticated clients can discover the installed AI object services", context do
     response = get_json("/api/v1/ai-services", context.viewer_token)
 
@@ -36,6 +134,120 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert length(services) == 30
     assert Enum.any?(services, &(&1["id"] == "ollama" && &1["auth"] == "none"))
     refute Enum.any?(services, &(&1["id"] in ~w(cohere elevenlabs typesafe)))
+  end
+
+  @tag provider_summaries: true
+  test "management metadata stays paged past 100 Providers and expires updated eligibility",
+       context do
+    ids =
+      for index <- 1..101 do
+        create_provider!(
+          context.admin_token,
+          "Connection #{index}",
+          "target",
+          "http-api",
+          %{"blob" => String.duplicate("x", 65_000)},
+          %{"bearer_token" => "private"}
+        )["id"]
+      end
+
+    first = get_json("/api/v1/providers/summaries?kinds=target&limit=100", context.viewer_token)
+    assert %{"data" => summaries, "page" => %{"next" => cursor}} = json_response(first, 200)
+    assert length(summaries) == 100
+    assert byte_size(first.resp_body) < 40_000
+    refute first.resp_body =~ "blob"
+
+    tail =
+      get_json(
+        "/api/v1/providers/summaries?kinds=target&limit=100&after=#{URI.encode_www_form(cursor)}",
+        context.admin_token
+      )
+
+    assert %{"data" => [%{"id" => tail_id}], "page" => %{"next" => nil}} =
+             json_response(tail, 200)
+
+    assert tail_id == List.last(ids)
+
+    provider =
+      create_provider!(
+        context.admin_token,
+        "Eligible inventory",
+        "inventory",
+        "fixture-inventory",
+        %{"source" => "reachable"},
+        %{"token" => "private"}
+      )
+
+    id = provider["id"]
+
+    post_json(
+      "/api/v1/providers/#{id}/check",
+      %{"provider" => %{"expected_revision" => 1}},
+      context.admin_token
+    )
+    |> json_response(200)
+
+    post_json(
+      "/api/v1/providers/#{id}/enable",
+      %{"provider" => %{"expected_revision" => 1}},
+      context.admin_token
+    )
+    |> json_response(200)
+
+    assert %{"data" => [%{"id" => ^id}]} =
+             get_json(
+               "/api/v1/providers/summaries?kinds=inventory&eligible=true",
+               context.viewer_token
+             )
+             |> json_response(200)
+
+    updated =
+      patch_json(
+        "/api/v1/providers/#{id}",
+        %{"provider" => %{"expected_revision" => 1, "name" => "Updated inventory"}},
+        context.admin_token
+      )
+      |> json_response(200)
+
+    assert updated["data"]["revision"] == 2
+
+    assert %{"data" => []} =
+             get_json(
+               "/api/v1/providers/summaries?kinds=inventory&eligible=true",
+               context.viewer_token
+             )
+             |> json_response(200)
+
+    assert %{
+             "data" => [
+               %{"id" => ^id, "revision" => 2, "enabled" => false, "check" => %{"status" => nil}}
+             ]
+           } =
+             get_json(
+               "/api/v1/providers/summaries?ids=#{id}&eligible=false",
+               context.viewer_token
+             )
+             |> json_response(200)
+
+    for query <- [
+          "kinds=invalid",
+          "kinds=target,inventory,ai,signal,notification,target",
+          "eligible=invalid",
+          "ids=invalid",
+          "ids=#{Enum.join(ids, ",")}"
+        ] do
+      assert %{"error" => %{"code" => "validation_failed"}} =
+               get_json("/api/v1/providers/summaries?#{query}", context.viewer_token)
+               |> json_response(422)
+    end
+
+    for query <- ["limit=101", "after=invalid"] do
+      assert %{"error" => %{"code" => "invalid_pagination"}} =
+               get_json("/api/v1/providers/summaries?#{query}", context.viewer_token)
+               |> json_response(422)
+    end
+
+    assert build_conn() |> get("/api/v1/providers/summaries") |> json_response(401)
   end
 
   test "service account credentials are write-only in public AI registration", context do

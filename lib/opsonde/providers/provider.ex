@@ -7,6 +7,8 @@ defmodule Opsonde.Providers.Provider do
     data_layer: AshPostgres.DataLayer
 
   @reference_fields ~w(id name kind adapter_type enabled revision)a
+  @management_fields @reference_fields ++
+                       ~w(check_status check_category check_message checked_revision checked_at)a
   def reference_fields, do: @reference_fields
 
   cloak do
@@ -64,6 +66,29 @@ defmodule Opsonde.Providers.Provider do
       prepare build(select: @reference_fields, sort: [inserted_at: :asc, id: :asc])
     end
 
+    read :management_page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+
+      argument :kinds, {:array, :atom},
+        constraints: [
+          min_length: 1,
+          max_length: 5,
+          items: [one_of: [:ai, :signal, :target, :inventory, :notification]]
+        ]
+
+      argument :eligible, :boolean
+
+      filter expr(
+               is_nil(retired_at) and
+                 (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:kinds)) or kind in ^arg(:kinds)) and
+                 (is_nil(^arg(:eligible)) or available_for_invocation == ^arg(:eligible))
+             )
+
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @management_fields, sort: [inserted_at: :asc, id: :asc])
+    end
+
     read :active do
       get? true
       argument :id, :uuid, allow_nil?: false
@@ -87,9 +112,7 @@ defmodule Opsonde.Providers.Provider do
                id == ^arg(:id) and
                  revision == ^arg(:expected_revision) and
                  kind == ^arg(:expected_kind) and
-                 enabled == true and
-                 is_nil(retired_at) and
-                 (kind == :target or (check_status == :passed and checked_revision == revision))
+                 available_for_invocation == true
              )
 
       prepare build(load: [:credentials])
@@ -479,7 +502,7 @@ defmodule Opsonde.Providers.Provider do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :page, :active, :reference_page]) do
+    policy action([:read, :page, :active, :reference_page, :management_page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)
@@ -564,6 +587,18 @@ defmodule Opsonde.Providers.Provider do
     attribute :retired_at, :utc_datetime_usec
 
     timestamps()
+  end
+
+  calculations do
+    calculate :available_for_invocation,
+              :boolean,
+              expr(
+                if enabled == true and is_nil(retired_at) and
+                     (kind == :target or
+                        (check_status == :passed and checked_revision == revision)),
+                   do: true,
+                   else: false
+              )
   end
 
   identities do

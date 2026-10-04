@@ -63,6 +63,7 @@ defmodule OpsondeWeb.Router do
 
     get "/providers", ProviderController, :index
     get "/providers/references", ProviderController, :references
+    get "/providers/summaries", ProviderController, :summaries
     get "/ai-services", ProviderController, :services
     post "/providers", ProviderController, :create
     get "/providers/:id", ProviderController, :show

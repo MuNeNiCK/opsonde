@@ -28,6 +28,8 @@ defmodule OpsondeCLI.CLI do
     ids: :string,
     query: :string,
     kind: :string,
+    kinds: :string,
+    eligible: :boolean,
     enabled: :boolean,
     adapter_types: :string,
     exclude_id: :string,
@@ -367,6 +369,15 @@ defmodule OpsondeCLI.CLI do
     |> maybe_query(:kind, options[:kind])
     |> maybe_query(:enabled, options[:enabled])
     |> maybe_query(:adapter_types, options[:adapter_types])
+  end
+
+  defp query(%Route{path: "/providers/summaries"}, options) do
+    []
+    |> maybe_query(:limit, options[:limit])
+    |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, options[:ids])
+    |> maybe_query(:kinds, options[:kinds])
+    |> maybe_query(:eligible, options[:eligible])
   end
 
   defp query(%Route{path: "/targets/references"}, options) do

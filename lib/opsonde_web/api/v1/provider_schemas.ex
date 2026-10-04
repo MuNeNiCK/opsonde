@@ -24,6 +24,21 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
           false
         ),
       "ProviderReferencePage" => Schemas.page(ref("ProviderReference")),
+      "ProviderSummary" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            name: %Schema{type: :string, minLength: 1, maxLength: 120},
+            kind: provider_kind(),
+            adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
+            enabled: %Schema{type: :boolean},
+            revision: positive_integer(),
+            check: provider_check()
+          },
+          [:id, :name, :kind, :adapter_type, :enabled, :revision, :check],
+          false
+        ),
+      "ProviderSummaryPage" => Schemas.page(ref("ProviderSummary")),
       "AIServiceCatalogResponse" => Schemas.data(%Schema{type: :array, items: ref("AIService")}),
       "AIService" => ai_service(),
       "CreateProviderRequest" => create_provider_request(),
@@ -39,6 +54,27 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  def summary_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        Schemas.reference_ids_parameter(),
+        {:kinds,
+         [
+           in: :query,
+           style: :form,
+           explode: false,
+           schema: %Schema{type: :array, minItems: 1, maxItems: 5, items: provider_kind()}
+         ]},
+        {:eligible,
+         [
+           in: :query,
+           schema: %Schema{type: :boolean},
+           description:
+             "Filter by current Provider invocation eligibility; target connection checks are owned by Access Methods."
+         ]}
+      ]
+  end
 
   def reference_page_parameters do
     Schemas.pagination_parameters() ++

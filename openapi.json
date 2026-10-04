@@ -2396,6 +2396,25 @@
         ],
         "type": "object"
       },
+      "ProviderSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "TargetCapabilitiesRequest": {
         "properties": {
           "provider": {
@@ -3092,6 +3111,98 @@
         "required": [
           "data",
           "page"
+        ],
+        "type": "object"
+      },
+      "ProviderSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "check": {
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "enum": [
+                  "invalid_configuration",
+                  "authentication",
+                  "unreachable",
+                  "capability",
+                  "provider_failure"
+                ],
+                "nullable": true,
+                "type": "string"
+              },
+              "checked_at": {
+                "format": "date-time",
+                "nullable": true,
+                "type": "string"
+              },
+              "checked_revision": {
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              "message": {
+                "nullable": true,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed"
+                ],
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "category",
+              "message",
+              "checked_revision",
+              "checked_at"
+            ],
+            "type": "object"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ai",
+              "signal",
+              "target",
+              "inventory",
+              "notification"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "adapter_type",
+          "enabled",
+          "revision",
+          "check"
         ],
         "type": "object"
       },
@@ -17595,6 +17706,141 @@
         "summary": "Handoff a Case",
         "tags": [
           "Cases"
+        ]
+      }
+    },
+    "/api/v1/providers/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listProviderSummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "kinds",
+            "required": false,
+            "schema": {
+              "items": {
+                "enum": [
+                  "ai",
+                  "signal",
+                  "target",
+                  "inventory",
+                  "notification"
+                ],
+                "type": "string"
+              },
+              "maxItems": 5,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Filter by current Provider invocation eligibility; target connection checks are owned by Access Methods.",
+            "in": "query",
+            "name": "eligible",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSummaryPage"
+                }
+              }
+            },
+            "description": "Provider management page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Provider management metadata",
+        "tags": [
+          "Providers"
         ]
       }
     },

@@ -63,6 +63,23 @@ defmodule OpsondeWeb.API.V1.ProviderController do
           :internal_server_error
         ])
 
+  operation :summaries,
+    operation_id: "listProviderSummaries",
+    summary: "List Provider management metadata",
+    parameters: ProviderSchemas.summary_page_parameters(),
+    responses:
+      [
+        ok:
+          {"Provider management page", "application/json",
+           ProviderSchemas.ref("ProviderSummaryPage")}
+      ] ++
+        OpsondeWeb.API.Schemas.errors([
+          :unauthorized,
+          :forbidden,
+          :unprocessable_entity,
+          :internal_server_error
+        ])
+
   operation :create,
     operation_id: "createProvider",
     summary: "Create a Provider",
@@ -240,6 +257,16 @@ defmodule OpsondeWeb.API.V1.ProviderController do
   def show(conn, %{"id" => id}) do
     with {:ok, provider} <- Providers.get_active_provider(id, actor: conn.assigns.current_user) do
       Response.data(conn, ProviderJSON.data(provider))
+    end
+  end
+
+  def summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:ids, :kinds, :eligible])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, providers} <-
+           Providers.page_provider_summaries(input, page: page, actor: conn.assigns.current_user) do
+      Response.page(conn, providers, &ProviderJSON.summary/1)
     end
   end
 

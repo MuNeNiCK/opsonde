@@ -7,6 +7,7 @@ defmodule Opsonde.Providers do
       define :list_providers, action: :read
       define :page_providers, action: :page
       define :page_provider_references, action: :reference_page
+      define :page_provider_summaries, action: :management_page
       define :get_provider, action: :read, get_by: [:id]
       define :get_active_provider, action: :active, args: [:id]
 

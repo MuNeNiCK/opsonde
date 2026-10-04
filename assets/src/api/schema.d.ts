@@ -1278,6 +1278,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Provider management metadata */
+        get: operations["listProviderSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{id}": {
         parameters: {
             query?: never;
@@ -2301,6 +2318,10 @@ export interface components {
                 value?: string;
             };
         };
+        ProviderSummaryPage: {
+            data: components["schemas"]["ProviderSummary"][];
+            page: components["schemas"]["Page"];
+        };
         TargetCapabilitiesRequest: {
             provider: {
                 endpoint: string;
@@ -2471,6 +2492,26 @@ export interface components {
         ReviewDecisionPage: {
             data: components["schemas"]["ReviewDecision"][];
             page: components["schemas"]["Page"];
+        };
+        ProviderSummary: {
+            adapter_type: string;
+            check: {
+                /** @enum {string|null} */
+                category: "invalid_configuration" | "authentication" | "unreachable" | "capability" | "provider_failure" | null;
+                /** Format: date-time */
+                checked_at: string | null;
+                checked_revision: number | null;
+                message: string | null;
+                /** @enum {string|null} */
+                status: "passed" | "failed" | null;
+            };
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "ai" | "signal" | "target" | "inventory" | "notification";
+            name: string;
+            revision: number;
         };
         CreateExternalIdentityRequest: {
             external_identity: {
@@ -10523,6 +10564,69 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listProviderSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                ids?: string[];
+                kinds?: ("ai" | "signal" | "target" | "inventory" | "notification")[];
+                /** @description Filter by current Provider invocation eligibility; target connection checks are owned by Access Methods. */
+                eligible?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider management page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

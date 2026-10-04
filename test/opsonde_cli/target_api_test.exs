@@ -666,6 +666,94 @@ defmodule OpsondeCLI.TargetAPITest do
              ])
   end
 
+  @tag provider_summaries_cli: true
+  test "CLI pages current Provider management checks without retaining configuration", context do
+    disabled =
+      Providers.create_provider!(
+        "Unchecked inventory",
+        :inventory,
+        "fixture-inventory",
+        %{"source" => "reachable"},
+        %{"token" => "private"},
+        actor: context.admin
+      )
+
+    inventory =
+      Providers.create_provider!(
+        "Checked inventory",
+        :inventory,
+        "fixture-inventory",
+        %{"source" => "reachable"},
+        %{"token" => "private"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, &1.revision, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    id = inventory.id
+
+    assert [%{"id" => ^id, "check" => %{"status" => "passed", "checked_revision" => 1}}] =
+             cli_data!(context, [
+               "provider",
+               "summaries",
+               "--kinds",
+               "inventory",
+               "--eligible",
+               "--limit",
+               "1"
+             ])
+
+    disabled_id = disabled.id
+
+    assert [%{"id" => ^disabled_id}] =
+             cli_data!(context, ["provider", "summaries", "--ids", disabled_id, "--no-eligible"])
+
+    expected = cli_data!(context, ["provider", "summaries", "--ids", id])
+    refute Jason.encode!(expected) =~ "private"
+
+    for {column, required?} <- [
+          {"configuration", false},
+          {"encrypted_credentials", false},
+          {"check_status", true},
+          {"checked_revision", true},
+          {"name", true}
+        ] do
+      Opsonde.Repo.query!(
+        "ALTER TABLE providers RENAME COLUMN #{column} TO unavailable_management_column"
+      )
+
+      try do
+        if required? do
+          assert {:error, %Ash.Error.Unknown{} = cause} =
+                   Providers.page_provider_summaries(%{ids: [id]},
+                     actor: context.admin,
+                     page: [limit: 1]
+                   )
+
+          assert Exception.message(cause) =~ "does not exist"
+
+          capture_log(fn ->
+            error =
+              capture_io(:stderr, fn ->
+                assert CLI.run(["provider", "summaries", "--ids", id], context.runtime) == 4
+              end)
+
+            assert Jason.decode!(error)["error"]["code"] == "internal_error"
+          end)
+        else
+          assert cli_data!(context, ["provider", "summaries", "--ids", id]) == expected
+
+          assert {:error, %Ash.Error.Unknown{}} =
+                   Providers.get_active_provider(id, actor: context.admin)
+        end
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE providers RENAME COLUMN unavailable_management_column TO #{column}"
+        )
+      end
+    end
+  end
+
   @tag reference_fault: true
   test "reference reads omit unused storage and preserve required metadata faults", context do
     provider =
