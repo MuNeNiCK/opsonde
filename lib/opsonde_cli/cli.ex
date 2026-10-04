@@ -403,6 +403,7 @@ defmodule OpsondeCLI.CLI do
     []
     |> maybe_query(:limit, options[:limit])
     |> maybe_query(:after, options[:after])
+    |> maybe_query(:ids, if(path == "/access-methods", do: options[:ids]))
     |> maybe_query(:target_id, options[:target_id])
     |> maybe_query(:active, options[:active])
   end
@@ -516,7 +517,8 @@ defmodule OpsondeCLI.CLI do
       opsonde auth status | logout
       opsonde provider services
       opsonde RESOURCE ACTION [ID] [--input FILE|-] [--limit N] [--after CURSOR]
-      opsonde identity|access-method|relationship list [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde identity|relationship list [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
+      opsonde access-method list [--ids UUID,UUID] [--target-id UUID] [--active|--no-active] [--limit N] [--after CURSOR]
       opsonde provider references [--ids UUID,UUID] [--kind KIND] [--enabled|--no-enabled] [--adapter-types TYPE,TYPE] [--limit N] [--after CURSOR]
       opsonde target references [--ids UUID,UUID] [--active|--no-active] [--exclude-id UUID] [--limit N] [--after CURSOR]
       opsonde target summaries [--ids UUID,UUID] [--active|--no-active] [--query TEXT] [--limit N] [--after CURSOR]

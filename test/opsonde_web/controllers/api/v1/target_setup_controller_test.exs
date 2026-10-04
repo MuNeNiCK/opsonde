@@ -652,6 +652,97 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
 
   @tag target_scope: true
   @tag method_projection: true
+  test "referenced Method IDs are filtered before paging and retain inactive lower-priority identities",
+       context do
+    alias Opsonde.Targets
+
+    selected =
+      create_target!(context.admin_token, "selected-identity-host", "host", "custom-os", nil)
+
+    other = create_target!(context.admin_token, "other-identity-host", "host", "custom-os", nil)
+    first = create_access_method!(context, selected, "first-method", "ssh", [])
+    last = create_access_method!(context, selected, "last-method", "ssh", [])
+    peer = create_access_method!(context, other, "peer-method", "ssh", [])
+
+    Targets.update_access_method!(last["id"], last["revision"], %{priority: 500},
+      actor: context.admin
+    )
+
+    Targets.deactivate_access_method!(last["id"], 2, actor: context.admin)
+    path = "/api/v1/access-methods?ids=#{last["id"]},#{peer["id"]}&limit=1"
+
+    response = get_json(path, context.viewer_token)
+    assert_operation_response(response)
+
+    assert %{"data" => [%{"id" => peer_id}], "page" => %{"next" => cursor}} =
+             json_response(response, 200)
+
+    assert peer_id == peer["id"]
+    assert is_binary(cursor)
+    tail = get_json(path <> "&after=" <> URI.encode_www_form(cursor), context.viewer_token)
+    assert_operation_response(tail)
+
+    assert %{
+             "data" => [
+               %{"id" => last_id, "name" => "last-method", "active" => false, "priority" => 500} =
+                 row
+             ],
+             "page" => %{"next" => nil}
+           } = json_response(tail, 200)
+
+    assert last_id == last["id"]
+    refute Map.has_key?(row, "operation_catalog")
+    refute Map.has_key?(row, "check_attempt_id")
+    refute last_id == first["id"]
+
+    scoped = get_json(path <> "&target_id=#{selected["id"]}", context.operator_token)
+    assert [%{"id" => ^last_id}] = json_response(scoped, 200)["data"]
+    active = get_json(path <> "&active=true", context.admin_token)
+    assert [%{"id" => ^peer_id}] = json_response(active, 200)["data"]
+
+    assert [] =
+             get_json("/api/v1/access-methods?ids=#{Ecto.UUID.generate()}", context.viewer_token)
+             |> json_response(200)
+             |> Map.fetch!("data")
+  end
+
+  @tag target_scope: true
+  @tag method_projection: true
+  test "Method identity filters reject unbounded or malformed requests and require authentication",
+       context do
+    path = "/api/v1/access-methods"
+    assert response(get_json(path <> "?ids=#{Ecto.UUID.generate()}", nil), 401)
+
+    for query <- [
+          "ids=not-a-uuid",
+          "ids=",
+          "ids=" <> Enum.map_join(1..101, ",", fn _ -> Ecto.UUID.generate() end)
+        ] do
+      response = get_json(path <> "?" <> query, context.viewer_token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(response, 422)
+    end
+
+    ids = for _ <- 1..100, do: Ecto.UUID.generate()
+    filters = %{ids: ids}
+
+    assert {:ok, %{results: []}} =
+             Opsonde.Targets.page_access_methods(filters, actor: context.admin)
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             Opsonde.Targets.page_access_methods(%{ids: [Ecto.UUID.generate() | ids]},
+               actor: context.admin
+             )
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             Opsonde.Targets.page_access_methods(%{ids: ["not-a-uuid"]}, actor: context.admin)
+
+    response = get_json(path <> "?ids=" <> Enum.join(ids, ","), context.viewer_token)
+    assert_operation_response(response)
+    assert [] = json_response(response, 200)["data"]
+  end
+
+  @tag target_scope: true
+  @tag method_projection: true
   test "management Method pages do not hydrate the execution catalog and preserve checked state",
        context do
     target = create_target!(context.admin_token, "projection-host", "host", "custom-os", nil)

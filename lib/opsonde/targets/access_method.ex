@@ -32,11 +32,13 @@ defmodule Opsonde.Targets.AccessMethod do
     end
 
     read :page do
+      argument :ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
       argument :target_id, :uuid
       argument :active, :boolean
 
       filter expr(
-               (is_nil(^arg(:target_id)) or target_id == ^arg(:target_id)) and
+               (is_nil(^arg(:ids)) or id in ^arg(:ids)) and
+                 (is_nil(^arg(:target_id)) or target_id == ^arg(:target_id)) and
                  (is_nil(^arg(:active)) or active == ^arg(:active))
              )
 

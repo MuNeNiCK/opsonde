@@ -104,6 +104,60 @@ defmodule OpsondeCLI.TargetAPITest do
     assert Enum.find(listed, &(&1["id"] == changed["id"])) == changed
   end
 
+  @tag method_ids: true
+  test "CLI selects referenced inactive Methods before paging and combines Target filters",
+       context do
+    provider =
+      Providers.create_provider!(
+        "Method identity fixture",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "fixture"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, &1.revision, actor: context.admin))
+
+    target =
+      Targets.create_target!("Method host", "host", "custom-os", %{}, nil, actor: context.admin)
+
+    first =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "preferred",
+        "ssh",
+        "ssh://192.0.2.1:22",
+        provider.revision,
+        1,
+        [],
+        actor: context.admin
+      )
+
+    last =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "historical",
+        "ssh",
+        "ssh://192.0.2.2:22",
+        provider.revision,
+        500,
+        [],
+        actor: context.admin
+      )
+
+    Targets.deactivate_access_method!(last, last.revision, actor: context.admin)
+
+    args = ["access-method", "list", "--ids", last.id, "--limit", "1"]
+    assert [%{"id" => id, "active" => false, "name" => "historical"}] = cli_data!(context, args)
+    assert id == last.id
+    refute id == first.id
+    assert [] == cli_data!(context, args ++ ["--active"])
+    assert [%{"id" => ^id}] = cli_data!(context, args ++ ["--target-id", target.id])
+    assert [] == cli_data!(context, args ++ ["--target-id", Ecto.UUID.generate()])
+  end
+
   test "CLI registers every published Method and reads failed checks through the authenticated API",
        context do
     catalog =

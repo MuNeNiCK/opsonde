@@ -233,7 +233,7 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   operation :access_methods_index,
     operation_id: "listAccessMethods",
     summary: "List Access Methods",
-    parameters: TargetSchemas.management_page_parameters(),
+    parameters: TargetSchemas.management_page_parameters() ++ [Schemas.reference_ids_parameter()],
     responses:
       [ok: {"Access Method page", "application/json", TargetSchemas.ref("AccessMethodPage")}] ++
         @list_errors
@@ -531,10 +531,12 @@ defmodule OpsondeWeb.API.V1.TargetSetupController do
   def identities_deactivate(_conn, _params), do: {:error, :bad_request}
 
   def access_methods_index(conn, params) do
+    filters = OpenApiSpex.params(conn) |> Map.take([:ids, :target_id, :active])
+
     page(
       conn,
       params,
-      &Targets.page_access_methods(Map.take(params, ~w(target_id active)), &1),
+      &Targets.page_access_methods(filters, &1),
       &TargetSetupJSON.access_method/1
     )
   end

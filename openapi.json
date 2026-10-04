@@ -14005,6 +14005,23 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
           }
         ],
         "responses": {

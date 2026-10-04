@@ -7801,6 +7801,7 @@ export interface operations {
                 after?: string;
                 target_id?: string;
                 active?: boolean;
+                ids?: string[];
             };
             header?: never;
             path?: never;
