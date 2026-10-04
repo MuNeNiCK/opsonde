@@ -1129,6 +1129,10 @@ const en = {
       inventoryDescription:
         "Model each layer independently, then connect layers with relationships.",
       topology: "Infrastructure topology",
+      viewTopology: "View topology",
+      chooseTopologyTarget: "Choose a Target from the list to view its relationships.",
+      topologyScope:
+        "Selected Target and active related Targets on this page ({{count}} relationships).",
       topologyDescription:
         "Relationships show how infrastructure layers depend on and support each other.",
       connectRelationshipInstruction:

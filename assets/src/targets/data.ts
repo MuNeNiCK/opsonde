@@ -6,6 +6,7 @@ export type ProviderReference = components["schemas"]["ProviderReference"];
 export type ManagementBoundary = components["schemas"]["ManagementBoundarySummary"];
 export type Target = components["schemas"]["Target"];
 export type TargetReference = components["schemas"]["TargetReference"];
+export type TargetSummary = components["schemas"]["TargetSummary"];
 export type ExternalIdentity = components["schemas"]["ExternalIdentity"];
 export type AccessMethod = components["schemas"]["AccessMethod"];
 export type TargetRelationship = components["schemas"]["TargetRelationship"];

@@ -17,11 +17,10 @@ import "@xyflow/react/dist/style.css";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/components/theme-provider";
 import { Badge } from "@/components/ui/badge";
-import type { AccessMethod, Target, TargetRelationship } from "@/targets/data";
+import type { TargetSummary, TargetRelationship } from "@/targets/data";
 
 type TargetNodeData = {
-  target: Target;
-  methods: AccessMethod[];
+  target: TargetSummary;
   editMode: boolean;
 };
 
@@ -32,6 +31,11 @@ type Topology = {
   edges: Edge[];
 };
 
+type TopologyRelationship = Pick<
+  TargetRelationship,
+  "id" | "source_target_id" | "destination_target_id" | "kind" | "active"
+>;
+
 const nodeWidth = 320;
 const nodeHeight = 156;
 const nodeTypes = { target: TargetNodeCard };
@@ -39,22 +43,20 @@ const nodeTypes = { target: TargetNodeCard };
 export function TargetTopology({
   targets,
   relationships,
-  methods,
   editMode,
   draft,
   onConnect,
 }: {
-  targets: Target[];
-  relationships: TargetRelationship[];
-  methods: AccessMethod[];
+  targets: TargetSummary[];
+  relationships: TopologyRelationship[];
   editMode: boolean;
   draft: { source: string; target: string } | null;
   onConnect: (source: string, target: string) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const topology = useMemo(
-    () => layoutTargets(targets, relationships, methods, editMode),
-    [editMode, methods, relationships, targets],
+    () => layoutTargets(targets, relationships, editMode),
+    [editMode, relationships, targets],
   );
   const edges = draft
     ? [
@@ -73,6 +75,7 @@ export function TargetTopology({
   return (
     <div className="h-[28rem] overflow-hidden rounded-lg border bg-card">
       <ReactFlow
+        key={targets.map((target) => target.id).join(",")}
         nodes={topology.nodes}
         edges={edges}
         nodeTypes={nodeTypes}
@@ -100,7 +103,7 @@ export function TargetTopology({
 }
 
 function TargetNodeCard({ data }: NodeProps<TargetNode>) {
-  const visibleMethods = data.methods.slice(0, 2);
+  const visibleMethods = data.target.methods;
   return (
     <>
       <Handle
@@ -134,10 +137,10 @@ function TargetNodeCard({ data }: NodeProps<TargetNode>) {
               </Badge>
             </div>
           ))}
-          {data.methods.length === 0 && <span className="text-muted-foreground">—</span>}
-          {data.methods.length > visibleMethods.length && (
+          {data.target.method_count === 0 && <span className="text-muted-foreground">—</span>}
+          {data.target.method_count > visibleMethods.length && (
             <span className="text-muted-foreground">
-              +{data.methods.length - visibleMethods.length}
+              +{data.target.method_count - visibleMethods.length}
             </span>
           )}
         </div>
@@ -164,9 +167,8 @@ function endpointHost(endpoint: string) {
 }
 
 function layoutTargets(
-  targets: Target[],
-  relationships: TargetRelationship[],
-  methods: AccessMethod[],
+  targets: TargetSummary[],
+  relationships: TopologyRelationship[],
   editMode: boolean,
 ): Topology {
   const targetIds = new Set(targets.map((target) => target.id));
@@ -200,9 +202,6 @@ function layoutTargets(
       },
       data: {
         target,
-        methods: methods
-          .filter((method) => method.active && method.target_id === target.id)
-          .sort((left, right) => left.priority - right.priority),
         editMode,
       },
       style: { width: nodeWidth, height: nodeHeight },
