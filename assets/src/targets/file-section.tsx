@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuthentication } from "@/auth/context";
+import { apiClient, apiData } from "@/api/client";
+import { usePagedData } from "@/api/use-paged-data";
+import { PageControls } from "@/components/page-controls";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import {
   downloadTargetFile,
-  listTargetFiles,
+  getTargetFile,
   revokeTargetFile,
   uploadTargetFile,
   type TargetFile,
@@ -19,52 +22,95 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const canOperate = account?.role === "admin" || account?.role === "operator";
-  const [files, setFiles] = useState<TargetFile[]>([]);
+  const [receipt, setReceipt] = useState<TargetFile | null>(null);
+  const [receiptError, setReceiptError] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [resumeId, setResumeId] = useState<string>();
   const [now, setNow] = useState(() => Date.now());
   const picker = useRef<HTMLInputElement>(null);
-  const refresh = useCallback(async () => setFiles(await listTargetFiles(targetId)), [targetId]);
+  const receiptRef = useRef<TargetFile | null>(null);
+  const receiptRead = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
   useEffect(() => {
-    let active = true;
-    listTargetFiles(targetId)
-      .then((items) => {
-        if (active) setFiles(items);
-      })
-      .catch(() => {
-        if (active) setError(t("files.failed"));
-      });
+    mounted.current = true;
     return () => {
-      active = false;
+      mounted.current = false;
+      receiptRead.current?.abort();
     };
-  }, [targetId, t]);
+  }, []);
+  const page = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        apiClient
+          .GET("/api/v1/targets/{target_id}/files", {
+            params: { path: { target_id: targetId }, query: { limit: 50, after } },
+            signal,
+          })
+          .then(apiData),
+      [targetId],
+    ),
+  );
+  const files = receipt
+    ? [receipt, ...(page.view?.data ?? []).filter((item) => item.id !== receipt.id)]
+    : (page.view?.data ?? []);
 
+  const nextExpiry = Math.min(
+    ...files.map((file) => Date.parse(file.expires_at)).filter((time) => time > now),
+  );
   useEffect(() => {
-    const next = Math.min(
-      ...files.map((file) => Date.parse(file.expires_at)).filter((time) => time > now),
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(nextExpiry - now + 1, 2_147_483_647),
     );
-    if (!Number.isFinite(next)) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(next - now + 1, 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [files, now]);
+  }, [nextExpiry, now]);
 
-  async function run(action?: () => Promise<unknown>) {
+  async function readReceipt() {
+    const known = receiptRef.current;
+    if (!known || !mounted.current) return;
+    receiptRead.current?.abort();
+    const controller = new AbortController();
+    receiptRead.current = controller;
+    try {
+      const current = await getTargetFile(targetId, known.id, controller.signal);
+      if (!controller.signal.aborted) {
+        receiptRef.current = current;
+        setReceipt(current);
+        setReceiptError(false);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setReceiptError(true);
+        throw cause;
+      }
+    }
+  }
+
+  async function run(action?: () => Promise<unknown>, selected?: TargetFile) {
     setPending(true);
     setError("");
+    if (selected) progress(selected);
     try {
       await action?.();
     } catch (cause) {
       const key = cause instanceof Error ? cause.message : "failed";
-      setError(t(`files.${key}`, { defaultValue: t("files.failed") }));
+      if (mounted.current) setError(t(`files.${key}`, { defaultValue: t("files.failed") }));
     } finally {
-      await refresh().catch(() => setError(t("files.failed")));
-      setPending(false);
+      if (mounted.current) {
+        await Promise.allSettled([page.retry(), readReceipt()]);
+        if (mounted.current) setPending(false);
+      }
     }
   }
 
   function progress(file: TargetFile) {
-    setFiles((current) => [file, ...current.filter((item) => item.id !== file.id)]);
+    if (!mounted.current) return;
+    receiptRead.current?.abort();
+    receiptRef.current = file;
+    setReceipt(file);
+    setReceiptError(false);
   }
 
   return (
@@ -72,7 +118,12 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>{t("files.title")}</CardTitle>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" disabled={pending} onClick={() => void run()}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending || page.pending}
+            onClick={() => void run()}
+          >
             {t("files.refresh")}
           </Button>
           {canOperate && (
@@ -90,6 +141,14 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <PageControls
+          index={page.view?.index ?? 0}
+          hasNext={!!page.view?.page.next}
+          pending={pending || page.pending}
+          previous={page.previous}
+          next={page.next}
+        />
+        {page.pending && <Spinner />}
         {canOperate && (
           <input
             ref={picker}
@@ -110,15 +169,18 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
             {t("files.transferring")}
           </div>
         )}
-        {error && (
+        {!!(error || page.error || receiptError) && (
           <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error || t("files.failed")}</AlertDescription>
           </Alert>
         )}
-        {!files.length && <p className="text-sm text-muted-foreground">{t("files.empty")}</p>}
+        {!files.length && page.view && !page.pending && !page.error && (
+          <p className="text-sm text-muted-foreground">{t("files.empty")}</p>
+        )}
         {files.map((file) => {
           const expired = Date.parse(file.expires_at) <= now;
-          const available = file.status === "ready" && !expired;
+          const unconfirmed = receiptError && receipt?.id === file.id;
+          const available = file.status === "ready" && !expired && !unconfirmed;
           return (
             <div key={file.id} className="space-y-2 border-b pb-4 last:border-0 last:pb-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -156,12 +218,17 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={pending}
-                        onClick={() => void run(() => downloadTargetFile(targetId, file.id))}
+                        disabled={pending || page.pending}
+                        onClick={() => void run(() => downloadTargetFile(targetId, file.id), file)}
                       >
                         {t("files.download")}
                       </Button>
-                      <Button asChild size="sm" variant="outline">
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="outline"
+                        disabled={pending || page.pending}
+                      >
                         <Link
                           to={`/cases/new?target=${encodeURIComponent(targetId)}&file=${encodeURIComponent(file.id)}`}
                         >
@@ -170,11 +237,11 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
                       </Button>
                     </>
                   )}
-                  {file.status === "uploading" && !expired && (
+                  {file.status === "uploading" && !expired && !unconfirmed && (
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={pending}
+                      disabled={pending || page.pending}
                       onClick={() => {
                         setResumeId(file.id);
                         picker.current?.click();
@@ -189,8 +256,8 @@ export function TargetFileSection({ targetId }: { targetId: string }) {
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={pending}
-                      onClick={() => void run(() => revokeTargetFile(targetId, file.id))}
+                      disabled={pending || page.pending || unconfirmed}
+                      onClick={() => void run(() => revokeTargetFile(targetId, file.id), file)}
                     >
                       {t("files.remove")}
                     </Button>

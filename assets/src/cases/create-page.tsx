@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -6,6 +6,8 @@ import { apiClient, apiData, collectPages } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useAuthentication } from "@/auth/context";
 import { FormSelect } from "@/components/form-select";
+import { PageControls } from "@/components/page-controls";
+import { usePagedData } from "@/api/use-paged-data";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,12 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  fileReference,
-  getTargetFile,
-  listTargetFiles,
-  type TargetFile,
-} from "@/targets/file-transfer";
+import { fileReference, getTargetFile, type TargetFile } from "@/targets/file-transfer";
 
 type Target = components["schemas"]["Target"];
 
@@ -33,12 +30,69 @@ export function CaseCreatePage() {
   const [error, setError] = useState("");
   const [targetId, setTargetId] = useState(search.get("target") ?? "");
   const [fileId, setFileId] = useState(search.get("file") ?? "");
-  const [fileListing, setFileListing] = useState<{ targetId: string; items: TargetFile[] } | null>(
-    null,
-  );
+  const [selection, setSelection] = useState<{
+    targetId: string;
+    id: string;
+    file: TargetFile | null;
+    revision: number;
+    error: boolean;
+  } | null>(null);
+  const [refreshFile, setRefreshFile] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const mounted = useRef(false);
+  const submissionRead = useRef<AbortController | null>(null);
   const canOperate = account?.role === "admin" || account?.role === "operator";
-  const files = fileListing?.targetId === targetId ? fileListing.items : [];
-  const loadingFiles = canOperate && !!targetId && fileListing?.targetId !== targetId;
+  const selected = selection?.targetId === targetId && selection.id === fileId ? selection : null;
+  const filePage = usePagedData(
+    useCallback(
+      (after: string | undefined, signal: AbortSignal) =>
+        targetId && canOperate
+          ? apiClient
+              .GET("/api/v1/targets/{target_id}/files", {
+                params: { path: { target_id: targetId }, query: { limit: 50, after } },
+                signal,
+              })
+              .then(apiData)
+          : Promise.resolve({ data: [] as TargetFile[], page: { next: null } }),
+      [targetId, canOperate],
+    ),
+  );
+  const available = (file: TargetFile) =>
+    file.status === "ready" &&
+    file.size_bytes != null &&
+    file.sha256 != null &&
+    Date.parse(file.expires_at) > now;
+  const files = (filePage.view?.data ?? []).filter(
+    (file) => available(file) && file.id !== selected?.file?.id,
+  );
+  if (selected?.file) files.push(selected.file);
+  const loadingFile = !!fileId && (!selected || selected.revision !== refreshFile);
+  const fileError = selected?.revision === refreshFile && selected.error;
+  const unavailableFile =
+    !!fileId &&
+    !!selected &&
+    !loadingFile &&
+    !fileError &&
+    (!selected.file || !available(selected.file));
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      submissionRead.current?.abort();
+    };
+  }, []);
+  const nextExpiry = Math.min(
+    ...files.map((file) => Date.parse(file.expires_at)).filter((time) => time > now),
+  );
+  useEffect(() => {
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(nextExpiry - now + 1, 2_147_483_647),
+    );
+    return () => clearTimeout(timer);
+  }, [nextExpiry, now]);
 
   useEffect(() => {
     let active = true;
@@ -55,28 +109,25 @@ export function CaseCreatePage() {
   }, [t]);
 
   useEffect(() => {
-    let active = true;
-    if (!targetId || !canOperate) return;
-    listTargetFiles(targetId)
-      .then((items) => {
-        if (active)
-          setFileListing({
-            targetId,
-            items: items.filter(
-              (file) => file.status === "ready" && Date.parse(file.expires_at) > Date.now(),
-            ),
-          });
+    if (!targetId || !fileId || !canOperate) return;
+    const controller = new AbortController();
+    void getTargetFile(targetId, fileId, controller.signal)
+      .then((file) => {
+        if (!controller.signal.aborted)
+          setSelection({ targetId, id: fileId, file, revision: refreshFile, error: false });
       })
       .catch(() => {
-        if (active) {
-          setFileListing({ targetId, items: [] });
-          setError(t("files.failed"));
-        }
+        if (!controller.signal.aborted)
+          setSelection((previous) => ({
+            targetId,
+            id: fileId,
+            file: previous?.targetId === targetId && previous.id === fileId ? previous.file : null,
+            revision: refreshFile,
+            error: true,
+          }));
       });
-    return () => {
-      active = false;
-    };
-  }, [targetId, canOperate, t]);
+    return () => controller.abort();
+  }, [targetId, fileId, canOperate, refreshFile]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,8 +144,17 @@ export function CaseCreatePage() {
 
     setPending(true);
     setError("");
+    const controller = new AbortController();
+    submissionRead.current = controller;
     try {
-      const attachment = fileId ? fileReference(await getTargetFile(targetId, fileId)) : null;
+      let attachment = null;
+      if (fileId) {
+        const file = await getTargetFile(targetId, fileId, controller.signal);
+        if (controller.signal.aborted) return;
+        setSelection({ targetId, id: fileId, file, revision: refreshFile, error: false });
+        attachment = fileReference(file);
+      }
+      if (!mounted.current) return;
       const response = apiData(
         await apiClient.POST("/api/v1/cases", {
           body: {
@@ -116,15 +176,16 @@ export function CaseCreatePage() {
           },
         }),
       );
-      void navigate(`/cases/${response.data.id}`);
+      if (mounted.current) void navigate(`/cases/${response.data.id}`);
     } catch (cause) {
-      setError(
-        cause instanceof Error && cause.message === "unavailable"
-          ? t("files.unavailable")
-          : t("cases.requestFailed"),
-      );
+      if (mounted.current)
+        setError(
+          cause instanceof Error && cause.message === "unavailable"
+            ? t("files.unavailable")
+            : t("cases.requestFailed"),
+        );
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
@@ -182,6 +243,7 @@ export function CaseCreatePage() {
                     name="initial_target_id"
                     placeholder={t("cases.findTarget")}
                     value={targetId || null}
+                    disabled={pending}
                     onValueChange={(value) => {
                       setTargetId(value ?? "");
                       setFileId("");
@@ -203,29 +265,56 @@ export function CaseCreatePage() {
                 </div>
               </div>
               {targetId && (
-                <div className="space-y-2">
+                <div className="space-y-2" role="group" aria-label={t("files.select")}>
                   <Label htmlFor="case-file">{t("files.select")}</Label>
                   <FormSelect
+                    key={`${targetId}:${fileId}`}
                     id="case-file"
                     value={fileId || null}
-                    disabled={loadingFiles || pending}
+                    disabled={filePage.pending || loadingFile || pending}
                     placeholder={t("files.none")}
                     onValueChange={(value) => setFileId(value ?? "")}
                     options={[
                       { value: "", label: t("files.none") },
-                      ...files.map((file) => ({ value: file.id, label: file.name })),
+                      ...files.map((file) => ({
+                        value: file.id,
+                        label: file.name,
+                        disabled: !available(file),
+                      })),
                     ]}
                   />
-                  {fileId && !loadingFiles && !files.some((file) => file.id === fileId) && (
+                  <PageControls
+                    index={filePage.view?.index ?? 0}
+                    hasNext={!!filePage.view?.page.next}
+                    pending={filePage.pending || pending}
+                    previous={filePage.previous}
+                    next={filePage.next}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={pending || filePage.pending || loadingFile}
+                    onClick={() => {
+                      setRefreshFile((revision) => revision + 1);
+                      void filePage.retry().catch(() => {});
+                    }}
+                  >
+                    {t("files.refresh")}
+                  </Button>
+                  {(filePage.error != null || fileError) && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{t("files.failed")}</AlertDescription>
+                    </Alert>
+                  )}
+                  {unavailableFile && (
                     <p className="text-sm text-destructive">{t("files.unavailable")}</p>
                   )}
                 </div>
               )}
               <Button
                 type="submit"
-                disabled={
-                  pending || loadingFiles || !!(fileId && !files.some((file) => file.id === fileId))
-                }
+                disabled={pending || loadingFile || unavailableFile || fileError}
               >
                 {pending && <Spinner />}
                 {t("cases.createManual")}

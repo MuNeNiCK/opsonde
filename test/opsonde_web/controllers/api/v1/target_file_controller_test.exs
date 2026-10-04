@@ -280,6 +280,76 @@ defmodule OpsondeWeb.API.V1.TargetFileControllerTest do
     assert Targets.get_artifact!(upload.id, actor: context.admin).received_bytes == 0
   end
 
+  test "file metadata pages reach all scoped files and an off-page ID remains readable",
+       context do
+    path = "/api/v1/targets/#{context.target.id}/files"
+
+    ids =
+      for index <- 1..51 do
+        body = %{
+          "file" => %{
+            "name" => "page-#{index}.bin",
+            "media_type" => "application/octet-stream",
+            "size_bytes" => 0,
+            "expected_sha256" =>
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "upload_key" => "page-#{index}"
+          }
+        }
+
+        conn =
+          build_json_conn(body)
+          |> put_req_header("authorization", "Bearer " <> context.token)
+          |> post(path, body)
+
+        json_response(conn, 201)["data"]["id"]
+      end
+
+    other =
+      Targets.create_target!("other-file-host", "host", "custom-os", %{}, nil,
+        actor: context.admin
+      )
+
+    Targets.begin_artifact_receipt!(
+      other.id,
+      "other.bin",
+      "application/octet-stream",
+      "other-file",
+      %{},
+      actor: context.admin
+    )
+
+    first_conn =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path)
+
+    assert_operation_response(first_conn)
+    assert %{"data" => first, "page" => %{"next" => cursor}} = json_response(first_conn, 200)
+    assert length(first) == 50
+    assert is_binary(cursor)
+    assert Enum.all?(first, &(&1["target_id"] == context.target.id))
+    refute Enum.any?(first, &Map.has_key?(&1, "bytes"))
+
+    last_conn =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path, %{"after" => cursor, "limit" => 50})
+
+    assert_operation_response(last_conn)
+    assert %{"data" => [last], "page" => %{"next" => nil}} = json_response(last_conn, 200)
+    assert MapSet.new(Enum.map(first, & &1["id"]) ++ [last["id"]]) == MapSet.new(ids)
+    refute Enum.any?(first, &(&1["id"] == last["id"]))
+
+    shown =
+      build_json_conn()
+      |> put_req_header("authorization", "Bearer " <> context.token)
+      |> get(path <> "/" <> last["id"])
+
+    assert json_response(shown, 200)["data"] == last
+    assert_operation_response(shown)
+  end
+
   test "a fresh client can list transfer progress and obtain the server chunk limits", context do
     upload =
       Targets.begin_artifact!(

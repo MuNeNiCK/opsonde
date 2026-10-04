@@ -1,24 +1,14 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { apiClient, apiData, collectPages } from "@/api/client";
+import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
 
 export type TargetFile = components["schemas"]["TargetFile"];
 const path = "/api/v1/targets/{target_id}/files/{id}";
 
-export function listTargetFiles(targetId: string) {
-  return collectPages((after) =>
-    apiClient
-      .GET("/api/v1/targets/{target_id}/files", {
-        params: { path: { target_id: targetId }, query: { limit: 100, after: after ?? undefined } },
-      })
-      .then(apiData),
-  );
-}
-
-export function getTargetFile(targetId: string, id: string) {
+export function getTargetFile(targetId: string, id: string, signal?: AbortSignal) {
   return apiClient
-    .GET(path, { params: { path: { target_id: targetId, id } } })
+    .GET(path, { params: { path: { target_id: targetId, id } }, signal })
     .then(apiData)
     .then((result) => result.data);
 }
