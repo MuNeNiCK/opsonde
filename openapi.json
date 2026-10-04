@@ -7692,6 +7692,18 @@
         ],
         "type": "object"
       },
+      "DeliverySummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DeliverySummary"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "DecideProposalRequest": {
         "properties": {
           "proposal": {
@@ -9572,6 +9584,101 @@
         "summary": "Create a Target",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/deliveries/receipt": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getDeliveryReceipt",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "idempotency_key",
+            "required": true,
+            "schema": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliverySummaryResponse"
+                }
+              }
+            },
+            "description": "Delivery summary"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get the saved delivery for its original request key",
+        "tags": [
+          "Deliveries"
         ]
       }
     },

@@ -57,6 +57,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/deliveries/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the saved delivery for its original request key */
+        get: operations["getDeliveryReceipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory-imports/{id}/rows/summaries": {
         parameters: {
             query?: never;
@@ -3742,6 +3759,9 @@ export interface components {
         TargetRelationshipResponse: {
             data: components["schemas"]["TargetRelationship"];
         };
+        DeliverySummaryResponse: {
+            data: components["schemas"]["DeliverySummary"];
+        };
         DecideProposalRequest: {
             proposal: {
                 /** @enum {string} */
@@ -4429,6 +4449,82 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getDeliveryReceipt: {
+        parameters: {
+            query: {
+                idempotency_key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliverySummaryResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

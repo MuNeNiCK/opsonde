@@ -114,13 +114,21 @@ if config_env() != :cli do
       Opsonde.Targets.Profiles.Linux.SSH
     ]
 
-  config :phoenix, :filter_parameters, ["client_secret", "credentials", "password", "token"]
+  config :phoenix, :filter_parameters, [
+    "client_secret",
+    "credentials",
+    "idempotency_key",
+    "password",
+    "token"
+  ]
+
   config :tzdata, :autoupdate, :disabled
 
   # Configure the endpoint
   config :opsonde, OpsondeWeb.Endpoint,
     url: [host: "localhost"],
     adapter: Bandit.PhoenixAdapter,
+    http: [http_1_options: [max_request_line_length: 16_384]],
     render_errors: [
       formats: [json: OpsondeWeb.ErrorJSON],
       layout: false

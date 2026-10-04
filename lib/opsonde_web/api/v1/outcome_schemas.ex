@@ -41,6 +41,7 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "DeliveryPage" => Schemas.page(ref("Delivery")),
       "DeliverySummary" => delivery_summary(),
       "DeliverySummaryPage" => Schemas.page(ref("DeliverySummary")),
+      "DeliverySummaryResponse" => Schemas.data(ref("DeliverySummary")),
       "LatestDeliveriesResponse" =>
         Schemas.data(%Schema{type: :array, items: ref("DeliverySummary"), maxItems: 100}),
       "CreateDeliveryRequest" => create_delivery_request()

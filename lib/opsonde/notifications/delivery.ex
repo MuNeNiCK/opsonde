@@ -51,6 +51,18 @@ defmodule Opsonde.Notifications.Delivery do
               )
     end
 
+    read :summary_by_request do
+      get? true
+
+      argument :idempotency_key, :string,
+        allow_nil?: false,
+        sensitive?: true,
+        constraints: [min_length: 1, max_length: 1_024]
+
+      filter expr(idempotency_key == ^arg(:idempotency_key))
+      prepare build(select: @summary_fields)
+    end
+
     read :by_idempotency do
       get? true
       argument :idempotency_key, :string, allow_nil?: false, constraints: [min_length: 1]
@@ -139,7 +151,7 @@ defmodule Opsonde.Notifications.Delivery do
       forbid_if always()
     end
 
-    policy action([:read, :page, :summaries, :latest_for_reports]) do
+    policy action([:read, :page, :summaries, :latest_for_reports, :summary_by_request]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

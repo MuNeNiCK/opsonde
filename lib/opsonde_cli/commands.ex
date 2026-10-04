@@ -141,6 +141,7 @@ defmodule OpsondeCLI.Commands do
     {"delivery", "list"} => Route.page("/deliveries"),
     {"delivery", "summaries"} => Route.page("/deliveries/summaries"),
     {"delivery", "latest"} => Route.new(:get, "/deliveries/latest"),
+    {"delivery", "receipt"} => Route.new(:get, "/deliveries/receipt"),
     {"delivery", "show"} => Route.new(:get, "/deliveries/:id", 1, nil, outcome: :delivery),
     {"delivery", "create"} => Route.new(:post, "/deliveries", 0, "delivery", outcome: :delivery)
   }

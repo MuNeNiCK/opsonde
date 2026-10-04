@@ -255,6 +255,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
   end
 
   @tag delivery_summary: true
+  @tag delivery_receipt: true
   test "Report delivery badges and history remain complete when one Report has more than a page of deliveries",
        context do
     [older_report, busy_report, missing_report] =
@@ -323,6 +324,23 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
     oldest = hd(deliveries)
     latest = List.last(deliveries)
+
+    original =
+      get_json(
+        "/api/v1/deliveries/receipt?idempotency_key=delivery-summary-0",
+        context.viewer_token
+      )
+
+    assert %{
+             "data" =>
+               %{"id" => original_id, "status" => "queued", "revision" => 1} = original_summary
+           } = json_response(original, 200)
+
+    assert original_id == oldest["id"]
+    assert original_summary["report_id"] == older_report["id"]
+    refute Map.has_key?(original_summary, "details")
+    refute Map.has_key?(original_summary, "idempotency_key")
+    assert_operation_response(original)
     report_ids = Enum.map_join([older_report, busy_report, missing_report], ",", & &1["id"])
     path = "/api/v1/deliveries/latest?report_ids=" <> report_ids
     response = get_json(path, context.viewer_token)
@@ -353,6 +371,10 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
              })
 
     assert dispatched.status == :delivered
+
+    assert_receive {:delivery, _state,
+                    %Notification.Request{idempotency_key: "delivery-summary-51"}}
+
     changed = get_data!(path, context.operator_token)
 
     assert %{"status" => "delivered", "revision" => 3, "reference" => "summary-receipt"} =
@@ -435,6 +457,103 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
     assert cli_history["outcome"] == "succeeded"
     assert Map.take(cli_history, ["data", "page"]) == json_response(next, 200)
 
+    receipt_cli =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["delivery", "receipt", "--idempotency-key", "delivery-summary-0"],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert receipt_cli["data"] == original_summary
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.operator_token},
+        config_path
+      )
+
+    owner = self()
+
+    Req.Test.stub(stub, fn conn ->
+      send(owner, {:enqueue_request, conn.method})
+      result = OpsondeWeb.Endpoint.call(conn, OpsondeWeb.Endpoint.init([]))
+
+      if conn.method == "POST" do
+        assert result.status == 202
+        send(owner, {:accepted_delivery, Jason.decode!(result.resp_body)["data"]["id"]})
+
+        %{
+          result
+          | status: 503,
+            resp_body:
+              Jason.encode!(%{
+                "error" => %{
+                  "code" => "response_lost",
+                  "message" => "Response lost after enqueue"
+                }
+              })
+        }
+      else
+        result
+      end
+    end)
+
+    input = %{
+      "report_id" => older_report["id"],
+      "report_revision" => older_report["revision"],
+      "provider_id" => provider.id,
+      "provider_revision" => provider.revision,
+      "idempotency_key" => "delivery-lost-response"
+    }
+
+    capture_io(:stderr, fn ->
+      capture_io([input: Jason.encode!(input)], fn ->
+        assert OpsondeCLI.CLI.run(["delivery", "create", "--input", "-"], runtime) == 4
+      end)
+    end)
+
+    assert_receive {:accepted_delivery, accepted_id}
+    assert_receive {:enqueue_request, "POST"}
+
+    recovered =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["delivery", "receipt", "--idempotency-key", "delivery-lost-response"],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert %{"id" => ^accepted_id, "status" => "queued", "revision" => 1} = recovered["data"]
+    assert_receive {:enqueue_request, "GET"}
+    refute_receive {:enqueue_request, "POST"}, 0
+
+    invocation = %{
+      test_pid: self(),
+      respond: fn ->
+        {:ok, %Notification.Result{status: :delivered, reference: "delivered-once", details: %{}}}
+      end
+    }
+
+    assert {:ok, %Opsonde.Notifications.Delivery{status: :delivered, revision: 3}} =
+             Dispatch.run(accepted_id, invocation)
+
+    assert_receive {:delivery, _state,
+                    %Notification.Request{idempotency_key: "delivery-lost-response"}}
+
+    assert {:ok, %Opsonde.Notifications.Delivery{status: :delivered, revision: 3}} =
+             Dispatch.run(accepted_id, invocation)
+
+    refute_receive {:delivery, _, _}, 0
+
+    assert %{"status" => "delivered", "revision" => 3} =
+             get_data!(
+               "/api/v1/deliveries/receipt?idempotency_key=delivery-lost-response",
+               context.viewer_token
+             )
+
     first_busy = Enum.at(deliveries, 1)
 
     Opsonde.Repo.query!(
@@ -449,6 +568,44 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
                "/api/v1/deliveries/latest?report_ids=#{busy_report["id"]}",
                context.viewer_token
              )
+
+    unicode_key = String.duplicate("😀", 1_024)
+
+    unicode_delivery =
+      post_json(
+        "/api/v1/deliveries",
+        %{"delivery" => %{input | "idempotency_key" => unicode_key}},
+        context.operator_token
+      )
+      |> json_response(202)
+      |> Map.fetch!("data")
+
+    server =
+      start_supervised!(
+        {Bandit,
+         OpsondeWeb.Endpoint.config(:http)
+         |> Keyword.merge(plug: OpsondeWeb.Endpoint, port: 0, startup_log: false)}
+      )
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "http://127.0.0.1:#{port}", "token" => context.viewer_token},
+        config_path
+      )
+
+    unicode_receipt =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 ["delivery", "receipt", "--idempotency-key", unicode_key],
+                 %{config_path: config_path}
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert unicode_receipt["data"]["id"] == unicode_delivery["id"]
+    refute Map.has_key?(unicode_receipt["data"], "idempotency_key")
   end
 
   @tag delivery_summary: true
@@ -498,6 +655,53 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
     assert get_data!(latest <> "?report_ids=" <> ids, context.viewer_token) == []
     assert get_data!(summaries, context.viewer_token) == []
+  end
+
+  @tag delivery_receipt: true
+  test "Delivery receipt reads enforce the original key bound and preserve missing and storage errors",
+       context do
+    path = "/api/v1/deliveries/receipt"
+    key = String.duplicate("x", 1_024)
+
+    for token <- [context.admin_token, context.operator_token, context.viewer_token] do
+      missing = get_json(path <> "?idempotency_key=" <> key, token)
+      assert %{"error" => %{"code" => "not_found"}} = json_response(missing, 404)
+      assert_operation_response(missing)
+    end
+
+    assert get_json(path <> "?idempotency_key=" <> key, nil).status == 401
+    absent = get_json(path, context.viewer_token)
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(absent, 400)
+    assert_operation_response(absent)
+
+    for invalid <- ["", String.duplicate("x", 1_025)] do
+      failed = get_json(path <> "?idempotency_key=" <> invalid, context.viewer_token)
+      assert %{"error" => %{"code" => "validation_failed"}} = json_response(failed, 422)
+      assert_operation_response(failed)
+    end
+
+    Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN details TO unavailable_details")
+
+    try do
+      assert get_json(path <> "?idempotency_key=" <> key, context.viewer_token).status == 404
+    after
+      Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN unavailable_details TO details")
+    end
+
+    Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN status TO unavailable_status")
+
+    try do
+      capture_log(fn ->
+        failed = get_json(path <> "?idempotency_key=" <> key, context.viewer_token)
+        assert %{"error" => %{"code" => "internal_error"}} = json_response(failed, 500)
+        refute failed.resp_body =~ key
+        assert_operation_response(failed)
+      end)
+    after
+      Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN unavailable_status TO status")
+    end
+
+    assert get_json(path <> "?idempotency_key=" <> key, context.viewer_token).status == 404
   end
 
   @tag report_identity: true

@@ -54,6 +54,23 @@ defmodule OpsondeWeb.API.V1.DeliveryController do
       ] ++
         @list_errors ++ Schemas.errors([:bad_request])
 
+  operation :receipt,
+    operation_id: "getDeliveryReceipt",
+    summary: "Get the saved delivery for its original request key",
+    parameters: [
+      idempotency_key: [
+        in: :query,
+        required: true,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1, maxLength: 1_024}
+      ]
+    ],
+    responses:
+      [
+        ok:
+          {"Delivery summary", "application/json", OutcomeSchemas.ref("DeliverySummaryResponse")}
+      ] ++
+        @show_errors ++ Schemas.errors([:bad_request])
+
   operation :show,
     operation_id: "getDelivery",
     summary: "Get a Report delivery",
@@ -108,6 +125,16 @@ defmodule OpsondeWeb.API.V1.DeliveryController do
              actor: conn.assigns.current_user
            ) do
       Response.data(conn, Enum.map(deliveries, &OutcomeJSON.delivery_summary/1))
+    end
+  end
+
+  def receipt(conn, _params) do
+    with {:ok, delivery} <-
+           Notifications.delivery_summary_by_request(
+             OpenApiSpex.params(conn).idempotency_key,
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, OutcomeJSON.delivery_summary(delivery))
     end
   end
 

@@ -25,6 +25,7 @@ defmodule OpsondeCLI.CLI do
     to: :string,
     target_id: :string,
     report_ids: :string,
+    idempotency_key: :string,
     active: :boolean,
     ids: :string,
     roles: :string,
@@ -425,6 +426,9 @@ defmodule OpsondeCLI.CLI do
     end
   end
 
+  defp query(%Route{path: "/deliveries/receipt"}, options),
+    do: maybe_query([], :idempotency_key, options[:idempotency_key])
+
   defp query(%Route{path: "/reports"}, options) do
     []
     |> maybe_query(:limit, options[:limit])
@@ -570,6 +574,7 @@ defmodule OpsondeCLI.CLI do
       opsonde case summaries [--ids UUID,UUID] [--query TEXT] [--status STATUS] [--sort SORT] [--limit N] [--after CURSOR]
       opsonde delivery summaries [--report-ids UUID,UUID] [--limit N] [--after CURSOR]
       opsonde delivery latest --report-ids UUID,UUID
+      opsonde delivery receipt --idempotency-key KEY
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report list [--ids UUID,UUID] [--limit N] [--after CURSOR]
       opsonde report revision CASE_ID CASE_REVISION

@@ -176,6 +176,7 @@ defmodule OpsondeWeb.Router do
     get "/deliveries", DeliveryController, :index
     get "/deliveries/summaries", DeliveryController, :summaries
     get "/deliveries/latest", DeliveryController, :latest
+    get "/deliveries/receipt", DeliveryController, :receipt
     post "/deliveries", DeliveryController, :create
     get "/deliveries/:id", DeliveryController, :show
   end
