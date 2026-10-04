@@ -29,7 +29,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
          {:ok, source_evidence} <- source_evidence(incident),
          {:ok, evidence} <- cited_evidence(proposal),
          {:ok, evidence} <- EvidenceProjection.file_contents(incident, run, evidence),
-         {:ok, context_evidence} <-
+         {:ok, context_evidence, chronology_ids} <-
            EvidenceProjection.recent(
              incident.id,
              proposal.target_id,
@@ -75,7 +75,7 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
           retry_context: retry_context,
           budget: budget(run)
         }
-        |> EvidenceProjection.bound_review_context()
+        |> EvidenceProjection.bound_review_context(chronology_ids)
 
       case AI.Validator.validate_request(:review, request) do
         :ok ->

@@ -736,10 +736,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
       %AI.Error{category: category} ->
         {to_string(category), public_failure(category)}
 
-      :review_context_incomplete ->
-        {"review_context_incomplete",
-         "Reviewer Target history exceeds the evidence window; review manually"}
-
       _error ->
         {"failed", "Reviewer delivery failed"}
     end
@@ -780,7 +776,6 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     end
   end
 
-  defp find_error(:review_context_incomplete), do: :review_context_incomplete
   defp find_error(error), do: AI.Error.unwrap(error)
 
   defp result_digest(attrs) do

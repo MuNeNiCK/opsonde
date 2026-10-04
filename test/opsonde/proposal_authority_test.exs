@@ -1127,7 +1127,8 @@ defmodule Opsonde.ProposalAuthorityTest do
     assert Enum.map(request.cited_evidence, & &1.id) == [prior_evidence.id]
   end
 
-  test "Auto uses the assigned Reviewer and reconsiders a rejected proposal once", context do
+  test "Auto reviews required chronology beyond 100 Target receipts and reconsiders once",
+       context do
     configure_mode!(:auto, context.admin)
 
     {incident, run, proposal} = proposal!("review-rejection", context)
@@ -1192,22 +1193,20 @@ defmodule Opsonde.ProposalAuthorityTest do
         authorize?: false
       )
 
-    unrelated_target_id = Ecto.UUID.generate()
-
     for index <- 1..101 do
       Cases.append_evidence!(
         incident.id,
         run.id,
         nil,
-        "review-rejection:unrelated-#{index}",
+        "review-rejection:newer-target-#{index}",
         "observation",
         "target",
-        "unrelated-inspection",
+        "target-inspection",
         %{
-          "target_id" => unrelated_target_id,
+          "target_id" => context.target.id,
           "operation" => "generic.inspect",
           "status" => "applied",
-          "facts" => %{"sample" => index}
+          "facts" => %{"sample" => index, "payload" => String.duplicate("x", 60_000)}
         },
         DateTime.add(observed_at, index, :microsecond),
         authorize?: false
@@ -1227,6 +1226,8 @@ defmodule Opsonde.ProposalAuthorityTest do
                  test_pid: self(),
                  respond: fn request ->
                    refute request.session_id == request.resolver_session_id
+                   assert AI.input_size(request) <= AI.max_input_bytes()
+                   assert length(request.context_evidence) < 10
 
                    chronology =
                      request.context_evidence
@@ -1275,59 +1276,6 @@ defmodule Opsonde.ProposalAuthorityTest do
              )
 
     assert length(Cases.list_turns!(actor: context.admin)) == initial_turn_count + 1
-    refute_receive {:effect, _, _}
-  end
-
-  test "Auto stops review when same-Target chronology exceeds its evidence window", context do
-    configure_mode!(:auto, context.admin)
-
-    {incident, run, proposal} = proposal!("review-target-overflow", context)
-    reviewing = Cases.route_proposal_authority!(proposal.id, authorize?: false)
-    observed_at = DateTime.utc_now()
-
-    for index <- 1..101 do
-      Cases.append_evidence!(
-        incident.id,
-        run.id,
-        nil,
-        "review-target-overflow-#{index}",
-        "observation",
-        "target",
-        "target-inspection-#{index}",
-        %{
-          "target_id" => context.target.id,
-          "operation" => "generic.inspect",
-          "status" => "applied",
-          "facts" => %{"sample" => index}
-        },
-        DateTime.add(observed_at, index, :microsecond),
-        authorize?: false
-      )
-    end
-
-    selection = %AI.Selection{
-      role: :reviewer,
-      provider_id: context.reviewer_provider.id,
-      provider_revision: context.reviewer_provider.revision,
-      assignment_id: context.reviewer_assignment.id,
-      assignment_revision: context.reviewer_assignment.revision,
-      source: :assignment
-    }
-
-    assert {:error, :review_context_incomplete} =
-             ReviewProjection.build(reviewing.id, selection)
-
-    assert :ok =
-             ReviewDelivery.run(reviewing.id,
-               ai_invocation: %{
-                 respond: fn _ -> flunk("incomplete Reviewer context was sent") end
-               }
-             )
-
-    stopped = Cases.get_case!(incident.id, authorize?: false)
-    assert stopped.status == :needs_attention
-    assert stopped.stop_reason =~ "Reviewer Target history exceeds the evidence window"
-    assert Cases.list_approvals!(actor: context.admin) == []
     refute_receive {:effect, _, _}
   end
 

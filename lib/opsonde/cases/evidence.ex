@@ -92,7 +92,8 @@ defmodule Opsonde.Cases.Evidence do
                  get_path(stored_content, ["target_id"]) == ^arg(:target_id)
              )
 
-      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], limit: 101)
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 100
+      prepare build(sort: [observed_at: :desc, inserted_at: :desc, id: :desc], load: [:summary])
     end
 
     read :condition_assessment_candidates do
@@ -194,6 +195,7 @@ defmodule Opsonde.Cases.Evidence do
              :signal_contexts,
              :target_continuity,
              :review_context,
+             :review_target_context,
              :condition_assessment_candidates,
              :by_idempotency,
              :create_record,
@@ -214,7 +216,13 @@ defmodule Opsonde.Cases.Evidence do
 
   preparations do
     prepare build(load: [:content]) do
-      where negate(action_is([:page_for_case, :condition_assessment_candidates]))
+      where negate(
+              action_is([
+                :page_for_case,
+                :condition_assessment_candidates,
+                :review_target_context
+              ])
+            )
     end
   end
 
