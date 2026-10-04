@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Printer, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import { Plus, Printer, RefreshCw, Settings2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, apiData, collectPages } from "@/api/client";
@@ -25,6 +25,7 @@ import { NotificationProviderSection } from "@/providers/notification-section";
 import { CaseReportDocument } from "@/reports/case-document";
 import { ReportGenerateForm } from "@/reports/generate-form";
 import { DeliveryCreateForm } from "@/reports/delivery-form";
+import { DeliveryHistory } from "@/reports/delivery-history";
 
 type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
@@ -99,6 +100,7 @@ export function ReportPage() {
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<"generate" | "deliver" | "destinations" | null>(null);
   const [selectedReportId, setSelectedReportId] = useState("");
+  const [deliveryRefreshKey, setDeliveryRefreshKey] = useState(0);
   const [detailReportId, setDetailReportId] = useState("");
   const canAct = account?.role === "admin" || account?.role === "operator";
   const canManageProviders = account?.role === "admin";
@@ -112,6 +114,7 @@ export function ReportPage() {
           ? { ...current, ...next }
           : current,
     );
+    setDeliveryRefreshKey((value) => value + 1);
   }, [reportCursor]);
 
   useEffect(() => {
@@ -125,17 +128,6 @@ export function ReportPage() {
       active = false;
     };
   }, [t]);
-
-  useEffect(() => {
-    if (
-      !snapshot?.deliveries.some(
-        (delivery) => delivery.status === "queued" || delivery.status === "dispatching",
-      )
-    )
-      return;
-    const timer = window.setInterval(() => void refresh().catch(() => undefined), 4000);
-    return () => window.clearInterval(timer);
-  }, [refresh, snapshot?.deliveries]);
 
   async function changeReportPage(index: number, cursor: string | null) {
     setPending("page");
@@ -206,12 +198,6 @@ export function ReportPage() {
     );
   }
   const caseTitle = (id: string) => snapshot.cases.find((item) => item.id === id)?.title ?? id;
-  const reportName = (id: string) => {
-    const report = snapshot.reports.find((item) => item.id === id);
-    return report ? `${caseTitle(report.case_id)} · ${report.language}` : id;
-  };
-  const providerName = (id: string) =>
-    snapshot.providers.find((item) => item.id === id)?.name ?? id;
   const targetName = (id: string) => snapshot.targets.find((item) => item.id === id)?.name ?? id;
   const targetForCase = (id: string) => {
     const incident = snapshot.cases.find((item) => item.id === id);
@@ -341,7 +327,7 @@ export function ReportPage() {
         </section>
       )}
 
-      <section className="space-y-4">
+      <section className="space-y-4" aria-label={t("reports.history")}>
         <div>
           <h2 className="text-xl font-semibold">{t("reports.history")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t("reports.historyDescription")}</p>
@@ -518,64 +504,7 @@ export function ReportPage() {
         )}
       </section>
 
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-xl font-semibold">{t("reports.deliveries")}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t("reports.deliveriesDescription")}</p>
-        </div>
-        <div className="divide-y rounded-lg border bg-card">
-          {snapshot.deliveries.map((delivery) => (
-            <div key={delivery.id} className="p-4 text-sm">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="font-medium">{reportName(delivery.report_id)}</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {providerName(delivery.provider_id)} ·{" "}
-                    {formatDate(delivery.enqueued_at, i18n.resolvedLanguage)}
-                  </p>
-                </div>
-                <Badge
-                  variant={
-                    delivery.status === "failed" || delivery.status === "unknown"
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
-                  {t(`reports.deliveryStatus.${delivery.status}`)}
-                </Badge>
-              </div>
-              {delivery.reference && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {t("reports.deliveryReference")}: {delivery.reference}
-                </p>
-              )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button asChild size="sm" variant="outline">
-                  <a href={`#report-${delivery.report_id}`}>{t("reports.openReport")}</a>
-                </Button>
-                {(delivery.status === "failed" || delivery.status === "unknown") && canAct && (
-                  <Button size="sm" onClick={() => openDelivery(delivery.report_id)}>
-                    <RotateCcw /> {t("reports.retryDelivery")}
-                  </Button>
-                )}
-              </div>
-              <details className="mt-3">
-                <summary className="cursor-pointer text-xs text-muted-foreground">
-                  {t("reports.deliveryDetails")}
-                </summary>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
-                  {JSON.stringify(delivery.details, null, 2)}
-                </pre>
-              </details>
-            </div>
-          ))}
-          {snapshot.deliveries.length === 0 && (
-            <p className="p-6 text-center text-sm text-muted-foreground">
-              {t("reports.noDeliveries")}
-            </p>
-          )}
-        </div>
-      </section>
+      <DeliveryHistory refreshKey={deliveryRefreshKey} canAct={canAct} onRetry={openDelivery} />
     </div>
   );
 }

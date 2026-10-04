@@ -83,7 +83,18 @@ function deliveryResponse(url: URL) {
       page: { next: null },
     });
   if (url.pathname === "/api/v1/providers/summaries")
-    return Response.json({ data: [destination(51)], page: { next: null } });
+    return Response.json({
+      data: url.searchParams.has("ids")
+        ? (url.searchParams.get("ids") ?? "")
+            .split(",")
+            .map((id) => destination(Number(id.slice(-12)) - 200))
+        : [destination(51)],
+      page: { next: null },
+    });
+  if (url.pathname === "/api/v1/deliveries/summaries") {
+    const { details: _details, ...summary } = failedDelivery;
+    return Response.json({ data: [summary], page: { next: null } });
+  }
   if (url.pathname === "/api/v1/deliveries")
     return Response.json({ data: [failedDelivery], page: { next: null } });
   if (url.pathname === "/api/v1/report-setting")
@@ -149,6 +160,7 @@ test("Delivery creation resolves a Report outside the table window and retains d
       });
     }
     if (url.pathname === "/api/v1/providers/summaries") {
+      if (!url.searchParams.has("eligible")) return deliveryResponse(url);
       reads.push(url);
       expect(url.searchParams.get("kinds")).toBe("notification");
       expect(url.searchParams.get("eligible")).toBe("true");
@@ -310,6 +322,7 @@ test.each(["disabled", "changed", "failed"])(
     wire.mockImplementation(async (request: Request) => {
       const url = new URL(request.url);
       if (url.pathname === "/api/v1/providers/summaries") {
+        if (!url.searchParams.has("eligible")) return deliveryResponse(url);
         if (url.searchParams.has("ids")) {
           if (condition === "failed")
             return Response.json(
@@ -364,7 +377,11 @@ test("a failed destination recheck stops the concurrent Report read and does not
       submitted = true;
       return Response.json({ data: failedDelivery }, { status: 202 });
     }
-    if (url.pathname === "/api/v1/reports" && url.searchParams.has("ids")) {
+    if (
+      url.pathname === "/api/v1/reports" &&
+      url.searchParams.has("ids") &&
+      url.searchParams.get("limit") === "1"
+    ) {
       if (checking === undefined) {
         checking = request;
         return deliveryResponse(url);
@@ -374,7 +391,11 @@ test("a failed destination recheck stops the concurrent Report read and does not
         finishRead = resolve;
       });
     }
-    if (url.pathname === "/api/v1/providers/summaries" && url.searchParams.has("ids"))
+    if (
+      url.pathname === "/api/v1/providers/summaries" &&
+      url.searchParams.has("ids") &&
+      url.searchParams.get("eligible") === "true"
+    )
       return Response.json({ error: { message: "Destination read unavailable" } }, { status: 500 });
     return deliveryResponse(url);
   });
@@ -421,7 +442,11 @@ test.each(["closing", "changing accounts"])(
     wire.mockImplementation(async (request: Request) => {
       const url = new URL(request.url);
       if (request.method === "POST") submissions.push(request.url);
-      if (url.pathname === "/api/v1/providers/summaries" && url.searchParams.has("ids")) {
+      if (
+        url.pathname === "/api/v1/providers/summaries" &&
+        url.searchParams.has("ids") &&
+        url.searchParams.get("eligible") === "true"
+      ) {
         checking = request;
         return new Promise<Response>((resolve) => {
           finishRead = resolve;
@@ -571,7 +596,12 @@ test.each(["missing", "changed", "foreign"])(
     wire.mockImplementation(async (request: Request) => {
       const url = new URL(request.url);
       if (request.method === "POST") submissions.push(request.url);
-      if (url.pathname === "/api/v1/reports" && url.searchParams.has("ids") && ++reportReads > 1)
+      if (
+        url.pathname === "/api/v1/reports" &&
+        url.searchParams.has("ids") &&
+        url.searchParams.get("limit") === "1" &&
+        ++reportReads > 1
+      )
         return Response.json({
           data:
             condition === "missing"

@@ -57,9 +57,15 @@ test("failed report page and body reads preserve history, and closing aborts a p
   );
   await screen.findByText("3 operations · 2 checks");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Next" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Report history" })).getByRole("button", {
+      name: "Next",
+    }),
+  );
   expect(await screen.findByText("Report page storage unavailable")).toBeDefined();
-  expect(screen.getByText("Page 1")).toBeDefined();
+  expect(
+    within(screen.getByRole("region", { name: "Report history" })).getByText("Page 1"),
+  ).toBeDefined();
   expect(document.getElementById(`report-${reportId}`)).not.toBeNull();
   expect(pageReads).toBe(2);
   await user.click(screen.getByRole("button", { name: "Details" }));
@@ -590,13 +596,31 @@ test("report history reads one metadata page and loads only the selected body", 
   await user.click(screen.getByRole("button", { name: "Hide details" }));
   expect(screen.queryByText("The selected recovery was verified.")).toBeNull();
   expect(document.querySelector("pre")).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Next" }));
-  expect(await screen.findByText("Page 2")).toBeDefined();
+  await user.click(
+    within(screen.getByRole("region", { name: "Report history" })).getByRole("button", {
+      name: "Next",
+    }),
+  );
+  expect(
+    await within(screen.getByRole("region", { name: "Report history" })).findByText("Page 2"),
+  ).toBeDefined();
   expect(document.getElementById(`report-${reportId}`)).toBeNull();
   expect(document.getElementById(`report-${olderId}`)).not.toBeNull();
-  expect((screen.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
-  await user.click(screen.getByRole("button", { name: "Previous" }));
-  expect(await screen.findByText("Page 1")).toBeDefined();
+  expect(
+    (
+      within(screen.getByRole("region", { name: "Report history" })).getByRole("button", {
+        name: "Next",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  await user.click(
+    within(screen.getByRole("region", { name: "Report history" })).getByRole("button", {
+      name: "Previous",
+    }),
+  );
+  expect(
+    await within(screen.getByRole("region", { name: "Report history" })).findByText("Page 1"),
+  ).toBeDefined();
   expect(document.getElementById(`report-${olderId}`)).toBeNull();
   expect(requests.filter((url) => url.startsWith("/api/v1/reports"))).toEqual([
     "/api/v1/reports?limit=50",
@@ -639,14 +663,22 @@ test("a refresh started on the first report page cannot replace a newly selected
   );
   await screen.findByText("3 operations · 2 checks");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
   await waitFor(() => expect(finishRefresh).toBeDefined());
-  await user.click(screen.getByRole("button", { name: "Next" }));
-  expect(await screen.findByText("Page 2")).toBeDefined();
+  await user.click(
+    within(screen.getByRole("region", { name: "Report history" })).getByRole("button", {
+      name: "Next",
+    }),
+  );
+  expect(
+    await within(screen.getByRole("region", { name: "Report history" })).findByText("Page 2"),
+  ).toBeDefined();
   await act(async () => {
     finishRefresh?.(new Response(JSON.stringify(firstPage)));
   });
-  expect(screen.getByText("Page 2")).toBeDefined();
+  expect(
+    within(screen.getByRole("region", { name: "Report history" })).getByText("Page 2"),
+  ).toBeDefined();
   expect(document.getElementById(`report-${olderId}`)).not.toBeNull();
   expect(document.getElementById(`report-${reportId}`)).toBeNull();
 });
