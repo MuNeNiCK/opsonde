@@ -6,6 +6,8 @@ defmodule Opsonde.Notifications do
     resource Opsonde.Notifications.Delivery do
       define :list_deliveries, action: :read
       define :page_deliveries, action: :page
+      define :page_delivery_summaries, action: :summaries
+      define :latest_deliveries_for_reports, action: :latest_for_reports, args: [:report_ids]
       define :get_delivery, action: :read, get_by: [:id]
       define :delivery_by_idempotency, action: :by_idempotency, args: [:idempotency_key]
       define :create_delivery_record, action: :create_record

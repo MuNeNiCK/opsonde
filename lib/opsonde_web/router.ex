@@ -173,6 +173,8 @@ defmodule OpsondeWeb.Router do
     post "/cases/:case_id/reports", ReportController, :generate
 
     get "/deliveries", DeliveryController, :index
+    get "/deliveries/summaries", DeliveryController, :summaries
+    get "/deliveries/latest", DeliveryController, :latest
     post "/deliveries", DeliveryController, :create
     get "/deliveries/:id", DeliveryController, :show
   end

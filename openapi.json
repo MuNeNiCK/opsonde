@@ -943,6 +943,25 @@
         ],
         "type": "object"
       },
+      "DeliverySummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "AuditRun": {
         "additionalProperties": false,
         "properties": {
@@ -7589,6 +7608,22 @@
         ],
         "type": "object"
       },
+      "LatestDeliveriesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummary"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "ManagementBoundarySummary": {
         "additionalProperties": false,
         "properties": {
@@ -7708,6 +7743,89 @@
         },
         "required": [
           "inventory_import"
+        ],
+        "type": "object"
+      },
+      "DeliverySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "destination_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "destination_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "dispatch_started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reference": {
+            "maxLength": 1024,
+            "nullable": true,
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "report_revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "dispatching",
+              "accepted",
+              "delivered",
+              "failed",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "report_revision",
+          "provider_id",
+          "provider_revision",
+          "destination_id",
+          "destination_revision",
+          "status",
+          "reference",
+          "enqueued_at",
+          "dispatch_started_at",
+          "completed_at",
+          "revision"
         ],
         "type": "object"
       },
@@ -9842,6 +9960,109 @@
         "summary": "Accept a Zabbix webhook",
         "tags": [
           "Signal webhooks"
+        ]
+      }
+    },
+    "/api/v1/deliveries/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listDeliverySummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "report_ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliverySummaryPage"
+                }
+              }
+            },
+            "description": "Delivery summary page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Report delivery summaries",
+        "tags": [
+          "Deliveries"
         ]
       }
     },
@@ -15978,6 +16199,97 @@
         "summary": "Update a Target",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/deliveries/latest": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listLatestReportDeliveries",
+        "parameters": [
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "report_ids",
+            "required": true,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestDeliveriesResponse"
+                }
+              }
+            },
+            "description": "Latest deliveries"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request body is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get the latest delivery for each referenced Report",
+        "tags": [
+          "Deliveries"
         ]
       }
     },

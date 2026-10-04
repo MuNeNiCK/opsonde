@@ -3,6 +3,7 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
   import OpenApiSpex.TestAssertions
   import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias Opsonde.{Accounts, Audits, Cases, Notifications, Providers, Reports, Signals, Targets}
   alias Opsonde.Notifications.Delivery.Dispatch
@@ -31,6 +32,252 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
       operator_token: token!(operator.email),
       viewer_token: token!(viewer.email)
     }
+  end
+
+  @tag delivery_summary: true
+  test "Report delivery badges and history remain complete when one Report has more than a page of deliveries",
+       context do
+    [older_report, busy_report, missing_report] =
+      for name <- ~w(older busy missing) do
+        incident =
+          post_data!(
+            "/api/v1/cases",
+            %{
+              "case" => %{
+                "trigger_kind" => "manual",
+                "source" => "api",
+                "source_ref" => "delivery-summary-#{name}",
+                "title" => "Delivery summary #{name}",
+                "severity" => "warning",
+                "initial_context" => %{"desired_outcome" => "Host responds"}
+              }
+            },
+            context.operator_token
+          )
+
+        cancelled =
+          post_json(
+            "/api/v1/cases/#{incident["id"]}/cancel",
+            %{"case" => %{"expected_revision" => 1}},
+            context.operator_token
+          )
+          |> json_response(200)
+
+        post_data!(
+          "/api/v1/cases/#{incident["id"]}/reports",
+          %{"report" => %{"expected_case_revision" => cancelled["data"]["revision"]}},
+          context.operator_token
+        )
+      end
+
+    provider =
+      Providers.create_provider!(
+        "delivery-summary-provider",
+        :notification,
+        "fixture-notification",
+        %{"destination" => "summary-webhook"},
+        %{"token" => "summary-fixture-token"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    deliveries =
+      for {report, index} <- [{older_report, 0} | for(index <- 1..51, do: {busy_report, index})] do
+        post_json(
+          "/api/v1/deliveries",
+          %{
+            "delivery" => %{
+              "report_id" => report["id"],
+              "report_revision" => report["revision"],
+              "provider_id" => provider.id,
+              "provider_revision" => provider.revision,
+              "idempotency_key" => "delivery-summary-#{index}"
+            }
+          },
+          context.operator_token
+        )
+        |> json_response(202)
+        |> Map.fetch!("data")
+      end
+
+    oldest = hd(deliveries)
+    latest = List.last(deliveries)
+    report_ids = Enum.map_join([older_report, busy_report, missing_report], ",", & &1["id"])
+    path = "/api/v1/deliveries/latest?report_ids=" <> report_ids
+    response = get_json(path, context.viewer_token)
+    records = json_response(response, 200)["data"]
+    assert_operation_response(response)
+    assert length(records) == 2
+    assert Enum.sort(Enum.map(records, & &1["id"])) == Enum.sort([oldest["id"], latest["id"]])
+
+    assert Enum.all?(
+             records,
+             &(Enum.sort(Map.keys(&1)) ==
+                 Enum.sort(
+                   ~w(id report_id report_revision provider_id provider_revision destination_id destination_revision status reference enqueued_at dispatch_started_at completed_at revision)
+                 ))
+           )
+
+    assert {:ok, dispatched} =
+             Dispatch.run(latest["id"], %{
+               test_pid: self(),
+               respond: fn ->
+                 {:ok,
+                  %Notification.Result{
+                    status: :delivered,
+                    reference: "summary-receipt",
+                    details: %{"message" => String.duplicate("x", 30_000)}
+                  }}
+               end
+             })
+
+    assert dispatched.status == :delivered
+    changed = get_data!(path, context.operator_token)
+
+    assert %{"status" => "delivered", "revision" => 3, "reference" => "summary-receipt"} =
+             Enum.find(changed, &(&1["id"] == latest["id"]))
+
+    full = get_data!("/api/v1/deliveries/#{latest["id"]}", context.viewer_token)
+    assert byte_size(full["details"]["message"]) == 30_000
+
+    history_path = "/api/v1/deliveries/summaries?report_ids=#{busy_report["id"]}"
+    history = get_json(history_path, context.viewer_token)
+    first_page = json_response(history, 200)
+    assert_operation_response(history)
+    assert length(first_page["data"]) == 50
+    assert hd(first_page["data"])["id"] == latest["id"]
+    assert byte_size(history.resp_body) < 30_000
+
+    assert Enum.all?(
+             first_page["data"],
+             &(&1["report_id"] == busy_report["id"] and not Map.has_key?(&1, "details"))
+           )
+
+    next =
+      get_json(
+        history_path <> "&after=" <> URI.encode_www_form(first_page["page"]["next"]),
+        context.viewer_token
+      )
+
+    assert %{"data" => [%{"id" => tail_id}], "page" => %{"next" => nil}} =
+             json_response(next, 200)
+
+    assert tail_id == Enum.at(deliveries, 1)["id"]
+    assert_operation_response(next)
+
+    assert get_data!(
+             "/api/v1/deliveries/latest?report_ids=#{missing_report["id"]}",
+             context.admin_token
+           ) == []
+
+    root =
+      Path.join(System.tmp_dir!(), "delivery-summary-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.viewer_token},
+        config_path
+      )
+
+    on_exit(fn -> File.rm_rf(root) end)
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+    runtime = [config_path: config_path, request_options: [plug: {Req.Test, stub}]]
+
+    cli_latest =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["delivery", "latest", "--report-ids", report_ids], runtime) ==
+                 0
+      end)
+      |> Jason.decode!()
+
+    assert cli_latest["data"] == changed
+
+    cli_history =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(
+                 [
+                   "delivery",
+                   "summaries",
+                   "--report-ids",
+                   busy_report["id"],
+                   "--after",
+                   first_page["page"]["next"]
+                 ],
+                 runtime
+               ) == 0
+      end)
+      |> Jason.decode!()
+
+    assert cli_history["outcome"] == "succeeded"
+    assert Map.take(cli_history, ["data", "page"]) == json_response(next, 200)
+
+    first_busy = Enum.at(deliveries, 1)
+
+    Opsonde.Repo.query!(
+      "UPDATE deliveries SET enqueued_at = (SELECT enqueued_at FROM deliveries WHERE id = $1) WHERE id = $2",
+      [Ecto.UUID.dump!(latest["id"]), Ecto.UUID.dump!(first_busy["id"])]
+    )
+
+    expected_tie_id = Enum.max([first_busy["id"], latest["id"]])
+
+    assert [%{"id" => ^expected_tie_id}] =
+             get_data!(
+               "/api/v1/deliveries/latest?report_ids=#{busy_report["id"]}",
+               context.viewer_token
+             )
+  end
+
+  @tag delivery_summary: true
+  test "Delivery summaries reject unbounded reference reads and expose storage faults", context do
+    ids = for(_ <- 1..100, do: Ecto.UUID.generate()) |> Enum.join(",")
+    latest = "/api/v1/deliveries/latest"
+    summaries = "/api/v1/deliveries/summaries"
+    assert get_data!(latest <> "?report_ids=" <> ids, context.viewer_token) == []
+    assert get_data!(summaries <> "?report_ids=" <> ids, context.operator_token) == []
+    assert get_data!(summaries, context.admin_token) == []
+    missing = get_json(latest, context.admin_token)
+    assert %{"error" => %{"code" => "bad_request"}} = json_response(missing, 400)
+    assert_operation_response(missing)
+
+    for path <- [latest, summaries] do
+      assert get_json(path, nil).status == 401
+
+      for invalid <- ["", "not-a-uuid", Ecto.UUID.generate() <> "," <> ids] do
+        failed = get_json(path <> "?report_ids=" <> invalid, context.viewer_token)
+        assert %{"error" => %{"code" => "validation_failed"}} = json_response(failed, 422)
+        assert_operation_response(failed)
+      end
+    end
+
+    Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN details TO unavailable_details")
+
+    try do
+      assert get_data!(latest <> "?report_ids=" <> ids, context.viewer_token) == []
+      assert get_data!(summaries, context.viewer_token) == []
+    after
+      Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN unavailable_details TO details")
+    end
+
+    Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN status TO unavailable_status")
+
+    try do
+      capture_log(fn ->
+        for path <- [latest <> "?report_ids=" <> ids, summaries] do
+          failed = get_json(path, context.viewer_token)
+          assert %{"error" => %{"code" => "internal_error"}} = json_response(failed, 500)
+          refute Map.has_key?(json_response(failed, 500), "data")
+        end
+      end)
+    after
+      Opsonde.Repo.query!("ALTER TABLE deliveries RENAME COLUMN unavailable_status TO status")
+    end
+
+    assert get_data!(latest <> "?report_ids=" <> ids, context.viewer_token) == []
+    assert get_data!(summaries, context.viewer_token) == []
   end
 
   @tag report_page_capacity: true

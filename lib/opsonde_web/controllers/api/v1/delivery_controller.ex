@@ -31,6 +31,29 @@ defmodule OpsondeWeb.API.V1.DeliveryController do
       [ok: {"Delivery page", "application/json", OutcomeSchemas.ref("DeliveryPage")}] ++
         @list_errors
 
+  operation :summaries,
+    operation_id: "listDeliverySummaries",
+    summary: "List Report delivery summaries",
+    parameters: Schemas.pagination_parameters() ++ [OutcomeSchemas.report_ids_parameter()],
+    responses:
+      [
+        ok:
+          {"Delivery summary page", "application/json", OutcomeSchemas.ref("DeliverySummaryPage")}
+      ] ++
+        @list_errors
+
+  operation :latest,
+    operation_id: "listLatestReportDeliveries",
+    summary: "Get the latest delivery for each referenced Report",
+    parameters: [OutcomeSchemas.report_ids_parameter(true)],
+    responses:
+      [
+        ok:
+          {"Latest deliveries", "application/json",
+           OutcomeSchemas.ref("LatestDeliveriesResponse")}
+      ] ++
+        @list_errors ++ Schemas.errors([:bad_request])
+
   operation :show,
     operation_id: "getDelivery",
     summary: "Get a Report delivery",
@@ -62,6 +85,29 @@ defmodule OpsondeWeb.API.V1.DeliveryController do
          {:ok, deliveries} <-
            Notifications.page_deliveries(page: page, actor: conn.assigns.current_user) do
       Response.page(conn, deliveries, &OutcomeJSON.delivery/1)
+    end
+  end
+
+  def summaries(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:report_ids])
+
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, deliveries} <-
+           Notifications.page_delivery_summaries(input,
+             page: page,
+             actor: conn.assigns.current_user
+           ) do
+      Response.page(conn, deliveries, &OutcomeJSON.delivery_summary/1)
+    end
+  end
+
+  def latest(conn, _params) do
+    with {:ok, deliveries} <-
+           Notifications.latest_deliveries_for_reports(
+             OpenApiSpex.params(conn).report_ids,
+             actor: conn.assigns.current_user
+           ) do
+      Response.data(conn, Enum.map(deliveries, &OutcomeJSON.delivery_summary/1))
     end
   end
 

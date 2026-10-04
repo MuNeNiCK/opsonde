@@ -5,6 +5,10 @@ defmodule Opsonde.Notifications.Delivery do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id report_id report_revision provider_id provider_revision destination_id destination_revision status reference enqueued_at dispatch_started_at completed_at revision)a
+
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "deliveries"
     repo Opsonde.Repo
@@ -22,6 +26,29 @@ defmodule Opsonde.Notifications.Delivery do
     read :page do
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
       prepare build(sort: [enqueued_at: :desc, id: :desc])
+    end
+
+    read :summaries do
+      argument :report_ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 100]
+      filter expr(is_nil(^arg(:report_ids)) or report_id in ^arg(:report_ids))
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @summary_fields, sort: [enqueued_at: :desc, id: :desc])
+    end
+
+    read :latest_for_reports do
+      argument :report_ids, {:array, :uuid},
+        allow_nil?: false,
+        constraints: [min_length: 1, max_length: 100]
+
+      filter expr(report_id in ^arg(:report_ids))
+
+      prepare build(
+                select: @summary_fields,
+                distinct: [:report_id],
+                distinct_sort: [report_id: :asc, enqueued_at: :desc, id: :desc],
+                sort: [report_id: :asc],
+                limit: 100
+              )
     end
 
     read :by_idempotency do
@@ -112,7 +139,7 @@ defmodule Opsonde.Notifications.Delivery do
       forbid_if always()
     end
 
-    policy action([:read, :page]) do
+    policy action([:read, :page, :summaries, :latest_for_reports]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

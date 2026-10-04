@@ -24,6 +24,7 @@ defmodule OpsondeCLI.CLI do
     from: :string,
     to: :string,
     target_id: :string,
+    report_ids: :string,
     active: :boolean,
     ids: :string,
     roles: :string,
@@ -411,6 +412,19 @@ defmodule OpsondeCLI.CLI do
     |> maybe_query(:sort, options[:sort])
   end
 
+  defp query(%Route{path: path}, options)
+       when path in ["/deliveries/summaries", "/deliveries/latest"] do
+    query = maybe_query([], :report_ids, options[:report_ids])
+
+    if path == "/deliveries/summaries" do
+      query
+      |> maybe_query(:limit, options[:limit])
+      |> maybe_query(:after, options[:after])
+    else
+      query
+    end
+  end
+
   defp query(%Route{page?: true, path: "/accounts"}, options) do
     []
     |> maybe_query(:limit, options[:limit])
@@ -547,6 +561,8 @@ defmodule OpsondeCLI.CLI do
       opsonde case|operation|verification|delivery wait ID [--interval MS] [--timeout SEC]
       opsonde case ai-invocations ID [--limit N] [--after CURSOR]
       opsonde case summaries [--ids UUID,UUID] [--query TEXT] [--status STATUS] [--sort SORT] [--limit N] [--after CURSOR]
+      opsonde delivery summaries [--report-ids UUID,UUID] [--limit N] [--after CURSOR]
+      opsonde delivery latest --report-ids UUID,UUID
       opsonde report summary --from ISO8601 --to ISO8601 [--target-id UUID]
       opsonde report read ID
       opsonde file list TARGET_ID

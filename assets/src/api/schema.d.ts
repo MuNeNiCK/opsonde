@@ -125,6 +125,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/deliveries/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Report delivery summaries */
+        get: operations["listDeliverySummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/{id}/target-capabilities": {
         parameters: {
             query?: never;
@@ -985,6 +1002,23 @@ export interface paths {
         head?: never;
         /** Update a Target */
         patch: operations["updateTarget"];
+        trace?: never;
+    };
+    "/api/v1/deliveries/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the latest delivery for each referenced Report */
+        get: operations["listLatestReportDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/inventory-imports/{id}": {
@@ -1971,6 +2005,10 @@ export interface components {
         };
         ProviderResponse: {
             data: components["schemas"]["Provider"];
+        };
+        DeliverySummaryPage: {
+            data: components["schemas"]["DeliverySummary"][];
+            page: components["schemas"]["Page"];
         };
         AuditRun: {
             /** Format: uuid */
@@ -3666,6 +3704,9 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        LatestDeliveriesResponse: {
+            data: components["schemas"]["DeliverySummary"][];
+        };
         ManagementBoundarySummary: {
             active: boolean;
             /** Format: uuid */
@@ -3695,6 +3736,29 @@ export interface components {
                 expected_digest: string;
                 expected_revision: number;
             };
+        };
+        DeliverySummary: {
+            /** Format: date-time */
+            completed_at: string | null;
+            /** Format: uuid */
+            destination_id: string;
+            destination_revision: number;
+            /** Format: date-time */
+            dispatch_started_at: string | null;
+            /** Format: date-time */
+            enqueued_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            provider_id: string;
+            provider_revision: number;
+            reference: string | null;
+            /** Format: uuid */
+            report_id: string;
+            report_revision: number;
+            revision: number;
+            /** @enum {string} */
+            status: "queued" | "dispatching" | "accepted" | "delivered" | "failed" | "unknown";
         };
         SessionResponse: {
             data: {
@@ -4657,6 +4721,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SignalWebhookError"];
+                };
+            };
+        };
+    };
+    listDeliverySummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+                report_ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery summary page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliverySummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -9188,6 +9312,73 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listLatestReportDeliveries: {
+        parameters: {
+            query: {
+                report_ids: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest deliveries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LatestDeliveriesResponse"];
+                };
+            };
+            /** @description Request body is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

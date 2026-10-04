@@ -38,11 +38,20 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       "Delivery" => delivery(),
       "DeliveryResponse" => Schemas.data(ref("Delivery")),
       "DeliveryPage" => Schemas.page(ref("Delivery")),
+      "DeliverySummary" => delivery_summary(),
+      "DeliverySummaryPage" => Schemas.page(ref("DeliverySummary")),
+      "LatestDeliveriesResponse" =>
+        Schemas.data(%Schema{type: :array, items: ref("DeliverySummary"), maxItems: 100}),
       "CreateDeliveryRequest" => create_delivery_request()
     }
   end
 
   def ref(name), do: Schemas.reference(name)
+
+  def report_ids_parameter(required? \\ false) do
+    {:ids, options} = Schemas.reference_ids_parameter()
+    {:report_ids, Keyword.put(options, :required, required?)}
+  end
 
   defp canonical_signal_webhook_payload do
     object(
@@ -498,6 +507,12 @@ defmodule OpsondeWeb.API.V1.OutcomeSchemas do
       ~w(id report_id report_revision provider_id provider_revision destination_id destination_revision status reference details enqueued_at dispatch_started_at completed_at revision)a,
       false
     )
+  end
+
+  defp delivery_summary do
+    schema = delivery()
+    fields = Opsonde.Notifications.Delivery.summary_fields()
+    %{schema | properties: Map.take(schema.properties, fields), required: fields}
   end
 
   defp create_delivery_request do

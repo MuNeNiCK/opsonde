@@ -99,6 +99,9 @@ defmodule OpsondeWeb.API.V1.OutcomeJSON do
     }
   end
 
+  def delivery_summary(delivery),
+    do: Map.take(delivery, Opsonde.Notifications.Delivery.summary_fields())
+
   def delivery(delivery) do
     %{
       id: delivery.id,
