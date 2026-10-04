@@ -2710,7 +2710,7 @@
           },
           "proposals": {
             "items": {
-              "$ref": "#/components/schemas/Proposal"
+              "$ref": "#/components/schemas/ProposalSummary"
             },
             "type": "array"
           },
@@ -3074,6 +3074,25 @@
           "data": {
             "items": {
               "$ref": "#/components/schemas/AuditSchedule"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
+      "ProposalPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalSummary"
             },
             "type": "array"
           },
@@ -3846,6 +3865,11 @@
             ],
             "type": "string"
           },
+          "pending_proposal_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "report_language": {
             "enum": [
               "en",
@@ -3946,6 +3970,7 @@
           "report_language",
           "status",
           "operator_action",
+          "pending_proposal_id",
           "initial_context",
           "case_symptom",
           "authority_setting_id",
@@ -5767,6 +5792,159 @@
         "required": [
           "data",
           "page"
+        ],
+        "type": "object"
+      },
+      "ProposalSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "access_method_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "capability": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "case_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "delay_seconds": {
+            "maximum": 86400,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inserted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "preflight_status": {
+            "enum": [
+              "cleared",
+              "blocked"
+            ],
+            "type": "string"
+          },
+          "proposal_digest": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "proposed_for_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "provider_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "investigation",
+              "remediation"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_kind": {
+            "enum": [
+              "observation",
+              "effect"
+            ],
+            "type": "string"
+          },
+          "resolution_run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source_turn_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "blocked",
+              "recommended",
+              "awaiting_human",
+              "reviewing",
+              "authorized",
+              "rejected",
+              "invalidated"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "resolution_run_id",
+          "source_turn_id",
+          "proposed_for_id",
+          "target_id",
+          "access_method_id",
+          "provider_id",
+          "status",
+          "authority_mode",
+          "request_kind",
+          "purpose",
+          "tool_id",
+          "capability",
+          "operation",
+          "reason",
+          "delay_seconds",
+          "preflight_status",
+          "proposal_digest",
+          "expires_at",
+          "revision",
+          "inserted_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -13148,6 +13326,112 @@
         "summary": "Check a Provider connection",
         "tags": [
           "Providers"
+        ]
+      }
+    },
+    "/api/v1/cases/{id}/proposals": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listCaseProposals",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalPage"
+                }
+              }
+            },
+            "description": "Proposal summary page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List Case proposal summaries",
+        "tags": [
+          "Cases"
         ]
       }
     },

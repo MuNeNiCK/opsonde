@@ -25,6 +25,8 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
   end
 
   def case_record(incident) do
+    action = operator_action(incident)
+
     %{
       id: incident.id,
       trigger_kind: incident.trigger_kind,
@@ -37,7 +39,9 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       firing_condition_count: loaded_count(incident.firing_condition_count),
       report_language: incident.report_language,
       status: incident.status,
-      operator_action: operator_action(incident),
+      operator_action: action,
+      pending_proposal_id:
+        if(action == :decision_required, do: incident.pending_intent["proposal_id"], else: nil),
       initial_context: incident.initial_context,
       case_symptom: CaseSymptom.current(incident),
       authority_setting_id: incident.authority_setting_id,
@@ -77,7 +81,8 @@ defmodule OpsondeWeb.API.V1.WorkflowJSON do
       conditions: Enum.map(snapshot.conditions, &condition/1),
       condition_history: Enum.map(snapshot.condition_history, &condition_membership/1),
       resolution_runs: Enum.map(snapshot.resolution_runs, &resolution_run/1),
-      proposals: Enum.map(snapshot.proposals, &proposal/1),
+      proposals:
+        Enum.map(snapshot.proposals, &Map.take(&1, Opsonde.Cases.Proposal.summary_fields())),
       operations:
         Enum.map(snapshot.operations, &Map.take(&1, Opsonde.Cases.Operation.summary_fields())),
       verification_attempts:

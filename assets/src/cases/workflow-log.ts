@@ -24,6 +24,7 @@ export type WorkflowLogInput = {
   snapshot: CaseSnapshot;
   timeline: CaseEvent[];
   turns: Turn[];
+  proposals: components["schemas"]["ProposalSummary"][];
   evidence: Evidence[];
   approvals: Approval[];
   reviews: Review[];
@@ -42,7 +43,7 @@ export type LogEntry = {
   facts?: Array<{ label: string; value: string }>;
   technical?: unknown;
   receipt?: {
-    kind: "evidence" | "operation" | "verification";
+    kind: "evidence" | "operation" | "verification" | "proposal";
     id: string;
     revision: string | number;
   };
@@ -68,7 +69,7 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
   const reviewedProposalIds = new Set(props.reviews.map((review) => review.proposal_id));
   const targetNames = new Map(props.targets.map((target) => [target.id, target.name]));
   const proposalsByTurn = new Map(
-    props.snapshot.proposals.map((proposal) => [proposal.source_turn_id, proposal]),
+    props.proposals.map((proposal) => [proposal.source_turn_id, proposal]),
   );
   const targetName = (id: string) => targetNames.get(id) ?? id;
   const reasonLanguage = t(`cases.workflow.languages.${props.snapshot.case.report_language}`);
@@ -149,6 +150,19 @@ export function buildLog(props: WorkflowLogInput, t: TFunction): LogEntry[] {
         failure_message: turn.failure_message,
       },
       failed: Boolean(failure),
+    });
+  }
+
+  for (const item of props.proposals) {
+    entries.push({
+      id: `proposal-${item.id}`,
+      at: item.inserted_at,
+      stage: "review",
+      source: t("cases.workflow.sources.resolver"),
+      summary: `${item.capability} / ${item.operation} · ${translatedToken(t, "proposalStatus", item.status)}`,
+      facts: [{ label: t("cases.workflow.fields.target"), value: targetName(item.target_id) }],
+      receipt: { kind: "proposal", id: item.id, revision: item.revision },
+      failed: ["blocked", "rejected", "invalidated"].includes(item.status),
     });
   }
 

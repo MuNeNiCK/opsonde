@@ -763,6 +763,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{id}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case proposal summaries */
+        get: operations["listCaseProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/target-file-limits": {
         parameters: {
             query?: never;
@@ -2284,7 +2301,7 @@ export interface components {
             condition_history: components["schemas"]["CaseConditionMembership"][];
             conditions: components["schemas"]["CaseCondition"][];
             operations: components["schemas"]["OperationSummary"][];
-            proposals: components["schemas"]["Proposal"][];
+            proposals: components["schemas"]["ProposalSummary"][];
             reports: components["schemas"]["ReportSummary"][];
             resolution_runs: components["schemas"]["ResolutionRun"][];
             verification_attempts: components["schemas"]["VerificationAttemptSummary"][];
@@ -2372,6 +2389,10 @@ export interface components {
         };
         AuditSchedulePage: {
             data: components["schemas"]["AuditSchedule"][];
+            page: components["schemas"]["Page"];
+        };
+        ProposalPage: {
+            data: components["schemas"]["ProposalSummary"][];
             page: components["schemas"]["Page"];
         };
         ProviderRevisionRequest: {
@@ -2592,6 +2613,8 @@ export interface components {
             limits: components["schemas"]["WorkflowLimits"];
             /** @enum {string} */
             operator_action: "none" | "decision_required" | "input_required" | "intervention_required";
+            /** Format: uuid */
+            pending_proposal_id: string | null;
             /** @enum {string} */
             report_language: "en" | "ja";
             required_human_input: string | null;
@@ -3072,6 +3095,47 @@ export interface components {
         InventoryImportRowPage: {
             data: components["schemas"]["InventoryImportRow"][];
             page: components["schemas"]["Page"];
+        };
+        ProposalSummary: {
+            /** Format: uuid */
+            access_method_id: string;
+            /** @enum {string} */
+            authority_mode: "readonly" | "ask" | "auto" | "full_access";
+            capability: string;
+            /** Format: uuid */
+            case_id: string;
+            delay_seconds: number;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            inserted_at: string;
+            operation: string;
+            /** @enum {string} */
+            preflight_status: "cleared" | "blocked";
+            proposal_digest: string;
+            /** Format: uuid */
+            proposed_for_id: string;
+            /** Format: uuid */
+            provider_id: string;
+            /** @enum {string|null} */
+            purpose: "investigation" | "remediation" | null;
+            reason: string;
+            /** @enum {string} */
+            request_kind: "observation" | "effect";
+            /** Format: uuid */
+            resolution_run_id: string;
+            revision: number;
+            /** Format: uuid */
+            source_turn_id: string;
+            /** @enum {string} */
+            status: "proposed" | "blocked" | "recommended" | "awaiting_human" | "reviewing" | "authorized" | "rejected" | "invalidated";
+            /** Format: uuid */
+            target_id: string;
+            tool_id: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         UpdateAuthoritySettingRequest: {
             authority_setting: {
@@ -7614,6 +7678,76 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCaseProposals: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proposal summary page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

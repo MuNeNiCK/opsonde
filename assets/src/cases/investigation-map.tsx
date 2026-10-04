@@ -246,10 +246,11 @@ function buildGraph(props: Props, t: ReturnType<typeof useTranslation>["t"]): In
       proposal.access_method_id,
       proposal.capability,
       proposal.operation,
-      JSON.stringify(proposal.selectors),
+      proposal.proposal_digest,
     ].join(":");
     const activities = targetActivities.get(proposal.target_id) ?? new Map<string, Activity>();
     const logIds = [
+      `proposal-${proposal.id}`,
       `turn-${proposal.source_turn_id}`,
       review && `review-${review.id}`,
       approval && `approval-${approval.id}`,

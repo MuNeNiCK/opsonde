@@ -1,6 +1,10 @@
 defmodule Opsonde.Cases.Proposal do
   alias Opsonde.Targets.TargetRequest.Request
 
+  @summary_fields ~w(id case_id resolution_run_id source_turn_id proposed_for_id target_id access_method_id provider_id status authority_mode request_kind purpose tool_id capability operation reason delay_seconds preflight_status proposal_digest expires_at revision inserted_at updated_at)a
+
+  def summary_fields, do: @summary_fields
+
   use Ash.Resource,
     otp_app: :opsonde,
     domain: Opsonde.Cases,
@@ -23,10 +27,17 @@ defmodule Opsonde.Cases.Proposal do
   actions do
     defaults [:read]
 
-    read :for_case do
+    read :summaries_for_case do
       argument :case_id, :uuid, allow_nil?: false
       filter expr(case_id == ^arg(:case_id))
-      prepare build(sort: [updated_at: :desc, id: :desc], limit: 100)
+      prepare build(select: @summary_fields, sort: [updated_at: :desc, id: :desc], limit: 100)
+    end
+
+    read :page_for_case do
+      argument :case_id, :uuid, allow_nil?: false
+      filter expr(case_id == ^arg(:case_id))
+      pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
+      prepare build(select: @summary_fields, sort: [inserted_at: :desc, id: :desc])
     end
 
     read :by_source_turn do
@@ -184,7 +195,7 @@ defmodule Opsonde.Cases.Proposal do
       authorize_if actor_attribute_equals(:role, :operator)
     end
 
-    policy action([:read, :for_case]) do
+    policy action([:read, :summaries_for_case, :page_for_case]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

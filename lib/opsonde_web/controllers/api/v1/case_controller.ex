@@ -98,6 +98,14 @@ defmodule OpsondeWeb.API.V1.CaseController do
       [ok: {"Resolver-turn page", "application/json", WorkflowSchemas.ref("ResolverTurnPage")}] ++
         @show_errors
 
+  operation :proposals,
+    operation_id: "listCaseProposals",
+    summary: "List Case proposal summaries",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [ok: {"Proposal summary page", "application/json", WorkflowSchemas.ref("ProposalPage")}] ++
+        @show_errors
+
   operation :evidence,
     operation_id: "listCaseEvidence",
     summary: "List Case evidence",
@@ -284,6 +292,12 @@ defmodule OpsondeWeb.API.V1.CaseController do
     with {:ok, evidence} <- Cases.get_evidence(id, actor: conn.assigns.current_user) do
       Response.data(conn, WorkflowJSON.evidence(evidence))
     end
+  end
+
+  def proposals(conn, %{"id" => id} = params) do
+    page_case_records(conn, params, &Cases.page_case_proposals(id, &1), fn record ->
+      Map.take(record, Opsonde.Cases.Proposal.summary_fields())
+    end)
   end
 
   def operations(conn, %{"id" => id} = params) do

@@ -293,12 +293,11 @@ defmodule OpsondeCLI.CLI do
   defp case_outcome(%{"status" => "needs_attention"}, _snapshot), do: :needs_attention
   defp case_outcome(%{"status" => "cancelled"}, _snapshot), do: :cancel_requested
 
-  defp case_outcome(%{"status" => "running"}, snapshot) do
-    proposals = Map.get(snapshot, "proposals", [])
+  defp case_outcome(%{"status" => "running"} = incident, snapshot) do
     runs = Map.get(snapshot, "resolution_runs", [])
 
     cond do
-      Enum.any?(proposals, &(&1["status"] == "awaiting_human")) -> :approval_required
+      incident["operator_action"] == "decision_required" -> :approval_required
       runs == [] -> :accepted
       true -> :resolving
     end

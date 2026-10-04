@@ -102,18 +102,24 @@ test("closing a pending read aborts it and a later response cannot populate the 
 test.each([
   ["operation", "/api/v1/operations/receipt-1"],
   ["verification", "/api/v1/verification-attempts/receipt-1"],
+  ["proposal", "/api/v1/proposals/receipt-1"],
 ] as const)(
   "reads a complete %s receipt and refreshes an open detail after its revision changes",
   async (kind, path) => {
     await i18n.changeLanguage("en");
     sessionStorage.setItem("opsonde.session", "fixture-token");
-    const reference = " " + "[REDACTED]".repeat(65_534) + " ";
+    const reference =
+      kind === "proposal" ? "x".repeat(64_000) : " " + "[REDACTED]".repeat(65_534) + " ";
     let revision = 1;
     wire.mockImplementation(async (request: Request) => {
       expect(request.method).toBe("GET");
       expect(new URL(request.url, "http://localhost").pathname).toBe(path);
       expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
-      return new Response(JSON.stringify({ data: { reference, revision } }));
+      const data =
+        kind === "proposal"
+          ? { parameters: { padding: reference }, revision }
+          : { reference, revision };
+      return new Response(JSON.stringify({ data }));
     });
     const { rerender } = render(<ReceiptDetails kind={kind} id="receipt-1" revision={1} />);
     expect(wire).not.toHaveBeenCalled();

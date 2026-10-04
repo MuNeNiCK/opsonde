@@ -40,6 +40,8 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
       "ReviewDecision" => review_decision(),
       "ReviewDecisionPage" => Schemas.page(ref("ReviewDecision")),
       "Proposal" => proposal(),
+      "ProposalSummary" => summary(proposal(), Opsonde.Cases.Proposal.summary_fields()),
+      "ProposalPage" => Schemas.page(ref("ProposalSummary")),
       "ProposalResponse" => Schemas.data(ref("Proposal")),
       "DecideProposalRequest" => decide_proposal_request(),
       "Operation" => operation(),
@@ -118,6 +120,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         report_language: enum(~w(en ja)),
         status: enum(~w(running needs_attention resolved cancelled)),
         operator_action: enum(~w(none decision_required input_required intervention_required)),
+        pending_proposal_id: nullable_uuid(),
         initial_context: map(),
         case_symptom: Schemas.case_symptom(true),
         authority_setting_id: Schemas.uuid(),
@@ -136,7 +139,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         inserted_at: Schemas.timestamp(),
         updated_at: Schemas.timestamp()
       },
-      ~w(id trigger_kind source source_ref split_parent_id title severity condition_count firing_condition_count report_language status operator_action initial_context case_symptom authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
+      ~w(id trigger_kind source source_ref split_parent_id title severity condition_count firing_condition_count report_language status operator_action pending_proposal_id initial_context case_symptom authority_setting_id authority_setting_revision authority_mode limits cancel_requested stop_reason required_human_input resolved_at initial_target_id selected_target_id selected_target_revision current_owner_id revision inserted_at updated_at)a,
       false
     )
   end
@@ -222,7 +225,7 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
         conditions: array(ref("CaseCondition")),
         condition_history: array(ref("CaseConditionMembership")),
         resolution_runs: array(ref("ResolutionRun")),
-        proposals: array(ref("Proposal")),
+        proposals: array(ref("ProposalSummary")),
         operations: array(ref("OperationSummary")),
         verification_attempts: array(ref("VerificationAttemptSummary")),
         reports: array(ref("ReportSummary"))

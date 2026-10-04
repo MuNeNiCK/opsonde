@@ -79,6 +79,7 @@ const snapshot: components["schemas"]["CaseSnapshot"] = {
     report_language: "en",
     status: "resolved",
     operator_action: "none",
+    pending_proposal_id: null,
     initial_context: {},
     case_symptom: null,
     authority_setting_id: caseId,
@@ -134,11 +135,110 @@ afterEach(() => {
 });
 
 test.each([false, true])(
+  "pending Proposal read failure=%s keeps the case visible without inferring approval from history",
+  async (fails) => {
+    await i18n.changeLanguage("en");
+    const requests: string[] = [];
+    const proposal: components["schemas"]["Proposal"] = {
+      id: reportId,
+      case_id: caseId,
+      resolution_run_id: caseId,
+      source_turn_id: caseId,
+      proposed_for_id: caseId,
+      target_id: caseId,
+      access_method_id: caseId,
+      provider_id: caseId,
+      status: "awaiting_human",
+      authority_mode: "ask",
+      case_generation: 1,
+      target_revision: 1,
+      access_method_revision: 1,
+      provider_revision: 1,
+      request_kind: "effect",
+      purpose: "remediation",
+      tool_id: "fixture",
+      capability: "fixture",
+      operation: "repair",
+      selectors: {},
+      parameters: { command: "repair service", padding: "x".repeat(64_000) },
+      reason: "Current exact request requires approval",
+      evidence_ids: [],
+      delay_seconds: 0,
+      affected_conditions: [],
+      expected_result: {},
+      verification_intent: {},
+      verification_tool: {},
+      preflight_status: "cleared",
+      preflight_reason: null,
+      proposal_digest: "a".repeat(64),
+      expires_at: timestamp,
+      revision: 1,
+      inserted_at: timestamp,
+      updated_at: timestamp,
+    };
+    wire.mockImplementation(async (request: Request) => {
+      expect(request.method).toBe("GET");
+      const path = new URL(request.url, "http://localhost").pathname;
+      requests.push(path);
+      if (path === `/api/v1/cases/${caseId}`)
+        return new Response(
+          JSON.stringify({
+            data: {
+              ...snapshot,
+              case: {
+                ...snapshot.case,
+                status: "running",
+                authority_mode: "ask",
+                operator_action: "decision_required",
+                pending_proposal_id: reportId,
+              },
+              proposals: [],
+              reports: [],
+            },
+          }),
+        );
+      if (path === `/api/v1/proposals/${reportId}`)
+        return fails
+          ? new Response(JSON.stringify({ error: { message: "Proposal storage unavailable" } }), {
+              status: 500,
+            })
+          : new Response(JSON.stringify({ data: proposal }));
+      if (path.startsWith("/api/v1/proposals/"))
+        throw new Error("Unselected Proposal must stay unloaded");
+      return new Response(JSON.stringify({ data: [], page: { next: null } }));
+    });
+    render(
+      <AuthenticationContext.Provider value={{ account: { role: "operator" } } as Authentication}>
+        <MemoryRouter initialEntries={[`/cases/${caseId}`]}>
+          <Routes>
+            <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthenticationContext.Provider>,
+    );
+    expect(await screen.findByRole("heading", { name: "Physical host recovered" })).toBeDefined();
+    expect(screen.getByText("Activity history")).toBeDefined();
+    if (fails) {
+      expect(await screen.findByText("Proposal storage unavailable")).toBeDefined();
+      expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    } else {
+      expect(await screen.findByText("Current exact request requires approval")).toBeDefined();
+      expect(screen.getByRole("button", { name: "Approve" })).toBeDefined();
+    }
+    expect(requests.filter((path) => path.startsWith("/api/v1/proposals/"))).toEqual([
+      `/api/v1/proposals/${reportId}`,
+    ]);
+  },
+);
+
+test.each([false, true])(
   "history window read failure=%s preserves data and ignores an old refresh after navigation",
   async (fails) => {
     await i18n.changeLanguage("en");
     const requests: string[] = [];
     const receiptRequests: Record<string, string[]> = {
+      proposals: [],
       operations: [],
       "verification-attempts": [],
     };
@@ -165,13 +265,22 @@ test.each([false, true])(
           revision: 1,
           capability: "fixture",
           operation: `${after ? "Older" : "Latest"} ${collection} receipt`,
-          status: collection === "operations" ? "applied" : "verified",
-          target_id: null,
+          status:
+            collection === "proposals"
+              ? "authorized"
+              : collection === "operations"
+                ? "applied"
+                : "verified",
+          target_id: collection === "proposals" ? caseId : null,
           proposal_id: null,
           outcome_category: null,
           completed_at: timestamp,
           updated_at: timestamp,
           accepted_at: timestamp,
+          inserted_at: timestamp,
+          source_turn_id: caseId,
+          access_method_id: caseId,
+          proposal_digest: "a".repeat(64),
         };
         return new Response(
           JSON.stringify({
@@ -234,6 +343,7 @@ test.each([false, true])(
     );
     expect(await screen.findByText("Latest window receipt")).toBeDefined();
     expect(screen.getByText(/Latest operations receipt/)).toBeDefined();
+    expect(screen.getByText(/Latest proposals receipt/)).toBeDefined();
     expect(screen.getByText(/Latest verification-attempts receipt/)).toBeDefined();
     expect(requests).toEqual(["first"]);
     expect(screen.queryByText("Older window receipt")).toBeNull();
@@ -250,8 +360,10 @@ test.each([false, true])(
     }
     expect(await screen.findByText("Older window receipt")).toBeDefined();
     expect(screen.getByText(/Older operations receipt/)).toBeDefined();
+    expect(screen.getByText(/Older proposals receipt/)).toBeDefined();
     expect(screen.getByText(/Older verification-attempts receipt/)).toBeDefined();
     expect(screen.queryByText(/Latest operations receipt/)).toBeNull();
+    expect(screen.queryByText(/Latest proposals receipt/)).toBeNull();
     expect(screen.queryByText(/Latest verification-attempts receipt/)).toBeNull();
     expect(screen.queryByText("Latest window receipt")).toBeNull();
     const expected = fails

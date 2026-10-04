@@ -1308,7 +1308,9 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     refute response.resp_body =~ "RuntimeError"
   end
 
-  test "an explicit Reviewer handoff is exposed as an operator decision", context do
+  @tag pending_proposal_identity: true
+  test "an explicit Reviewer handoff remains an operator decision beyond the history window",
+       context do
     configure_mode!(:auto, context.admin)
     setup = proposal_setup!(context)
     {incident, reviewing} = awaiting_proposal!(setup, context.operator)
@@ -1332,7 +1334,76 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
     snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
     assert snapshot["case"]["status"] == "running"
     assert snapshot["case"]["operator_action"] == "decision_required"
+    assert snapshot["case"]["pending_proposal_id"] == reviewing.id
     assert [%{"status" => "awaiting_human"}] = snapshot["proposals"]
+
+    # Historical records test read capacity; they do not authorize or dispatch effects.
+    current = Cases.get_proposal!(reviewing.id, authorize?: false)
+
+    inputs =
+      Map.take(current, Ash.Resource.Info.action(current.__struct__, :create_record).accept)
+
+    source_turn = Cases.get_turn!(current.source_turn_id, authorize?: false)
+
+    turn_inputs =
+      Map.take(
+        source_turn,
+        Ash.Resource.Info.action(source_turn.__struct__, :create_record).accept
+      )
+
+    for index <- 1..100 do
+      turn =
+        Cases.create_turn_record!(
+          Map.merge(Map.drop(turn_inputs, [:id]), %{
+            ordinal: index + 1,
+            idempotency_key: "pending-history:#{index}"
+          }),
+          authorize?: false
+        )
+
+      Cases.create_proposal_record!(
+        Map.merge(Map.drop(inputs, [:id]), %{
+          source_turn_id: turn.id,
+          status: :authorized,
+          reserved_operation_id: Ecto.UUID.generate(),
+          operation_idempotency_key: "pending-history:#{index}"
+        }),
+        authorize?: false
+      )
+    end
+
+    snapshot = get_data!("/api/v1/cases/#{incident.id}", context.viewer_token)
+    assert snapshot["case"]["pending_proposal_id"] == reviewing.id
+    assert length(snapshot["proposals"]) == 100
+    refute Enum.any?(snapshot["proposals"], &(&1["id"] == reviewing.id))
+
+    assert get_data!("/api/v1/proposals/#{reviewing.id}", context.operator_token)["status"] ==
+             "awaiting_human"
+
+    root =
+      Path.join(System.tmp_dir!(), "pending-proposal-cli-#{System.unique_integer([:positive])}")
+
+    config_path = Path.join(root, "config.json")
+    on_exit(fn -> File.rm_rf(root) end)
+
+    :ok =
+      OpsondeCLI.Config.save(
+        %{"server" => "https://opsonde.example", "token" => context.operator_token},
+        config_path
+      )
+
+    stub = {__MODULE__, make_ref()}
+    Req.Test.stub(stub, &OpsondeWeb.Endpoint.call(&1, OpsondeWeb.Endpoint.init([])))
+
+    output =
+      capture_io(fn ->
+        assert OpsondeCLI.CLI.run(["case", "wait", incident.id, "--timeout", "0"],
+                 config_path: config_path,
+                 request_options: [plug: {Req.Test, stub}]
+               ) == 11
+      end)
+
+    assert Jason.decode!(output)["outcome"] == "approval_required"
   end
 
   test "contract rejects malformed Case identifiers and action bodies", context do
@@ -1418,6 +1489,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         Cases.create_proposal_record!(
           Map.merge(copy_inputs.(proposal), %{
             source_turn_id: turn.id,
+            parameters: %{"service" => "api", "padding" => String.duplicate("x", 64_000)},
             reserved_operation_id: Ecto.UUID.generate(),
             operation_idempotency_key: "history-capacity:#{index}"
           }),
@@ -1524,6 +1596,8 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       snapshot = json_response(response, 200)["data"]
       assert byte_size(response.resp_body) < 500_000
       assert length(snapshot["operations"]) == 100
+      assert length(snapshot["proposals"]) == 100
+      refute Map.has_key?(hd(snapshot["proposals"]), "parameters")
       refute Map.has_key?(hd(snapshot["operations"]), "reference")
       refute Map.has_key?(hd(snapshot["operations"]), "result_details")
       refute Map.has_key?(hd(snapshot["verification_attempts"]), "operation_reference")
@@ -1537,6 +1611,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
       assert Jason.decode!(reconnected)["data"]["operations"] == snapshot["operations"]
 
       for {collection, original_id, command} <- [
+            {"proposals", proposal.id, "proposals"},
             {"operations", operation.id, "operations"},
             {"verification-attempts", verification.id, "verifications"}
           ] do
@@ -1572,18 +1647,78 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
         assert [%{"id" => ^original_id}] = Jason.decode!(cli_page)["data"]
         assert get_json("/api/v1/cases/#{incident.id}/#{collection}", nil).status == 401
 
-        table = if collection == "operations", do: "operations", else: "verification_attempts"
+        if collection == "proposals" do
+          maximum = get_json("/api/v1/cases/#{incident.id}/proposals?limit=500", token)
+          assert_operation_response(maximum)
+          assert json_response(maximum, 422)["error"]["code"] == "invalid_pagination"
+
+          maximum =
+            Cases.page_case_proposals!(incident.id, actor: context.operator, page: [limit: 500])
+
+          assert length(maximum.results) == 101
+          assert Enum.all?(maximum.results, &(not Ash.Resource.selected?(&1, :parameters)))
+
+          selected_id = hd(first_page["data"])["id"]
+          selected = get_json("/api/v1/proposals/#{selected_id}", token)
+          assert_operation_response(selected)
+          selected_body = json_response(selected, 200)["data"]
+          assert selected_body["parameters"]["padding"] == String.duplicate("x", 64_000)
+
+          exact =
+            capture_io(fn ->
+              assert OpsondeCLI.CLI.run(["proposal", "show", selected_id], runtime) == 0
+            end)
+
+          assert Jason.decode!(exact)["data"] == selected_body
+
+          Opsonde.Repo.query!(
+            "ALTER TABLE proposals RENAME COLUMN parameters TO unavailable_parameters"
+          )
+
+          try do
+            assert {:ok, page} = Cases.page_case_proposals(incident.id, actor: context.operator)
+            assert length(page.results) == 100
+
+            assert {:error, %Ash.Error.Unknown{} = cause} =
+                     Cases.get_proposal(selected_id, actor: context.operator)
+
+            assert Exception.message(cause) =~ "does not exist"
+
+            capture_log(fn ->
+              assert get_json("/api/v1/cases/#{incident.id}", token).status == 200
+              assert get_json("/api/v1/proposals/#{selected_id}", token).status == 500
+
+              capture_io(:stderr, fn ->
+                assert OpsondeCLI.CLI.run(["proposal", "show", selected_id], runtime) == 4
+              end)
+            end)
+          after
+            Opsonde.Repo.query!(
+              "ALTER TABLE proposals RENAME COLUMN unavailable_parameters TO parameters"
+            )
+          end
+
+          assert json_response(get_json("/api/v1/proposals/#{selected_id}", token), 200)["data"] ==
+                   selected_body
+        end
+
+        {table, column, read} =
+          case collection do
+            "proposals" ->
+              {"proposals", "status", &Cases.page_case_proposals/2}
+
+            "operations" ->
+              {"operations", "outcome_category", &Cases.page_case_operations/2}
+
+            "verification-attempts" ->
+              {"verification_attempts", "outcome_category", &Cases.page_case_verifications/2}
+          end
 
         Opsonde.Repo.query!(
-          "ALTER TABLE #{table} RENAME COLUMN outcome_category TO unavailable_outcome_category"
+          "ALTER TABLE #{table} RENAME COLUMN #{column} TO unavailable_#{column}"
         )
 
         try do
-          read =
-            if collection == "operations",
-              do: &Cases.page_case_operations/2,
-              else: &Cases.page_case_verifications/2
-
           assert {:error, %Ash.Error.Unknown{}} =
                    read.(incident.id, actor: context.operator, page: [limit: 100])
 
@@ -1598,7 +1733,7 @@ defmodule OpsondeWeb.API.V1.WorkflowControllerTest do
           end)
         after
           Opsonde.Repo.query!(
-            "ALTER TABLE #{table} RENAME COLUMN unavailable_outcome_category TO outcome_category"
+            "ALTER TABLE #{table} RENAME COLUMN unavailable_#{column} TO #{column}"
           )
         end
 

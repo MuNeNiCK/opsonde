@@ -412,7 +412,8 @@ defmodule Opsonde.Cases do
     resource Opsonde.Cases.Proposal do
       define :list_proposals, action: :read
       define :get_proposal, action: :read, get_by: [:id]
-      define :proposals_for_case, action: :for_case, args: [:case_id]
+      define :proposal_summaries_for_case, action: :summaries_for_case, args: [:case_id]
+      define :page_case_proposals, action: :page_for_case, args: [:case_id]
 
       define :proposal_by_source_turn,
         action: :by_source_turn,

@@ -17,7 +17,7 @@ defmodule Opsonde.Cases.Case.Actions.Reconnect do
          {:ok, history} <- Cases.condition_membership_history_for_case(case_id, authorize?: false),
          {:ok, conditions} <- current_conditions(incident, history),
          {:ok, runs} <- Cases.resolution_runs_for_case(case_id, opts),
-         {:ok, proposals} <- Cases.proposals_for_case(case_id, opts),
+         {:ok, proposals} <- Cases.proposal_summaries_for_case(case_id, opts),
          {:ok, operations} <- Cases.operation_summaries_for_case(case_id, opts),
          {:ok, attempts} <- Cases.verification_summaries_for_case(case_id, opts),
          {:ok, reports} <- Reports.report_summaries_for_case(case_id, opts) do

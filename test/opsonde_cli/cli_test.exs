@@ -470,8 +470,10 @@ defmodule OpsondeCLI.CLITest do
     scenarios = [
       {"accepted", case_snapshot("running", [], []), 10},
       {"approval_required",
+       case_snapshot("running", [%{"status" => "running"}], [], false, "decision_required"), 11},
+      {"resolving",
        case_snapshot("running", [%{"status" => "running"}], [%{"status" => "awaiting_human"}]),
-       11},
+       10},
       {"needs_attention", case_snapshot("needs_attention", [], []), 12},
       {"cancel_requested", case_snapshot("running", [], [], true), 16}
     ]
@@ -587,10 +589,21 @@ defmodule OpsondeCLI.CLITest do
       )
   end
 
-  defp case_snapshot(status, runs, proposals, cancel_requested \\ false) do
+  defp case_snapshot(
+         status,
+         runs,
+         proposals,
+         cancel_requested \\ false,
+         operator_action \\ "none"
+       ) do
     %{
       data: %{
-        case: %{id: "case-1", status: status, cancel_requested: cancel_requested},
+        case: %{
+          id: "case-1",
+          status: status,
+          cancel_requested: cancel_requested,
+          operator_action: operator_action
+        },
         resolution_runs: runs,
         proposals: proposals,
         operations: [],

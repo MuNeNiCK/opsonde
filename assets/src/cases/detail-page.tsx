@@ -36,12 +36,15 @@ type CaseSnapshot = components["schemas"]["CaseSnapshot"];
 type Evidence = components["schemas"]["EvidenceSummary"];
 type ReviewDecision = components["schemas"]["ReviewDecision"];
 type Turn = components["schemas"]["ResolverTurn"];
+type Proposal = components["schemas"]["Proposal"];
+type ProposalSummary = components["schemas"]["ProposalSummary"];
 type Provider = components["schemas"]["Provider"];
 type AccessMethod = components["schemas"]["AccessMethod"];
 type Target = components["schemas"]["Target"];
 type HistoryCursor = Record<
   | "timeline"
   | "turns"
+  | "proposals"
   | "evidence"
   | "approvals"
   | "reviews"
@@ -55,6 +58,9 @@ type Detail = {
   snapshot: CaseSnapshot;
   timeline: CaseEvent[];
   turns: Turn[];
+  proposals: ProposalSummary[];
+  awaitingProposal: Proposal | null;
+  proposalError: Error | null;
   evidence: Evidence[];
   approvals: Approval[];
   reviews: ReviewDecision[];
@@ -77,6 +83,9 @@ type CaseState = Pick<
   | "snapshot"
   | "timeline"
   | "turns"
+  | "proposals"
+  | "awaitingProposal"
+  | "proposalError"
   | "evidence"
   | "approvals"
   | "reviews"
@@ -101,6 +110,7 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     snapshotResponse,
     timeline,
     turns,
+    proposals,
     evidence,
     approvals,
     reviews,
@@ -119,6 +129,13 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     loadHistoryPage(cursor?.turns, (after) =>
       apiClient
         .GET("/api/v1/cases/{id}/turns", {
+          params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
+        })
+        .then(apiData),
+    ),
+    loadHistoryPage(cursor?.proposals, (after) =>
+      apiClient
+        .GET("/api/v1/cases/{id}/proposals", {
           params: { path: { id: caseId }, query: { limit: 100, after: after ?? undefined } },
         })
         .then(apiData),
@@ -172,21 +189,38 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
       ? snapshot.reports.find((report) => report.case_revision === snapshot.case.revision)
       : undefined;
   let reportError: Error | null = null;
-  const report = currentReport
-    ? await apiClient
-        .GET("/api/v1/reports/{id}", { params: { path: { id: currentReport.id } } })
-        .then(apiData)
-        .then((response) => response.data)
-        .catch((error: unknown) => {
-          reportError = error instanceof Error ? error : new Error();
-          return null;
-        })
-    : null;
+  let proposalError: Error | null = null;
+  const pendingProposalId = snapshot.case.pending_proposal_id;
+  const [report, awaitingProposal] = await Promise.all([
+    currentReport
+      ? apiClient
+          .GET("/api/v1/reports/{id}", { params: { path: { id: currentReport.id } } })
+          .then(apiData)
+          .then((response) => response.data)
+          .catch((error: unknown) => {
+            reportError = error instanceof Error ? error : new Error();
+            return null;
+          })
+      : null,
+    pendingProposalId
+      ? apiClient
+          .GET("/api/v1/proposals/{id}", { params: { path: { id: pendingProposalId } } })
+          .then(apiData)
+          .then((response) => response.data)
+          .catch((error: unknown) => {
+            proposalError = error instanceof Error ? error : new Error();
+            return null;
+          })
+      : null,
+  ]);
 
   return {
     snapshot: snapshotResponse.data,
     timeline: timeline.data,
     turns: turns.data,
+    proposals: proposals.data,
+    awaitingProposal,
+    proposalError,
     evidence: evidence.data,
     approvals: approvals.data,
     reviews: reviews.data,
@@ -198,6 +232,7 @@ async function loadCaseState(caseId: string, cursor?: HistoryCursor): Promise<Ca
     historyNext: {
       timeline: timeline.page.next,
       turns: turns.page.next,
+      proposals: proposals.page.next,
       evidence: evidence.page.next,
       approvals: approvals.page.next,
       reviews: reviews.page.next,
@@ -407,9 +442,7 @@ export function CaseDetailPage() {
   const latestRun = [...detail.snapshot.resolution_runs].sort(
     (a, b) => b.generation - a.generation,
   )[0];
-  const awaitingProposal = detail.snapshot.proposals.find(
-    (proposal) => proposal.status === "awaiting_human",
-  );
+  const awaitingProposal = detail.awaitingProposal;
   const selectedTarget = detail.targets.find((target) => target.id === incident.selected_target_id);
   const exactReport = detail.report;
   const complete = incident.status === "resolved" && exactReport !== null;
@@ -520,6 +553,7 @@ export function CaseDetailPage() {
         snapshot={detail.snapshot}
         timeline={detail.timeline}
         turns={detail.turns}
+        proposals={detail.proposals}
         evidence={detail.evidence}
         approvals={detail.approvals}
         reviews={detail.reviews}
@@ -887,6 +921,14 @@ export function CaseDetailPage() {
       ) : (
         <>
           {workflow}
+
+          {detail.proposalError && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {detail.proposalError.message || t("errors.unexpected")}
+              </AlertDescription>
+            </Alert>
+          )}
 
           {awaitingProposal && (
             <section className="space-y-3" aria-labelledby="case-required-decision">
