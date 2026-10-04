@@ -39,4 +39,6 @@ defmodule OpsondeWeb.API.V1.InventoryImportJSON do
       updated_at: row.updated_at
     }
   end
+
+  def row_summary(row), do: Map.take(row, Opsonde.Targets.InventoryImportRow.summary_fields())
 end

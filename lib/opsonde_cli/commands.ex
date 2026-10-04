@@ -83,6 +83,7 @@ defmodule OpsondeCLI.Commands do
     {"inventory", "list"} => Route.page("/inventory-imports"),
     {"inventory", "show"} => Route.new(:get, "/inventory-imports/:id", 1),
     {"inventory", "rows"} => Route.page("/inventory-imports/:id/rows", 1),
+    {"inventory", "row-summaries"} => Route.page("/inventory-imports/:id/rows/summaries", 1),
     {"inventory", "preview-manual"} =>
       Route.new(:post, "/inventory-imports/manual-preview", 0, "inventory_import"),
     {"inventory", "preview-provider"} =>

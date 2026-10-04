@@ -5,6 +5,9 @@ defmodule Opsonde.Targets.InventoryImportRow do
     authorizers: [Ash.Policy.Authorizer],
     data_layer: AshPostgres.DataLayer
 
+  @summary_fields ~w(id position identity_value disposition errors)a
+  def summary_fields, do: @summary_fields
+
   postgres do
     table "inventory_import_rows"
     repo Opsonde.Repo
@@ -29,6 +32,13 @@ defmodule Opsonde.Targets.InventoryImportRow do
       filter expr(inventory_import_id == ^arg(:inventory_import_id))
       pagination keyset?: true, required?: true, default_limit: 100, max_page_size: 500
       prepare build(sort: [position: :asc, id: :asc])
+    end
+
+    read :summary_page do
+      argument :inventory_import_id, :uuid, allow_nil?: false
+      filter expr(inventory_import_id == ^arg(:inventory_import_id))
+      pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
+      prepare build(select: @summary_fields, sort: [position: :asc, id: :asc])
     end
 
     create :create do
@@ -56,7 +66,7 @@ defmodule Opsonde.Targets.InventoryImportRow do
       forbid_if always()
     end
 
-    policy action([:read, :page_for_import]) do
+    policy action([:read, :page_for_import, :summary_page]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

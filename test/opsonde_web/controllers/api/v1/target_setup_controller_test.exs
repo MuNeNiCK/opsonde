@@ -75,6 +75,104 @@ defmodule OpsondeWeb.API.V1.TargetSetupControllerTest do
            |> get_in(["data", Access.at(0), "check", "status"]) == "passed"
   end
 
+  @tag inventory_row_summaries: true
+  test "preview display pages omit candidate data while keeping every row available for full apply",
+       context do
+    csv =
+      NimbleCSV.RFC4180.dump_to_iodata([
+        ~w(external_id identity_kind name kind type_id facts_json)
+        | for index <- 1..101 do
+            [
+              "asset-#{index}",
+              "custom-os",
+              "Host #{index}",
+              "host",
+              "custom-os",
+              Jason.encode!(%{"blob" => String.duplicate("x", 65_000)})
+            ]
+          end
+      ])
+      |> IO.iodata_to_binary()
+
+    preview =
+      post_json(
+        "/api/v1/inventory-imports/manual-preview",
+        %{"inventory_import" => %{"source" => "display-fixture", "csv" => csv}},
+        context.admin_token
+      )
+      |> json_response(201)
+      |> Map.fetch!("data")
+
+    assert preview["row_count"] == 101
+    assert preview["error_count"] == 0
+    id = preview["id"]
+    path = "/api/v1/inventory-imports/#{id}/rows/summaries"
+    first = get_json("#{path}?limit=100", context.viewer_token)
+    assert %{"data" => summaries, "page" => %{"next" => cursor}} = json_response(first, 200)
+    assert_operation_response(first)
+    assert Enum.map(summaries, & &1["position"]) == Enum.to_list(1..100)
+
+    assert Map.keys(hd(summaries)) |> Enum.sort() ==
+             ~w(disposition errors id identity_value position)
+
+    assert byte_size(first.resp_body) < 25_000
+    refute first.resp_body =~ "blob"
+
+    tail =
+      get_json("#{path}?limit=100&after=#{URI.encode_www_form(cursor)}", context.operator_token)
+
+    assert %{
+             "data" => [%{"position" => 101, "identity_value" => "asset-101"}],
+             "page" => %{"next" => nil}
+           } = json_response(tail, 200)
+
+    assert_operation_response(tail)
+
+    assert get_json(path, context.admin_token)
+           |> json_response(200)
+           |> Map.fetch!("data")
+           |> length() == 50
+
+    assert get_json(path, nil) |> json_response(401)
+
+    assert get_json("/api/v1/inventory-imports/not-a-uuid/rows/summaries", context.viewer_token)
+           |> json_response(422)
+
+    for query <- ["limit=101", "after=invalid"] do
+      assert %{"error" => %{"code" => "invalid_pagination"}} =
+               get_json("#{path}?#{query}", context.viewer_token) |> json_response(422)
+    end
+
+    applied =
+      post_json(
+        "/api/v1/inventory-imports/#{id}/apply",
+        %{
+          "inventory_import" => %{
+            "expected_revision" => preview["revision"],
+            "expected_digest" => preview["content_digest"]
+          }
+        },
+        context.admin_token
+      )
+      |> json_response(200)
+
+    assert applied["data"]["status"] == "applied"
+    assert applied["data"]["row_count"] == 101
+
+    assert %{"data" => targets, "page" => %{"next" => target_cursor}} =
+             get_json("/api/v1/targets/summaries?limit=100", context.viewer_token)
+             |> json_response(200)
+
+    assert length(targets) == 100
+
+    assert %{"data" => [_], "page" => %{"next" => nil}} =
+             get_json(
+               "/api/v1/targets/summaries?limit=100&after=#{URI.encode_www_form(target_cursor)}",
+               context.viewer_token
+             )
+             |> json_response(200)
+  end
+
   @tag provider_references: true
   test "Provider references page compatible metadata without loading stored configuration",
        context do

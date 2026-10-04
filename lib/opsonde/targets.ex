@@ -165,6 +165,10 @@ defmodule Opsonde.Targets do
         action: :page_for_import,
         args: [:inventory_import_id]
 
+      define :page_inventory_import_row_summaries,
+        action: :summary_page,
+        args: [:inventory_import_id]
+
       define :inventory_import_rows,
         action: :for_import,
         args: [:inventory_import_id]

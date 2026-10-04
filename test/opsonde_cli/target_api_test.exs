@@ -666,6 +666,74 @@ defmodule OpsondeCLI.TargetAPITest do
              ])
   end
 
+  @tag inventory_row_summaries_cli: true
+  test "CLI pages scoped preview display metadata and preserves storage failures", context do
+    csv =
+      "external_id,identity_kind,name,kind,type_id,facts_json\nasset-1,custom-os,Host 1,host,custom-os,{}\nasset-2,custom-os,Host 2,host,custom-os,{}\n"
+
+    preview = Targets.preview_manual_inventory!("display-source", csv, actor: context.admin)
+
+    other =
+      Targets.preview_manual_inventory!(
+        "another-source",
+        "external_id,identity_kind,name,kind,type_id,facts_json\nother,custom-os,Other,host,custom-os,{}\n",
+        actor: context.admin
+      )
+
+    args = ["inventory", "row-summaries", preview.id, "--limit", "1"]
+    first = capture_io(fn -> assert CLI.run(args, context.runtime) == 0 end) |> Jason.decode!()
+    assert [%{"position" => 1, "identity_value" => "asset-1"}] = first["data"]
+
+    assert [%{"position" => 2, "identity_value" => "asset-2"}] =
+             cli_data!(context, args ++ ["--after", first["page"]["next"]])
+
+    assert [%{"identity_value" => "other"}] =
+             cli_data!(context, ["inventory", "row-summaries", other.id])
+
+    expected = cli_data!(context, ["inventory", "row-summaries", preview.id])
+
+    for {column, required?} <- [
+          {"candidate", false},
+          {"provenance", false},
+          {"identity_value", true},
+          {"errors", true},
+          {"position", true}
+        ] do
+      Opsonde.Repo.query!(
+        "ALTER TABLE inventory_import_rows RENAME COLUMN #{column} TO unavailable_display_column"
+      )
+
+      try do
+        if required? do
+          assert {:error, %Ash.Error.Unknown{} = cause} =
+                   Targets.page_inventory_import_row_summaries(preview.id,
+                     actor: context.admin,
+                     page: [limit: 1]
+                   )
+
+          assert Exception.message(cause) =~ "does not exist"
+
+          capture_log(fn ->
+            error = capture_io(:stderr, fn -> assert CLI.run(args, context.runtime) == 4 end)
+            assert Jason.decode!(error)["error"]["code"] == "internal_error"
+          end)
+        else
+          assert cli_data!(context, ["inventory", "row-summaries", preview.id]) == expected
+
+          assert {:error, %Ash.Error.Unknown{}} =
+                   Targets.page_inventory_import_rows(preview.id,
+                     actor: context.admin,
+                     page: [limit: 1]
+                   )
+        end
+      after
+        Opsonde.Repo.query!(
+          "ALTER TABLE inventory_import_rows RENAME COLUMN unavailable_display_column TO #{column}"
+        )
+      end
+    end
+  end
+
   @tag provider_summaries_cli: true
   test "CLI pages current Provider management checks without retaining configuration", context do
     disabled =

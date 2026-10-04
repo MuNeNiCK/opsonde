@@ -57,6 +57,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory-imports/{id}/rows/summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List inventory preview row display metadata */
+        get: operations["listInventoryImportRowSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory-imports/{id}/apply": {
         parameters: {
             query?: never;
@@ -3171,6 +3188,10 @@ export interface components {
                 issuer: string;
             };
         };
+        InventoryImportRowSummaryPage: {
+            data: components["schemas"]["InventoryImportRowSummary"][];
+            page: components["schemas"]["Page"];
+        };
         Page: {
             next: string | null;
         };
@@ -3198,6 +3219,15 @@ export interface components {
             updated_at: string;
             /** Format: date-time */
             valid_until: string | null;
+        };
+        InventoryImportRowSummary: {
+            /** @enum {string} */
+            disposition: "create" | "update" | "error";
+            errors: string[];
+            /** Format: uuid */
+            id: string;
+            identity_value: string;
+            position: number;
         };
         HandoffCaseRequest: {
             case: {
@@ -4276,6 +4306,76 @@ export interface operations {
             };
             /** @description Resource state conflicts with the request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listInventoryImportRowSummaries: {
+        parameters: {
+            query?: {
+                limit?: number;
+                after?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Inventory row display page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryImportRowSummaryPage"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource was not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

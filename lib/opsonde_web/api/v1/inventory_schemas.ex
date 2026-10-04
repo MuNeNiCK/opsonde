@@ -11,6 +11,19 @@ defmodule OpsondeWeb.API.V1.InventorySchemas do
       "InventoryImportPage" => Schemas.page(ref("InventoryImport")),
       "InventoryImportRow" => inventory_import_row(),
       "InventoryImportRowPage" => Schemas.page(ref("InventoryImportRow")),
+      "InventoryImportRowSummary" =>
+        object(
+          %{
+            id: Schemas.uuid(),
+            position: %Schema{type: :integer, minimum: 1, maximum: 100_000},
+            disposition: enum(~w(create update error)),
+            identity_value: string(1, 500),
+            errors: %Schema{type: :array, maxItems: 20, items: string(1, 500)}
+          },
+          [:id, :position, :disposition, :identity_value, :errors],
+          false
+        ),
+      "InventoryImportRowSummaryPage" => Schemas.page(ref("InventoryImportRowSummary")),
       "ManualInventoryPreviewRequest" => manual_preview_request(),
       "ProviderInventoryPreviewRequest" => provider_preview_request(),
       "ApplyInventoryImportRequest" => apply_request()

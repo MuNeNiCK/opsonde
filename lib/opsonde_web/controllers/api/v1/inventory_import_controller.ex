@@ -79,6 +79,17 @@ defmodule OpsondeWeb.API.V1.InventoryImportController do
            InventorySchemas.ref("InventoryImportResponse")}
       ] ++ @write_errors
 
+  operation :row_summaries,
+    operation_id: "listInventoryImportRowSummaries",
+    summary: "List inventory preview row display metadata",
+    parameters: Schemas.id_parameter() ++ Schemas.pagination_parameters(),
+    responses:
+      [
+        ok:
+          {"Inventory row display page", "application/json",
+           InventorySchemas.ref("InventoryImportRowSummaryPage")}
+      ] ++ @show_errors
+
   operation :preview_provider,
     operation_id: "previewProviderInventory",
     summary: "Preview inventory from an Inventory Provider",
@@ -139,6 +150,17 @@ defmodule OpsondeWeb.API.V1.InventoryImportController do
   end
 
   def preview_manual(_conn, _params), do: {:error, :bad_request}
+
+  def row_summaries(conn, %{"id" => id} = params) do
+    with {:ok, page} <- Pagination.parse(params),
+         {:ok, rows} <-
+           Targets.page_inventory_import_row_summaries(id,
+             page: page,
+             actor: conn.assigns.current_user
+           ) do
+      Response.page(conn, rows, &InventoryImportJSON.row_summary/1)
+    end
+  end
 
   def preview_provider(
         conn,

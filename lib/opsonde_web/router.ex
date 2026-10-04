@@ -120,6 +120,7 @@ defmodule OpsondeWeb.Router do
     post "/inventory-imports/provider-preview", InventoryImportController, :preview_provider
     get "/inventory-imports/:id", InventoryImportController, :show
     get "/inventory-imports/:id/rows", InventoryImportController, :rows
+    get "/inventory-imports/:id/rows/summaries", InventoryImportController, :row_summaries
     post "/inventory-imports/:id/apply", InventoryImportController, :apply_import
 
     get "/authority-settings", AuthoritySettingController, :index

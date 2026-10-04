@@ -5786,6 +5786,25 @@
         ],
         "type": "object"
       },
+      "InventoryImportRowSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/InventoryImportRowSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "data",
+          "page"
+        ],
+        "type": "object"
+      },
       "Page": {
         "additionalProperties": false,
         "properties": {
@@ -5875,6 +5894,50 @@
           "facts",
           "valid_until",
           "active"
+        ],
+        "type": "object"
+      },
+      "InventoryImportRowSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": [
+              "create",
+              "update",
+              "error"
+            ],
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "identity_value": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "position": {
+            "maximum": 100000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "disposition",
+          "identity_value",
+          "errors"
         ],
         "type": "object"
       },
@@ -9296,6 +9359,112 @@
         "summary": "Create a Target",
         "tags": [
           "Targets"
+        ]
+      }
+    },
+    "/api/v1/inventory-imports/{id}/rows/summaries": {
+      "get": {
+        "callbacks": {},
+        "operationId": "listInventoryImportRowSummaries",
+        "parameters": [
+          {
+            "description": "",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryImportRowSummaryPage"
+                }
+              }
+            },
+            "description": "Inventory row display page"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource was not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "List inventory preview row display metadata",
+        "tags": [
+          "Inventory imports"
         ]
       }
     },
