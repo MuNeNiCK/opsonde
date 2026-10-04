@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -135,6 +135,404 @@ const setting: components["schemas"]["ReportSetting"] = {
   revision: 1,
   updated_at: timestamp,
 };
+
+function reportCase(index: number): components["schemas"]["CaseSummary"] {
+  return {
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    title: `Completed Case ${index}`,
+    status: "resolved",
+    revision: 7,
+    report_language: "en",
+    initial_target_id: null,
+    selected_target_id: null,
+    inserted_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+function reportEditor(accountId = "operator-1") {
+  return (
+    <AuthenticationContext.Provider
+      value={{ account: { id: accountId, role: "operator" } } as Authentication}
+    >
+      <MemoryRouter>
+        <ReportPage />
+      </MemoryRouter>
+    </AuthenticationContext.Provider>
+  );
+}
+
+function showReportEditor() {
+  return render(reportEditor());
+}
+
+test("Report generation reaches Case 51, retains the off-page selection and rechecks its exact revision", async () => {
+  await i18n.changeLanguage("en");
+  const reads: URL[] = [];
+  const submissions: unknown[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/v1/cases/summaries") {
+      reads.push(url);
+      return Response.json({
+        data:
+          url.searchParams.has("after") || url.searchParams.has("ids")
+            ? [reportCase(51)]
+            : Array.from({ length: 50 }, (_, index) => reportCase(index + 1)),
+        page: {
+          next: url.searchParams.has("after") || url.searchParams.has("ids") ? null : "cases-tail",
+        },
+      });
+    }
+    if (request.method === "POST") {
+      expect(url.pathname).toBe(`/api/v1/cases/${reportCase(51).id}/reports`);
+      submissions.push(await request.json());
+      return Response.json(
+        { data: { ...summary, case_id: reportCase(51).id, case_revision: 7 } },
+        { status: 201 },
+      );
+    }
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  await screen.findByText("Report history");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  const group = await screen.findByRole("group", { name: "Completed Case" });
+  await waitFor(() =>
+    expect(within(group).getByRole("combobox").hasAttribute("disabled")).toBe(false),
+  );
+  await user.click(within(group).getByRole("button", { name: "Next" }));
+  await waitFor(() =>
+    expect(within(group).getByRole("combobox").hasAttribute("disabled")).toBe(false),
+  );
+  await user.click(within(group).getByRole("combobox"));
+  await user.click(await screen.findByRole("option", { name: "Completed Case 51 · en · r7" }));
+  await user.click(within(group).getByRole("button", { name: "Previous" }));
+  await waitFor(() =>
+    expect(within(group).getByRole("combobox").textContent).toContain("Completed Case 51"),
+  );
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await waitFor(() => expect(submissions).toEqual([{ report: { expected_case_revision: 7 } }]));
+  expect(
+    reads.map((url) => [
+      url.searchParams.get("limit"),
+      url.searchParams.get("after"),
+      url.searchParams.get("ids"),
+    ]),
+  ).toEqual([
+    ["50", null, null],
+    ["50", "cases-tail", null],
+    ["50", null, null],
+    ["1", null, reportCase(51).id],
+  ]);
+});
+
+test("a lost generation response survives page reload and recovers by Case revision without another POST", async () => {
+  await i18n.changeLanguage("en");
+  const requests: string[] = [];
+  let recovered = false;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    requests.push(`${request.method} ${url.pathname}`);
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname === `/api/v1/cases/${reportCase(51).id}/reports/7`)
+      return recovered
+        ? Response.json({ data: { ...summary, case_id: reportCase(51).id, case_revision: 7 } })
+        : Response.json({ error: { message: "Receipt not yet available" } }, { status: 404 });
+    if (request.method === "POST")
+      return Response.json(
+        { error: { message: "Response lost after generation" } },
+        { status: 503 },
+      );
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  await screen.findByText("Report history");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  const choice = await screen.findByRole("combobox", { name: "Completed Case" });
+  await waitFor(() => expect(choice.hasAttribute("disabled")).toBe(false));
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Completed Case 51 · en · r7" }));
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  expect(
+    await screen.findByText("Could not confirm report generation. Check the result."),
+  ).toBeDefined();
+  expect(
+    (screen.getByRole("button", { name: "Generate report" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(requests.filter((item) => item.startsWith("POST"))).toEqual([
+    `POST /api/v1/cases/${reportCase(51).id}/reports`,
+  ]);
+  expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(1);
+  cleanup();
+  recovered = true;
+  showReportEditor();
+  await screen.findByText("Report history");
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await user.click(await screen.findByRole("button", { name: "Check result" }));
+  await waitFor(() =>
+    expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(2),
+  );
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Completed Case" })).toBeNull());
+  expect(requests.filter((item) => item.startsWith("POST"))).toHaveLength(1);
+});
+
+async function chooseCompletedCase() {
+  await screen.findByText("Report history");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  const choice = await screen.findByRole("combobox", { name: "Completed Case" });
+  await waitFor(() => expect(choice.hasAttribute("disabled")).toBe(false));
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Completed Case 51 · en · r7" }));
+  return user;
+}
+
+test.each(["missing", "running", "changed", "failed", "foreign"])(
+  "generation recheck blocks a %s Case without posting",
+  async (condition) => {
+    await i18n.changeLanguage("en");
+    const posted: string[] = [];
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      if (request.method === "POST") {
+        posted.push(url.pathname);
+        return Response.json({ data: summary }, { status: 201 });
+      }
+      if (url.pathname === "/api/v1/cases/summaries") {
+        if (url.searchParams.has("ids")) {
+          if (condition === "failed")
+            return Response.json({ error: { message: "Recheck unavailable" } }, { status: 500 });
+          return Response.json({
+            data:
+              condition === "missing"
+                ? []
+                : [
+                    {
+                      ...reportCase(condition === "foreign" ? 52 : 51),
+                      status: condition === "running" ? "running" : "resolved",
+                      revision: condition === "changed" ? 8 : 7,
+                    },
+                  ],
+            page: { next: null },
+          });
+        }
+        return Response.json({ data: [reportCase(51)], page: { next: null } });
+      }
+      if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+      return Response.json({ data: [], page: { next: null } });
+    });
+    showReportEditor();
+    const user = await chooseCompletedCase();
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await screen.findByText(
+      condition === "failed"
+        ? "Recheck unavailable"
+        : i18n.t(condition === "changed" ? "cases.stateChanged" : "reports.caseUnavailable"),
+    );
+    expect(posted).toEqual([]);
+  },
+);
+
+test("generation sends nothing when its request identity cannot be saved", async () => {
+  await i18n.changeLanguage("en");
+  const posted: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      posted.push(url.pathname);
+      return Response.json({ data: summary });
+    }
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const user = await chooseCompletedCase();
+  const saving = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => {
+    throw new DOMException("Storage unavailable", "QuotaExceededError");
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await screen.findByText("Could not save the request. No generation was submitted.");
+    expect(posted).toEqual([]);
+  } finally {
+    saving.mockRestore();
+  }
+});
+
+test.each(["closing", "changing accounts"])(
+  "%s during a generation recheck aborts the read and cannot post afterward",
+  async (interruption) => {
+    await i18n.changeLanguage("en");
+    let checking: Request | undefined;
+    let finishCheck: ((response: Response) => void) | undefined;
+    const posted: string[] = [];
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      if (request.method === "POST") {
+        posted.push(url.pathname);
+        return Response.json({ data: summary });
+      }
+      if (url.pathname === "/api/v1/cases/summaries") {
+        if (url.searchParams.has("ids")) {
+          checking = request;
+          return new Promise<Response>((resolve) => {
+            finishCheck = resolve;
+          });
+        }
+        return Response.json({ data: [reportCase(51)], page: { next: null } });
+      }
+      if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+      return Response.json({ data: [], page: { next: null } });
+    });
+    const view = showReportEditor();
+    const user = await chooseCompletedCase();
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await waitFor(() => expect(checking).toBeDefined());
+    if (interruption === "closing")
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+    else view.rerender(reportEditor("operator-2"));
+    expect(checking?.signal.aborted).toBe(true);
+    await act(async () => {
+      finishCheck?.(Response.json({ data: [reportCase(51)], page: { next: null } }));
+    });
+    expect(posted).toEqual([]);
+  },
+);
+
+test("a rejected generation reports its error and does not retain a pending receipt or retry automatically", async () => {
+  await i18n.changeLanguage("en");
+  const requests: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    requests.push(`${request.method} ${url.pathname}`);
+    if (request.method === "POST")
+      return Response.json({ error: { message: "Generation rejected" } }, { status: 409 });
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const user = await chooseCompletedCase();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await screen.findByText("Generation rejected");
+  expect(
+    (screen.getByRole("button", { name: "Generate report" }) as HTMLButtonElement).disabled,
+  ).toBe(false);
+  expect(screen.queryByRole("button", { name: "Check result" })).toBeNull();
+  expect(requests.filter((item) => item.startsWith("POST"))).toHaveLength(1);
+  expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(0);
+});
+
+test("a rejection arriving after the form closes releases only its own saved generation request", async () => {
+  await i18n.changeLanguage("en");
+  let finishPost: ((response: Response) => void) | undefined;
+  const posted: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      posted.push(url.pathname);
+      return new Promise<Response>((resolve) => {
+        finishPost = resolve;
+      });
+    }
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const user = await chooseCompletedCase();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await waitFor(() => expect(finishPost).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await act(async () => {
+    finishPost?.(Response.json({ error: { message: "Generation rejected" } }, { status: 409 }));
+  });
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await screen.findByRole("group", { name: "Completed Case" });
+  expect(screen.queryByRole("button", { name: "Check result" })).toBeNull();
+  expect(posted).toHaveLength(1);
+});
+
+test("accepted generation keeps its receipt when the list refresh fails and checks it without reposting", async () => {
+  await i18n.changeLanguage("en");
+  const requests: string[] = [];
+  let reportReads = 0;
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    requests.push(`${request.method} ${url.pathname}`);
+    const receipt = { ...summary, case_id: reportCase(51).id, case_revision: 7 };
+    if (request.method === "POST") return Response.json({ data: receipt }, { status: 201 });
+    if (url.pathname === "/api/v1/cases/summaries")
+      return Response.json({ data: [reportCase(51)], page: { next: null } });
+    if (url.pathname.endsWith("/reports/7")) return Response.json({ data: receipt });
+    if (url.pathname === "/api/v1/reports") {
+      reportReads++;
+      if (reportReads === 2)
+        return Response.json({ error: { message: "Accepted refresh failed" } }, { status: 500 });
+    }
+    if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+    return Response.json({ data: [], page: { next: null } });
+  });
+  showReportEditor();
+  const user = await chooseCompletedCase();
+  await user.click(screen.getByRole("button", { name: "Generate report" }));
+  await screen.findByText("Could not confirm report generation. Check the result.");
+  expect(requests.filter((item) => item.startsWith("POST"))).toHaveLength(1);
+  expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Check result" }));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Completed Case" })).toBeNull());
+  expect(requests.filter((item) => item.startsWith("POST"))).toHaveLength(1);
+  expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(1);
+});
+
+test.each(["foreign", "failed"])(
+  "a %s generation receipt stays unknown and cannot enable another POST",
+  async (condition) => {
+    await i18n.changeLanguage("en");
+    const requests: string[] = [];
+    wire.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
+      if (request.method === "POST")
+        return Response.json({ error: { message: "Lost generation response" } }, { status: 503 });
+      if (url.pathname === "/api/v1/cases/summaries")
+        return Response.json({ data: [reportCase(51)], page: { next: null } });
+      if (url.pathname.endsWith("/reports/7"))
+        return condition === "foreign"
+          ? Response.json({ data: { ...summary, case_id: reportCase(52).id, case_revision: 7 } })
+          : Response.json({ error: { message: "Receipt storage unavailable" } }, { status: 500 });
+      if (url.pathname === "/api/v1/report-setting") return Response.json({ data: setting });
+      return Response.json({ data: [], page: { next: null } });
+    });
+    showReportEditor();
+    const user = await chooseCompletedCase();
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await screen.findByText("Could not confirm report generation. Check the result.");
+    await user.click(screen.getByRole("button", { name: "Check result" }));
+    await waitFor(() =>
+      expect(requests.filter((item) => item.endsWith("/reports/7"))).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Check result" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    expect(
+      (screen.getByRole("button", { name: "Generate report" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(requests.filter((item) => item.startsWith("POST"))).toHaveLength(1);
+  },
+);
 
 afterEach(() => {
   cleanup();

@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { NotificationProviderSection } from "@/providers/notification-section";
 import { CaseReportDocument } from "@/reports/case-document";
+import { ReportGenerateForm } from "@/reports/generate-form";
 
 type CaseRecord = components["schemas"]["Case"];
 type Delivery = components["schemas"]["Delivery"];
@@ -161,21 +162,6 @@ export function ReportPage() {
     }
   }
 
-  async function generate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const caseId = formValue(form, "case_id");
-    const incident = snapshot?.cases.find((item) => item.id === caseId);
-    if (!incident) return;
-    const succeeded = await mutate("generate", () =>
-      apiClient.POST("/api/v1/cases/{case_id}/reports", {
-        params: { path: { case_id: incident.id } },
-        body: { report: { expected_case_revision: incident.revision } },
-      }),
-    );
-    if (succeeded) setPanel(null);
-  }
-
   async function deliver(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -259,7 +245,6 @@ export function ReportPage() {
       </div>
     );
   }
-  const reportable = snapshot.cases.filter((item) => item.status !== "running");
   const notificationProviders = snapshot.providers.filter(
     (provider) =>
       provider.kind === "notification" &&
@@ -389,33 +374,7 @@ export function ReportPage() {
       {canAct && (panel === "generate" || panel === "deliver") && (
         <section id="report-action">
           {panel === "generate" ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("reports.generate")}</CardTitle>
-                <CardDescription>{t("reports.generateDescription")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="space-y-4" onSubmit={generate}>
-                  <div className="space-y-2">
-                    <Label htmlFor="report-case">{t("reports.case")}</Label>
-                    <FormSelect
-                      id="report-case"
-                      name="case_id"
-                      required
-                      placeholder={t("reports.chooseCase")}
-                      options={reportable.map((item) => ({
-                        value: item.id,
-                        label: `${item.title} · ${item.report_language} · r${item.revision}`,
-                      }))}
-                    />
-                  </div>
-                  <Button type="submit" disabled={pending !== null || reportable.length === 0}>
-                    {pending === "generate" && <Spinner />}
-                    {t("reports.generate")}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+            <ReportGenerateForm onGenerated={refresh} onClose={() => setPanel(null)} />
           ) : (
             <Card>
               <CardHeader>
