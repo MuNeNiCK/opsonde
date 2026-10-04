@@ -4,6 +4,34 @@ defmodule Opsonde.Cases.Evidence.Projection do
   alias Opsonde.Cases
   alias Opsonde.Providers.AI
 
+  def with_condition_evidence(case_id, conditions, cited_evidence, context_evidence) do
+    available_ids = MapSet.new(cited_evidence ++ context_evidence, & &1.id)
+
+    conditions
+    |> Enum.flat_map(&(&1.recovery_evidence_ids ++ &1.failed_observation_ids))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(available_ids, &1))
+    |> Enum.reduce_while({:ok, []}, fn id, {:ok, loaded} ->
+      case Cases.get_evidence(id, authorize?: false) do
+        {:ok, %{case_id: ^case_id} = item} ->
+          {:cont, {:ok, [project_item(item) | loaded]}}
+
+        {:error, %Ash.Error.Unknown{}} = error ->
+          {:halt, error}
+
+        {:error, %Ash.Error.Framework{}} = error ->
+          {:halt, error}
+
+        _unavailable ->
+          {:halt, {:error, "Reviewer Condition Evidence is unavailable"}}
+      end
+    end)
+    |> case do
+      {:ok, required} -> {:ok, Enum.reverse(required) ++ context_evidence}
+      error -> error
+    end
+  end
+
   def bound_review_context(request) do
     required_ids =
       MapSet.new(
@@ -71,15 +99,17 @@ defmodule Opsonde.Cases.Evidence.Projection do
     |> Enum.uniq_by(&context_identity/1)
     |> Enum.take(32)
     |> Enum.sort_by(& &1.observed_at, {:desc, DateTime})
-    |> Enum.map(fn item ->
-      %AI.Evidence{
-        id: item.id,
-        kind: item.kind,
-        target_id: item.content["target_id"],
-        observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
-        content: item.content
-      }
-    end)
+    |> Enum.map(&project_item/1)
+  end
+
+  defp project_item(item) do
+    %AI.Evidence{
+      id: item.id,
+      kind: item.kind,
+      target_id: item.content["target_id"],
+      observed_at_us: DateTime.to_unix(item.observed_at, :microsecond),
+      content: item.content
+    }
   end
 
   def file_contents(incident, run, evidence) do

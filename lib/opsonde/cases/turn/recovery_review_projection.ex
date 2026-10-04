@@ -24,6 +24,13 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewProjection do
          {:ok, context_evidence} <-
            EvidenceProjection.recent(incident.id, Enum.map(cited_evidence, & &1.id)),
          {:ok, context_evidence} <-
+           EvidenceProjection.with_condition_evidence(
+             incident.id,
+             conditions,
+             cited_evidence,
+             context_evidence
+           ),
+         {:ok, context_evidence} <-
            EvidenceProjection.file_contents(incident, run, context_evidence) do
       intent = turn.result["intent"]
 

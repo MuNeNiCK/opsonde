@@ -36,6 +36,13 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
              Enum.map(evidence, & &1.id)
            ),
          {:ok, context_evidence} <-
+           EvidenceProjection.with_condition_evidence(
+             incident.id,
+             conditions,
+             evidence,
+             context_evidence
+           ),
+         {:ok, context_evidence} <-
            EvidenceProjection.file_contents(incident, run, context_evidence),
          {:ok, target_relations} <- target_relations(incident, proposal),
          {:ok, target} <- current_target(proposal),
@@ -131,10 +138,8 @@ defmodule Opsonde.Cases.Proposal.ReviewProjection do
   end
 
   defp recovery_evidence_ids(incident, run, target, visible, condition_ids) do
-    visible_ids = Enum.map(visible, & &1.id)
-
     if incident.trigger_kind == :signal do
-      {:ok, Enum.filter(condition_ids, &(&1 in visible_ids))}
+      {:ok, condition_ids}
     else
       Enum.reduce_while(visible, {:ok, []}, fn projected, {:ok, loaded} ->
         case Cases.get_evidence(projected.id, authorize?: false) do

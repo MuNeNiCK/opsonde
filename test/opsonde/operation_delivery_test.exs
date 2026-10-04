@@ -5154,6 +5154,206 @@ defmodule Opsonde.OperationDeliveryTest do
     assert Enum.any?(refreshed.observation_tools, &(&1.access_method_id == context.method.id))
   end
 
+  test "both Reviewers receive required Condition observations outside recent history", context do
+    configure_mode!(context.admin, :auto)
+    enable_signal_automation!(context.admin)
+
+    {incident, run, proposal, _signal_provider} =
+      authorized_proposal!("review-required-history", context,
+        trigger_kind: :signal,
+        request_kind: :observation,
+        recover_before_proposal: true
+      )
+
+    failed_operation = Cases.accept_operation!(proposal.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(failed_operation.id,
+               target_invocation: invocation({:error, :failed, "Earlier observation timed out"})
+             )
+
+    failed = operation_evidence_record(failed_operation.id)
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    retry_proposal =
+      complete_signal_proposal!(
+        turn,
+        signal_proposal_intent(failed.id, context, :observation),
+        incident,
+        context
+      )
+
+    healthy_operation = Cases.accept_operation!(retry_proposal.id, authorize?: false)
+    assert :ok = deliver_observation(healthy_operation, %{"active_state" => "active"})
+    healthy = operation_evidence_record(healthy_operation.id)
+    unrelated_target_id = Ecto.UUID.generate()
+
+    for index <- 1..101 do
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "review-required-history-#{index}",
+        "observation",
+        "fixture",
+        "unrelated-#{index}",
+        %{
+          "target_id" => if(index <= 40, do: context.target.id, else: unrelated_target_id),
+          "facts" => %{"sample" => index}
+        },
+        DateTime.utc_now(),
+        authorize?: false
+      )
+    end
+
+    refute Enum.any?(
+             Cases.review_context_evidence!(incident.id, authorize?: false),
+             &(&1.id == failed.id)
+           )
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+    {:ok, [condition]} = ConditionContext.current_conditions(incident)
+
+    repair =
+      complete_signal_proposal!(
+        turn,
+        signal_proposal_intent(healthy.id, context)
+        |> Map.put("affected_conditions", [
+          %{"condition_id" => condition.id, "revision" => condition.revision}
+        ]),
+        incident,
+        context
+      )
+
+    assert repair.status == :reviewing
+
+    with_projection_read_fault("evidences", "kind", "text", failed.id, fn ->
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               Opsonde.Cases.Proposal.ReviewDelivery.run(repair.id,
+                 ai_invocation: %{
+                   respond: fn _ -> flunk("proposal review ran without required evidence") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+    end)
+
+    assert Cases.get_proposal!(repair.id, authorize?: false).status == :reviewing
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 0
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(repair.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _ ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :rejected,
+                      purpose_assessment: :remediation,
+                      reason: "The service is already active; a restart is unnecessary",
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review, _, proposal_request}
+    assert healthy.id in proposal_request.recovery_evidence_ids
+    failed_context = Enum.find(proposal_request.context_evidence, &(&1.id == failed.id))
+    assert failed_context, "declared failed observation must reach the proposal Reviewer"
+    assert failed_context.content == failed.content
+
+    assert Cases.get_proposal!(repair.id, authorize?: false).status == :rejected
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(repair.id,
+               ai_invocation: %{respond: fn _ -> flunk("known proposal review was resent") end}
+             )
+
+    pending = Cases.get_case!(incident.id, authorize?: false).pending_intent
+    turn = Cases.get_turn!(pending["turn_id"], authorize?: false)
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               target_invocation:
+                 invocation({:ok, %Target.Capabilities{observations: [], effects: []}}),
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   [condition] = request.conditions
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: %AI.RecoveryConclusion{
+                        reason: "The fresh observation reports an active service",
+                        evidence_ids: [healthy.id],
+                        condition_claims: [
+                          %{
+                            "condition_id" => condition.id,
+                            "revision" => condition.revision,
+                            "evidence_id" => healthy.id,
+                            "reason" => "Service state is active"
+                          }
+                        ]
+                      },
+                      usage: %AI.Usage{input_tokens: 3, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    completed = Cases.get_turn!(turn.id, authorize?: false)
+    assert completed.result["outcome"] == "decision", inspect(completed.result)
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+
+    with_projection_read_fault("evidences", "kind", "text", failed.id, fn ->
+      assert {:error, %Ash.Error.Unknown{} = error} =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   respond: fn _ -> flunk("recovery review ran without required evidence") end
+                 }
+               )
+
+      assert Exception.message(error) =~ "Projection record temporarily unavailable"
+    end)
+
+    assert Cases.get_case!(incident.id, authorize?: false).status == :running
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 11
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn _request ->
+                   {:ok,
+                    %AI.ReviewDecision{
+                      verdict: :approved,
+                      purpose_assessment: :remediation,
+                      reason: "The newer direct observation supports recovery",
+                      usage: %AI.Usage{input_tokens: 4, output_tokens: 2}
+                    }}
+                 end
+               }
+             )
+
+    assert_receive {:review_recovery, _, request}
+    assert [%AI.Condition{failed_observation_ids: [failed_id]}] = request.conditions
+    assert failed_id == failed.id
+    item = Enum.find(request.context_evidence, &(&1.id == failed.id))
+    assert item, "declared failed observation must reach the independent Reviewer"
+    assert item.content == failed.content
+    assert Enum.any?(request.cited_evidence, &(&1.id == healthy.id))
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :resolved
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 17
+
+    assert :ok =
+             Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+               ai_invocation: %{respond: fn _ -> flunk("known review was resent") end}
+             )
+  end
+
   test "Resolver receives a current failed observation after Signal recovery", context do
     enable_signal_automation!(context.admin)
 
