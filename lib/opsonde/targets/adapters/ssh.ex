@@ -132,7 +132,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
   def effect(state, %{operation: "shell.execute"} = request, invocation) do
     with {:ok, script} <- shell_script(request, @effect_capability),
          result <-
-           Transport.shell(state, request.connection.endpoint, script, cancelled?(invocation)) do
+           Transport.shell(state, request.connection.endpoint, script, invocation) do
       effect_result(result)
     end
   end
@@ -167,7 +167,7 @@ defmodule Opsonde.Targets.Adapters.SSH do
   def effect(state, request, invocation) do
     with {:ok, command} <- effect_command(request, @effect_capability),
          result <-
-           Transport.exec(state, request.connection.endpoint, command, cancelled?(invocation)) do
+           Transport.exec(state, request.connection.endpoint, command, invocation) do
       effect_result(result)
     end
   end
@@ -216,9 +216,6 @@ defmodule Opsonde.Targets.Adapters.SSH do
   defp effect_result({:error, :cancelled, message}), do: {:error, :cancelled, message}
   defp effect_result({:error, _category, message}), do: {:error, :failed, message}
   defp effect_result({:error, _cause} = error), do: error
-
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 
   # Shared SSH request contract used by product profiles in addition to this
   # generic Method. Profiles may add operations, but reuse the same raw request.

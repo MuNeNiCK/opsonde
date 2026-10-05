@@ -98,13 +98,13 @@ defmodule Opsonde.Transports.SSH.Subsystem do
   end
 
   defp step(state, %{"op" => "send_eof"}) do
-    with :ok <- native(:ssh_connection.send_eof(state.channel.connection, state.channel.id)),
+    with :ok <- SSH.channel_eof(state.channel),
          do: {:ok, %{"op" => "send_eof"}, state}
   end
 
   defp step(state, %{"op" => "close"}) do
     with :ok <- inline_budget(state),
-         :ok <- native(:ssh_connection.close(state.channel.connection, state.channel.id)),
+         :ok <- SSH.channel_close(state.channel),
          do:
            {:ok, %{"op" => "close", "unconsumed" => buffered(state)},
             %{state | buffers: %{0 => <<>>, 1 => <<>>}}}
@@ -322,11 +322,6 @@ defmodule Opsonde.Transports.SSH.Subsystem do
   defp extract(_, :eof, false), do: :more
   defp extract(_, _, true), do: :incomplete
   defp extract(_, _, false), do: :more
-  defp native(:ok), do: :ok
-
-  defp native(_),
-    do: {:error, :disconnected_after_dispatch, "SSH subsystem channel control failed"}
-
   defp report(state), do: SSH.channel_progress(state.channel, progress(state))
 
   defp progress(state) do

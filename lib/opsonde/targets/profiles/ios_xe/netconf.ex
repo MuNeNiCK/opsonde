@@ -57,7 +57,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
              state,
              request.connection.endpoint,
              operation,
-             cancelled?(invocation)
+             invocation
            ) do
       IOSXE.observation(facts)
     else
@@ -96,7 +96,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
         state,
         request.connection.endpoint,
         operation,
-        cancelled?(invocation)
+        invocation
       )
     else
       {:error, category, message} -> IOSXE.effect_error(category, message)
@@ -114,7 +114,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
              state,
              request.connection.endpoint,
              {:interface, name},
-             cancelled?(invocation)
+             invocation
            ) do
       IOSXE.verification(facts, expected)
     else
@@ -123,8 +123,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     end
   end
 
-  defp observe_operation(state, endpoint, :system, cancelled?) do
-    with {:ok, root} <- request(state, endpoint, netconf_system_filter(), cancelled?),
+  defp observe_operation(state, endpoint, :system, invocation) do
+    with {:ok, root} <- request(state, endpoint, netconf_system_filter(), invocation),
          {:ok, data} <- reply_data(root),
          {:ok, system_element} <- child(data, "native"),
          {:ok, hostname} <- child_text(system_element, "hostname"),
@@ -133,8 +133,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     end
   end
 
-  defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
-    with {:ok, root} <- request(state, endpoint, netconf_interface_filter(name), cancelled?),
+  defp observe_operation(state, endpoint, {:interface, name}, invocation) do
+    with {:ok, root} <- request(state, endpoint, netconf_interface_filter(name), invocation),
          {:ok, data} <- reply_data(root),
          {:ok, configuration} <- data |> child("interfaces") |> interface(name),
          {:ok, operational} <- data |> child("interfaces-state") |> interface(name) do
@@ -150,10 +150,10 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     end
   end
 
-  defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
-    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
+  defp apply_operation(state, endpoint, {:description, name, expected, desired}, invocation) do
+    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
-         {:ok, _root} <- edit_interface(state, endpoint, name, "description", desired, cancelled?) do
+         {:ok, _root} <- edit_interface(state, endpoint, name, "description", desired, invocation) do
       IOSXE.applied(%{"interface" => name, "description" => desired})
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
@@ -162,11 +162,11 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     end
   end
 
-  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
-    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
+  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, invocation) do
+    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, _root} <-
-           edit_interface(state, endpoint, name, "enabled", to_string(desired), cancelled?) do
+           edit_interface(state, endpoint, name, "enabled", to_string(desired), invocation) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired})
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
@@ -174,12 +174,12 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
     end
   end
 
-  defp edit_interface(state, endpoint, name, field, value, cancelled?) do
-    request(state, endpoint, netconf_interface_edit(name, field, value), cancelled?)
+  defp edit_interface(state, endpoint, name, field, value, invocation) do
+    request(state, endpoint, netconf_interface_edit(name, field, value), invocation)
   end
 
-  defp request(state, endpoint, body, cancelled?) do
-    case NETCONF.execute(state, endpoint, body, cancelled?) do
+  defp request(state, endpoint, body, invocation) do
+    case NETCONF.execute(state, endpoint, body, invocation) do
       {:ok, %NETCONF.Result{root: root}} -> {:ok, root}
       error -> error
     end
@@ -260,8 +260,6 @@ defmodule Opsonde.Targets.Profiles.IOSXE.NETCONF do
   end
 
   defp local_name(name), do: name |> String.split(":") |> List.last()
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 
   defp netconf_system_filter do
     """

@@ -70,7 +70,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     with {:ok, commands} <- method_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &ssh_readonly_command?/1),
          {:ok, output} <-
-           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
+           run_shell(state, request.connection.endpoint, script(commands), invocation) do
       IOSXE.observation(%{"output" => output}, [evidence(output)])
     else
       false ->
@@ -91,7 +91,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
              state,
              request.connection.endpoint,
              operation,
-             cancelled?(invocation)
+             invocation
            ) do
       IOSXE.observation(facts, [evidence(output)])
     else
@@ -140,7 +140,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   def effect(%Transport.Config{} = state, %{capability: @method_effect} = request, invocation) do
     with {:ok, commands} <- method_commands(request, "cli.execute"),
          {:ok, output} <-
-           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)),
+           run_shell(state, request.connection.endpoint, script(commands), invocation),
          :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{"output" => output})
     else
@@ -155,7 +155,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
         state,
         request.connection.endpoint,
         operation,
-        cancelled?(invocation)
+        invocation
       )
     else
       {:error, category, message} -> IOSXE.effect_error(category, message)
@@ -175,7 +175,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     with {:ok, commands} <- method_commands(request, "cli.observe"),
          true <- Enum.all?(commands, &ssh_readonly_command?/1),
          {:ok, output} <-
-           run_shell(state, request.connection.endpoint, script(commands), cancelled?(invocation)) do
+           run_shell(state, request.connection.endpoint, script(commands), invocation) do
       IOSXE.verification(%{"output" => output}, request.expected, [evidence(output)])
     else
       false -> {:error, :failed, "CLI verification must be non-mutating"}
@@ -191,7 +191,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
              state,
              request.connection.endpoint,
              {:interface, name},
-             cancelled?(invocation)
+             invocation
            ) do
       IOSXE.verification(facts, expected, [evidence(output)])
     else
@@ -200,32 +200,32 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     end
   end
 
-  defp observe_operation(state, endpoint, :system, cancelled?) do
+  defp observe_operation(state, endpoint, :system, invocation) do
     with {:ok, output} <-
-           run_shell(state, endpoint, script(ssh_system_commands()), cancelled?),
+           run_shell(state, endpoint, script(ssh_system_commands()), invocation),
          {:ok, facts} <- ssh_system_facts(output) do
       {:ok, facts, output}
     end
   end
 
-  defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
+  defp observe_operation(state, endpoint, {:interface, name}, invocation) do
     with {:ok, output} <-
-           run_shell(state, endpoint, script(ssh_interface_commands(name)), cancelled?),
+           run_shell(state, endpoint, script(ssh_interface_commands(name)), invocation),
          {:ok, facts} <- ssh_interface_facts(name, output) do
       {:ok, facts, output}
     end
   end
 
-  defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
+  defp apply_operation(state, endpoint, {:description, name, expected, desired}, invocation) do
     with {:ok, facts, _output} <-
-           observe_operation(state, endpoint, {:interface, name}, cancelled?),
+           observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
          {:ok, output} <-
            run_shell(
              state,
              endpoint,
              script(ssh_description_commands(name, desired)),
-             cancelled?
+             invocation
            ),
          :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{
@@ -240,16 +240,16 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     end
   end
 
-  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
+  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, invocation) do
     with {:ok, facts, _output} <-
-           observe_operation(state, endpoint, {:interface, name}, cancelled?),
+           observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, output} <-
            run_shell(
              state,
              endpoint,
              script(ssh_admin_state_commands(name, desired)),
-             cancelled?
+             invocation
            ),
          :ok <- ssh_command_accepted?(output) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired, "evidence" => evidence(output)})
@@ -260,8 +260,8 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
     end
   end
 
-  defp run_shell(state, endpoint, script, cancelled?) do
-    case Transport.shell(state, endpoint, script, cancelled?) do
+  defp run_shell(state, endpoint, script, invocation) do
+    case Transport.shell(state, endpoint, script, invocation) do
       {:ok, %Transport.ShellResult{output: output}} -> {:ok, normalize(output)}
       {:error, category, message} -> {:error, category, message}
       {:error, _cause} = error -> error
@@ -351,8 +351,6 @@ defmodule Opsonde.Targets.Profiles.IOSXE.SSH do
   end
 
   defp evidence(output), do: %{"transport" => "ssh-cli", "output" => output}
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 
   # IOS XE CLI vocabulary and response interpretation belong to this Method.
   defp ssh_system_commands do

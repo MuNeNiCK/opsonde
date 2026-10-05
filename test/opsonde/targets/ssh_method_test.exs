@@ -195,15 +195,21 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert {:error, :timeout_after_dispatch, _message} =
              Transport.exec(timed, context.endpoint, "slow")
 
-    assert {:error, :cancelled, _message} =
-             Transport.exec(password_config(context), context.endpoint, "success", fn -> true end)
+    assert {:error, %Target.BeforeSendError{cause: %Target.Error{category: :cancelled}} = unsent} =
+             Transport.exec(password_config(context), context.endpoint, "success", %{
+               cancelled?: fn -> true end
+             })
+
+    refute Target.BeforeSendError.retryable?(unsent)
 
     cancel_at = System.monotonic_time(:millisecond) + 500
 
     assert {:error, :cancelled_after_dispatch, _message} =
-             Transport.exec(password_config(context), context.endpoint, "slow", fn ->
-               System.monotonic_time(:millisecond) >= cancel_at
-             end)
+             Transport.exec(password_config(context), context.endpoint, "slow", %{
+               cancelled?: fn ->
+                 System.monotonic_time(:millisecond) >= cancel_at
+               end
+             })
   end
 
   test "legacy algorithms require an explicit bounded allowlist", context do
@@ -286,6 +292,46 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert details["bytes_received"] == 20
     calls = Agent.get(context.subsystem_calls, &Enum.reverse/1)
     assert [{session, <<0, 255>>}, {session, "second"}] = calls
+  end
+
+  for {name, settings} <- [
+        {"generic", %{}},
+        {"Linux", %{provider_type: "linux-ssh", target_kind: "host", target_type: "linux"}}
+      ] do
+    @tag ssh_fresh_send: true, ssh_fresh_settings: settings
+    test "registered #{name} SSH retains a native pre-send fault independently of waiting",
+         context do
+      owner = self()
+
+      {admin, input} =
+        subsystem_request(Map.merge(context, context.ssh_fresh_settings), [%{"op" => "close"}])
+
+      input = %{input | operation: "command.execute", parameters: %{"command" => "never-sent"}}
+      clearance = Targets.clear_target_request!(input, actor: admin)
+
+      before_send? = fn ->
+        if self() != owner do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT ssh_native_send_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               Targets.dispatch_target_effect(
+                 clearance,
+                 %{before_send?: before_send?, cancelled?: fn -> false end},
+                 actor: admin,
+                 authorize?: false
+               )
+
+      assert %Target.BeforeSendError{cause: cause} = Target.BeforeSendError.unwrap(error)
+      assert Exception.message(cause) =~ "ssh_native_send_unavailable"
+      assert commands(context) == []
+    end
   end
 
   @tag ssh_context_fault: true
@@ -383,6 +429,67 @@ defmodule Opsonde.Targets.SSHMethodTest do
     assert Exception.message(cause) =~ "ssh_initial_context_unavailable"
     assert commands(context) == []
     assert Agent.get(context.subsystem_calls, & &1) == []
+  end
+
+  for {name, step} <- [
+        {"send", %{"op" => "send", "data" => Base.encode64("second")}},
+        {"send_eof", %{"op" => "send_eof"}},
+        {"close", %{"op" => "close"}}
+      ] do
+    @tag ssh_fresh_send: true, ssh_fresh_step: step
+    test "a later subsystem #{name} checks fresh facts and retains completed native steps",
+         context do
+      steps = [
+        %{"op" => "send", "data" => Base.encode64(<<0, 255>>)},
+        %{"op" => "receive", "until" => %{"bytes" => 5}},
+        context.ssh_fresh_step
+      ]
+
+      steps =
+        if context.ssh_fresh_step["op"] == "close", do: steps, else: steps ++ [%{"op" => "close"}]
+
+      {admin, input} = subsystem_request(context, steps)
+      clearance = Targets.clear_target_request!(input, actor: admin)
+
+      before_send? = fn ->
+        if Agent.get(context.subsystem_calls, &(&1 != [])) do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT ssh_followup_context_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               Targets.dispatch_target_effect(
+                 clearance,
+                 %{before_send?: before_send?, cancelled?: fn -> false end},
+                 actor: admin,
+                 authorize?: false
+               )
+
+      assert Exception.message(error) =~ "ssh_followup_context_unavailable"
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+
+      assert %{
+               "bytes_sent" => 2,
+               "bytes_received" => 14,
+               "steps" => [sent, received],
+               "buffered" => %{"0" => buffered}
+             } =
+               Target.Error.context_progress(error)
+
+      assert sent["op"] == "send"
+      assert Base.decode64!(received["data"]) == "first"
+      assert Base.decode64!(buffered) == "|leftover"
+
+      assert Agent.get(context.subsystem_calls, &Enum.map(&1, fn {_, bytes} -> bytes end)) == [
+               <<0, 255>>
+             ]
+    end
   end
 
   @tag ssh_context_fault: true

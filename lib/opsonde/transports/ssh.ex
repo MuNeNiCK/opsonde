@@ -1,5 +1,6 @@
 defmodule Opsonde.Transports.SSH do
   @moduledoc false
+  alias Opsonde.Providers.Target
 
   @configuration_keys ~w(host_key_fingerprints connect_timeout_ms operation_timeout_ms max_output_bytes legacy_algorithms)
   @credential_keys ~w(username auth_method password private_key)
@@ -41,7 +42,7 @@ defmodule Opsonde.Transports.SSH do
 
   defmodule Channel do
     @moduledoc false
-    @enforce_keys [:connection, :id, :deadline, :max_output_bytes, :reporter]
+    @enforce_keys [:connection, :id, :deadline, :max_output_bytes, :reporter, :invocation]
     defstruct @enforce_keys
   end
 
@@ -86,38 +87,52 @@ defmodule Opsonde.Transports.SSH do
 
   def build(_configuration, _credentials), do: {:error, :invalid_configuration}
 
-  def check(%Config{} = config, endpoint, cancelled? \\ fn -> false end) do
-    run(config, endpoint, cancelled?, fn _connection, _deadline, _parent, _reference -> :ok end)
+  def check(%Config{} = config, endpoint, invocation \\ %{}) do
+    run(config, endpoint, invocation, fn _connection, _deadline, _parent, _reference -> :ok end)
   end
 
   def sftp(%Config{} = config, endpoint, operation, invocation) do
-    cancel = Map.get(invocation, :cancelled?, fn -> false end)
-
     Opsonde.Transports.SSH.SFTP.request(operation, invocation, fn callback ->
-      run(config, endpoint, cancel, callback)
+      run(config, endpoint, invocation, callback)
     end)
   end
 
-  def exec(%Config{} = config, endpoint, command, cancelled? \\ fn -> false end) do
+  def exec(%Config{} = config, endpoint, command, invocation \\ %{}) do
     with :ok <- command(command) do
-      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
-        execute(connection, command, config.max_output_bytes, deadline, parent, reference)
+      run(config, endpoint, invocation, fn connection, deadline, parent, reference ->
+        execute(
+          connection,
+          command,
+          config.max_output_bytes,
+          deadline,
+          parent,
+          reference,
+          invocation
+        )
       end)
     end
   end
 
-  def shell(%Config{} = config, endpoint, script, cancelled? \\ fn -> false end) do
+  def shell(%Config{} = config, endpoint, script, invocation \\ %{}) do
     with :ok <- command(script) do
-      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
-        execute_shell(connection, script, config.max_output_bytes, deadline, parent, reference)
+      run(config, endpoint, invocation, fn connection, deadline, parent, reference ->
+        execute_shell(
+          connection,
+          script,
+          config.max_output_bytes,
+          deadline,
+          parent,
+          reference,
+          invocation
+        )
       end)
     end
   end
 
-  def subsystem(%Config{} = config, endpoint, name, exchange, cancelled? \\ fn -> false end)
+  def subsystem(%Config{} = config, endpoint, name, exchange, invocation \\ %{})
       when is_function(exchange, 1) do
     with :ok <- validate_subsystem_name(name) do
-      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
+      run(config, endpoint, invocation, fn connection, deadline, parent, reference ->
         execute_subsystem(
           connection,
           name,
@@ -125,7 +140,8 @@ defmodule Opsonde.Transports.SSH do
           deadline,
           parent,
           reference,
-          exchange
+          exchange,
+          invocation
         )
       end)
     end
@@ -134,10 +150,8 @@ defmodule Opsonde.Transports.SSH do
   def channel_send(channel, data), do: channel_send(channel, data, true)
 
   def subsystem_session(%Config{} = config, endpoint, operation, invocation) do
-    cancelled? = Map.get(invocation, :cancelled?, fn -> false end)
-
     Opsonde.Transports.SSH.Subsystem.request(operation, invocation, fn exchange ->
-      run(config, endpoint, cancelled?, fn connection, deadline, parent, reference ->
+      run(config, endpoint, invocation, fn connection, deadline, parent, reference ->
         execute_subsystem(
           connection,
           operation.name,
@@ -146,6 +160,7 @@ defmodule Opsonde.Transports.SSH do
           parent,
           reference,
           exchange,
+          invocation,
           true
         )
       end)
@@ -155,17 +170,24 @@ defmodule Opsonde.Transports.SSH do
   def channel_send(%Channel{} = channel, data, dispatched?)
       when is_binary(data) and is_boolean(dispatched?) do
     if byte_size(data) in 1..@maximum_output_bytes do
-      case :ssh_connection.send(channel.connection, channel.id, data, remaining(channel.deadline)) do
-        :ok ->
-          if dispatched? do
-            {parent, reference} = channel.reporter
-            send(parent, {:opsonde_ssh_dispatched, reference, channel.connection})
-          end
+      with :ok <- before_send(channel.invocation) do
+        case :ssh_connection.send(
+               channel.connection,
+               channel.id,
+               data,
+               remaining(channel.deadline)
+             ) do
+          :ok ->
+            if dispatched? do
+              {parent, reference} = channel.reporter
+              send(parent, {:opsonde_ssh_dispatched, reference, channel.connection})
+            end
 
-          :ok
+            :ok
 
-        {:error, reason} ->
-          transport_error_after_dispatch(reason)
+          {:error, reason} ->
+            transport_error_after_dispatch(reason)
+        end
       end
     else
       {:error, :failed, "SSH channel payload is invalid"}
@@ -174,6 +196,22 @@ defmodule Opsonde.Transports.SSH do
 
   def channel_send(_channel, _data, _dispatched?),
     do: {:error, :failed, "SSH channel payload is invalid"}
+
+  def channel_eof(%Channel{} = channel),
+    do:
+      channel_control(channel, fn -> :ssh_connection.send_eof(channel.connection, channel.id) end)
+
+  def channel_close(%Channel{} = channel),
+    do: channel_control(channel, fn -> :ssh_connection.close(channel.connection, channel.id) end)
+
+  defp channel_control(channel, operation) do
+    with :ok <- before_send(channel.invocation) do
+      case operation.() do
+        :ok -> :ok
+        _ -> {:error, :disconnected_after_dispatch, "SSH subsystem channel control failed"}
+      end
+    end
+  end
 
   def channel_progress(%Channel{reporter: {parent, reference}}, progress) do
     send(parent, {:opsonde_ssh_progress, reference, progress})
@@ -188,16 +226,17 @@ defmodule Opsonde.Transports.SSH do
       when is_binary(buffer) and is_function(complete?, 1),
       do: receive_channel(channel, buffer, complete?, true)
 
-  defp run(config, endpoint, cancelled?, operation) when is_function(cancelled?, 0) do
+  defp run(config, endpoint, invocation, operation) when is_map(invocation) do
     with {:ok, host, port, fingerprint} <- endpoint(config, endpoint),
          {:ok, _started} <- Application.ensure_all_started(:ssh),
-         {:ok, stopped?} <- stop_check(cancelled?) do
-      if stopped?,
-        do: {:error, :cancelled, "SSH operation was cancelled"},
-        else: run_task(config, host, port, fingerprint, cancelled?, operation)
+         :ok <- before_send(invocation) do
+      run_task(config, host, port, fingerprint, invocation, operation)
     else
       {:error, category, message} ->
         {:error, category, message}
+
+      {:error, %Target.BeforeSendError{}} = error ->
+        error
 
       {:error, cause} ->
         {:error, Opsonde.Providers.Target.BeforeSendError.exception(cause: cause)}
@@ -211,7 +250,7 @@ defmodule Opsonde.Transports.SSH do
     _kind, _reason -> {:error, :failed, "SSH transport failed"}
   end
 
-  defp run_task(config, host, port, fingerprint, cancelled?, operation) do
+  defp run_task(config, host, port, fingerprint, invocation, operation) do
     parent = self()
     reference = make_ref()
     deadline = System.monotonic_time(:millisecond) + config.operation_timeout
@@ -219,11 +258,13 @@ defmodule Opsonde.Transports.SSH do
     task =
       Task.async(fn ->
         try do
-          with {:ok, connection} <- connect(config, host, port, fingerprint) do
+          with :ok <- before_send(invocation),
+               {:ok, connection} <- connect(config, host, port, fingerprint) do
             send(parent, {:opsonde_ssh_connection, reference, connection})
 
             try do
-              operation.(connection, deadline, parent, reference)
+              with :ok <- before_send(invocation),
+                   do: operation.(connection, deadline, parent, reference)
             after
               :ssh.close(connection)
             end
@@ -235,7 +276,15 @@ defmodule Opsonde.Transports.SSH do
         end
       end)
 
-    await(task, reference, nil, :connecting, nil, cancelled?, deadline)
+    await(
+      task,
+      reference,
+      nil,
+      :connecting,
+      nil,
+      Map.get(invocation, :cancelled?, fn -> false end),
+      deadline
+    )
   end
 
   defp connect(config, host, port, fingerprint) do
@@ -272,10 +321,11 @@ defmodule Opsonde.Transports.SSH do
     end
   end
 
-  defp execute(connection, command, max_output_bytes, deadline, parent, reference) do
+  defp execute(connection, command, max_output_bytes, deadline, parent, reference, invocation) do
     timeout = remaining(deadline)
 
-    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout) do
+    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
+         :ok <- before_send(invocation) do
       send(parent, {:opsonde_ssh_dispatched, reference, connection})
 
       case :ssh_connection.exec(connection, channel, String.to_charlist(command), timeout) do
@@ -285,20 +335,32 @@ defmodule Opsonde.Transports.SSH do
         _other -> {:error, :disconnected_after_dispatch, "SSH command failed"}
       end
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       {:error, reason} -> transport_error(reason)
     end
   end
 
-  defp execute_shell(connection, script, max_output_bytes, deadline, parent, reference) do
+  defp execute_shell(
+         connection,
+         script,
+         max_output_bytes,
+         deadline,
+         parent,
+         reference,
+         invocation
+       ) do
     timeout = remaining(deadline)
 
     with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
          :success <- :ssh_connection.ptty_alloc(connection, channel, [], timeout),
+         :ok <- before_send(invocation),
+         :ok <- report_dispatch(true, parent, reference, connection),
          :ok <- :ssh_connection.shell(connection, channel),
+         :ok <- before_send(invocation),
          :ok <- :ssh_connection.send(connection, channel, script, timeout) do
-      send(parent, {:opsonde_ssh_dispatched, reference, connection})
       collect_shell(connection, channel, max_output_bytes, deadline, <<>>)
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       {:error, reason} -> transport_error(reason)
       :failure -> {:error, :failed, "SSH shell was rejected"}
       _other -> {:error, :failed, "SSH shell failed"}
@@ -313,12 +375,14 @@ defmodule Opsonde.Transports.SSH do
          parent,
          reference,
          exchange,
+         invocation,
          raw? \\ false
        ) do
     timeout = remaining(deadline)
 
-    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout) do
-      :ok = report_subsystem_dispatch(raw?, parent, reference, connection)
+    with {:ok, channel} <- :ssh_connection.session_channel(connection, timeout),
+         :ok <- before_send(invocation) do
+      :ok = report_dispatch(raw?, parent, reference, connection)
 
       case :ssh_connection.subsystem(connection, channel, String.to_charlist(name), timeout) do
         :success ->
@@ -327,7 +391,8 @@ defmodule Opsonde.Transports.SSH do
             id: channel,
             deadline: deadline,
             max_output_bytes: max_output_bytes,
-            reporter: {parent, reference}
+            reporter: {parent, reference},
+            invocation: invocation
           })
 
         {:error, reason} ->
@@ -343,13 +408,14 @@ defmodule Opsonde.Transports.SSH do
           )
       end
     else
+      {:error, %Target.BeforeSendError{}} = error -> error
       {:error, reason} -> transport_error(reason)
     end
   end
 
-  defp report_subsystem_dispatch(false, _, _, _), do: :ok
+  defp report_dispatch(false, _, _, _), do: :ok
 
-  defp report_subsystem_dispatch(true, parent, reference, connection) do
+  defp report_dispatch(true, parent, reference, connection) do
     send(parent, {:opsonde_ssh_dispatched, reference, connection})
     :ok
   end
@@ -542,9 +608,12 @@ defmodule Opsonde.Transports.SSH do
        do: unexpected_failure(reference, connection, phase, progress, message)
 
   defp finish_reply({:ok, result}, reference, connection, phase, progress) do
-    {_connection, _phase, latest} = latest_state(reference, connection, phase, progress)
+    {_connection, current_phase, latest} = latest_state(reference, connection, phase, progress)
 
     case result do
+      {:error, %Target.BeforeSendError{cause: cause}} when current_phase == :dispatched ->
+        {:error, Target.Error.context_failure(cause, latest)}
+
       {:error, category, message} ->
         interrupted(category, message, latest)
 
@@ -568,6 +637,26 @@ defmodule Opsonde.Transports.SSH do
 
   defp finish_reply({:exit, _reason}, reference, connection, phase, progress),
     do: unexpected_failure(reference, connection, phase, progress, "SSH transport failed")
+
+  defp before_send(invocation) do
+    callback =
+      Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?, fn -> false end))
+
+    case stop_check(callback) do
+      {:ok, false} ->
+        :ok
+
+      {:ok, true} ->
+        {:error,
+         Target.BeforeSendError.exception(
+           cause:
+             Target.Error.exception(category: :cancelled, message: "SSH operation was cancelled")
+         )}
+
+      {:error, cause} ->
+        {:error, Target.BeforeSendError.exception(cause: cause)}
+    end
+  end
 
   def validate_endpoint(%Config{} = config, value) do
     case endpoint(config, value) do

@@ -52,7 +52,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
   def observe(%State{} = state, request, invocation) do
     with {:ok, endpoint} <- Transport.endpoint(request.connection.endpoint),
          {:ok, operation} <- IOSXE.observation_request(request),
-         {:ok, facts} <- observe_operation(state, endpoint, operation, cancelled?(invocation)) do
+         {:ok, facts} <- observe_operation(state, endpoint, operation, invocation) do
       IOSXE.observation(facts)
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
@@ -87,7 +87,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
   def effect(%State{} = state, request, invocation) do
     with {:ok, endpoint} <- Transport.endpoint(request.connection.endpoint),
          {:ok, operation} <- IOSXE.effect_request(request) do
-      apply_operation(state, endpoint, operation, cancelled?(invocation))
+      apply_operation(state, endpoint, operation, invocation)
     else
       {:error, category, message} -> IOSXE.effect_error(category, message)
     end
@@ -101,14 +101,14 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
     with {:ok, endpoint} <- Transport.endpoint(request.connection.endpoint),
          {:ok, name, expected} <- IOSXE.verification_request(request),
          {:ok, facts} <-
-           observe_operation(state, endpoint, {:interface, name}, cancelled?(invocation)) do
+           observe_operation(state, endpoint, {:interface, name}, invocation) do
       IOSXE.verification(facts, expected)
     else
       {:error, category, message} -> IOSXE.read_error(category, message)
     end
   end
 
-  defp observe_operation(state, endpoint, :system, cancelled?) do
+  defp observe_operation(state, endpoint, :system, invocation) do
     {hostname_path, version_path} = restconf_system_paths()
 
     with {:ok, hostname} <-
@@ -118,7 +118,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
              :get,
              hostname_path,
              nil,
-             cancelled?,
+             invocation,
              :read
            ),
          {:ok, version} <-
@@ -128,7 +128,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
              :get,
              version_path,
              nil,
-             cancelled?,
+             invocation,
              :read
            ),
          {:ok, facts} <- restconf_system_facts(hostname, version) do
@@ -138,7 +138,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
     end
   end
 
-  defp observe_operation(state, endpoint, {:interface, name}, cancelled?) do
+  defp observe_operation(state, endpoint, {:interface, name}, invocation) do
     {configuration_path, operational_path} = restconf_interface_paths(name)
 
     with {:ok, configuration} <-
@@ -148,7 +148,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
              :get,
              configuration_path,
              nil,
-             cancelled?,
+             invocation,
              :read
            ),
          {:ok, operational} <-
@@ -158,7 +158,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
              :get,
              operational_path,
              nil,
-             cancelled?,
+             invocation,
              :read
            ),
          {:ok, facts} <- restconf_interface_facts(name, configuration, operational) do
@@ -166,11 +166,11 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
     end
   end
 
-  defp apply_operation(state, endpoint, {:description, name, expected, desired}, cancelled?) do
-    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
+  defp apply_operation(state, endpoint, {:description, name, expected, desired}, invocation) do
+    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["description"], expected, "description"),
          {:ok, _body} <-
-           patch_interface(state, endpoint, name, %{"description" => desired}, cancelled?) do
+           patch_interface(state, endpoint, name, %{"description" => desired}, invocation) do
       IOSXE.applied(%{"interface" => name, "description" => desired})
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
@@ -178,11 +178,11 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
     end
   end
 
-  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, cancelled?) do
-    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, cancelled?),
+  defp apply_operation(state, endpoint, {:admin_state, name, expected, desired}, invocation) do
+    with {:ok, facts} <- observe_operation(state, endpoint, {:interface, name}, invocation),
          :ok <- IOSXE.match_expected(facts["enabled"], expected, "enabled"),
          {:ok, _body} <-
-           patch_interface(state, endpoint, name, %{"enabled" => desired}, cancelled?) do
+           patch_interface(state, endpoint, name, %{"enabled" => desired}, invocation) do
       IOSXE.applied(%{"interface" => name, "enabled" => desired})
     else
       {:stale, observed, field} -> IOSXE.stale(field, observed)
@@ -190,7 +190,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
     end
   end
 
-  defp patch_interface(state, endpoint, name, values, cancelled?) do
+  defp patch_interface(state, endpoint, name, values, invocation) do
     {path, _operational_path} = restconf_interface_paths(name)
     body = restconf_interface_body(name, values)
 
@@ -200,12 +200,12 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
       :patch,
       path,
       body,
-      cancelled?,
+      invocation,
       :effect
     )
   end
 
-  defp request(state, endpoint, method, path, body, cancelled?, phase) do
+  defp request(state, endpoint, method, path, body, invocation, phase) do
     operation = %{
       method: method,
       path: path,
@@ -215,7 +215,7 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
       content_type: "application/yang-data+json"
     }
 
-    case Transport.request(state, endpoint, operation, %{cancelled?: cancelled?}, phase) do
+    case Transport.request(state, endpoint, operation, invocation, phase) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
         if body == "" do
           {:ok, %{}}
@@ -245,9 +245,6 @@ defmodule Opsonde.Targets.Profiles.IOSXE.RESTCONF do
         error
     end
   end
-
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 
   defp restconf_system_paths do
     {

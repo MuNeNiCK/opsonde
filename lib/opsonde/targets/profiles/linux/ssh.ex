@@ -226,7 +226,7 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
       state.transport,
       request.connection.endpoint,
       command,
-      cancelled?(invocation)
+      invocation
     )
   end
 
@@ -289,9 +289,6 @@ defmodule Opsonde.Targets.Profiles.Linux.SSH do
       do: %{"encoding" => "utf-8", "value" => value},
       else: %{"encoding" => "base64", "value" => Base.encode64(value)}
   end
-
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 
   defp catalog(privilege, shared) do
     {:ok,

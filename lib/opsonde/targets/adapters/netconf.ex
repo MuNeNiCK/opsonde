@@ -197,7 +197,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
          {:ok, body} <- request_body(request),
          {:ok, :observation} <- NETCONF.classify_body(body),
          {:ok, %NETCONF.Result{reply: reply}} <-
-           NETCONF.execute(state, request.connection.endpoint, body, cancelled?(invocation)) do
+           NETCONF.execute(state, request.connection.endpoint, body, invocation) do
       {:ok, %Target.Observation{facts: %{"reply" => reply}, observed_at: DateTime.utc_now()}}
     else
       false -> {:error, :failed, "NETCONF observation request is invalid"}
@@ -217,7 +217,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
              rpcs,
              max_events,
              wait_ms,
-             cancelled?(invocation)
+             invocation
            ) do
         {:ok, progress, completion} ->
           {:ok,
@@ -242,7 +242,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
              state,
              request.connection.endpoint,
              bodies,
-             cancelled?(invocation)
+             invocation
            ) do
         {:ok, replies} ->
           {:ok,
@@ -271,7 +271,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
     with true <- request.capability == @effect,
          {:ok, body} <- request_body(request),
          {:ok, %NETCONF.Result{reply: reply}} <-
-           NETCONF.execute(state, request.connection.endpoint, body, cancelled?(invocation)) do
+           NETCONF.execute(state, request.connection.endpoint, body, invocation) do
       {:ok, %Target.EffectResult{status: :applied, details: %{"reply" => reply}}}
     else
       false -> {:error, :failed, "NETCONF effect request is invalid"}
@@ -286,7 +286,7 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
          {:ok, body} <- request_body(request),
          {:ok, :observation} <- NETCONF.classify_body(body),
          {:ok, %NETCONF.Result{reply: reply}} <-
-           NETCONF.execute(state, request.connection.endpoint, body, cancelled?(invocation)) do
+           NETCONF.execute(state, request.connection.endpoint, body, invocation) do
       facts = %{"reply" => reply}
 
       status =
@@ -431,7 +431,4 @@ defmodule Opsonde.Targets.Adapters.NETCONF do
 
   defp effect_error(:cancelled, message), do: {:error, :cancelled, message}
   defp effect_error(_category, message), do: {:error, :failed, message}
-
-  defp cancelled?(%{cancelled?: callback}) when is_function(callback, 0), do: callback
-  defp cancelled?(_invocation), do: fn -> false end
 end

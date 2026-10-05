@@ -426,6 +426,49 @@ defmodule Opsonde.Targets.IOSXENETCONFTest do
     })
   end
 
+  @tag netconf_fresh_send: true
+  test "NETCONF checks fresh facts before a later RPC while retaining the completed reply",
+       context do
+    context = generic_netconf_context(context)
+    before = length(rpcs(context))
+
+    input =
+      request(context, :effect, "request.netconf.effect", "rpc.sequence", %{}, %{
+        "rpcs" => [
+          "<lock><target><running/></target></lock>",
+          "<unlock><target><running/></target></unlock>"
+        ]
+      })
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    before_send? = fn ->
+      if length(rpcs(context)) > before do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT netconf_followup_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(
+               clearance,
+               %{before_send?: before_send?, cancelled?: fn -> false end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "netconf_followup_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert is_nil(Target.BeforeSendError.unwrap(error))
+    assert %{"completed" => 1, "replies" => [reply]} = Target.Error.context_progress(error)
+    assert reply =~ "<ok/>"
+    assert length(rpcs(context)) == before + 1
+  end
+
   @tag netconf_context_fault: true
   test "NETCONF sequence retains completed replies and original context failure", context do
     context = generic_netconf_context(context)

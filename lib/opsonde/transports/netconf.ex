@@ -67,9 +67,9 @@ defmodule Opsonde.Transports.NETCONF do
 
   defp body_operation(_body), do: {:error, :failed, "NETCONF RPC body is invalid"}
 
-  def execute(%SSH.Config{} = config, endpoint, body, cancelled? \\ fn -> false end) do
+  def execute(%SSH.Config{} = config, endpoint, body, invocation \\ %{}) do
     with {:ok, _kind} <- classify_body(body),
-         {:ok, %Result{} = result} <- request(config, endpoint, envelope(body), cancelled?) do
+         {:ok, %Result{} = result} <- request(config, endpoint, envelope(body), invocation) do
       case parse(result.reply) do
         {:ok, root} ->
           case valid_reply(root, @message_id, result.reply) do
@@ -84,9 +84,9 @@ defmodule Opsonde.Transports.NETCONF do
     end
   end
 
-  def execute_many(config, endpoint, bodies, cancelled? \\ fn -> false end)
+  def execute_many(config, endpoint, bodies, invocation \\ %{})
 
-  def execute_many(%SSH.Config{} = config, endpoint, bodies, cancelled?)
+  def execute_many(%SSH.Config{} = config, endpoint, bodies, invocation)
       when is_list(bodies) and length(bodies) in 1..8 do
     if Enum.all?(bodies, &match?({:ok, _kind}, classify_body(&1))) do
       owner = self()
@@ -102,7 +102,7 @@ defmodule Opsonde.Transports.NETCONF do
               exchange_many(channel, session.framing, bodies, 1, <<>>, [], {owner, reference})
             end
           end,
-          cancelled?
+          invocation
         )
 
       progress = latest_progress(reference, [])
@@ -125,7 +125,7 @@ defmodule Opsonde.Transports.NETCONF do
     end
   end
 
-  def execute_many(_config, _endpoint, _bodies, _cancelled?),
+  def execute_many(_config, _endpoint, _bodies, _invocation),
     do: {:error, :failed, "NETCONF sequence is invalid", []}
 
   def subscribe(
@@ -135,7 +135,7 @@ defmodule Opsonde.Transports.NETCONF do
         follow_ups,
         max_events,
         wait_ms,
-        cancelled?
+        invocation
       )
       when is_integer(max_events) and max_events in 1..20 and is_integer(wait_ms) and
              wait_ms in 100..20_000 do
@@ -176,7 +176,7 @@ defmodule Opsonde.Transports.NETCONF do
                 error
             end
           end,
-          cancelled?
+          invocation
         )
 
       progress = latest_progress(reference, empty_subscription_progress())
@@ -206,7 +206,7 @@ defmodule Opsonde.Transports.NETCONF do
     end
   end
 
-  def subscribe(_config, _endpoint, _body, _follow_ups, _max_events, _wait_ms, _cancelled?),
+  def subscribe(_config, _endpoint, _body, _follow_ups, _max_events, _wait_ms, _invocation),
     do: {:error, :failed, "NETCONF subscription is invalid", empty_subscription_progress()}
 
   defp context_error(error, progress) do
@@ -251,6 +251,9 @@ defmodule Opsonde.Transports.NETCONF do
 
       {:error, category, message} ->
         {:error, after_sequence_dispatch(category), message, empty_subscription_progress()}
+
+      {:error, _cause} = error ->
+        error
     end
   end
 
@@ -344,6 +347,9 @@ defmodule Opsonde.Transports.NETCONF do
     else
       {:error, category, message} ->
         {:error, after_sequence_dispatch(category), message, progress}
+
+      {:error, _cause} = error ->
+        error
     end
   end
 
@@ -484,6 +490,9 @@ defmodule Opsonde.Transports.NETCONF do
       {:error, category, message} ->
         {:error, after_sequence_dispatch(category), message, Enum.reverse(replies)}
 
+      {:error, _cause} = error ->
+        error
+
       false ->
         {:error, :unknown_after_dispatch, "NETCONF sequence replies exceeded their limit",
          Enum.reverse(replies)}
@@ -510,13 +519,13 @@ defmodule Opsonde.Transports.NETCONF do
     end
   end
 
-  def check(%SSH.Config{} = config, endpoint, cancelled? \\ fn -> false end) do
-    SSH.subsystem(config, endpoint, "netconf", &open_session/1, cancelled?)
+  def check(%SSH.Config{} = config, endpoint, invocation \\ %{}) do
+    SSH.subsystem(config, endpoint, "netconf", &open_session/1, invocation)
   end
 
-  defp request(config, endpoint, rpc, cancelled?)
+  defp request(config, endpoint, rpc, invocation)
 
-  defp request(%SSH.Config{} = config, endpoint, rpc, cancelled?)
+  defp request(%SSH.Config{} = config, endpoint, rpc, invocation)
        when is_binary(rpc) and byte_size(rpc) in 1..60_000 do
     SSH.subsystem(
       config,
@@ -529,11 +538,11 @@ defmodule Opsonde.Transports.NETCONF do
           {:ok, %Result{capabilities: session.capabilities, reply: reply, root: nil}}
         end
       end,
-      cancelled?
+      invocation
     )
   end
 
-  defp request(_config, _endpoint, _rpc, _cancelled?),
+  defp request(_config, _endpoint, _rpc, _invocation),
     do: {:error, :failed, "NETCONF request is invalid"}
 
   defp valid_reply({name, attributes, children}, message_id, raw_reply) do
