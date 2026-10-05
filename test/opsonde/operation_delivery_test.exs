@@ -101,6 +101,79 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  @tag native_waiting_context: true
+  test "a native Reviewer waits with bounded Case reads and retains its completed result",
+       context do
+    {context, peer} = native_reviewer!(context)
+    configure_mode!(context.admin, :auto)
+    {_incident, run, proposal} = authorized_proposal!("native-bounded-wait", context)
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+
+    Agent.update(
+      peer,
+      &Map.put(
+        %{
+          &1
+          | mode:
+              {:sleep, 1_500,
+               %{
+                 "verdict" => "rejected",
+                 "purpose_assessment" => "unknown",
+                 "reason" => "Fresh evidence is required"
+               }},
+            requests: []
+        },
+        :response_complete,
+        false
+      )
+    )
+
+    counts = :atomics.new(3, [])
+    handler = "native-wait-#{Ecto.UUID.generate()}"
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:opsonde, :repo, :query],
+        fn _, _, metadata, counters ->
+          if metadata[:source] == "cases" and String.starts_with?(metadata.query, "SELECT") do
+            :atomics.add(counters, 1, 1)
+
+            if Agent.get(peer, &(&1.requests != [] and not &1.response_complete)),
+              do: :atomics.add(counters, 3, 1)
+          end
+        end,
+        counts
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               ai_invocation: %{
+                 cancelled?: fn ->
+                   :atomics.add(counts, 2, 1)
+                   false
+                 end
+               }
+             )
+
+    assert :atomics.get(counts, 2) >= 30
+    assert :atomics.get(counts, 3) <= 9
+
+    IO.puts(
+      "native Reviewer Case reads total=#{:atomics.get(counts, 1)} waiting=#{:atomics.get(counts, 3)} caller_checks=#{:atomics.get(counts, 2)}"
+    )
+
+    assert Agent.get(peer, &length(&1.requests)) == 1
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :completed
+    assert invocation.usage_reported
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_units + 12
+  end
+
   @tag native_reviewer_context: true
   test "a native proposal Reviewer observes its changed assignment and settles paid uncertainty once",
        context do

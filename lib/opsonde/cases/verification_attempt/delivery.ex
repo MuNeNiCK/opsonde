@@ -31,21 +31,23 @@ defmodule Opsonde.Cases.VerificationAttempt.Delivery do
          opts
        ) do
     invocation =
-      Opsonde.Cases.Case.InvocationContext.invocation(
-        context,
-        Keyword.get(opts, :target_invocation, %{})
+      Map.put(
+        Keyword.get(opts, :target_invocation, %{}),
+        :result_reference_reader,
+        fn reference ->
+          Cases.read_operation_result_reference(reference, attempt.case_id, clearance,
+            actor: actor
+          )
+        end
       )
 
-    invocation =
-      Map.put(invocation, :result_reference_reader, fn reference ->
-        Cases.read_operation_result_reference(reference, attempt.case_id, clearance, actor: actor)
+    result =
+      Opsonde.Cases.Case.InvocationContext.with_invocation(context, invocation, fn supplied ->
+        Targets.dispatch_target_verification(clearance, supplied, actor: actor, authorize?: false)
       end)
 
     outcome =
-      case Targets.dispatch_target_verification(clearance, invocation,
-             actor: actor,
-             authorize?: false
-           ) do
+      case result do
         {:ok, %ProviderTarget.Verification{} = result} ->
           normalize(result)
 

@@ -112,13 +112,16 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   end
 
   defp dispatch(turn, selection, request, claim, opts) do
-    ai_invocation =
-      InvocationContext.invocation(
+    outcome =
+      InvocationContext.with_invocation(
         claim.invocation_context,
-        Keyword.get(opts, :ai_invocation, %{})
+        Keyword.get(opts, :ai_invocation, %{}),
+        fn invocation ->
+          Providers.ai_resolve(selection.provider_id, request, invocation, authorize?: false)
+        end
       )
 
-    case Providers.ai_resolve(selection.provider_id, request, ai_invocation, authorize?: false) do
+    case outcome do
       {:ok, decision} ->
         accept_decision(turn, selection, request, claim.invocation, decision)
 

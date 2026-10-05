@@ -46,19 +46,22 @@ defmodule Opsonde.Cases.Operation.Delivery do
          opts
        ) do
     invocation =
-      Opsonde.Cases.Case.InvocationContext.invocation(
-        context,
-        Keyword.get(opts, :target_invocation, %{})
+      Map.put(
+        Keyword.get(opts, :target_invocation, %{}),
+        :result_reference_reader,
+        fn reference ->
+          Cases.read_operation_result_reference(reference, operation.case_id, clearance,
+            actor: actor
+          )
+        end
       )
 
-    invocation =
-      Map.put(invocation, :result_reference_reader, fn reference ->
-        Cases.read_operation_result_reference(reference, operation.case_id, clearance,
-          actor: actor
-        )
+    outcome =
+      Opsonde.Cases.Case.InvocationContext.with_invocation(context, invocation, fn supplied ->
+        dispatch_target(operation, clearance, supplied, actor)
       end)
 
-    case dispatch_target(operation, clearance, invocation, actor) do
+    case outcome do
       {:error, %ProviderTarget.BeforeSendError{} = error} -> unsent(operation, error)
       outcome -> persist_and_handoff(operation, outcome)
     end

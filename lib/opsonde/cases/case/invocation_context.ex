@@ -14,6 +14,7 @@ defmodule Opsonde.Cases.Case.InvocationContext do
   ]
   defstruct @enforce_keys
   @type t :: %__MODULE__{}
+  @reconcile_ms 200
 
   def project(incident, run, subject, conditions, selection, methods) do
     methods =
@@ -52,12 +53,78 @@ defmodule Opsonde.Cases.Case.InvocationContext do
     }
   end
 
-  def invocation(context, supplied) do
-    cancelled = Map.get(supplied, :cancelled?)
+  # Ash owns the current facts. This scope only bounds their observation while
+  # native tasks wait; a cached observation can never authorize another send.
+  def with_invocation(context, supplied, dispatch) do
+    table = :ets.new(__MODULE__, [:set, :public, read_concurrency: true])
+    poll = :atomics.new(2, [])
+    :atomics.put(poll, 1, System.monotonic_time(:millisecond))
+    cancelled = Map.get(supplied, :cancelled?, fn -> false end)
+    before_send = Map.get(supplied, :before_send?, cancelled)
 
-    Map.put(supplied, :cancelled?, fn ->
-      (is_function(cancelled, 0) and cancelled.()) or
-        not Opsonde.Cases.invocation_context_current!(context, authorize?: false)
-    end)
+    try do
+      supplied
+      |> Map.put(:cancelled?, fn ->
+        observe(table, fn ->
+          cancelled.() == true or reconcile(context, poll)
+        end)
+      end)
+      |> Map.put(:before_send?, fn ->
+        observe(table, fn -> before_send.() == true or changed?(context) end)
+      end)
+      |> dispatch.()
+    after
+      :ets.delete(table)
+    end
   end
+
+  defp reconcile(context, poll) do
+    if System.monotonic_time(:millisecond) >= :atomics.get(poll, 1) and
+         :atomics.compare_exchange(poll, 2, 0, 1) == :ok do
+      try do
+        if System.monotonic_time(:millisecond) >= :atomics.get(poll, 1) do
+          try do
+            changed?(context)
+          after
+            :atomics.put(poll, 1, System.monotonic_time(:millisecond) + @reconcile_ms)
+          end
+        else
+          false
+        end
+      after
+        :atomics.put(poll, 2, 0)
+      end
+    else
+      false
+    end
+  end
+
+  defp changed?(context),
+    do: not Opsonde.Cases.invocation_context_current!(context, authorize?: false)
+
+  defp observe(table, check) do
+    case :ets.lookup(table, :terminal) do
+      [{:terminal, result}] ->
+        return_observation(result)
+
+      [] ->
+        result =
+          try do
+            {:ok, check.()}
+          catch
+            kind, cause -> {:error, kind, cause, __STACKTRACE__}
+          end
+
+        if result != {:ok, false}, do: :ets.insert_new(table, {:terminal, result})
+
+        # Another native task may have observed a stop during this read.
+        case :ets.lookup(table, :terminal) do
+          [{:terminal, terminal}] -> return_observation(terminal)
+          [] -> return_observation(result)
+        end
+    end
+  end
+
+  defp return_observation({:ok, value}), do: value
+  defp return_observation({:error, kind, cause, stack}), do: :erlang.raise(kind, cause, stack)
 end

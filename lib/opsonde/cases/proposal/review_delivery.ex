@@ -100,13 +100,16 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   end
 
   defp dispatch(proposal, selection, request, %AIInvocationClaim{state: :claimed} = claim, opts) do
-    invocation =
-      Opsonde.Cases.Case.InvocationContext.invocation(
+    outcome =
+      Opsonde.Cases.Case.InvocationContext.with_invocation(
         claim.invocation_context,
-        Keyword.get(opts, :ai_invocation, %{})
+        Keyword.get(opts, :ai_invocation, %{}),
+        fn invocation ->
+          Providers.ai_review(selection.provider_id, request, invocation, authorize?: false)
+        end
       )
 
-    case Providers.ai_review(selection.provider_id, request, invocation, authorize?: false) do
+    case outcome do
       {:ok, decision} ->
         case accept(proposal, selection, request, claim.invocation, decision) do
           {:ok, {:decision, stored}} ->

@@ -18,7 +18,9 @@ defmodule Opsonde.AIHTTPFixture do
         {mode, %{state | requests: [request | state.requests]}}
       end)
 
-    respond(conn, request, check_decision(request.body, mode))
+    response = respond(conn, request, check_decision(request.body, mode))
+    Agent.update(agent, &Map.put(&1, :response_complete, true))
+    response
   end
 
   defp next_mode(%{mode: {:sequence, [mode | remaining]}} = state),
@@ -32,6 +34,11 @@ defmodule Opsonde.AIHTTPFixture do
   defp respond(conn, request, {:sleep, milliseconds}) do
     Process.sleep(milliseconds)
     respond(conn, request, {:decision, handoff()})
+  end
+
+  defp respond(conn, request, {:sleep, milliseconds, decision}) do
+    Process.sleep(milliseconds)
+    respond(conn, request, {:decision, decision})
   end
 
   defp respond(conn, request, {:decision, decision}) do
