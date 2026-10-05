@@ -92,9 +92,12 @@ defmodule Opsonde.Transports.SSH do
   end
 
   def sftp(%Config{} = config, endpoint, operation, invocation) do
-    Opsonde.Transports.SSH.SFTP.request(operation, invocation, fn callback ->
-      run(config, endpoint, invocation, callback)
-    end)
+    Opsonde.Transports.SSH.SFTP.request(
+      operation,
+      invocation,
+      fn callback -> run(config, endpoint, invocation, callback) end,
+      fn -> before_send(invocation) end
+    )
   end
 
   def exec(%Config{} = config, endpoint, command, invocation \\ %{}) do

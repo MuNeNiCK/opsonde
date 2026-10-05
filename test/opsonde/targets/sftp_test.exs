@@ -531,6 +531,105 @@ defmodule Opsonde.Targets.SFTPTest do
     assert Agent.get(context.agent, & &1.writes) == 2
   end
 
+  @tag sftp_fresh_context: true
+  test "SFTP stops subsequent writes after a fresh context fault and retains acknowledged bytes",
+       context do
+    bytes = :binary.copy(<<42>>, 65_536)
+    file = stage_file(context, bytes)
+
+    clearance =
+      request(context, :effect, "sftp.write_file", %{
+        "path" => "/fresh-context.bin",
+        "body_file" => "payload",
+        "files" => %{"payload" => file}
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    fresh = fn ->
+      if Agent.get(context.agent, &(&1.writes > 0)) do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT sftp_fresh_context_unavailable", [], mode: :savepoint)
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(
+               clearance,
+               %{before_send?: fresh, cancelled?: fn -> false end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "sftp_fresh_context_unavailable"
+    assert Target.Error.context_failure?(error)
+    assert is_nil(Target.BeforeSendError.unwrap(error))
+    assert Target.Error.context_progress(error)["bytes_written"] == 32_768
+    assert Agent.get(context.agent, & &1.writes) == 1
+
+    assert File.read!(Path.join(context.directory, "fresh-context.bin")) ==
+             :binary.copy(<<42>>, 32_768)
+  end
+
+  for kind <- [:observation, :verification] do
+    @tag sftp_fresh_context: true, sftp_read_kind: kind
+    test "SFTP #{kind} retains received bytes when fresh context stops the next read", context do
+      File.write!(Path.join(context.directory, "fresh-read.bin"), :binary.copy(<<43>>, 65_536))
+
+      clearance =
+        request(context, context.sftp_read_kind, "sftp.read_file", %{
+          "path" => "/fresh-read.bin",
+          "response_file" => %{
+            "name" => "partial.bin",
+            "media_type" => "application/octet-stream"
+          }
+        })
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      fresh = fn ->
+        if Agent.get(context.agent, &(&1.reads > 0)) do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT sftp_fresh_read_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      dispatch =
+        if context.sftp_read_kind == :observation,
+          do: &Targets.dispatch_target_observation/3,
+          else: &Targets.dispatch_target_verification/3
+
+      assert {:error, error} =
+               dispatch.(
+                 clearance,
+                 %{before_send?: fresh, cancelled?: fn -> false end},
+                 actor: context.operator
+               )
+
+      assert Exception.message(error) =~ "sftp_fresh_read_unavailable"
+      assert Target.Error.context_failure?(error)
+      assert is_nil(Target.BeforeSendError.unwrap(error))
+      [receipt] = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+      assert receipt.status == :receiving
+      assert receipt.received_bytes == 32_768
+      assert receipt.completion_reason == nil
+
+      assert Target.Error.context_progress(error) ==
+               %{"receiving_file_id" => receipt.id, "received_bytes" => 32_768}
+
+      assert {:error, _} =
+               Targets.artifact_reference(receipt.id, context.target.id, actor: context.operator)
+
+      assert Agent.get(context.agent, & &1.reads) == 1
+    end
+  end
+
   @tag sftp_context_fault: true
   test "SFTP preserves original in-flight context faults across all three ports", context do
     Agent.update(context.agent, &%{&1 | read_delay: 300, write_delay: 300})

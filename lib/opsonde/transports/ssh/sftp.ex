@@ -9,12 +9,14 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   # The supplied runner owns the pinned connection, task, deadline and disposal.
   # Supplied file ports own authorization and storage; publication is caller-side.
-  def request(%{kind: :directory} = operation, invocation, runner) do
+  def request(%{kind: :directory} = operation, invocation, runner, before_send) do
     with :ok <- active(invocation),
          {:ok, writer} <- capture(operation.output, invocation),
          {:ok, result} <-
            runner.(fn connection, deadline, _parent, _reference ->
-             channel(connection, deadline, fn pid -> metadata_read(pid, operation, deadline) end)
+             channel(connection, deadline, before_send, fn pid ->
+               metadata_read(pid, operation, deadline, before_send)
+             end)
            end),
          :ok <- active(invocation),
          bytes <- Jason.encode!(result["entries"]),
@@ -35,56 +37,73 @@ defmodule Opsonde.Transports.SSH.SFTP do
             }}
   end
 
-  def request(%{kind: :metadata_read} = operation, invocation, runner) do
+  def request(%{kind: :metadata_read} = operation, invocation, runner, before_send) do
     with :ok <- active(invocation),
          do:
            runner.(fn connection, deadline, _parent, _reference ->
-             channel(connection, deadline, fn pid ->
-               metadata_read(pid, operation, deadline)
+             channel(connection, deadline, before_send, fn pid ->
+               metadata_read(pid, operation, deadline, before_send)
              end)
            end)
   end
 
-  def request(%{kind: :metadata_write} = operation, invocation, runner) do
+  def request(%{kind: :metadata_write} = operation, invocation, runner, before_send) do
     with :ok <- active(invocation),
          do:
            runner.(fn connection, deadline, parent, reference ->
-             channel(connection, deadline, fn pid ->
+             channel(connection, deadline, before_send, fn pid ->
                args = native_args(operation, connection)
-               send(parent, {:opsonde_ssh_dispatched, reference, connection})
 
                with :ok <-
-                      native(
-                        apply(
-                          :ssh_sftp,
-                          operation.method,
-                          [pid] ++ args ++ [remaining(deadline)]
-                        ),
-                        if(operation.method == :write_file_info, do: :write, else: :mutation)
+                      send_request(
+                        before_send,
+                        if(operation.method == :write_file_info, do: :write, else: :mutation),
+                        fn ->
+                          send(parent, {:opsonde_ssh_dispatched, reference, connection})
+
+                          apply(
+                            :ssh_sftp,
+                            operation.method,
+                            [pid] ++ args ++ [remaining(deadline)]
+                          )
+                        end
                       ),
                     do: {:ok, %{"acknowledged" => true}}
              end)
            end)
   end
 
-  def request(%{kind: :read} = operation, invocation, runner) do
+  def request(%{kind: :read} = operation, invocation, runner, before_send) do
     with :ok <- active(invocation),
          {:ok, writer} <- capture(operation.output, invocation),
          {:ok, size} <-
-           runner.(fn connection, deadline, _parent, _reference ->
-             channel(connection, deadline, fn pid ->
+           runner.(fn connection, deadline, parent, reference ->
+             channel(connection, deadline, before_send, fn pid ->
                with {:ok, handle} <-
-                      native(
+                      send_request(before_send, :read, fn ->
+                        send(parent, {:opsonde_ssh_dispatched, reference, connection})
+
                         :ssh_sftp.open(
                           pid,
                           operation.path,
                           [:read, :binary],
                           remaining(deadline)
-                        ),
-                        :read
-                      ) do
-                 with {:ok, size} <- download(pid, handle, writer, deadline, 0),
-                      :ok <- native(:ssh_sftp.close(pid, handle, remaining(deadline)), :read),
+                        )
+                      end) do
+                 progress = fn offset ->
+                   send(
+                     parent,
+                     {:opsonde_ssh_progress, reference,
+                      %{"receiving_file_id" => writer.id, "received_bytes" => offset}}
+                   )
+                 end
+
+                 with {:ok, size} <-
+                        download(pid, handle, writer, deadline, 0, before_send, progress),
+                      :ok <-
+                        send_request(before_send, :read, fn ->
+                          :ssh_sftp.close(pid, handle, remaining(deadline))
+                        end),
                       do: {:ok, size}
                end
              end)
@@ -94,35 +113,56 @@ defmodule Opsonde.Transports.SSH.SFTP do
          do: {:ok, %{"file" => file, "completion_reason" => "eof"}}
   end
 
-  def request(%{kind: :write} = operation, invocation, runner) do
+  def request(%{kind: :write} = operation, invocation, runner, before_send) do
     with :ok <- active(invocation),
          {:ok, reader} <- admit_input(operation, invocation),
          do:
            runner.(fn connection, deadline, parent, reference ->
-             channel(connection, deadline, fn pid ->
-               send(parent, {:opsonde_ssh_dispatched, reference, connection})
-
+             channel(connection, deadline, before_send, fn pid ->
                with {:ok, handle} <-
-                      native(
+                      send_request(before_send, :write_open, fn ->
+                        send(parent, {:opsonde_ssh_dispatched, reference, connection})
+
                         :ssh_sftp.open(
                           pid,
                           operation.path,
                           [:write, :binary],
                           remaining(deadline)
+                        )
+                      end) do
+                 progress = fn offset ->
+                   send(
+                     parent,
+                     {:opsonde_ssh_progress, reference,
+                      %{"input_file_id" => operation.file["id"], "bytes_written" => offset}}
+                   )
+                 end
+
+                 with {:ok, size} <-
+                        upload(
+                          pid,
+                          handle,
+                          operation.file,
+                          reader,
+                          deadline,
+                          before_send,
+                          progress
                         ),
-                        :write_open
-                      ) do
-                 with :ok <- upload(pid, handle, operation.file, reader, deadline),
-                      :ok <- native(:ssh_sftp.close(pid, handle, remaining(deadline)), :write),
-                      do: {:ok, %{"bytes_written" => operation.file["size_bytes"]}}
+                      :ok <-
+                        send_request(before_send, :write, fn ->
+                          :ssh_sftp.close(pid, handle, remaining(deadline))
+                        end),
+                      do: {:ok, %{"bytes_written" => size}}
                end
              end)
            end)
   end
 
-  defp channel(connection, deadline, callback) do
+  defp channel(connection, deadline, before_send, callback) do
     with {:ok, pid} <-
-           native(:ssh_sftp.start_channel(connection, timeout: remaining(deadline)), :read) do
+           send_request(before_send, :read, fn ->
+             :ssh_sftp.start_channel(connection, timeout: remaining(deadline))
+           end) do
       try do
         callback.(pid)
       after
@@ -131,34 +171,53 @@ defmodule Opsonde.Transports.SSH.SFTP do
     end
   end
 
-  defp metadata_read(pid, %{method: :list_dir, args: [path, max_entries, max_bytes]}, deadline) do
-    with {:ok, handle} <- native(:ssh_sftp.opendir(pid, path, remaining(deadline)), :read),
-         {:ok, result} <- directory(pid, handle, deadline, max_entries, max_bytes, {[], 0, 2}),
-         :ok <- native(:ssh_sftp.close(pid, handle, remaining(deadline)), :read),
+  defp metadata_read(
+         pid,
+         %{method: :list_dir, args: [path, max_entries, max_bytes]},
+         deadline,
+         before_send
+       ) do
+    with {:ok, handle} <-
+           send_request(before_send, :read, fn ->
+             :ssh_sftp.opendir(pid, path, remaining(deadline))
+           end),
+         {:ok, result} <-
+           directory(pid, handle, deadline, max_entries, max_bytes, {[], 0, 2}, before_send),
+         :ok <-
+           send_request(before_send, :read, fn ->
+             :ssh_sftp.close(pid, handle, remaining(deadline))
+           end),
          do: {:ok, result}
   end
 
-  defp metadata_read(pid, operation, deadline) do
+  defp metadata_read(pid, operation, deadline, before_send) do
     with {:ok, info} <-
-           native(
-             apply(:ssh_sftp, operation.method, [pid] ++ operation.args ++ [remaining(deadline)]),
-             :read
-           ),
+           send_request(before_send, :read, fn ->
+             apply(:ssh_sftp, operation.method, [pid] ++ operation.args ++ [remaining(deadline)])
+           end),
          do: {:ok, metadata_result(operation.method, info)}
   end
 
-  defp directory(pid, handle, deadline, max_entries, max_bytes, state) do
-    case native(:ssh_sftp.readdir(pid, handle, remaining(deadline)), :read) do
+  defp directory(pid, handle, deadline, max_entries, max_bytes, state, before_send) do
+    case send_request(before_send, :read, fn ->
+           :ssh_sftp.readdir(pid, handle, remaining(deadline))
+         end) do
       :eof ->
         {:ok, directory_result(state, "eof")}
 
       {:ok, entries} when is_list(entries) and entries != [] ->
         case collect_entries(entries, state, max_entries, max_bytes) do
-          {:continue, next} -> directory(pid, handle, deadline, max_entries, max_bytes, next)
-          {:stop, result} -> {:ok, result}
+          {:continue, next} ->
+            directory(pid, handle, deadline, max_entries, max_bytes, next, before_send)
+
+          {:stop, result} ->
+            {:ok, result}
         end
 
       {:error, _, _} = error ->
+        error
+
+      {:error, _cause} = error ->
         error
 
       _ ->
@@ -274,28 +333,31 @@ defmodule Opsonde.Transports.SSH.SFTP do
 
   defp json_value(value), do: value
 
-  defp download(pid, handle, writer, deadline, offset) do
-    case native(
+  defp download(pid, handle, writer, deadline, offset, before_send, progress) do
+    case send_request(before_send, :read, fn ->
            :ssh_sftp.read(
              pid,
              handle,
              min(@chunk_bytes, writer.chunk_bytes),
              remaining(deadline)
-           ),
-           :read
-         ) do
+           )
+         end) do
       :eof ->
         {:ok, offset}
 
       {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 ->
-        with {:ok, next} <- Target.FileWriter.append(writer, offset, bytes),
-             do: download(pid, handle, writer, deadline, next),
-             else: (
-               {:error, cause} -> file_error(cause, :in_flight)
-               _ -> file_error()
-             )
+        with {:ok, next} <- Target.FileWriter.append(writer, offset, bytes) do
+          progress.(next)
+          download(pid, handle, writer, deadline, next, before_send, progress)
+        else
+          {:error, cause} -> file_error(cause, :in_flight)
+          _ -> file_error()
+        end
 
       {:error, _, _} = error ->
+        error
+
+      {:error, _cause} = error ->
         error
 
       _ ->
@@ -303,13 +365,22 @@ defmodule Opsonde.Transports.SSH.SFTP do
     end
   end
 
-  defp upload(pid, handle, file, reader, deadline) do
+  defp upload(pid, handle, file, reader, deadline, before_send, progress) do
     with {:ok, {_window, packet_bytes}} <-
            native(:ssh_sftp.send_window(pid, remaining(deadline)), :write) do
       Target.FileWriter.stream(file, reader)
-      |> Enum.reduce_while(:ok, fn bytes, :ok ->
-        case write_chunks(pid, handle, bytes, min(@chunk_bytes, packet_bytes), deadline) do
-          :ok -> {:cont, :ok}
+      |> Enum.reduce_while({:ok, 0}, fn bytes, {:ok, offset} ->
+        case write_chunks(
+               pid,
+               handle,
+               bytes,
+               min(@chunk_bytes, packet_bytes),
+               deadline,
+               before_send,
+               progress,
+               offset
+             ) do
+          {:ok, next} -> {:cont, {:ok, next}}
           error -> {:halt, error}
         end
       end)
@@ -323,14 +394,21 @@ defmodule Opsonde.Transports.SSH.SFTP do
            "SFTP input file became unavailable; the remote file may be partial"}
   end
 
-  defp write_chunks(_pid, _handle, <<>>, _limit, _deadline), do: :ok
+  defp write_chunks(_pid, _handle, <<>>, _limit, _deadline, _before_send, _progress, offset),
+    do: {:ok, offset}
 
-  defp write_chunks(pid, handle, bytes, limit, deadline) do
+  defp write_chunks(pid, handle, bytes, limit, deadline, before_send, progress, offset) do
     count = min(byte_size(bytes), limit)
     <<chunk::binary-size(^count), tail::binary>> = bytes
 
-    with :ok <- native(:ssh_sftp.write(pid, handle, chunk, remaining(deadline)), :write),
-         do: write_chunks(pid, handle, tail, limit, deadline)
+    with :ok <-
+           send_request(before_send, :write, fn ->
+             :ssh_sftp.write(pid, handle, chunk, remaining(deadline))
+           end) do
+      next = offset + count
+      progress.(next)
+      write_chunks(pid, handle, tail, limit, deadline, before_send, progress, next)
+    end
   end
 
   defp admit_input(operation, invocation) do
@@ -405,6 +483,10 @@ defmodule Opsonde.Transports.SSH.SFTP do
       _ ->
         file_error()
     end
+  end
+
+  defp send_request(before_send, phase, callback) do
+    with :ok <- before_send.(), do: native(callback.(), phase)
   end
 
   defp native({:error, reason}, phase)
