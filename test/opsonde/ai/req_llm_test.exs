@@ -922,12 +922,25 @@ defmodule Opsonde.AI.ReqLLMTest do
           {:resolve, &Providers.ai_resolve/4, resolver_request()},
           {:review, &Providers.ai_review/4, review_request()},
           {:review_recovery, &Providers.ai_review_recovery/4, recovery_request}
-        ] do
+        ],
+        phase <- [:provider_entry, :native_send] do
       assert :ok = AI.Validator.validate_request(role, request)
       set_mode(context.agent, {:decision, handoff()})
+      checks = :atomics.new(1, [])
+
+      before_send? = fn ->
+        if phase == :native_send and :atomics.add_get(checks, 1, 1) == 1,
+          do: false,
+          else: cancelled?.()
+      end
 
       assert {:error, error} =
-               action.(provider.id, request, %{cancelled?: cancelled?}, actor: admin)
+               action.(
+                 provider.id,
+                 request,
+                 %{before_send?: before_send?, cancelled?: fn -> false end},
+                 actor: admin
+               )
 
       assert AI.Error.context_failure?(error)
       assert Exception.message(error) =~ "invocation_context_unavailable"
@@ -1052,23 +1065,21 @@ defmodule Opsonde.AI.ReqLLMTest do
       |> then(&Providers.enable_provider!(&1, 1, actor: admin))
 
     set_mode(context.agent, {:decision, handoff()})
-    calls = :atomics.new(1, [])
 
     cancelled? = fn ->
-      if :atomics.add_get(calls, 1, 1) == 1 do
-        false
-      else
-        # The remote response arrives while this context check is still waiting.
-        Process.sleep(500)
-        true
-      end
+      # The remote response arrives while this waiting check is still blocked.
+      Process.sleep(500)
+      true
     end
 
     assert {:ok,
             %AI.ResolverDecision{
               usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
             }} =
-             Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+             Providers.ai_resolve(
+               provider.id,
+               resolver_request(),
+               %{before_send?: fn -> false end, cancelled?: cancelled?},
                actor: admin
              )
 
@@ -1109,29 +1120,22 @@ defmodule Opsonde.AI.ReqLLMTest do
 
       for stop <- [:cancel, :deadline, :read_fault] do
         set_mode(context.agent, {mode, handoff()})
-        calls = :atomics.new(1, [])
 
         cancelled? = fn ->
-          if :atomics.add_get(calls, 1, 1) == 1 do
-            false
-          else
-            Process.sleep(if stop == :deadline, do: 1100, else: 500)
+          Process.sleep(if stop == :deadline, do: 1100, else: 500)
 
-            case stop do
-              :cancel ->
-                true
+          case stop do
+            :cancel ->
+              true
 
-              :deadline ->
-                false
+            :deadline ->
+              false
 
-              :read_fault ->
-                {:error, error} =
-                  Opsonde.Repo.query("SELECT invocation_context_unavailable", [],
-                    mode: :savepoint
-                  )
+            :read_fault ->
+              {:error, error} =
+                Opsonde.Repo.query("SELECT invocation_context_unavailable", [], mode: :savepoint)
 
-                raise error
-            end
+              raise error
           end
         end
 
@@ -1139,7 +1143,10 @@ defmodule Opsonde.AI.ReqLLMTest do
                 %AI.ResolverDecision{
                   usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
                 }} =
-                 Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+                 Providers.ai_resolve(
+                   provider.id,
+                   resolver_request(),
+                   %{before_send?: fn -> false end, cancelled?: cancelled?},
                    actor: admin
                  )
 
@@ -1147,19 +1154,17 @@ defmodule Opsonde.AI.ReqLLMTest do
       end
 
       set_mode(context.agent, {mode, %{"unexpected" => true}})
-      calls = :atomics.new(1, [])
 
       cancelled? = fn ->
-        if :atomics.add_get(calls, 1, 1) == 1 do
-          false
-        else
-          Process.sleep(500)
-          true
-        end
+        Process.sleep(500)
+        true
       end
 
       assert {:error, error} =
-               Providers.ai_resolve(provider.id, resolver_request(), %{cancelled?: cancelled?},
+               Providers.ai_resolve(
+                 provider.id,
+                 resolver_request(),
+                 %{before_send?: fn -> false end, cancelled?: cancelled?},
                  actor: admin
                )
 
@@ -1185,17 +1190,16 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:sleep, 500})
     assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
 
-    cancellation =
-      start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
-
     set_mode(context.agent, {:sleep, 500})
-
-    cancelled? = fn ->
-      Agent.get_and_update(cancellation, fn count -> {count >= 1, count + 1} end)
-    end
+    cancelled? = fn -> requests(context.agent) != [] end
 
     assert {:error, :cancelled, _message} =
-             Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
+             Adapter.resolve(state, resolver_request(), %{
+               before_send?: fn -> false end,
+               cancelled?: cancelled?
+             })
+
+    assert length(requests(context.agent)) == 1
   end
 
   test "object requests accept complete JSON text through the same schema and retain usage",
@@ -3315,17 +3319,16 @@ defmodule Opsonde.AI.ReqLLMTest do
     set_mode(context.agent, {:sleep, 1_000})
     assert {:error, :timeout, _message} = Adapter.resolve(state, resolver_request(), %{})
 
-    cancellation =
-      start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
-
     set_mode(context.agent, {:sleep, 1_000})
-
-    cancelled? = fn ->
-      Agent.get_and_update(cancellation, fn count -> {count >= 1, count + 1} end)
-    end
+    cancelled? = fn -> requests(context.agent) != [] end
 
     assert {:error, :cancelled, _message} =
-             Adapter.resolve(state, resolver_request(), %{cancelled?: cancelled?})
+             Adapter.resolve(state, resolver_request(), %{
+               before_send?: fn -> false end,
+               cancelled?: cancelled?
+             })
+
+    assert length(requests(context.agent)) == 1
   end
 
   test "configuration rejects unknown fields and invalid provider credentials", context do

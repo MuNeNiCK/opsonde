@@ -172,8 +172,10 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
          dispatched?: true
        )}
 
-  defp ensure_not_cancelled(%{cancelled?: cancelled?}) when is_function(cancelled?, 0) do
-    if cancelled?.(),
+  defp ensure_not_cancelled(invocation) do
+    callback = Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?))
+
+    if is_function(callback, 0) and callback.(),
       do: {:error, ai_error(:cancelled, "AI decision was cancelled", false)},
       else: :ok
   rescue
@@ -181,8 +183,6 @@ defmodule Opsonde.Providers.Provider.Actions.AI do
   catch
     kind, reason -> callback_failure(ErlangError.exception(original: {kind, reason}))
   end
-
-  defp ensure_not_cancelled(_invocation), do: :ok
 
   defp callback_failure(cause),
     do:

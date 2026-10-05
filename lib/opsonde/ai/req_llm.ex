@@ -104,7 +104,7 @@ defmodule Opsonde.AI.ReqLLM do
            ),
            schema,
            min(state.max_tokens, 128),
-           fn -> false end
+           %{}
          ) do
       {:ok, response} ->
         case decode_output(response, schema) do
@@ -127,7 +127,7 @@ defmodule Opsonde.AI.ReqLLM do
              resolver_context(request),
              schema,
              min(state.max_tokens, request.budget.remaining_tokens),
-             cancelled_callback(invocation)
+             invocation
            ),
          result <-
            decode_decision(response, schema, fn value ->
@@ -178,7 +178,7 @@ defmodule Opsonde.AI.ReqLLM do
              messages,
              schema,
              min(state.max_tokens, budget.remaining_tokens),
-             cancelled_callback(invocation)
+             invocation
            ),
          result <-
            decode_decision(response, schema, fn value ->
@@ -264,25 +264,25 @@ defmodule Opsonde.AI.ReqLLM do
     )
   end
 
-  defp invoke(state, messages, schema, max_tokens, cancelled?) do
+  defp invoke(state, messages, schema, max_tokens, invocation) do
     parent = self()
     stream_ref = make_ref()
 
     task =
       Task.async(fn ->
-        safe_request(state, messages, schema, max_tokens, parent, stream_ref)
+        safe_request(state, messages, schema, max_tokens, parent, stream_ref, invocation)
       end)
 
     await(
       task,
       stream_ref,
       nil,
-      cancelled?,
+      cancelled_callback(invocation),
       System.monotonic_time(:millisecond) + state.timeout
     )
   end
 
-  defp safe_request(state, messages, schema, max_tokens, parent, stream_ref) do
+  defp safe_request(state, messages, schema, max_tokens, parent, stream_ref, invocation) do
     options =
       [
         max_tokens: max_tokens,
@@ -298,7 +298,8 @@ defmodule Opsonde.AI.ReqLLM do
       |> maybe_put(:provider_options, state.provider_options)
       |> maybe_put(:base_url, state.endpoint)
 
-    request(state, messages, schema, options, parent, stream_ref)
+    with :ok <- before_native_send(invocation),
+         do: request(state, messages, schema, options, parent, stream_ref)
   rescue
     error -> request_exception(error)
   catch
@@ -341,15 +342,7 @@ defmodule Opsonde.AI.ReqLLM do
         stop(
           task,
           cancel_stream,
-          {:error,
-           Ash.Error.to_error_class([
-             cause,
-             AI.Error.exception(
-               category: :failed,
-               message: "AI invocation context check failed",
-               dispatched?: true
-             )
-           ])}
+          {:error, context_failure(cause, true)}
         )
 
       cancellation ->
@@ -2196,6 +2189,37 @@ defmodule Opsonde.AI.ReqLLM do
 
   defp cancelled_callback(%{cancelled?: callback}) when is_function(callback, 0), do: callback
   defp cancelled_callback(_invocation), do: fn -> false end
+
+  defp before_native_send(invocation) do
+    callback = Map.get(invocation, :before_send?, cancelled_callback(invocation))
+
+    case cancelled?(callback) do
+      {:error, cause} ->
+        {:error, context_failure(cause, false)}
+
+      true ->
+        {:error,
+         AI.Error.exception(
+           category: :cancelled,
+           message: "AI decision was cancelled",
+           dispatched?: false
+         )}
+
+      false ->
+        :ok
+    end
+  end
+
+  defp context_failure(cause, dispatched?) do
+    Ash.Error.to_error_class([
+      cause,
+      AI.Error.exception(
+        category: :failed,
+        message: "AI invocation context check failed",
+        dispatched?: dispatched?
+      )
+    ])
+  end
 
   defp cancelled?(callback) do
     callback.() == true
