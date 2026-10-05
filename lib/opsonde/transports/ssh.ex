@@ -298,6 +298,9 @@ defmodule Opsonde.Transports.SSH do
       {:user_interaction, false},
       {:quiet_mode, true},
       {:save_accepted_host, false},
+      # A dead caller cannot run our after block. Bound the orphaned idle
+      # connection with OTP's lifecycle using this invocation's existing timeout.
+      {:idle_time, config.operation_timeout},
       {:key_cb,
        {Opsonde.Transports.SSH.KeyCallback,
         [
