@@ -89,9 +89,29 @@ defmodule Opsonde.Providers.Provider do
 
       prepare build(
                 select: @management_fields,
-                load: [:ai_service, :ai_model],
                 sort: [inserted_at: :asc, id: :asc]
               )
+
+      prepare fn query, context ->
+        Ash.Query.after_action(query, fn _query, providers ->
+          ai = Enum.filter(providers, &(&1.kind == :ai))
+
+          metadata =
+            __MODULE__
+            |> Ash.Query.select(@management_fields)
+            |> Ash.Query.load([:ai_service, :ai_model])
+
+          with {:ok, loaded} <- Ash.load(ai, metadata, actor: context.actor) do
+            by_id = Map.new(loaded, &{&1.id, &1})
+
+            {:ok,
+             Enum.map(providers, fn
+               %{kind: :ai, id: id} -> Map.fetch!(by_id, id)
+               provider -> provider
+             end)}
+          end
+        end)
+      end
     end
 
     read :active do
