@@ -463,10 +463,28 @@ function CaseDetail({ caseId }: { caseId: string }) {
         </Alert>
       )}
 
+      {complete ? (
+        <>
+          <CompletedCaseSummary
+            conditions={detail.snapshot.conditions}
+            report={exactReport}
+            targetName={
+              selectedTarget?.name ?? incident.selected_target_id ?? t("cases.unresolved")
+            }
+            verificationCount={detail.snapshot.verification_attempts.length}
+            progressVisible={showProgress}
+            onToggleProgress={() => setShowProgress((visible) => !visible)}
+          />
+          {showProgress && workflow}
+        </>
+      ) : (
+        workflow
+      )}
+
       {incident.case_symptom && (
-        <Card>
-          <CardContent className="space-y-4 p-5">
-            <h2 className="text-lg font-semibold">{t("cases.manualRequest")}</h2>
+        <details className="border-t pt-4">
+          <summary className="cursor-pointer font-medium">{t("cases.manualRequest")}</summary>
+          <div className="mt-4 space-y-4">
             <div>
               <p className="text-xs text-muted-foreground">{t("cases.desiredOutcome")}</p>
               <p className="text-sm font-medium">{incident.case_symptom.desired_outcome}</p>
@@ -476,14 +494,14 @@ function CaseDetail({ caseId }: { caseId: string }) {
               <p className="text-sm">{incident.case_symptom.text}</p>
             </div>
             <p className="font-mono text-xs text-muted-foreground">{incident.case_symptom.id}</p>
-          </CardContent>
-        </Card>
+          </div>
+        </details>
       )}
 
       {detail.timeline.some((event) => event.type === "recovery_review_decided") && (
-        <Card>
-          <CardContent className="space-y-3 p-5">
-            <h2 className="text-lg font-semibold">{t("cases.recoveryReviews")}</h2>
+        <details className="border-t pt-4">
+          <summary className="cursor-pointer font-medium">{t("cases.recoveryReviews")}</summary>
+          <div className="mt-4 space-y-3">
             <ul className="space-y-3">
               {detail.timeline
                 .filter((event) => event.type === "recovery_review_decided")
@@ -521,15 +539,15 @@ function CaseDetail({ caseId }: { caseId: string }) {
                   </li>
                 ))}
             </ul>
-          </CardContent>
-        </Card>
+          </div>
+        </details>
       )}
 
       {incident.trigger_kind === "signal" && (
-        <Card>
-          <CardContent className="space-y-4 p-5">
+        <details className="border-t pt-4">
+          <summary className="cursor-pointer font-medium">{t("cases.conditionsTitle")}</summary>
+          <div className="mt-4 space-y-4">
             <div>
-              <h2 className="text-lg font-semibold">{t("cases.conditionsTitle")}</h2>
               <p className="text-sm text-muted-foreground">
                 {t("cases.conditionsDescription", { count: detail.snapshot.conditions.length })}
               </p>
@@ -702,8 +720,8 @@ function CaseDetail({ caseId }: { caseId: string }) {
                   </Button>
                 </form>
               )}
-          </CardContent>
-        </Card>
+          </div>
+        </details>
       )}
 
       <CaseAIUsage usage={detail.snapshot.ai_usage} invocations={detail.aiInvocations} />
@@ -716,24 +734,8 @@ function CaseDetail({ caseId }: { caseId: string }) {
         </Alert>
       )}
 
-      {complete ? (
+      {!complete && (
         <>
-          <CompletedCaseSummary
-            conditions={detail.snapshot.conditions}
-            report={exactReport}
-            targetName={
-              selectedTarget?.name ?? incident.selected_target_id ?? t("cases.unresolved")
-            }
-            verificationCount={detail.snapshot.verification_attempts.length}
-            progressVisible={showProgress}
-            onToggleProgress={() => setShowProgress((visible) => !visible)}
-          />
-          {showProgress && workflow}
-        </>
-      ) : (
-        <>
-          {workflow}
-
           {detail.proposalError && (
             <Alert variant="destructive">
               <AlertDescription>

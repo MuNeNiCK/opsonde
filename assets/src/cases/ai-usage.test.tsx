@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { expect, test } from "vite-plus/test";
 import type { components } from "@/api/schema";
 import { CaseAIUsage } from "@/cases/ai-usage";
@@ -62,6 +63,10 @@ test("shows service-reported zero separately from unmeasured calls and budget re
       ]}
     />,
   );
+  const summary = screen.getByText("AI usage");
+  expect(summary.closest("details")?.open).toBe(false);
+  await userEvent.click(summary);
+  await userEvent.click(screen.getByText("Invocation history"));
   expect(screen.getByText("26")).toBeTruthy();
   expect(screen.getByText("65,562")).toBeTruthy();
   expect(screen.getByText("Incomplete")).toBeTruthy();

@@ -1,7 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -29,14 +28,14 @@ export function CaseAIUsage({ usage, invocations }: Props) {
   ] as const;
 
   return (
-    <Card>
-      <CardContent className="space-y-4 p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold">{t("cases.aiUsage.title")}</h2>
-          <Badge variant="outline">
-            {t(`cases.aiUsage.${usage.complete ? "complete" : "incomplete"}`)}
-          </Badge>
-        </div>
+    <details className="border-t pt-4">
+      <summary className="cursor-pointer font-medium">
+        <span>{t("cases.aiUsage.title")}</span>
+        <Badge variant="outline" className="ml-2">
+          {t(`cases.aiUsage.${usage.complete ? "complete" : "incomplete"}`)}
+        </Badge>
+      </summary>
+      <div className="mt-4 space-y-4">
         <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {figures.map(([label, value]) => (
             <div key={label}>
@@ -101,7 +100,7 @@ export function CaseAIUsage({ usage, invocations }: Props) {
             </div>
           </details>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </details>
   );
 }
