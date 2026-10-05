@@ -88,11 +88,13 @@ function formConfiguration(form: FormData, service: AIService) {
 
 export function AIProviderCreateForm({
   service,
-  onCreated,
+  onRegister,
   onError,
 }: {
   service: AIService;
-  onCreated: () => void;
+  onRegister: (
+    input: Omit<components["schemas"]["CreateProviderRequest"]["provider"], "registration_id">,
+  ) => Promise<void>;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
@@ -143,21 +145,15 @@ export function AIProviderCreateForm({
     setPending(true);
     onError("");
     try {
-      await apiClient.POST("/api/v1/providers", {
-        body: {
-          provider: {
-            registration_id: crypto.randomUUID(),
-            name,
-            kind: "ai",
-            adapter_type: "req-llm",
-            configuration,
-            credentials: secretField && secret ? { [secretField]: secret } : {},
-            usage_scope: usageScope,
-            usage_priority: Number(usagePriority),
-          },
-        },
+      await onRegister({
+        name,
+        kind: "ai",
+        adapter_type: "req-llm",
+        configuration,
+        credentials: secretField && secret ? { [secretField]: secret } : {},
+        usage_scope: usageScope,
+        usage_priority: Number(usagePriority),
       });
-      onCreated();
     } catch {
       onError(t("setup.requestFailed"));
     } finally {

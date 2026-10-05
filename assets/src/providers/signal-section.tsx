@@ -42,11 +42,13 @@ type Props = {
 
 export function SignalProviderCreateForm({
   adapterType,
-  onCreated,
+  onRegister,
   onError,
 }: {
   adapterType: "alertmanager-webhook" | "generic-webhook" | "zabbix-webhook";
-  onCreated: () => void;
+  onRegister: (
+    input: Omit<components["schemas"]["CreateProviderRequest"]["provider"], "registration_id">,
+  ) => Promise<void>;
   onError: (message: string) => void;
 }) {
   const { t } = useTranslation();
@@ -62,19 +64,13 @@ export function SignalProviderCreateForm({
     setPending(true);
     onError("");
     try {
-      await apiClient.POST("/api/v1/providers", {
-        body: {
-          provider: {
-            registration_id: crypto.randomUUID(),
-            name: formValue(form, "name"),
-            kind: "signal",
-            adapter_type: adapterType,
-            configuration,
-            credentials: { secret: formValue(form, "secret") },
-          },
-        },
+      await onRegister({
+        name: formValue(form, "name"),
+        kind: "signal",
+        adapter_type: adapterType,
+        configuration,
+        credentials: { secret: formValue(form, "secret") },
       });
-      onCreated();
     } catch {
       onError(t("cases.requestFailed"));
     } finally {

@@ -3,7 +3,8 @@ import { Activity, ArrowLeft, Bot, BrainCircuit, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
-import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { ApiError, apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { clearStoredRequest, readStoredRequest } from "@/api/stored-request";
 import { usePagedData, type PageData } from "@/api/use-paged-data";
 import { PageControls } from "@/components/page-controls";
 import type { components } from "@/api/schema";
@@ -227,6 +228,17 @@ export function SignalProviderPage() {
 }
 
 function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
+  const { account } = useAuthentication();
+  const { providerType } = useParams();
+  return (
+    <ProviderCreation
+      key={`${account?.id}:${account?.role}:${account?.role_version}:${kind}:${providerType}`}
+      kind={kind}
+    />
+  );
+}
+
+function ProviderCreation({ kind }: { kind: ProviderPageKind }) {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const navigate = useNavigate();
@@ -234,6 +246,26 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
   const [error, setError] = useState("");
   const [services, setServices] = useState<AIService[] | null>(null);
   const [serviceQuery, setServiceQuery] = useState("");
+  const storageKey = `opsonde.provider-registration:${account?.id}:${kind}`;
+  const [saved, setSaved] = useState(() =>
+    readStoredRequest(storageKey, (value): { id: string } => {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("id" in value) ||
+        typeof value.id !== "string" ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.id)
+      )
+        throw new Error("Invalid registration identity");
+      return { id: value.id };
+    }),
+  );
+  const original = useRef(saved.intent);
+  const mounted = useRef(false);
+  const busy = useRef(false);
+  const read = useRef<AbortController | null>(null);
+  const [reading, setReading] = useState(false);
+  const [sending, setSending] = useState(false);
   const canManage = account?.role === "admin";
   const overview = kind === "ai" ? "/ai" : "/signals";
   const choiceEntries = Object.entries(signalChoices);
@@ -258,21 +290,105 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
   const selected = kind === "ai" ? aiService?.id : selectedChoice ? providerType : undefined;
 
   useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      read.current?.abort();
+    };
+  }, []);
+
+  function clearOriginal(id: string) {
+    if (original.current?.id !== id || !clearStoredRequest(storageKey, { id }))
+      throw new Error("Registration identity changed");
+    original.current = null;
+    if (mounted.current) setSaved({ intent: null, unreadable: false });
+  }
+
+  function confirm(provider: components["schemas"]["Provider"], id: string) {
+    if (!mounted.current || original.current?.id !== id) return;
+    if (provider.id !== id || provider.kind !== kind || provider.revision < 1)
+      throw new Error("Registration result does not match its identity");
+    clearOriginal(id);
+    void navigate(overview, { replace: true, state: { created: kind } });
+  }
+
+  async function register(
+    input: Omit<components["schemas"]["CreateProviderRequest"]["provider"], "registration_id">,
+  ) {
+    if (!mounted.current || busy.current || original.current || saved.unreadable)
+      throw new Error("Registration pending");
+    busy.current = true;
+    setSending(true);
+    let id: string | undefined;
+    try {
+      id = crypto.randomUUID();
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify({ id }));
+      } catch (cause) {
+        setSaved({ intent: null, unreadable: true });
+        throw cause;
+      }
+      original.current = { id };
+      setSaved({ intent: { id }, unreadable: false });
+      const result = await apiClient
+        .POST("/api/v1/providers", {
+          body: { provider: { ...input, registration_id: id } },
+        })
+        .then(apiData);
+      confirm(result.data, id);
+    } catch (cause) {
+      if (
+        mounted.current &&
+        id &&
+        original.current?.id === id &&
+        cause instanceof ApiError &&
+        [400, 403, 409, 422].includes(cause.status)
+      )
+        clearOriginal(id);
+      throw cause;
+    } finally {
+      busy.current = false;
+      if (mounted.current) setSending(false);
+    }
+  }
+
+  async function checkRegistration() {
+    const id = original.current?.id;
+    if (!id || busy.current) return;
+    busy.current = true;
+    setReading(true);
+    setError("");
+    const owner = new AbortController();
+    read.current = owner;
+    try {
+      const result = await apiClient
+        .GET("/api/v1/providers/{id}", { params: { path: { id } }, signal: owner.signal })
+        .then(apiData);
+      if (!owner.signal.aborted) confirm(result.data, id);
+    } catch {
+      if (mounted.current && !owner.signal.aborted) setError(t("setup.registrationUnknown"));
+    } finally {
+      busy.current = false;
+      if (mounted.current) setReading(false);
+    }
+  }
+
+  useEffect(() => {
     if (kind !== "ai") return;
-    let active = true;
-    loadAIServices()
+    const owner = new AbortController();
+    loadAIServices(owner.signal)
       .then((items) => {
-        if (active) setServices(items);
+        if (!owner.signal.aborted) setServices(items);
       })
       .catch(() => {
-        if (active) setError(t("setup.requestFailed"));
+        if (!owner.signal.aborted) setError(t("setup.requestFailed"));
       });
     return () => {
-      active = false;
+      owner.abort();
     };
   }, [kind, t]);
 
-  if (kind === "ai" && !services) {
+  if (kind === "ai" && !services && !saved.intent && !saved.unreadable) {
     if (error) {
       return (
         <div className="p-6">
@@ -289,7 +405,8 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
     );
   }
 
-  if (providerType && !selected) return <Navigate to={`${overview}/new`} replace />;
+  if (providerType && !selected && (kind !== "ai" || services))
+    return <Navigate to={`${overview}/new`} replace />;
 
   return (
     <div className="space-y-6 p-6 lg:p-8">
@@ -326,6 +443,26 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {(saved.intent || saved.unreadable) && (
+        <Alert>
+          <AlertDescription>
+            <p>
+              {t(saved.unreadable ? "setup.registrationUnavailable" : "setup.registrationUnknown")}
+            </p>
+            {saved.intent && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={reading || sending}
+                onClick={() => void checkRegistration()}
+              >
+                {reading && <Spinner />}
+                {t("setup.checkRegistration")}
+              </Button>
+            )}
+          </AlertDescription>
         </Alert>
       )}
       {!canManage ? (
@@ -379,19 +516,17 @@ function ProviderCreatePage({ kind }: { kind: ProviderPageKind }) {
           ))}
         </div>
       ) : kind === "ai" ? (
-        <AIProviderCreateForm
-          service={aiService!}
-          onCreated={() => void navigate("/ai", { replace: true, state: { created: "ai" } })}
-          onError={setError}
-        />
+        <fieldset disabled={!!saved.intent || saved.unreadable}>
+          <AIProviderCreateForm service={aiService!} onRegister={register} onError={setError} />
+        </fieldset>
       ) : (
-        <SignalProviderCreateForm
-          adapterType={selected as SignalAdapter}
-          onCreated={() =>
-            void navigate("/signals", { replace: true, state: { created: "signal" } })
-          }
-          onError={setError}
-        />
+        <fieldset disabled={!!saved.intent || saved.unreadable}>
+          <SignalProviderCreateForm
+            adapterType={selected as SignalAdapter}
+            onRegister={register}
+            onError={setError}
+          />
+        </fieldset>
       )}
     </div>
   );

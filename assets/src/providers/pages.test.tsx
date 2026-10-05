@@ -1,9 +1,14 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { AuthenticationContext, type Authentication } from "@/auth/context";
-import { AIProviderPage, SignalProviderPage } from "@/providers/pages";
+import {
+  AIProviderPage,
+  SignalProviderPage,
+  SignalProviderCreatePage,
+  AIProviderCreatePage,
+} from "@/providers/pages";
 import { OnboardingPage } from "@/settings/onboarding-page";
 import i18n from "@/i18n/config";
 
@@ -15,6 +20,292 @@ const wire = vi.hoisted(() => {
 afterEach(() => {
   cleanup();
   wire.mockReset();
+  sessionStorage.clear();
+  vi.restoreAllMocks();
+});
+
+function signalCreationScreen(accountId = "account-1") {
+  return (
+    <AuthenticationContext.Provider
+      value={{ account: { id: accountId, role: "admin", role_version: 1 } } as Authentication}
+    >
+      <MemoryRouter initialEntries={["/signals/new/alertmanager-webhook"]}>
+        <Routes>
+          <Route path="/signals/new/:providerType" element={<SignalProviderCreatePage />} />
+          <Route path="/signals" element={<div>Signal registration confirmed</div>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticationContext.Provider>
+  );
+}
+function showSignalCreation() {
+  return render(signalCreationScreen());
+}
+
+test("Signal registration retains only its original ID after lost acknowledgement and reload confirms it without resending", async () => {
+  await i18n.changeLanguage("en");
+  let registeredId = "";
+  let posts = 0;
+  const reads: string[] = [];
+  wire.mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "POST") {
+      posts++;
+      const input = await request.json();
+      registeredId = input.provider.registration_id;
+      expect(
+        JSON.parse(sessionStorage.getItem("opsonde.provider-registration:account-1:signal")!),
+      ).toEqual({ id: registeredId });
+      return Response.json({ error: { code: "internal_error" } }, { status: 503 });
+    }
+    reads.push(url.pathname);
+    return Response.json({
+      data: {
+        ...metadata(1, "signal"),
+        id: registeredId,
+        revision: 1,
+        enabled: false,
+        configuration: { source: "prometheus" },
+        inserted_at: "2026-10-05T00:00:00Z",
+        updated_at: "2026-10-05T00:00:00Z",
+      },
+    });
+  });
+  const view = showSignalCreation();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(i18n.t("cases.name")), "Prometheus Signal");
+  await user.type(screen.getByLabelText(i18n.t("cases.source")), "prometheus");
+  await user.type(
+    screen.getByLabelText(i18n.t("cases.webhookSecret")),
+    "private-secret-for-registration",
+  );
+  await user.click(screen.getByRole("button", { name: i18n.t("cases.addSignal") }));
+  await screen.findByText(i18n.t("setup.registrationUnknown"));
+  expect(posts).toBe(1);
+  expect(sessionStorage.getItem("opsonde.provider-registration:account-1:signal")).not.toContain(
+    "private-secret-for-registration",
+  );
+  view.unmount();
+  showSignalCreation();
+  await user.click(screen.getByRole("button", { name: i18n.t("setup.checkRegistration") }));
+  await screen.findByText("Signal registration confirmed");
+  expect(posts).toBe(1);
+  expect(reads).toEqual([`/api/v1/providers/${registeredId}`]);
+  expect(sessionStorage.getItem("opsonde.provider-registration:account-1:signal")).toBeNull();
+});
+
+test("registration storage failure sends no request and preserves the entered form", async () => {
+  await i18n.changeLanguage("en");
+  wire.mockImplementation(() => {
+    throw new Error("No HTTP request should be made");
+  });
+  showSignalCreation();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(i18n.t("cases.name")), "Storage-fault Signal");
+  await user.type(screen.getByLabelText(i18n.t("cases.source")), "prometheus");
+  await user.type(
+    screen.getByLabelText(i18n.t("cases.webhookSecret")),
+    "private-storage-test-secret",
+  );
+  const saving = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => {
+    throw new Error("Storage unavailable");
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: i18n.t("cases.addSignal") }));
+    await screen.findByText(i18n.t("setup.registrationUnavailable"));
+    expect(wire).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(i18n.t("cases.name"))).toHaveProperty(
+      "value",
+      "Storage-fault Signal",
+    );
+  } finally {
+    saving.mockRestore();
+  }
+});
+
+test("a rejected registration keeps input and clears only its original identity", async () => {
+  await i18n.changeLanguage("en");
+  let posts = 0;
+  wire.mockImplementation(() => {
+    posts++;
+    return Promise.resolve(
+      Response.json({ error: { code: "validation_failed" } }, { status: 422 }),
+    );
+  });
+  showSignalCreation();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(i18n.t("cases.name")), "Rejected Signal");
+  await user.type(screen.getByLabelText(i18n.t("cases.source")), "prometheus");
+  await user.type(
+    screen.getByLabelText(i18n.t("cases.webhookSecret")),
+    "private-rejection-test-secret",
+  );
+  await user.click(screen.getByRole("button", { name: i18n.t("cases.addSignal") }));
+  await screen.findByText(i18n.t("cases.requestFailed"));
+  expect(posts).toBe(1);
+  expect(screen.getByLabelText(i18n.t("cases.name"))).toHaveProperty("value", "Rejected Signal");
+  expect(screen.queryByText(i18n.t("setup.registrationUnknown"))).toBeNull();
+  expect(sessionStorage.getItem("opsonde.provider-registration:account-1:signal")).toBeNull();
+});
+
+test("a saved AI registration can be confirmed even when its service catalog is unavailable", async () => {
+  await i18n.changeLanguage("en");
+  sessionStorage.setItem(
+    "opsonde.provider-registration:account-1:ai",
+    JSON.stringify({ id: id(51) }),
+  );
+  const methods: string[] = [];
+  wire.mockImplementation((request: Request) => {
+    methods.push(request.method);
+    if (new URL(request.url).pathname === "/api/v1/ai-services")
+      return Promise.resolve(Response.json({ error: { code: "internal_error" } }, { status: 500 }));
+    return Promise.resolve(
+      Response.json({
+        data: {
+          ...metadata(51),
+          configuration: {},
+          inserted_at: "2026-10-05T00:00:00Z",
+          updated_at: "2026-10-05T00:00:00Z",
+        },
+      }),
+    );
+  });
+  render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: "account-1", role: "admin", role_version: 1 } } as Authentication}
+    >
+      <MemoryRouter initialEntries={["/ai/new/openai"]}>
+        <Routes>
+          <Route path="/ai/new/:providerType" element={<AIProviderCreatePage />} />
+          <Route path="/ai" element={<div>AI registration confirmed</div>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("button", { name: i18n.t("setup.checkRegistration") }));
+  await screen.findByText("AI registration confirmed");
+  expect(methods.every((method) => method === "GET")).toBe(true);
+});
+
+test("AI registration sends the composed model and role input with one original identity", async () => {
+  await i18n.changeLanguage("en");
+  let posts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    if (request.method === "GET")
+      return Response.json({
+        data: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            auth: "api_key",
+            endpoint_required: false,
+            configuration_fields: [],
+          },
+        ],
+      });
+    posts++;
+    const input = await request.json();
+    expect(input.provider).toMatchObject({
+      name: "Chosen AI",
+      kind: "ai",
+      adapter_type: "req-llm",
+      usage_scope: "all",
+      usage_priority: 100,
+      configuration: { provider: "openai", model: "selected-model" },
+      credentials: { api_key: "private-ai-test-secret" },
+    });
+    expect(
+      JSON.parse(sessionStorage.getItem("opsonde.provider-registration:account-1:ai")!),
+    ).toEqual({ id: input.provider.registration_id });
+    return Response.json(
+      {
+        data: {
+          ...metadata(51),
+          id: input.provider.registration_id,
+          enabled: false,
+          configuration: input.provider.configuration,
+          inserted_at: "2026-10-05T00:00:00Z",
+          updated_at: "2026-10-05T00:00:00Z",
+        },
+      },
+      { status: 201 },
+    );
+  });
+  render(
+    <AuthenticationContext.Provider
+      value={{ account: { id: "account-1", role: "admin", role_version: 1 } } as Authentication}
+    >
+      <MemoryRouter initialEntries={["/ai/new/openai"]}>
+        <Routes>
+          <Route path="/ai/new/:providerType" element={<AIProviderCreatePage />} />
+          <Route path="/ai" element={<div>AI registration confirmed</div>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticationContext.Provider>,
+  );
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText(i18n.t("setup.name")), "Chosen AI");
+  await user.type(screen.getByLabelText(i18n.t("setup.model")), "selected-model");
+  await user.type(
+    screen.getByLabelText(i18n.t("setup.aiFields.api_key")),
+    "private-ai-test-secret",
+  );
+  await user.click(screen.getByRole("button", { name: i18n.t("setup.addConnection") }));
+  await screen.findByText("AI registration confirmed");
+  expect(posts).toBe(1);
+  expect(sessionStorage.getItem("opsonde.provider-registration:account-1:ai")).toBeNull();
+});
+
+test("a former account registration acknowledgement cannot navigate or clear its saved identity", async () => {
+  await i18n.changeLanguage("en");
+  let finish!: (response: Response) => void;
+  let registeredId = "";
+  let posts = 0;
+  wire.mockImplementation(async (request: Request) => {
+    posts++;
+    registeredId = (await request.json()).provider.registration_id;
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  const view = showSignalCreation();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(i18n.t("cases.name")), "Previous account Signal");
+  await user.type(screen.getByLabelText(i18n.t("cases.source")), "prometheus");
+  await user.type(
+    screen.getByLabelText(i18n.t("cases.webhookSecret")),
+    "private-previous-account-secret",
+  );
+  await user.click(screen.getByRole("button", { name: i18n.t("cases.addSignal") }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.rerender(signalCreationScreen("different-account"));
+  await act(async () => {
+    finish(
+      Response.json(
+        {
+          data: {
+            ...metadata(1, "signal"),
+            id: registeredId,
+            configuration: {},
+            inserted_at: "2026-10-05T00:00:00Z",
+            updated_at: "2026-10-05T00:00:00Z",
+          },
+        },
+        { status: 201 },
+      ),
+    );
+  });
+  expect(screen.queryByText("Signal registration confirmed")).toBeNull();
+  expect(screen.getByLabelText(i18n.t("cases.name"))).toHaveProperty("value", "");
+  expect(sessionStorage.getItem("opsonde.provider-registration:account-1:signal")).toBe(
+    JSON.stringify({ id: registeredId }),
+  );
+  expect(
+    sessionStorage.getItem("opsonde.provider-registration:different-account:signal"),
+  ).toBeNull();
+  expect(posts).toBe(1);
 });
 const id = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const metadata = (n: number, kind = "ai") => ({

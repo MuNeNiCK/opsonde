@@ -200,7 +200,10 @@ const ja = {
       saveUsage: "用途と順序を保存",
       usageSaved: "{{name}}の用途を保存しました。",
       priorityDescription:
-        "優先度は小さい数字から選択します。同じ数字なら登録順です。接続確認後に有効化すると順位が表示されます。",
+        "用途ごとに、接続確認済みで有効なAIから優先度の小さい順に選びます。同じ数字なら登録順です。",
+      registrationUnknown: "登録結果を確認できませんでした。",
+      registrationUnavailable: "保存した登録情報を読み取れません。",
+      checkRegistration: "登録結果を確認",
       connection: "接続",
       priority: "優先度",
       accounts: {

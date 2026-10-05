@@ -202,7 +202,10 @@ const en = {
       saveUsage: "Save use and order",
       usageSaved: "Usage for {{name}} was saved.",
       priorityDescription:
-        "Lower numbers are selected first. Ties follow registration order. The rank appears after the connection passes its check and is enabled.",
+        "For each role, checked and enabled connections are selected by priority, then registration order.",
+      registrationUnknown: "Registration could not be confirmed.",
+      registrationUnavailable: "The saved registration request could not be read.",
+      checkRegistration: "Check registration result",
       connection: "Connection",
       priority: "Priority",
       accounts: {
