@@ -1077,6 +1077,9 @@ defmodule Opsonde.OperationDeliveryTest do
     assert saved.result["intent"]["parameters"] == parameters
     assert byte_size(Jason.encode!(saved.result)) > 65_536
     assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+    Cases.route_downstream_decision!(turn.id, authorize?: false)
+    proposal = Cases.proposal_by_source_turn!(turn.id, authorize?: false)
+    assert proposal.parameters == parameters
 
     assert :ok =
              ResolverDelivery.run(turn.id,
