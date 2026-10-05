@@ -136,8 +136,8 @@ export function AIProviderCreateForm({
       provider: service.id,
       model,
       timeout_ms: Number(timeoutMs),
-      max_tokens: Number(maxTokens),
     };
+    if (maxTokens) configuration.max_tokens = Number(maxTokens);
     if (endpoint) configuration.endpoint = endpoint;
     if (reasoningEffort) configuration.reasoning_effort = reasoningEffort;
     Object.assign(configuration, extraConfiguration);
@@ -339,8 +339,9 @@ export function ProviderSetup({
       provider: service.id,
       model,
       timeout_ms: Number(timeoutMs),
-      max_tokens: Number(maxTokens),
     };
+    if (maxTokens) configuration.max_tokens = Number(maxTokens);
+    else delete configuration.max_tokens;
     if (endpoint) configuration.endpoint = endpoint;
     else delete configuration.endpoint;
     if (reasoningEffort) configuration.reasoning_effort = reasoningEffort;
@@ -833,9 +834,7 @@ function AIProviderFields({
           name="max_tokens"
           type="number"
           min={1}
-          max={32_768}
-          defaultValue={number("max_tokens", 4_096)}
-          required
+          defaultValue={number("max_tokens", 0) || ""}
         />
         <p className="text-xs text-muted-foreground">{t("setup.maxTokensDescription")}</p>
       </div>

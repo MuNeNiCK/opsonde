@@ -911,7 +911,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
         %{
           "provider" => %{
             "expected_revision" => provider["revision"],
-            "configuration" => %{configuration | "max_tokens" => 16_384}
+            "configuration" => %{configuration | "max_tokens" => 65_536}
           }
         },
         context.admin_token
@@ -920,8 +920,25 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{"data" => %{"configuration" => saved, "enabled" => false}} =
              json_response(updated, 200)
 
-    assert saved["max_tokens"] == 16_384
+    assert saved["max_tokens"] == 65_536
     assert saved["reasoning_effort"] == "none"
+
+    updated_provider = json_response(updated, 200)["data"]
+
+    cleared =
+      patch_json(
+        "/api/v1/providers/#{provider["id"]}",
+        %{
+          "provider" => %{
+            "expected_revision" => updated_provider["revision"],
+            "configuration" => Map.delete(saved, "max_tokens")
+          }
+        },
+        context.admin_token
+      )
+
+    assert %{"data" => %{"configuration" => defaults}} = json_response(cleared, 200)
+    refute Map.has_key?(defaults, "max_tokens")
   end
 
   test "AI creation accepts an initial usage choice and rejects usage on other kinds", context do

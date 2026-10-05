@@ -162,7 +162,7 @@ const en = {
       timeoutMs: "Request timeout (milliseconds)",
       timeoutMsDescription: "Maximum time allowed for one model request.",
       maxTokens: "Maximum output tokens",
-      maxTokensDescription: "Maximum model output allowed for one request.",
+      maxTokensDescription: "Leave blank to use the model default.",
       advancedAI: "Advanced",
       reasoningEffort: "Reasoning effort",
       reasoningEffortDefault: "Model default",

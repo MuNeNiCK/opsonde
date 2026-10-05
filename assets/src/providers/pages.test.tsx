@@ -216,6 +216,7 @@ test("AI registration sends the composed model and role input with one original 
       configuration: { provider: "openai", model: "selected-model" },
       credentials: { api_key: "private-ai-test-secret" },
     });
+    expect(input.provider.configuration).not.toHaveProperty("max_tokens");
     expect(
       JSON.parse(sessionStorage.getItem("opsonde.provider-registration:account-1:ai")!),
     ).toEqual({ id: input.provider.registration_id });
@@ -248,6 +249,10 @@ test("AI registration sends the composed model and role input with one original 
   const user = userEvent.setup();
   await user.type(await screen.findByLabelText(i18n.t("setup.name")), "Chosen AI");
   await user.type(screen.getByLabelText(i18n.t("setup.model")), "selected-model");
+  const outputLimit = screen.getByLabelText(i18n.t("setup.maxTokens")) as HTMLInputElement;
+  expect(outputLimit.value).toBe("");
+  expect(outputLimit.required).toBe(false);
+  expect(outputLimit.max).toBe("");
   await user.type(
     screen.getByLabelText(i18n.t("setup.aiFields.api_key")),
     "private-ai-test-secret",
@@ -347,9 +352,16 @@ function show(kind = "ai", role = "admin") {
 
 test("AI pages keep fifty metadata cards, use global Reviewer facts and fetch only the selected configuration", async () => {
   await i18n.changeLanguage("en");
+  let changes = 0;
   const requests: URL[] = [];
-  wire.mockImplementation((request: Request) => {
+  wire.mockImplementation(async (request: Request) => {
     const url = new URL(request.url);
+    if (request.method === "PATCH") {
+      const input = await request.json();
+      expect(input.provider.configuration).not.toHaveProperty("max_tokens");
+      changes++;
+      return Response.json({ data: {} });
+    }
     requests.push(url);
     if (url.pathname === "/api/v1/authority-setting/readiness")
       return Promise.resolve(Response.json({ data: readiness }));
@@ -402,6 +414,7 @@ test("AI pages keep fifty metadata cards, use global Reviewer facts and fetch on
               provider: "openai",
               model: "example-model",
               endpoint: "https://api.example/v1",
+              max_tokens: 65_536,
             },
             inserted_at: "2026-10-05T00:00:00Z",
             updated_at: "2026-10-05T00:00:00Z",
@@ -430,6 +443,8 @@ test("AI pages keep fifty metadata cards, use global Reviewer facts and fetch on
   await waitFor(() =>
     expect(screen.getByLabelText("Model")).toHaveProperty("value", "example-model"),
   );
+  const outputLimit = screen.getByLabelText(i18n.t("setup.maxTokens"));
+  expect(outputLimit).toHaveProperty("value", "65536");
   expect(requests.filter((url) => url.pathname === `/api/v1/providers/${id(51)}`)).toHaveLength(1);
   expect(
     requests.some((url) =>
@@ -441,6 +456,9 @@ test("AI pages keep fifty metadata cards, use global Reviewer facts and fetch on
       ].includes(url.pathname),
     ),
   ).toBe(false);
+  await user.clear(outputLimit);
+  await user.click(screen.getByRole("button", { name: i18n.t("setup.saveConnection") }));
+  await waitFor(() => expect(changes).toBe(1));
 });
 
 test("Signal changes refresh the current window and HTTP failure never repeats a write", async () => {

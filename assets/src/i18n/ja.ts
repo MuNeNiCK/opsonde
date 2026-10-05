@@ -161,7 +161,7 @@ const ja = {
       timeoutMs: "リクエストタイムアウト（ミリ秒）",
       timeoutMsDescription: "1回のモデルリクエストを待つ最大時間です。",
       maxTokens: "最大出力トークン数",
-      maxTokensDescription: "1回のリクエストで許可するモデル出力の上限です。",
+      maxTokensDescription: "空欄の場合はモデルの既定値を使用します。",
       advancedAI: "詳細設定",
       reasoningEffort: "推論量",
       reasoningEffortDefault: "モデルの初期値",

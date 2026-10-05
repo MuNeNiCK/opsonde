@@ -21,6 +21,47 @@ defmodule Opsonde.AI.ReqLLMTest do
     %{agent: agent, endpoint: "http://127.0.0.1:#{port}"}
   end
 
+  test "model output defaults reach Resolver requests within the remaining Case budget",
+       context do
+    state =
+      state!("anthropic", context.endpoint, %{"api_key" => "test-secret"}, %{
+        "model" => "claude-sonnet-4-5"
+      })
+
+    request = resolver_request()
+    request = %{request | budget: %{request.budget | remaining_tokens: 100_000}}
+    assert {:ok, _} = Adapter.resolve(state, request, %{})
+    [sent] = requests(context.agent)
+    assert Jason.decode!(sent.body)["max_tokens"] == 64_000
+
+    set_mode(context.agent, {:decision, handoff()})
+    request = %{request | budget: %{request.budget | remaining_tokens: 1_000}}
+    assert {:ok, _} = Adapter.resolve(state, request, %{})
+    [sent] = requests(context.agent)
+    assert Jason.decode!(sent.body)["max_tokens"] == 1_000
+  end
+
+  test "explicit output overrides and unknown-model defaults retain the Case ceiling", context do
+    request = resolver_request()
+    request = %{request | budget: %{request.budget | remaining_tokens: 100_000}}
+
+    for {configuration, expected} <- [{%{}, 4_096}, {%{"max_tokens" => 65_536}, 65_536}] do
+      state =
+        state!("openai", context.endpoint <> "/v1", %{"api_key" => "test-secret"}, configuration)
+
+      set_mode(context.agent, {:decision, handoff()})
+      assert {:ok, _} = Adapter.resolve(state, request, %{})
+      [sent] = requests(context.agent)
+      assert Jason.decode!(sent.body)["max_tokens"] == expected
+
+      set_mode(context.agent, {:decision, handoff()})
+      bounded = %{request | budget: %{request.budget | remaining_tokens: 1_000}}
+      assert {:ok, _} = Adapter.resolve(state, bounded, %{})
+      [sent] = requests(context.agent)
+      assert Jason.decode!(sent.body)["max_tokens"] == 1_000
+    end
+  end
+
   test "generate_object preserves the exact file binding offered by each file-bearing Method",
        context do
     reference = %{

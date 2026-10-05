@@ -29,7 +29,6 @@ defmodule Opsonde.AI.ReqLLM do
   @reasoning_efforts ~w(none low medium high max)
   @max_model_bytes 200
   @max_output_bytes AI.max_output_bytes()
-  @max_tokens 32_768
   @max_timeout 600_000
   @poll_interval 20
   @resolver_intent_types ~w(target_search target_selection target_traversal file_read proposal case_split recovery handoff)
@@ -63,20 +62,25 @@ defmodule Opsonde.AI.ReqLLM do
          {:ok, model} <- required_string(configuration, "model", @max_model_bytes),
          {:ok, endpoint} <- endpoint(configuration),
          {:ok, stream?} <- boolean(configuration, "stream", false),
-         {:ok, max_tokens} <- integer(configuration, "max_tokens", 2_048, 1, @max_tokens),
+         {:ok, max_tokens} <- optional_positive_integer(configuration, "max_tokens"),
          {:ok, timeout} <- integer(configuration, "timeout_ms", 60_000, 100, @max_timeout),
          {:ok, reasoning_effort} <- reasoning_effort(configuration),
          {:ok, provider_options} <- provider_configuration(provider, configuration),
          {:ok, auth_options} <- credentials(provider, credentials),
          model_spec <- model_spec(provider, model),
          {:ok, resolved_model} <- ReqLLM.model(model_spec) do
+      output_options =
+        []
+        |> maybe_put(:max_tokens, max_tokens)
+        |> ReqLLM.Provider.Options.put_model_max_tokens_default(resolved_model, fallback: 4096)
+
       {:ok,
        %{
          provider: provider,
          model: resolved_model,
          endpoint: endpoint,
          stream?: stream?,
-         max_tokens: max_tokens,
+         max_tokens: Keyword.fetch!(output_options, :max_tokens),
          timeout: timeout,
          reasoning_effort: reasoning_effort,
          auth_options: Keyword.delete(auth_options, :provider_options),
@@ -103,7 +107,7 @@ defmodule Opsonde.AI.ReqLLM do
              "Return the required connection-check object with status ready."
            ),
            schema,
-           min(state.max_tokens, 128),
+           state.max_tokens,
            %{}
          ) do
       {:ok, response} ->
@@ -2090,6 +2094,14 @@ defmodule Opsonde.AI.ReqLLM do
   defp integer(map, key, default, minimum, maximum) do
     case Map.get(map, key, default) do
       value when is_integer(value) and value >= minimum and value <= maximum -> {:ok, value}
+      _value -> {:error, :invalid_integer}
+    end
+  end
+
+  defp optional_positive_integer(map, key) do
+    case Map.fetch(map, key) do
+      :error -> {:ok, nil}
+      {:ok, value} when is_integer(value) and value > 0 -> {:ok, value}
       _value -> {:error, :invalid_integer}
     end
   end
