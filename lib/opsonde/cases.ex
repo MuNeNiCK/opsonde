@@ -275,6 +275,10 @@ defmodule Opsonde.Cases do
         action: :update_counters,
         args: [:expected_revision]
 
+      define :record_resolution_run_ai_usage,
+        action: :record_ai_usage,
+        args: [:expected_revision, :amount]
+
       define :reallocate_resolution_run_limits,
         action: :reallocate_limits,
         args: [:expected_revision]

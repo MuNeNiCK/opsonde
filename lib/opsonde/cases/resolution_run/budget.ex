@@ -28,7 +28,7 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
   defp consume_locked(opts) do
     with :ok <- admission_lock(opts),
          {:ok, incident} <- lock_case(opts[:case_id]),
-         {:ok, run} <- lock_run(opts[:resolution_run_id], incident.id),
+         {:ok, run} <- lock_run(opts[:resolution_run_id], incident.id, opts[:kind]),
          {:ok, event} <- existing_event(incident.id, opts[:ledger_key]) do
       if event do
         replay_result(incident, run, event, opts)
@@ -83,24 +83,27 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
   end
 
   defp consume_new(incident, run, opts) do
-    with :ok <- ensure_running(incident, run) do
-      case exhausted_limit(run, opts[:kind], opts[:amount], DateTime.utc_now()) do
-        nil -> charge(incident, run, opts)
-        limit -> exhaust(incident, run, limit, opts)
+    if stopped_usage?(incident, run, opts) do
+      charge(incident, run, opts)
+    else
+      with :ok <- ensure_running(incident, run) do
+        case exhausted_limit(run, opts[:kind], opts[:amount], DateTime.utc_now()) do
+          nil -> charge(incident, run, opts)
+          limit -> exhaust(incident, run, limit, opts)
+        end
       end
     end
   end
 
-  defp charge(incident, run, opts) do
-    counters = next_counters(run, opts[:kind], opts[:amount])
+  defp stopped_usage?(incident, run, opts),
+    do:
+      opts[:kind] == :ai_usage and
+        (incident.cancel_requested or incident.status != :running or
+           not run.active or run.status != :running)
 
+  defp charge(incident, run, opts) do
     with {:ok, updated_run} <-
-           Cases.update_resolution_run_counters(
-             run,
-             run.revision,
-             counters,
-             authorize?: false
-           ),
+           update_counters(incident, run, opts),
          {:ok, value} <- opts[:operation].(incident, updated_run),
          {:ok, _event} <-
            create_event(
@@ -112,6 +115,19 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
              event_data(opts, updated_run, value)
            ) do
       %BudgetResult{status: :charged, case: incident, run: updated_run, value: value}
+    end
+  end
+
+  defp update_counters(incident, run, opts) do
+    if stopped_usage?(incident, run, opts) do
+      Cases.record_resolution_run_ai_usage(run, run.revision, opts[:amount], authorize?: false)
+    else
+      Cases.update_resolution_run_counters(
+        run,
+        run.revision,
+        next_counters(run, opts[:kind], opts[:amount]),
+        authorize?: false
+      )
     end
   end
 
@@ -158,13 +174,18 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
     |> required("Case is unavailable")
   end
 
-  defp lock_run(id, case_id) do
-    ResolutionRun
-    |> Ash.Query.for_read(:read)
-    |> Ash.Query.filter(id: id, case_id: case_id, active: true)
+  defp lock_run(id, case_id, kind) do
+    query =
+      ResolutionRun
+      |> Ash.Query.for_read(:read)
+      |> Ash.Query.filter(id: id, case_id: case_id)
+
+    query = if kind == :ai_usage, do: query, else: Ash.Query.filter(query, active: true)
+
+    query
     |> Ash.Query.lock(:for_update)
     |> Ash.read_one(authorize?: false)
-    |> required("Active ResolutionRun is unavailable")
+    |> required("ResolutionRun is unavailable")
   end
 
   defp required({:ok, nil}, message), do: invalid(message)

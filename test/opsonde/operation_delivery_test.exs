@@ -192,6 +192,211 @@ defmodule Opsonde.OperationDeliveryTest do
              )
   end
 
+  @tag native_reviewer_context: true
+  test "a pending native Reviewer retains its context read error after accounting", context do
+    {context, peer} = native_reviewer!(context)
+    configure_mode!(context.admin, :auto)
+    {_incident, run, proposal} = authorized_proposal!("native-review-read-fault", context)
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+    faulted = :atomics.new(1, [])
+    Agent.update(peer, &%{&1 | mode: {:sleep, 1_500}, requests: []})
+
+    assert {:error, cause} =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 cancelled?: fn ->
+                   if Agent.get(peer, &(&1.requests != [])) and
+                        :atomics.compare_exchange(faulted, 1, 0, 1) == :ok do
+                     {:error, error} =
+                       Repo.query("SELECT native_reviewer_context_unavailable", [],
+                         mode: :savepoint
+                       )
+
+                     raise error
+                   end
+
+                   false
+                 end
+               }
+             )
+
+    assert Exception.message(cause) =~ "native_reviewer_context_unavailable"
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :failed
+    assert invocation.category == "failed"
+    assert invocation.dispatch_confirmed
+    refute invocation.usage_reported
+    expected_units = before_units + invocation.reserved_units
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == expected_units
+
+    assert {:error, _retry} =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3
+             )
+
+    assert Agent.get(peer, &length(&1.requests)) == 1
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == expected_units
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+  end
+
+  @tag native_reviewer_context: true
+  test "cancelling a pending native Reviewer retains its paid usage on the ended Run", context do
+    {context, peer} = native_reviewer!(context)
+    configure_mode!(context.admin, :auto)
+    {incident, run, proposal} = authorized_proposal!("native-review-case-cancel", context)
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+    cancelled = :atomics.new(1, [])
+    Agent.update(peer, &%{&1 | mode: {:sleep, 1_500}, requests: []})
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               ai_invocation: %{
+                 cancelled?: fn ->
+                   if Agent.get(peer, &(&1.requests != [])) and
+                        :atomics.compare_exchange(cancelled, 1, 0, 1) == :ok do
+                     current = Cases.get_case!(incident.id, actor: context.operator)
+
+                     Cases.request_case_cancellation!(current.id, current.revision,
+                       actor: context.operator
+                     )
+                   end
+
+                   false
+                 end
+               }
+             )
+
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :failed
+    assert invocation.category == "cancelled"
+    assert invocation.dispatch_confirmed
+    refute invocation.usage_reported
+    ended = Cases.get_resolution_run!(run.id, authorize?: false)
+    assert ended.status == :cancelled
+    refute ended.active
+    assert ended.ai_usage_units == before_units + invocation.reserved_units
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :cancelled
+
+    assert :ok = Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id)
+    assert Agent.get(peer, &length(&1.requests)) == 1
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             ended.ai_usage_units
+
+    assert Cases.list_approvals!(actor: context.admin) == []
+  end
+
+  for role <- [:resolver, :recovery], stop <- [:cancel, :read_fault] do
+    @tag native_ai_stop: true, native_role: role, native_stop: stop
+    test "native #{role} retains usage and cause after #{stop}", context do
+      {context, peer} = native_reviewer!(context)
+
+      {incident, run, turn} =
+        if context.native_role == :resolver do
+          provider = Providers.get_provider!(context.resolver_provider.id, actor: context.admin)
+          Providers.disable_provider!(provider, provider.revision, actor: context.admin)
+          Opsonde.TestAIUsage.configure!(context.reviewer_provider.id, :all, 10, context.admin)
+
+          incident =
+            Cases.open_case!(
+              :manual,
+              "test",
+              "native-other-stop",
+              "The service is unavailable",
+              :warning,
+              %{"desired_outcome" => "The service responds"},
+              nil,
+              :en,
+              actor: context.operator
+            )
+
+          run = Cases.active_resolution_run!(incident.id, authorize?: false)
+
+          turn =
+            Cases.start_turn!(
+              incident.id,
+              run.id,
+              "native-stop-turn",
+              %{"objective" => "Investigate"},
+              %{"action" => "continue"},
+              "Review limits",
+              authorize?: false
+            ).value
+
+          {incident, run, turn}
+        else
+          {incident, run, turn, _evidence} = recovery_conclusion!(context, "native-recovery-stop")
+          Cases.route_downstream_decision!(turn.id, authorize?: false)
+          {incident, run, turn}
+        end
+
+      before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+      prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
+      Agent.update(peer, &%{&1 | mode: {:sleep, 1500}, requests: []})
+      changed = :atomics.new(1, [])
+
+      opts = [
+        ai_invocation: %{
+          cancelled?: fn ->
+            if Agent.get(peer, &(&1.requests != [])) and
+                 :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+              if context.native_stop == :cancel do
+                current = Cases.get_case!(incident.id, actor: context.operator)
+
+                Cases.request_case_cancellation!(current.id, current.revision,
+                  actor: context.operator
+                )
+              else
+                {:error, error} =
+                  Repo.query("SELECT native_other_ai_context_unavailable", [], mode: :savepoint)
+
+                raise error
+              end
+            end
+
+            false
+          end
+        }
+      ]
+
+      delivery =
+        if context.native_role == :resolver,
+          do: ResolverDelivery,
+          else: Opsonde.Cases.Turn.RecoveryReviewDelivery
+
+      result = delivery.run(turn.id, opts)
+      assert :atomics.get(changed, 1) == 1
+
+      assert [invocation] =
+               Cases.list_ai_invocations!(authorize?: false)
+               |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+      assert invocation.status == :failed
+      assert invocation.dispatch_confirmed
+      refute invocation.usage_reported
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_units + invocation.reserved_units
+
+      if context.native_stop == :read_fault do
+        assert {:error, error} = result
+        assert Exception.message(error) =~ "native_other_ai_context_unavailable"
+      else
+        assert result == :ok or match?({:cancel, _}, result)
+        assert Cases.get_case!(incident.id, actor: context.operator).status == :cancelled
+      end
+
+      _replay = delivery.run(turn.id)
+      assert Agent.get(peer, &length(&1.requests)) == 1
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_units + invocation.reserved_units
+    end
+  end
+
   @tag native_waiting_context: true
   test "a native Reviewer waits with bounded Case reads and retains its completed result",
        context do

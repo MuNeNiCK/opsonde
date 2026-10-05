@@ -93,6 +93,15 @@ defmodule Opsonde.Cases.ResolutionRun do
       change optimistic_lock(:revision)
     end
 
+    update :record_ai_usage do
+      accept []
+      argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
+      argument :amount, :integer, allow_nil?: false, constraints: [min: 1]
+      validate Opsonde.Validations.CurrentRevision
+      change atomic_update(:ai_usage_units, expr(ai_usage_units + ^arg(:amount)))
+      change optimistic_lock(:revision)
+    end
+
     update :reallocate_limits do
       accept [
         :max_resolver_turns,
@@ -143,6 +152,7 @@ defmodule Opsonde.Cases.ResolutionRun do
              :retire,
              :pause,
              :update_counters,
+             :record_ai_usage,
              :reallocate_limits,
              :charge
            ]) do

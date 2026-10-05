@@ -18,8 +18,9 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   alias Opsonde.Providers.AI
 
   def run(proposal_id, opts \\ []) do
-    with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false) do
-      if proposal.status == :invalidated do
+    with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false),
+         {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false) do
+      if proposal.status == :invalidated or incident.cancel_requested do
         :ok
       else
         case existing_decision(proposal.id) do
@@ -473,6 +474,9 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
 
       with {:ok, _invocation} <- record_failure(proposal, invocation, category, error) do
         cond do
+          AI.Error.context_failure?(error) ->
+            {:error, error}
+
           retryable_failure?(category) and retry_available?(opts) ->
             {:error,
              "Reviewer delivery #{category} on attempt #{delivery_attempt(opts)} of #{max_delivery_attempts(opts)}"}
@@ -632,11 +636,16 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
     do: {:error, "Reviewer AI invocation is already terminal"}
 
   defp stop_delivery(proposal, "cancelled" = category, reason) do
-    with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false),
-         {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
-      if current?,
-        do: fail_delivery(proposal, category, reason),
-        else: supersede_changed_context(proposal)
+    with {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false) do
+      if incident.cancel_requested do
+        :ok
+      else
+        with {:ok, current?} <- ConditionContext.current?(incident, proposal.source_turn_id) do
+          if current?,
+            do: fail_delivery(proposal, category, reason),
+            else: supersede_changed_context(proposal)
+        end
+      end
     end
   end
 

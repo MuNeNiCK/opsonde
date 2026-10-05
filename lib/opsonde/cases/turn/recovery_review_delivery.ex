@@ -390,6 +390,9 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
              end
            end) do
       cond do
+        AI.Error.context_failure?(error) ->
+          {:error, error}
+
         category == "context_changed" ->
           :ok
 

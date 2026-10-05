@@ -776,7 +776,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
                    rejection_code
                  ) do
               {:ok, _incident} ->
-                :ok
+                if AI.Error.context_failure?(error), do: {:error, error}, else: :ok
 
               {:error, persistence_error} ->
                 if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
