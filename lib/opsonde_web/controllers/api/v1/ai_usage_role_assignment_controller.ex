@@ -12,7 +12,7 @@ defmodule OpsondeWeb.API.V1.AIUsageRoleAssignmentController do
   operation :index,
     operation_id: "listAIUsageRoleAssignments",
     summary: "List AI usage-role assignments",
-    parameters: OpsondeWeb.API.Schemas.pagination_parameters(),
+    parameters: ProviderSchemas.assignment_page_parameters(),
     responses:
       [
         ok:
@@ -27,9 +27,12 @@ defmodule OpsondeWeb.API.V1.AIUsageRoleAssignmentController do
         ])
 
   def index(conn, params) do
+    input = OpenApiSpex.params(conn) |> Map.take([:provider_ids])
+
     with {:ok, page} <- Pagination.parse(params),
          {:ok, assignments} <-
            Providers.page_ai_usage_role_assignments(
+             input,
              page: page,
              actor: conn.assigns.current_user
            ) do

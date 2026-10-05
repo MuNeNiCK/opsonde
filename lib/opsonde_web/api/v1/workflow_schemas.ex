@@ -7,6 +7,35 @@ defmodule OpsondeWeb.API.V1.WorkflowSchemas do
   def components do
     %{
       "AuthoritySetting" => authority_setting(),
+      "SetupReadinessResponse" => Schemas.data(ref("SetupReadiness")),
+      "SetupReadiness" =>
+        object(
+          %{
+            ai: %Schema{type: :boolean},
+            resolver: %Schema{type: :boolean},
+            reviewer: %Schema{type: :boolean},
+            authority: %Schema{type: :boolean},
+            signal: %Schema{type: :boolean},
+            target: %Schema{type: :boolean},
+            complete: %Schema{type: :boolean},
+            authority_mode: %Schema{type: :string, enum: ~w(readonly ask auto full_access)},
+            sole_reviewer_provider_id: %{Schemas.uuid() | nullable: true},
+            first_target_id: %{Schemas.uuid() | nullable: true}
+          },
+          [
+            :ai,
+            :resolver,
+            :reviewer,
+            :authority,
+            :signal,
+            :target,
+            :complete,
+            :authority_mode,
+            :sole_reviewer_provider_id,
+            :first_target_id
+          ],
+          false
+        ),
       "AuthoritySettingResponse" => Schemas.data(ref("AuthoritySetting")),
       "AuthoritySettingPage" => Schemas.page(ref("AuthoritySetting")),
       "UpdateAuthoritySettingRequest" => update_authority_request(),

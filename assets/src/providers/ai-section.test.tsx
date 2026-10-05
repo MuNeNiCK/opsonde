@@ -6,7 +6,7 @@ import i18n from "@/i18n/config";
 import { ProviderSetup } from "@/providers/ai-section";
 import type { components } from "@/api/schema";
 
-type Provider = components["schemas"]["Provider"];
+type Provider = components["schemas"]["ProviderSummary"];
 type Assignment = components["schemas"]["AIUsageRoleAssignment"];
 
 const provider: Provider = {
@@ -16,7 +16,8 @@ const provider: Provider = {
   adapter_type: "req-llm",
   enabled: true,
   revision: 1,
-  configuration: { provider: "openai", model: "example-model" },
+  ai_service: "openai",
+  ai_model: "example-model",
   check: {
     status: "passed",
     category: null,
@@ -24,8 +25,6 @@ const provider: Provider = {
     checked_revision: 1,
     message: null,
   },
-  inserted_at: "2026-09-29T00:00:00Z",
-  updated_at: "2026-09-29T00:00:00Z",
 };
 
 const assignments: Assignment[] = (["resolver", "reviewer"] as const).map((role, index) => ({
@@ -50,6 +49,8 @@ test("warns before the only Reviewer is changed to Resolver in Auto mode", async
         services={[]}
         assignments={assignments}
         authorityMode="auto"
+        reviewerAvailable
+        soleReviewerProviderId={provider.id}
         canManage
         onRefresh={async () => {}}
         onError={() => {}}

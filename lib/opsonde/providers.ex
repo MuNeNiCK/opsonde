@@ -82,6 +82,7 @@ defmodule Opsonde.Providers do
     resource Opsonde.Providers.AIUsageRoleAssignment do
       define :list_ai_usage_role_assignments, action: :read
       define :page_ai_usage_role_assignments, action: :page
+      define :eligible_ai_usage_role_summaries, action: :eligibility_summary, args: [:role]
       define :get_ai_usage_role_assignment, action: :read, get_by: [:id]
 
       define :eligible_ai_usage_role_assignments,

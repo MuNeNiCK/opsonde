@@ -425,6 +425,64 @@
         ],
         "type": "object"
       },
+      "SetupReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "ai": {
+            "type": "boolean"
+          },
+          "authority": {
+            "type": "boolean"
+          },
+          "authority_mode": {
+            "enum": [
+              "readonly",
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "first_target_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "resolver": {
+            "type": "boolean"
+          },
+          "reviewer": {
+            "type": "boolean"
+          },
+          "signal": {
+            "type": "boolean"
+          },
+          "sole_reviewer_provider_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "target": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ai",
+          "resolver",
+          "reviewer",
+          "authority",
+          "signal",
+          "target",
+          "complete",
+          "authority_mode",
+          "sole_reviewer_provider_id",
+          "first_target_id"
+        ],
+        "type": "object"
+      },
       "AuditRunPage": {
         "additionalProperties": false,
         "properties": {
@@ -2453,6 +2511,18 @@
         ],
         "type": "object"
       },
+      "SetupReadinessResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SetupReadiness"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "ProviderSummaryPage": {
         "additionalProperties": false,
         "properties": {
@@ -3177,6 +3247,14 @@
           "adapter_type": {
             "maxLength": 120,
             "minLength": 1,
+            "type": "string"
+          },
+          "ai_model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ai_service": {
+            "nullable": true,
             "type": "string"
           },
           "check": {
@@ -18270,6 +18348,69 @@
         ]
       }
     },
+    "/api/v1/authority-setting/readiness": {
+      "get": {
+        "callbacks": {},
+        "operationId": "getSetupReadiness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupReadinessResponse"
+                }
+              }
+            },
+            "description": "Setup readiness"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The operation is not permitted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request could not be completed"
+          }
+        },
+        "summary": "Get global current setup readiness",
+        "tags": [
+          "Authority settings"
+        ]
+      }
+    },
     "/api/v1/inventory-imports": {
       "get": {
         "callbacks": {},
@@ -21957,6 +22098,23 @@
               "minLength": 1,
               "type": "string"
             }
+          },
+          {
+            "description": "",
+            "explode": false,
+            "in": "query",
+            "name": "provider_ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "type": "array"
+            },
+            "style": "form"
           }
         ],
         "responses": {

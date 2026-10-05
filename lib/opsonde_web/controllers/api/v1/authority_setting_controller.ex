@@ -24,6 +24,13 @@ defmodule OpsondeWeb.API.V1.AuthoritySettingController do
 
   tags ["Authority settings"]
 
+  operation :readiness,
+    operation_id: "getSetupReadiness",
+    summary: "Get global current setup readiness",
+    responses:
+      [ok: {"Setup readiness", "application/json", WorkflowSchemas.ref("SetupReadinessResponse")}] ++
+        @read_errors
+
   operation :index,
     operation_id: "listAuthoritySettings",
     summary: "List authority-setting revisions",
@@ -69,6 +76,12 @@ defmodule OpsondeWeb.API.V1.AuthoritySettingController do
   def show(conn, _params) do
     with {:ok, setting} <- Cases.current_authority_setting(actor: conn.assigns.current_user) do
       Response.data(conn, WorkflowJSON.authority(setting))
+    end
+  end
+
+  def readiness(conn, _params) do
+    with {:ok, readiness} <- Cases.setup_readiness(actor: conn.assigns.current_user) do
+      Response.data(conn, readiness)
     end
   end
 

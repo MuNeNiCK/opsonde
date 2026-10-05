@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type PageData<T> = { data: T[]; page: { next: string | null } };
-type View<T> = PageData<T> & { index: number; cursors: Array<string | undefined> };
+type View<T, Page extends PageData<T>> = Page & {
+  index: number;
+  cursors: Array<string | undefined>;
+};
 type Position = { index: number; cursors: Array<string | undefined> };
 
-export function usePagedData<T>(
-  load: (after: string | undefined, signal: AbortSignal) => Promise<PageData<T>>,
+export function usePagedData<T, Page extends PageData<T> = PageData<T>>(
+  load: (after: string | undefined, signal: AbortSignal) => Promise<Page>,
 ) {
   const initial = {
     load,
-    view: null as View<T> | null,
+    view: null as View<T, Page> | null,
     pending: true,
     error: null as unknown,
     attempt: { index: 0, cursors: [undefined] } as Position,

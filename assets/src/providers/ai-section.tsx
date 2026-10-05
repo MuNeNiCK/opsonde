@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { apiClient } from "@/api/client";
+import { apiClient, apiData } from "@/api/client";
 import type { components } from "@/api/schema";
 import { FormSelect } from "@/components/form-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,14 +26,17 @@ import { Textarea } from "@/components/ui/textarea";
 
 type AIUsageRoleAssignment = components["schemas"]["AIUsageRoleAssignment"];
 type Provider = components["schemas"]["Provider"];
+type ProviderSummary = components["schemas"]["ProviderSummary"];
 type UsageScope = "all" | "resolver" | "reviewer";
 export type AIService = components["schemas"]["AIService"];
 
 type Props = {
-  providers: Provider[];
+  providers: ProviderSummary[];
   services: AIService[];
   assignments: AIUsageRoleAssignment[];
   authorityMode: components["schemas"]["AuthoritySetting"]["authority_mode"];
+  reviewerAvailable: boolean;
+  soleReviewerProviderId: string | null;
   canManage: boolean;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
@@ -218,6 +221,8 @@ export function ProviderSetup({
   services,
   assignments,
   authorityMode,
+  reviewerAvailable,
+  soleReviewerProviderId,
   canManage,
   onRefresh,
   onError,
@@ -226,11 +231,42 @@ export function ProviderSetup({
   const [pending, setPending] = useState<string | null>(null);
   const [managingProviderId, setManagingProviderId] = useState<string | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [details, setDetails] = useState<Provider | null>(null);
+  const [detailFailure, setDetailFailure] = useState<{ id: string; revision: number } | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
   const [draftScope, setDraftScope] = useState<UsageScope | null>(null);
   const [localError, setLocalError] = useState("");
   const [success, setSuccess] = useState("");
   const aiProviders = providers.filter((provider) => provider.kind === "ai");
+  const editingRevision = aiProviders.find(
+    (provider) => provider.id === editingProviderId,
+  )?.revision;
+  const detailFailed =
+    detailFailure?.id === editingProviderId && detailFailure?.revision === editingRevision;
+
+  useEffect(() => {
+    if (!editingProviderId || editingRevision === undefined) return;
+    const owner = new AbortController();
+    apiClient
+      .GET("/api/v1/providers/{id}", {
+        params: { path: { id: editingProviderId } },
+        signal: owner.signal,
+      })
+      .then(apiData)
+      .then((result) => {
+        if (owner.signal.aborted) return;
+        if (result.data.id !== editingProviderId || result.data.revision !== editingRevision)
+          throw new Error("Selected Provider changed");
+        setDetails(result.data);
+      })
+      .catch(() => {
+        if (!owner.signal.aborted) {
+          setDetailFailure({ id: editingProviderId, revision: editingRevision });
+          setLocalError(t("setup.requestFailed"));
+        }
+      });
+    return () => owner.abort();
+  }, [editingProviderId, editingRevision, t]);
 
   async function mutate(key: string, action: () => Promise<unknown>) {
     setPending(key);
@@ -251,7 +287,7 @@ export function ProviderSetup({
     }
   }
 
-  async function providerAction(provider: Provider, action: "check" | "enable" | "disable") {
+  async function providerAction(provider: ProviderSummary, action: "check" | "enable" | "disable") {
     const body = { provider: { expected_revision: provider.revision } };
     await mutate(`${provider.id}-${action}`, () => {
       if (action === "check") {
@@ -336,7 +372,7 @@ export function ProviderSetup({
     }
   }
 
-  async function deleteProvider(provider: Provider) {
+  async function deleteProvider(provider: ProviderSummary) {
     const deleted = await mutate(`${provider.id}-delete`, () =>
       apiClient.DELETE("/api/v1/providers/{id}", {
         params: { path: { id: provider.id } },
@@ -352,7 +388,7 @@ export function ProviderSetup({
     }
   }
 
-  async function saveUsage(provider: Provider, event: FormEvent<HTMLFormElement>) {
+  async function saveUsage(provider: ProviderSummary, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const scope = form.get("scope");
@@ -389,34 +425,13 @@ export function ProviderSetup({
     }
   }
 
-  function ordered(role: "resolver" | "reviewer") {
-    return assignments
-      .filter((assignment) => {
-        const provider = aiProviders.find((item) => item.id === assignment.provider_id);
-        return (
-          assignment.role === role &&
-          assignment.enabled &&
-          provider?.enabled &&
-          provider.check.status === "passed" &&
-          provider.check.checked_revision === provider.revision
-        );
-      })
-      .sort(
-        (a, b) =>
-          a.priority - b.priority ||
-          a.inserted_at.localeCompare(b.inserted_at) ||
-          a.id.localeCompare(b.id),
-      );
-  }
-
-  const resolverOrder = ordered("resolver");
-  const reviewerOrder = ordered("reviewer");
-
   function toggleManagement(id: string) {
     setManagingProviderId(managingProviderId === id ? null : id);
     setDraftScope(null);
     setEditingProviderId(null);
     setDeletingProviderId(null);
+    setDetails(null);
+    setDetailFailure(null);
   }
 
   return (
@@ -448,7 +463,7 @@ export function ProviderSetup({
         </Alert>
       )}
 
-      {authorityMode === "auto" && reviewerOrder.length === 0 && (
+      {authorityMode === "auto" && !reviewerAvailable && (
         <Alert className="border-warning/60 [&>svg]:text-warning">
           <CircleAlert />
           <AlertDescription>{t("setup.autoReviewerWarning")}</AlertDescription>
@@ -457,9 +472,7 @@ export function ProviderSetup({
 
       <div id="ai-connections" className="grid scroll-mt-6 items-start gap-4 xl:grid-cols-2">
         {aiProviders.map((provider) => {
-          const service = services.find(
-            (item) => item.id === configurationValue(provider, "provider"),
-          );
+          const service = services.find((item) => item.id === provider.ai_service);
           const currentCheck = provider.check.checked_revision === provider.revision;
           const passed = currentCheck && provider.check.status === "passed";
           const assigned = assignments.filter(
@@ -470,8 +483,6 @@ export function ProviderSetup({
             assigned.find((assignment) => assignment.role === "resolver")?.priority ??
             assigned.find((assignment) => assignment.role === "reviewer")?.priority ??
             100;
-          const resolverRank = resolverOrder.findIndex((item) => item.provider_id === provider.id);
-          const reviewerRank = reviewerOrder.findIndex((item) => item.provider_id === provider.id);
           const expanded = managingProviderId === provider.id;
           return (
             <Card key={provider.id}>
@@ -483,8 +494,7 @@ export function ProviderSetup({
                   </Badge>
                 </div>
                 <CardDescription className="break-all">
-                  {service?.name ?? configurationValue(provider, "provider")} ·{" "}
-                  {configurationValue(provider, "model")}
+                  {service?.name ?? provider.ai_service} · {provider.ai_model}
                 </CardDescription>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   {(scope === "all" || scope === "resolver") && (
@@ -501,13 +511,6 @@ export function ProviderSetup({
                     <span className="text-xs text-muted-foreground">{t("setup.usageUnset")}</span>
                   )}
                 </div>
-                {(resolverRank >= 0 || reviewerRank >= 0) && (
-                  <p className="text-xs text-muted-foreground">
-                    {resolverRank >= 0 && <span>Resolver #{resolverRank + 1}</span>}
-                    {resolverRank >= 0 && reviewerRank >= 0 && <span> · </span>}
-                    {reviewerRank >= 0 && <span>Reviewer #{reviewerRank + 1}</span>}
-                  </p>
-                )}
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-start gap-2 text-sm">
@@ -616,8 +619,7 @@ export function ProviderSetup({
                       </form>
                       {authorityMode === "auto" &&
                         draftScope === "resolver" &&
-                        reviewerOrder.length === 1 &&
-                        reviewerOrder[0].provider_id === provider.id && (
+                        soleReviewerProviderId === provider.id && (
                           <Alert className="border-warning/60 [&>svg]:text-warning">
                             <CircleAlert />
                             <AlertDescription>
@@ -632,11 +634,13 @@ export function ProviderSetup({
                         size="sm"
                         variant="outline"
                         disabled={pending !== null}
-                        onClick={() =>
+                        onClick={() => {
                           setEditingProviderId(
                             editingProviderId === provider.id ? null : provider.id,
-                          )
-                        }
+                          );
+                          setDetails(null);
+                          setDetailFailure(null);
+                        }}
                       >
                         {editingProviderId === provider.id ? <X /> : <Pencil />}
                         {t(editingProviderId === provider.id ? "common.cancel" : "setup.edit")}
@@ -684,27 +688,34 @@ export function ProviderSetup({
                       </Alert>
                     )}
 
-                    {editingProviderId === provider.id && service && (
-                      <form
-                        className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
-                        onSubmit={(event) => void updateProvider(provider, event)}
-                      >
-                        <AIProviderFields
-                          idPrefix={`provider-${provider.id}`}
-                          provider={provider}
-                          service={service}
-                          editing
-                        />
-                        <Button
-                          type="submit"
-                          className="md:col-span-2 md:w-fit"
-                          disabled={pending !== null}
+                    {editingProviderId === provider.id &&
+                      service &&
+                      (details?.id !== provider.id || details.revision !== provider.revision) &&
+                      !detailFailed && <Spinner />}
+                    {editingProviderId === provider.id &&
+                      service &&
+                      details?.id === provider.id &&
+                      details.revision === provider.revision && (
+                        <form
+                          className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2"
+                          onSubmit={(event) => void updateProvider(details, event)}
                         >
-                          {pending === `${provider.id}-update` ? <Spinner /> : <Save />}
-                          {t("setup.saveConnection")}
-                        </Button>
-                      </form>
-                    )}
+                          <AIProviderFields
+                            idPrefix={`provider-${provider.id}`}
+                            provider={details}
+                            service={service}
+                            editing
+                          />
+                          <Button
+                            type="submit"
+                            className="md:col-span-2 md:w-fit"
+                            disabled={pending !== null}
+                          >
+                            {pending === `${provider.id}-update` ? <Spinner /> : <Save />}
+                            {t("setup.saveConnection")}
+                          </Button>
+                        </form>
+                      )}
                   </div>
                 )}
               </CardContent>

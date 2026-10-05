@@ -14,8 +14,14 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
     defaults [:read]
 
     read :page do
+      argument :provider_ids, {:array, :uuid}, constraints: [min_length: 1, max_length: 50]
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      filter expr(is_nil(provider.retired_at))
+
+      filter expr(
+               is_nil(provider.retired_at) and
+                 (is_nil(^arg(:provider_ids)) or provider_id in ^arg(:provider_ids))
+             )
+
       prepare build(sort: [inserted_at: :asc, id: :asc])
     end
 
@@ -24,14 +30,20 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
         allow_nil?: false,
         constraints: [one_of: [:resolver, :reviewer]]
 
-      filter expr(
-               role == ^arg(:role) and enabled == true and provider.kind == :ai and
-                 is_nil(provider.retired_at) and
-                 provider.enabled == true and provider.check_status == :passed and
-                 provider.checked_revision == provider.revision
-             )
+      filter expr(role == ^arg(:role) and eligible_for_selection == true)
 
       prepare build(sort: [priority: :asc, inserted_at: :asc, id: :asc], load: [:provider])
+    end
+
+    read :eligibility_summary do
+      argument :role, :atom, allow_nil?: false, constraints: [one_of: [:resolver, :reviewer]]
+      filter expr(role == ^arg(:role) and eligible_for_selection == true)
+
+      prepare build(
+                select: [:id, :provider_id],
+                limit: 2,
+                sort: [priority: :asc, inserted_at: :asc, id: :asc]
+              )
     end
 
     read :current_assignment do
@@ -53,10 +65,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
 
       filter expr(
                id == ^arg(:id) and revision == ^arg(:expected_assignment_revision) and
-                 role == ^arg(:role) and enabled == true and provider.kind == :ai and
-                 is_nil(provider.retired_at) and
-                 provider.enabled == true and provider.check_status == :passed and
-                 provider.checked_revision == provider.revision and
+                 role == ^arg(:role) and eligible_for_selection == true and
                  provider.revision == ^arg(:expected_provider_revision)
              )
 
@@ -124,7 +133,7 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       forbid_if always()
     end
 
-    policy action([:eligible, :current_assignment]) do
+    policy action([:eligible, :current_assignment, :eligibility_summary]) do
       forbid_if always()
     end
 
@@ -177,6 +186,15 @@ defmodule Opsonde.Providers.AIUsageRoleAssignment do
       allow_nil? false
       public? true
     end
+  end
+
+  calculations do
+    calculate :eligible_for_selection,
+              :boolean,
+              expr(
+                enabled == true and provider.kind == :ai and
+                  provider.available_for_invocation == true
+              )
   end
 
   identities do

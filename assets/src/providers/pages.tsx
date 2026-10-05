@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Activity, ArrowLeft, Bot, BrainCircuit, Webhook } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuthentication } from "@/auth/context";
-import { apiClient, apiData } from "@/api/client";
+import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
+import { usePagedData, type PageData } from "@/api/use-paged-data";
+import { PageControls } from "@/components/page-controls";
 import type { components } from "@/api/schema";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,15 +15,15 @@ import { Label } from "@/components/ui/label";
 import { AIProviderCreateForm, ProviderSetup } from "@/providers/ai-section";
 import { ProviderChoiceCard } from "@/providers/choice-card";
 import { SignalProviderCreateForm, SignalProviderSection } from "@/providers/signal-section";
-import { loadSettingsSnapshot, type SettingsSnapshot } from "@/settings/data";
+import { loadSetupReadiness, type SetupReadiness } from "@/settings/data";
 
 type ProviderPageKind = "ai" | "signal";
 type AIService = components["schemas"]["AIService"];
 type SignalAdapter = "alertmanager-webhook" | "generic-webhook" | "zabbix-webhook";
 
-async function loadAIServices(): Promise<AIService[]> {
+async function loadAIServices(signal?: AbortSignal): Promise<AIService[]> {
   return apiClient
-    .GET("/api/v1/ai-services")
+    .GET("/api/v1/ai-services", { signal })
     .then(apiData)
     .then((response) => response.data);
 }
@@ -63,41 +65,78 @@ const featuredAIServices = [
   "ollama",
 ];
 
+type ProviderSummary = components["schemas"]["ProviderSummary"];
+type Assignment = components["schemas"]["AIUsageRoleAssignment"];
+type ProviderWindow = PageData<ProviderSummary> & {
+  assignments: Assignment[];
+  readiness: SetupReadiness;
+  services: AIService[];
+};
+
 function ProviderPage({ kind }: { kind: ProviderPageKind }) {
+  const { account } = useAuthentication();
+  return (
+    <ProviderListing
+      key={`${account?.id}:${account?.role}:${account?.role_version}:${kind}`}
+      kind={kind}
+    />
+  );
+}
+
+function ProviderListing({ kind }: { kind: ProviderPageKind }) {
   const { t } = useTranslation();
   const { account } = useAuthentication();
   const location = useLocation();
-  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
-  const [services, setServices] = useState<AIService[] | null>(null);
   const [error, setError] = useState("");
   const canManage = account?.role === "admin";
   const created = (location.state as { created?: ProviderPageKind } | null)?.created === kind;
 
+  const load = useCallback(
+    async (after: string | undefined, signal: AbortSignal): Promise<ProviderWindow> => {
+      const owner = new AbortController();
+      signal = AbortSignal.any([signal, owner.signal]);
+      try {
+        const [page, readiness, services] = await Promise.all([
+          apiClient
+            .GET("/api/v1/providers/summaries", {
+              params: { query: { kinds: [kind], limit: 50, after } },
+              querySerializer: commaSeparatedQuery,
+              signal,
+            })
+            .then(apiData),
+          loadSetupReadiness(signal),
+          kind === "ai" ? loadAIServices(signal) : Promise.resolve([]),
+        ]);
+        const roles =
+          kind === "ai" && page.data.length
+            ? await apiClient
+                .GET("/api/v1/ai-usage-role-assignments", {
+                  params: { query: { provider_ids: page.data.map((item) => item.id), limit: 100 } },
+                  querySerializer: commaSeparatedQuery,
+                  signal,
+                })
+                .then(apiData)
+            : { data: [], page: { next: null } };
+        if (roles.page.next) throw new Error("Provider role page is incomplete");
+        signal.throwIfAborted();
+        return { ...page, assignments: roles.data, readiness, services };
+      } catch (cause) {
+        owner.abort();
+        throw cause;
+      }
+    },
+    [kind],
+  );
+  const pages = usePagedData<ProviderSummary, ProviderWindow>(load);
+  const currentPage = useRef(pages.retry);
+  useLayoutEffect(() => {
+    currentPage.current = pages.retry;
+  });
   const refresh = useCallback(async () => {
-    const [nextSnapshot, nextServices] = await Promise.all([
-      loadSettingsSnapshot(),
-      kind === "ai" ? loadAIServices() : Promise.resolve(null),
-    ]);
-    setSnapshot(nextSnapshot);
-    setServices(nextServices);
-  }, [kind]);
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([loadSettingsSnapshot(), kind === "ai" ? loadAIServices() : Promise.resolve(null)])
-      .then(([next, nextServices]) => {
-        if (active) {
-          setSnapshot(next);
-          setServices(nextServices);
-        }
-      })
-      .catch(() => {
-        if (active) setError(t("setup.requestFailed"));
-      });
-    return () => {
-      active = false;
-    };
-  }, [kind, t]);
+    setError("");
+    await currentPage.current();
+  }, []);
+  const snapshot = pages.view;
 
   useEffect(() => {
     if (!snapshot || !location.hash) return;
@@ -107,16 +146,7 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
     return () => window.cancelAnimationFrame(frame);
   }, [location.hash, snapshot]);
 
-  if (!snapshot || (kind === "ai" && !services)) {
-    if (error) {
-      return (
-        <div className="p-6">
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        </div>
-      );
-    }
+  if (!snapshot && pages.pending) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
@@ -127,9 +157,9 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
 
   return (
     <div className="space-y-6 p-6 lg:p-8">
-      {error && (
+      {(error || !!pages.error) && (
         <Alert variant="destructive" className="sticky top-16 z-20">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || t("setup.requestFailed")}</AlertDescription>
         </Alert>
       )}
       {created && (
@@ -144,23 +174,45 @@ function ProviderPage({ kind }: { kind: ProviderPageKind }) {
           <AlertDescription>{t("setup.readOnly")}</AlertDescription>
         </Alert>
       )}
-      {kind === "ai" ? (
-        <ProviderSetup
-          providers={snapshot.providers}
-          services={services ?? []}
-          assignments={snapshot.assignments}
-          authorityMode={snapshot.authority.authority_mode}
-          canManage={canManage}
-          onRefresh={refresh}
-          onError={setError}
-        />
-      ) : (
-        <SignalProviderSection
-          providers={snapshot.providers}
-          canManage={canManage}
-          onRefresh={refresh}
-          onError={setError}
-        />
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={pages.pending}
+        onClick={() => void refresh().catch(() => {})}
+      >
+        {t("common.refresh")}
+      </Button>
+      {snapshot && (
+        <>
+          {kind === "ai" ? (
+            <ProviderSetup
+              key={snapshot.index}
+              providers={snapshot.data}
+              services={snapshot.services}
+              assignments={snapshot.assignments}
+              authorityMode={snapshot.readiness.authority_mode}
+              reviewerAvailable={snapshot.readiness.reviewer}
+              soleReviewerProviderId={snapshot.readiness.sole_reviewer_provider_id}
+              canManage={canManage}
+              onRefresh={refresh}
+              onError={setError}
+            />
+          ) : (
+            <SignalProviderSection
+              providers={snapshot.data}
+              canManage={canManage}
+              onRefresh={refresh}
+              onError={setError}
+            />
+          )}
+          <PageControls
+            index={snapshot.index}
+            hasNext={!!snapshot.page.next}
+            pending={pages.pending}
+            previous={pages.previous}
+            next={pages.next}
+          />
+        </>
       )}
     </div>
   );

@@ -28,6 +28,11 @@ defmodule Opsonde.Cases.AuthoritySetting do
       filter expr(active == true)
     end
 
+    action :readiness, :map do
+      transaction? false
+      run Opsonde.Cases.AuthoritySetting.Actions.Readiness
+    end
+
     create :create_revision do
       accept [
         :authority_mode,
@@ -130,7 +135,7 @@ defmodule Opsonde.Cases.AuthoritySetting do
       forbid_if always()
     end
 
-    policy action([:read, :page, :current]) do
+    policy action([:read, :page, :current, :readiness]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:role, :operator)
       authorize_if actor_attribute_equals(:role, :viewer)

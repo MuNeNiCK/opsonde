@@ -33,7 +33,9 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
             adapter_type: %Schema{type: :string, minLength: 1, maxLength: 120},
             enabled: %Schema{type: :boolean},
             revision: positive_integer(),
-            check: provider_check()
+            check: provider_check(),
+            ai_service: %Schema{type: :string, nullable: true},
+            ai_model: %Schema{type: :string, nullable: true}
           },
           [:id, :name, :kind, :adapter_type, :enabled, :revision, :check],
           false
@@ -93,6 +95,19 @@ defmodule OpsondeWeb.API.V1.ProviderSchemas do
              maxItems: 100,
              items: %Schema{type: :string, minLength: 1, maxLength: 120}
            }
+         ]}
+      ]
+  end
+
+  def assignment_page_parameters do
+    Schemas.pagination_parameters() ++
+      [
+        {:provider_ids,
+         [
+           in: :query,
+           style: :form,
+           explode: false,
+           schema: %Schema{type: :array, minItems: 1, maxItems: 50, items: Schemas.uuid()}
          ]}
       ]
   end

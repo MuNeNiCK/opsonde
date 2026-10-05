@@ -15,7 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { loadSettingsSnapshot, readiness, type SettingsSnapshot } from "@/settings/data";
+import { loadSetupReadiness, type SetupReadiness } from "@/settings/data";
+import { useAuthentication } from "@/auth/context";
 
 type Step = {
   key: "ai" | "resolver" | "authority" | "signal" | "target";
@@ -24,26 +25,31 @@ type Step = {
 };
 
 export function OnboardingPage() {
+  const { account } = useAuthentication();
+  return <Onboarding key={`${account?.id}:${account?.role}:${account?.role_version}`} />;
+}
+
+function Onboarding() {
   const { t } = useTranslation();
-  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null | undefined>();
+  const [status, setStatus] = useState<SetupReadiness | null | undefined>();
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let active = true;
-    loadSettingsSnapshot()
-      .then((next) => active && setSnapshot(next))
+    const owner = new AbortController();
+    loadSetupReadiness(owner.signal)
+      .then((next) => !owner.signal.aborted && setStatus(next))
       .catch(() => {
-        if (active) {
-          setSnapshot(null);
+        if (!owner.signal.aborted) {
+          setStatus(null);
           setError(t("setup.requestFailed"));
         }
       });
     return () => {
-      active = false;
+      owner.abort();
     };
   }, [t]);
 
-  if (snapshot === undefined) {
+  if (status === undefined) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <Spinner />
@@ -52,7 +58,7 @@ export function OnboardingPage() {
     );
   }
 
-  if (snapshot === null) {
+  if (status === null) {
     return (
       <div className="p-6 lg:p-8">
         <Alert variant="destructive">
@@ -62,10 +68,8 @@ export function OnboardingPage() {
     );
   }
 
-  const status = readiness(snapshot);
   if (status.complete) return <Navigate to="/cases" replace />;
 
-  const firstTarget = snapshot.targets.find((target) => target.active);
   const steps: Step[] = [
     { key: "ai", icon: <Bot />, href: "/ai/new" },
     { key: "resolver", icon: <Bot />, href: "/ai#ai-connections" },
@@ -73,7 +77,7 @@ export function OnboardingPage() {
       key: "authority",
       icon: <ShieldCheck />,
       href:
-        snapshot.authority.authority_mode === "auto" && !status.reviewer
+        status.authority_mode === "auto" && !status.reviewer
           ? "/ai#ai-connections"
           : "/ai/authority",
     },
@@ -81,7 +85,7 @@ export function OnboardingPage() {
     {
       key: "target",
       icon: <Server />,
-      href: firstTarget ? `/targets/${firstTarget.id}` : "/targets/new",
+      href: status.first_target_id ? `/targets/${status.first_target_id}` : "/targets/new",
     },
   ];
   const completed = steps.filter((step) => status[step.key]).length;
@@ -115,7 +119,7 @@ export function OnboardingPage() {
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
                     {step.key === "authority" &&
-                    snapshot.authority.authority_mode === "auto" &&
+                    status.authority_mode === "auto" &&
                     !status.reviewer
                       ? t("onboarding.steps.authority.reviewerRequired")
                       : t(`onboarding.steps.${step.key}.description`)}
@@ -131,7 +135,7 @@ export function OnboardingPage() {
                   <Button asChild size="sm">
                     <Link to={step.href}>
                       {step.key === "authority" &&
-                      snapshot.authority.authority_mode === "auto" &&
+                      status.authority_mode === "auto" &&
                       !status.reviewer
                         ? t("onboarding.steps.authority.assignReviewer")
                         : t(`onboarding.steps.${step.key}.action`)}

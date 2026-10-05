@@ -1293,6 +1293,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/authority-setting/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get global current setup readiness */
+        get: operations["getSetupReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory-imports": {
         parameters: {
             query?: never;
@@ -1948,6 +1965,21 @@ export interface components {
             data: components["schemas"]["ResolverTurnSummary"][];
             page: components["schemas"]["Page"];
         };
+        SetupReadiness: {
+            ai: boolean;
+            authority: boolean;
+            /** @enum {string} */
+            authority_mode: "readonly" | "ask" | "auto" | "full_access";
+            complete: boolean;
+            /** Format: uuid */
+            first_target_id: string | null;
+            resolver: boolean;
+            reviewer: boolean;
+            signal: boolean;
+            /** Format: uuid */
+            sole_reviewer_provider_id: string | null;
+            target: boolean;
+        };
         AuditRunPage: {
             data: components["schemas"]["AuditRun"][];
             page: components["schemas"]["Page"];
@@ -2466,6 +2498,9 @@ export interface components {
                 value?: string;
             };
         };
+        SetupReadinessResponse: {
+            data: components["schemas"]["SetupReadiness"];
+        };
         ProviderSummaryPage: {
             data: components["schemas"]["ProviderSummary"][];
             page: components["schemas"]["Page"];
@@ -2643,6 +2678,8 @@ export interface components {
         };
         ProviderSummary: {
             adapter_type: string;
+            ai_model?: string | null;
+            ai_service?: string | null;
             check: {
                 /** @enum {string|null} */
                 category: "invalid_configuration" | "authentication" | "unreachable" | "capability" | "provider_failure" | null;
@@ -10691,6 +10728,62 @@ export interface operations {
             };
         };
     };
+    getSetupReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup readiness */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupReadinessResponse"];
+                };
+            };
+            /** @description Authentication is required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The operation is not permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request could not be completed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listInventoryImports: {
         parameters: {
             query?: {
@@ -13457,6 +13550,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 after?: string;
+                provider_ids?: string[];
             };
             header?: never;
             path?: never;

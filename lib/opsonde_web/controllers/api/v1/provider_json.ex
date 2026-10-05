@@ -29,9 +29,16 @@ defmodule OpsondeWeb.API.V1.ProviderJSON do
   end
 
   def summary(provider) do
-    provider
-    |> Map.take(Providers.Provider.reference_fields())
-    |> Map.put(:check, check(provider))
+    summary =
+      provider
+      |> Map.take(Providers.Provider.reference_fields())
+      |> Map.put(:check, check(provider))
+
+    if provider.kind == :ai do
+      Map.merge(summary, %{ai_service: provider.ai_service, ai_model: provider.ai_model})
+    else
+      summary
+    end
   end
 
   defp check(provider) do

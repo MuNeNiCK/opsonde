@@ -4,7 +4,7 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
   import OpenApiSpex.TestAssertions
   import ExUnit.CaptureLog
 
-  alias Opsonde.{Accounts, Cases, Providers}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
 
   @password "correct horse battery staple"
 
@@ -23,10 +23,153 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
       Accounts.create_user!("provider-api-viewer@example.com", @password, :viewer, actor: admin)
 
     %{
+      admin: admin,
       admin_token: token!(admin.email),
       operator_token: token!(operator.email),
       viewer_token: token!(viewer.email)
     }
+  end
+
+  @tag setup_readiness: true
+  test "setup readiness uses global current connections and independent AI roles", context do
+    path = "/api/v1/authority-setting/readiness"
+    empty = get_json(path, context.viewer_token)
+
+    assert %{"data" => %{"complete" => false, "reviewer" => false, "target" => false}} =
+             json_response(empty, 200)
+
+    assert_operation_response(empty)
+
+    for n <- 1..51 do
+      Providers.create_provider!(
+        "Unchecked AI #{n}",
+        :ai,
+        "fixture-ai",
+        %{"model" => "fixture"},
+        %{"api_key" => "private"},
+        actor: context.admin
+      )
+    end
+
+    ai =
+      Providers.create_provider!(
+        "Ready AI",
+        :ai,
+        "fixture-ai",
+        %{"model" => "fixture"},
+        %{"api_key" => "private"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    roles =
+      Providers.list_ai_usage_role_assignments!(actor: context.admin)
+      |> Enum.filter(&(&1.provider_id == ai.id))
+
+    resolver = Enum.find(roles, &(&1.role == :resolver))
+    reviewer = Enum.find(roles, &(&1.role == :reviewer))
+
+    Providers.configure_ai_usage!(ai.id, :resolver, 100, resolver.revision, reviewer.revision,
+      actor: context.admin
+    )
+
+    Providers.create_provider!(
+      "Ready Signal",
+      :signal,
+      "fixture-signal",
+      %{"source" => "ready"},
+      %{"secret" => "private-signal-secret"},
+      actor: context.admin
+    )
+    |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+    |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    provider =
+      Providers.create_provider!(
+        "Ready Target",
+        :target,
+        "fixture-target",
+        %{"endpoint" => "reachable"},
+        %{"token" => "private-target-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    target =
+      Targets.create_target!("Managed host", :host, "custom-os", %{}, nil, actor: context.admin)
+
+    method =
+      Targets.create_access_method!(
+        target.id,
+        provider.id,
+        "Host SSH",
+        :ssh,
+        "ssh://host.example",
+        provider.revision,
+        100,
+        ["observe.command"],
+        actor: context.admin
+      )
+
+    Targets.check_access_method!(method.id, method.revision, %{}, actor: context.admin)
+
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      :auto,
+      false,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Readiness check",
+      actor: context.admin
+    )
+
+    missing = get_json(path, context.operator_token)
+
+    assert %{
+             "data" => %{
+               "ai" => true,
+               "resolver" => true,
+               "reviewer" => false,
+               "authority" => false,
+               "signal" => true,
+               "target" => true,
+               "complete" => false
+             }
+           } =
+             json_response(missing, 200)
+
+    assert_operation_response(missing)
+
+    roles =
+      Providers.list_ai_usage_role_assignments!(actor: context.admin)
+      |> Enum.filter(&(&1.provider_id == ai.id))
+
+    resolver = Enum.find(roles, &(&1.role == :resolver))
+    reviewer = Enum.find(roles, &(&1.role == :reviewer))
+
+    Providers.configure_ai_usage!(ai.id, :all, 100, resolver.revision, reviewer.revision,
+      actor: context.admin
+    )
+
+    assert %{"data" => %{"complete" => true, "sole_reviewer_provider_id" => id}} =
+             get_json(path, context.admin_token) |> json_response(200)
+
+    assert id == ai.id
+
+    Targets.update_target!(target, target.revision, %{name: "Changed host"}, actor: context.admin)
+
+    assert %{"data" => %{"target" => false, "complete" => false}} =
+             get_json(path, context.viewer_token) |> json_response(200)
+
+    assert get_json(path, nil) |> response(401)
   end
 
   @tag provider_registration: true
@@ -68,6 +211,57 @@ defmodule OpsondeWeb.API.V1.ProviderControllerTest do
     assert %{"data" => %{"name" => "Original destination", "revision" => 1}} =
              get_json("/api/v1/providers/#{registration_id}", context.admin_token)
              |> json_response(200)
+  end
+
+  @tag setup_readiness: true
+  test "AI display and role pages return only selected metadata", context do
+    first =
+      Providers.create_provider!(
+        "Large AI configuration",
+        :ai,
+        "fixture-ai",
+        %{
+          "model" => "selected-model",
+          "provider" => "openai",
+          "body" => String.duplicate("x", 60_000)
+        },
+        %{"api_key" => "private-display-secret"},
+        actor: context.admin
+      )
+
+    second =
+      Providers.create_provider!(
+        "Other AI configuration",
+        :ai,
+        "fixture-ai",
+        %{"model" => "other-model"},
+        %{"api_key" => "private"},
+        actor: context.admin
+      )
+
+    response = get_json("/api/v1/providers/summaries?kinds=ai&limit=1", context.viewer_token)
+    assert %{"data" => [summary], "page" => %{"next" => cursor}} = json_response(response, 200)
+    assert summary["id"] == first.id
+    assert summary["ai_model"] == "selected-model"
+    assert summary["ai_service"] == "openai"
+    refute Map.has_key?(summary, "configuration")
+    assert byte_size(response.resp_body) < 3_000
+    assert_operation_response(response)
+    assert_secret_free(response, ["private-display-secret"])
+    assert is_binary(cursor)
+
+    roles =
+      get_json(
+        "/api/v1/ai-usage-role-assignments?provider_ids=#{second.id}&limit=100",
+        context.viewer_token
+      )
+
+    assert %{"data" => assignments, "page" => %{"next" => nil}} = json_response(roles, 200)
+    assert Enum.map(assignments, & &1["provider_id"]) == [second.id, second.id]
+    assert_operation_response(roles)
+
+    assert get_json("/api/v1/ai-usage-role-assignments?provider_ids=invalid", context.admin_token)
+           |> response(422)
   end
 
   @tag provider_registration: true

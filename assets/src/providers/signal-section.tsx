@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
-type Provider = components["schemas"]["Provider"];
+type Provider = components["schemas"]["ProviderSummary"];
 
 const genericPayloadExample = JSON.stringify(
   {

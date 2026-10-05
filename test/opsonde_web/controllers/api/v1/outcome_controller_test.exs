@@ -480,7 +480,9 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
                  executable,
                  paths ++
                    ["-e", broken_output_script, "--", config_path] ++
-                   command ++ ["--input", input_path], env: [{"ERL_FLAGS", "+S 2:2"}])
+                   command ++ ["--input", input_path],
+                 env: [{"ERL_FLAGS", "+S 2:2"}]
+               )
 
       refute_receive {:registration_request, "POST"}, 0
       refute_receive {:registration_committed, _, _}, 0

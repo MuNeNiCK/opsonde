@@ -86,7 +86,12 @@ defmodule Opsonde.Providers.Provider do
              )
 
       pagination keyset?: true, required?: true, default_limit: 50, max_page_size: 100
-      prepare build(select: @management_fields, sort: [inserted_at: :asc, id: :asc])
+
+      prepare build(
+                select: @management_fields,
+                load: [:ai_service, :ai_model],
+                sort: [inserted_at: :asc, id: :asc]
+              )
     end
 
     read :active do
@@ -595,6 +600,9 @@ defmodule Opsonde.Providers.Provider do
   end
 
   calculations do
+    calculate :ai_service, :string, expr(if kind == :ai, do: get_path(configuration, [:provider]))
+    calculate :ai_model, :string, expr(if kind == :ai, do: get_path(configuration, [:model]))
+
     calculate :available_for_invocation,
               :boolean,
               expr(

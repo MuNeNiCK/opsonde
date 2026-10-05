@@ -125,6 +125,7 @@ defmodule OpsondeWeb.Router do
 
     get "/authority-settings", AuthoritySettingController, :index
     get "/authority-setting", AuthoritySettingController, :show
+    get "/authority-setting/readiness", AuthoritySettingController, :readiness
     put "/authority-setting", AuthoritySettingController, :update
 
     get "/cases", CaseController, :index

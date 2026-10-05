@@ -6,7 +6,7 @@ import { AuthenticationProvider } from "@/auth/provider";
 import { LoginPage } from "@/auth/login-page";
 import { useAuthentication } from "@/auth/context";
 import { Spinner } from "@/components/ui/spinner";
-import { loadSettingsSnapshot, readiness } from "@/settings/data";
+import { loadSetupReadiness } from "@/settings/data";
 
 const CaseListPage = lazy(() =>
   import("@/cases/list-page").then((module) => ({ default: module.CaseListPage })),
@@ -119,25 +119,26 @@ function FoundationPage({ title }: { title: string }) {
 
 function HomeRoute() {
   const { account } = useAuthentication();
+  if (account?.role !== "admin") return <Navigate to="/cases" replace />;
+  return <HomeDestination key={`${account.id}:${account.role_version}`} />;
+}
+
+function HomeDestination() {
   const [destination, setDestination] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
-    if (account?.role !== "admin") return;
-
-    loadSettingsSnapshot()
-      .then((snapshot) => {
-        if (active) setDestination(readiness(snapshot).complete ? "/cases" : "/onboarding");
+    const owner = new AbortController();
+    loadSetupReadiness(owner.signal)
+      .then((status) => {
+        if (!owner.signal.aborted) setDestination(status.complete ? "/cases" : "/onboarding");
       })
       .catch(() => {
-        if (active) setDestination("/settings");
+        if (!owner.signal.aborted) setDestination("/settings");
       });
     return () => {
-      active = false;
+      owner.abort();
     };
-  }, [account?.role]);
-
-  if (account?.role !== "admin") return <Navigate to="/cases" replace />;
+  }, []);
   return destination ? <Navigate to={destination} replace /> : <PageSpinner />;
 }
 
