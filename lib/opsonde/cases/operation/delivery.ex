@@ -60,12 +60,25 @@ defmodule Opsonde.Cases.Operation.Delivery do
       Opsonde.Cases.Case.InvocationContext.with_invocation(context, invocation, fn supplied ->
         dispatch_target(operation, clearance, supplied, actor)
       end)
+      |> returned_context(context)
 
     case outcome do
       {:error, %ProviderTarget.BeforeSendError{} = error} -> unsent(operation, error)
       outcome -> persist_and_handoff(operation, outcome)
     end
   end
+
+  defp returned_context(%{context_failure: _cause} = outcome, _context), do: outcome
+
+  defp returned_context(%{status: _status} = outcome, context) do
+    case Cases.invocation_context_current(context, authorize?: false) do
+      {:ok, true} -> outcome
+      {:ok, false} -> %{outcome | category: "authorization_invalidated"}
+      {:error, cause} -> Map.put(outcome, :context_failure, cause)
+    end
+  end
+
+  defp returned_context(outcome, _context), do: outcome
 
   defp dispatch_target(%{request_kind: :observation}, clearance, invocation, actor) do
     case Targets.dispatch_target_observation(clearance, invocation,

@@ -101,6 +101,97 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  for status <- [:applied, :unknown] do
+    @tag changed_target_result: true, received_status: status
+    test "a received #{status} effect survives changed instructions and returns to the Resolver",
+         context do
+      {incident, _run, proposal} =
+        authorized_proposal!("changed-target-result", context)
+
+      operation = Cases.accept_operation!(proposal.id, authorize?: false)
+      details = %{"native_receipt" => "Original command receipt"}
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn ->
+                     Targets.update_target!(
+                       context.target,
+                       context.target.revision,
+                       %{operating_instructions: "Reassess under the changed instructions"},
+                       actor: context.admin
+                     )
+
+                     {:ok,
+                      %Target.EffectResult{
+                        status: context.received_status,
+                        details: details,
+                        reference: "original-command"
+                      }}
+                   end)
+               )
+
+      saved = Cases.get_operation!(operation.id, actor: context.operator)
+      assert saved.status == context.received_status
+      assert saved.reference == "original-command"
+      assert saved.result_details == details
+      assert saved.outcome_category == "authorization_invalidated"
+      current = Cases.get_case!(incident.id, actor: context.operator)
+      assert current.pending_intent["action"] == "resolve_turn"
+      assert current.pending_intent["source_operation_id"] == operation.id
+      assert current.selected_target_revision == context.target.revision + 1
+
+      assert Cases.verification_attempt_by_operation(operation.id,
+               authorize?: false,
+               not_found_error?: false
+             ) == {:ok, nil}
+
+      assert :ok =
+               OperationDelivery.run(operation.id,
+                 target_invocation: invocation(fn -> flunk("received effect was resent") end)
+               )
+
+      assert Cases.get_case!(incident.id, actor: context.operator).pending_intent ==
+               current.pending_intent
+    end
+  end
+
+  @tag changed_target_result: true
+  test "a received effect persists before a failed post-response Case context read", context do
+    {_incident, _run, proposal} = authorized_proposal!("received-context-read-fault", context)
+    operation = Cases.accept_operation!(proposal.id, authorize?: false)
+    details = %{"native_receipt" => "Confirmed command result"}
+
+    try do
+      assert {:error, error} =
+               OperationDelivery.run(operation.id,
+                 target_invocation:
+                   invocation(fn ->
+                     Repo.query!(
+                       "ALTER TABLE cases RENAME COLUMN selected_target_revision TO unavailable_target_revision"
+                     )
+
+                     {:ok, %Target.EffectResult{status: :applied, details: details}}
+                   end)
+               )
+
+      assert Exception.message(error) =~ "selected_target_revision"
+    after
+      Repo.query!(
+        "ALTER TABLE cases RENAME COLUMN unavailable_target_revision TO selected_target_revision"
+      )
+    end
+
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert saved.status == :applied
+    assert saved.result_details == details
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation: invocation(fn -> flunk("received effect was resent") end)
+             )
+  end
+
   @tag native_waiting_context: true
   test "a native Reviewer waits with bounded Case reads and retains its completed result",
        context do
