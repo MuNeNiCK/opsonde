@@ -74,18 +74,3 @@ export function apiData<T>(result: { data?: T; response: Response }): NonNullabl
   }
   return result.data;
 }
-
-export async function collectPages<T>(
-  load: (after: string | null) => Promise<{ data: T[]; page: { next: string | null } }>,
-) {
-  const records: T[] = [];
-  let cursor: string | null = null;
-
-  do {
-    const page = await load(cursor);
-    records.push(...page.data);
-    cursor = page.page.next;
-  } while (cursor);
-
-  return records;
-}
