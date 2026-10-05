@@ -995,6 +995,97 @@ defmodule Opsonde.OperationDeliveryTest do
     assert receipt.kind == "observation"
   end
 
+  @tag resolver_output_capacity: true
+  test "an admitted large Resolver proposal retains its decision and charges usage only once",
+       context do
+    {:ok, catalog} = Opsonde.Targets.Adapters.HTTP.capabilities(nil, %{})
+
+    method =
+      Targets.create_access_method!(
+        context.target.id,
+        context.provider.id,
+        "large-output-http",
+        "http",
+        "http://fixture.example",
+        context.provider.revision,
+        20,
+        Enum.map(catalog.effects, & &1.capability),
+        actor: context.admin
+      )
+
+    Targets.check_access_method!(method.id, method.revision, invocation({:ok, catalog}),
+      actor: context.admin
+    )
+
+    {incident, run, first} =
+      authorized_proposal!("large-resolver-output", context, request_kind: :observation)
+
+    operation = Cases.accept_operation!(first.id, authorize?: false)
+
+    assert :ok =
+             OperationDelivery.run(operation.id,
+               target_invocation:
+                 invocation(
+                   {:ok,
+                    %Target.Observation{
+                      observed_at: DateTime.utc_now(),
+                      facts: %{"service" => "unhealthy"}
+                    }}
+                 )
+             )
+
+    current = Cases.get_case!(incident.id, actor: context.operator)
+    turn = Cases.get_turn!(current.pending_intent["turn_id"], authorize?: false)
+
+    parameters = %{"method" => "POST", "path" => "/", "body" => String.duplicate("x", 64_700)}
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{
+                 test_pid: self(),
+                 respond: fn request ->
+                   tool = Enum.find(request.proposal_tools, &(&1.operation == "request.execute"))
+
+                   proposal =
+                     struct!(
+                       AI.Proposal,
+                       Map.take(
+                         Map.from_struct(tool),
+                         ~w(target_id target_revision access_method_id access_method_revision request_kind capability operation)a
+                       )
+                       |> Map.merge(%{
+                         tool_id: tool.id,
+                         purpose: :investigation,
+                         selectors: %{},
+                         parameters: parameters,
+                         reason: "Observe the current target",
+                         evidence_ids: []
+                       })
+                     )
+
+                   {:ok,
+                    %AI.ResolverDecision{
+                      intent: proposal,
+                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                    }}
+                 end
+               }
+             )
+
+    saved = Cases.get_turn!(turn.id, authorize?: false)
+    assert saved.result["intent"]["type"] == "proposal"
+    assert saved.result["intent"]["parameters"] == parameters
+    assert byte_size(Jason.encode!(saved.result)) > 65_536
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+
+    assert :ok =
+             ResolverDelivery.run(turn.id,
+               ai_invocation: %{respond: fn _ -> flunk("saved paid AI decision was resent") end}
+             )
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 12
+  end
+
   @tag normalized_capacity: true
   test "the next Resolver receives the exact maximum normalized investigation receipt without replay",
        context do

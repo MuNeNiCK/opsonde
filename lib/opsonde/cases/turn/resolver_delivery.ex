@@ -18,7 +18,7 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
 
   alias Opsonde.Providers.AI
 
-  @max_result_bytes 65_536
+  @max_result_bytes Turn.max_result_bytes()
 
   @spec run(String.t(), keyword()) ::
           :ok | {:cancel, String.t()} | {:snooze, pos_integer()} | {:error, term()}

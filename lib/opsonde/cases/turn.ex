@@ -1,7 +1,11 @@
 defmodule Opsonde.Cases.Turn do
   @summary_fields ~w(id case_id resolution_run_id ordinal status progress_kind started_at completed_at revision inserted_at updated_at)a
+  # Retain the admitted 64 KiB AI decision plus current Condition revisions,
+  # normalized groups and exact tool/relationship snapshots added by delivery.
+  @max_result_bytes 131_072
 
   def summary_fields, do: @summary_fields
+  def max_result_bytes, do: @max_result_bytes
 
   use Ash.Resource,
     otp_app: :opsonde,
@@ -100,7 +104,7 @@ defmodule Opsonde.Cases.Turn do
       ]
 
       validate {Opsonde.Validations.BoundedMap, attribute: :intent}
-      validate {Opsonde.Validations.BoundedMap, attribute: :result}
+      validate {Opsonde.Validations.BoundedMap, attribute: :result, max_bytes: @max_result_bytes}
     end
 
     update :complete_record do
@@ -109,7 +113,7 @@ defmodule Opsonde.Cases.Turn do
       argument :expected_revision, :integer, allow_nil?: false, constraints: [min: 1]
       validate Opsonde.Validations.CurrentRevision
       validate attribute_equals(:status, :started)
-      validate {Opsonde.Validations.BoundedMap, attribute: :result}
+      validate {Opsonde.Validations.BoundedMap, attribute: :result, max_bytes: @max_result_bytes}
       change set_attribute(:status, :completed)
       change optimistic_lock(:revision)
     end
