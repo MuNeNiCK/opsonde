@@ -32,18 +32,22 @@ if config_env() != :cli do
 
   config :opsonde, :case_collect_seconds, case_collect_seconds
 
-  if public_url = System.get_env("OPSONDE_PUBLIC_URL") do
-    public_url = String.trim_trailing(public_url, "/")
-    uri = URI.parse(public_url)
+  public_url =
+    System.get_env("OPSONDE_PUBLIC_URL", "http://localhost:4000")
+    |> String.trim_trailing("/")
 
-    unless uri.scheme in ["http", "https"] and is_binary(uri.host) and
-             uri.path in [nil, ""] and is_nil(uri.userinfo) and is_nil(uri.query) and
-             is_nil(uri.fragment) do
-      raise "OPSONDE_PUBLIC_URL must be an HTTP(S) origin without credentials, path, query, or fragment"
-    end
+  public_uri = URI.parse(public_url)
 
-    config :opsonde, :public_url, public_url
+  unless public_uri.scheme in ["http", "https"] and is_binary(public_uri.host) and
+           public_uri.path in [nil, ""] and is_nil(public_uri.userinfo) and
+           is_nil(public_uri.query) and is_nil(public_uri.fragment) do
+    raise "OPSONDE_PUBLIC_URL must be an HTTP(S) origin without credentials, path, query, or fragment"
   end
+
+  config :opsonde, :public_url, public_url
+
+  config :opsonde, OpsondeWeb.Endpoint,
+    url: [host: public_uri.host, port: public_uri.port, scheme: public_uri.scheme]
 
   if config_env() == :prod do
     encoded_credentials_key =
@@ -98,12 +102,9 @@ if config_env() != :cli do
         You can generate one by calling: mix phx.gen.secret
         """
 
-    host = System.get_env("PHX_HOST") || "example.com"
-
     config :opsonde, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
     config :opsonde, OpsondeWeb.Endpoint,
-      url: [host: host, port: 443, scheme: "https"],
       http: [
         # Enable IPv6 and bind on all interfaces.
         # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
