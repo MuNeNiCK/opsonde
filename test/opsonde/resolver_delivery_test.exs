@@ -713,43 +713,67 @@ defmodule Opsonde.ResolverDeliveryTest do
     assert Cases.get_evidence!(receipt.id, actor: context.operator).content == receipt.content
   end
 
-  test "an unavailable file reaches the next Resolver without a human handoff", context do
-    {turn, run, source, reference} = file_turn!(context)
-    file_decision!(turn, source, reference)
-    Targets.revoke_artifact!(reference["id"], actor: context.operator)
-    assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+  for disposition <- [:revoked, :expired] do
+    @tag artifact_disposition: disposition
+    test "a #{disposition} file reaches the next Resolver without a human handoff", context do
+      {turn, run, source, reference} = file_turn!(context)
+      file_decision!(turn, source, reference)
 
-    [next] =
-      Cases.list_turns!(actor: context.operator)
-      |> Enum.filter(&(&1.resolution_run_id == run.id and &1.id != turn.id))
+      if context.artifact_disposition == :expired do
+        Opsonde.Repo.query!(
+          "UPDATE artifacts SET expires_at = now() - interval '1 second' WHERE id = $1",
+          [Ecto.UUID.dump!(reference["id"])]
+        )
 
-    assert :ok =
-             ResolverDelivery.run(next.id,
-               ai_invocation: %{
-                 test_pid: self(),
-                 respond: fn request ->
-                   receipt = Enum.find(request.evidence, &(&1.kind == "file_read"))
-                   assert receipt.content["status"] == "unavailable"
-                   refute Map.has_key?(receipt.content, "value")
-                   assert AI.file_read_options(request) == []
+        Targets.expire_artifact!(reference["id"], authorize?: false)
+      else
+        Targets.revoke_artifact!(reference["id"], actor: context.operator)
+      end
 
-                   {:ok,
-                    %AI.ResolverDecision{
-                      intent: %AI.TargetSearch{
-                        query: "resolver-file-host",
-                        reason: "Seek another source"
-                      },
-                      usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
-                    }}
-                 end
-               }
-             )
+      assert Targets.get_artifact!(reference["id"], actor: context.operator).status ==
+               context.artifact_disposition
 
-    incident = Cases.get_case!(turn.case_id, authorize?: false)
-    assert incident.status == :running
-    assert incident.required_human_input == nil
-    assert Cases.get_turn!(next.id, authorize?: false).result["intent"]["type"] == "target_search"
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 24
+      assert {:error, _error} =
+               Targets.read_bound_artifact_range(reference, 0, 3, actor: context.operator)
+
+      assert :ok = DecisionRouteWorker.perform(%Oban.Job{args: %{"turn_id" => turn.id}})
+
+      [next] =
+        Cases.list_turns!(actor: context.operator)
+        |> Enum.filter(&(&1.resolution_run_id == run.id and &1.id != turn.id))
+
+      assert :ok =
+               ResolverDelivery.run(next.id,
+                 ai_invocation: %{
+                   test_pid: self(),
+                   respond: fn request ->
+                     receipt = Enum.find(request.evidence, &(&1.kind == "file_read"))
+                     assert receipt.content["status"] == "unavailable"
+                     refute Map.has_key?(receipt.content, "value")
+                     assert AI.file_read_options(request) == []
+
+                     {:ok,
+                      %AI.ResolverDecision{
+                        intent: %AI.TargetSearch{
+                          query: "resolver-file-host",
+                          reason: "Seek another source"
+                        },
+                        usage: %AI.Usage{input_tokens: 7, output_tokens: 5}
+                      }}
+                   end
+                 }
+               )
+
+      incident = Cases.get_case!(turn.case_id, authorize?: false)
+      assert incident.status == :running
+      assert incident.required_human_input == nil
+
+      assert Cases.get_turn!(next.id, authorize?: false).result["intent"]["type"] ==
+               "target_search"
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == 24
+      assert Cases.get_evidence!(source.id, actor: context.operator).content == source.content
+    end
   end
 
   test "file receipt persistence failure retries routing without a second AI charge", context do
