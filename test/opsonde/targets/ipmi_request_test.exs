@@ -241,6 +241,48 @@ defmodule Opsonde.Targets.IPMIRequestTest do
     end
   end
 
+  @tag ipmi_native_before_send: true
+  test "IPMI rechecks current facts before native authentication independently of waiting" do
+    {:ok, socket} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    on_exit(fn -> :gen_udp.close(socket) end)
+    {:ok, port} = :inet.port(socket)
+
+    {:ok, state} =
+      IPMI.build(%{"timeout_ms" => 100}, %{"username" => "fixture", "password" => "fixture"})
+
+    {:ok, state} =
+      IPMI.bind_connection(state, %Target.Connection{endpoint: "ipmi://127.0.0.1:#{port}"})
+
+    owner = self()
+
+    cause =
+      Ash.Error.Invalid.exception(
+        errors: [RuntimeError.exception("IPMI native context unavailable")]
+      )
+
+    for operation <- ["command.execute", "console.exchange"] do
+      input =
+        if operation == "command.execute",
+          do: request(%{"netfn" => 6, "command" => 1}),
+          else: %{request(%{"input_hex" => "0d"}) | operation: operation}
+
+      input = %{input | connection: %Target.Connection{endpoint: state.endpoint}}
+
+      before_send? = fn ->
+        if self() != owner, do: raise(cause), else: false
+      end
+
+      assert {:error, error} =
+               IPMI.effect(state, input, %{
+                 before_send?: before_send?,
+                 cancelled?: fn -> false end
+               })
+
+      assert %Target.BeforeSendError{cause: ^cause} = Target.BeforeSendError.unwrap(error)
+      assert {:error, :timeout} = :gen_udp.recv(socket, 0, 20)
+    end
+  end
+
   @tag ipmi_deadline: true
   test "IPMI authentication cancellation stops the request and permits the next request" do
     for {operation, parameters} <- [

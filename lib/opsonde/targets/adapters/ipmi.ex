@@ -12,6 +12,12 @@ defmodule Opsonde.Targets.Adapters.IPMI do
   # Hex doubles retained output; leave room for the receipt within the shared 64 KiB result.
   @max_console_output_bytes 30_000
   @method_effect "request.ipmi.effect"
+  @context_error_classes [
+    Ash.Error.Unknown,
+    Ash.Error.Invalid,
+    Ash.Error.Forbidden,
+    Ash.Error.Framework
+  ]
 
   defmodule State do
     @moduledoc false
@@ -216,7 +222,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, %Target.BeforeSendError{}} = error ->
           error
 
-        {:error, %Ash.Error.Unknown{}} = error ->
+        {:error, %type{}} = error
+        when type in @context_error_classes ->
           error
       end
     else
@@ -298,7 +305,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, %Target.BeforeSendError{}} = error ->
           error
 
-        {:error, %Ash.Error.Unknown{}} = error ->
+        {:error, %type{}} = error
+        when type in @context_error_classes ->
           error
 
         {:error, category, message} when category in [:local_capacity, :native_unavailable] ->
@@ -490,7 +498,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
         {:error, %Target.BeforeSendError{}} = error ->
           error
 
-        {:error, %Ash.Error.Unknown{}} = error ->
+        {:error, %type{}} = error
+        when type in @context_error_classes ->
           error
 
         {:error, category} when category in ["local_capacity", "native_unavailable"] ->
@@ -644,7 +653,8 @@ defmodule Opsonde.Targets.Adapters.IPMI do
       {:error, %Target.BeforeSendError{}} = error ->
         error
 
-      {:error, %Ash.Error.Unknown{}} = error ->
+      {:error, %type{}} = error
+      when type in @context_error_classes ->
         error
 
       _ ->
@@ -724,15 +734,17 @@ defmodule Opsonde.Targets.Adapters.IPMI do
 
   defp secret(_value, _limit), do: {:error, :invalid_secret}
 
-  defp not_cancelled(%{cancelled?: callback}) when is_function(callback, 0) do
-    if callback.(), do: {:error, :cancelled, "IPMI request was cancelled"}, else: :ok
+  defp not_cancelled(invocation) do
+    callback = Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?))
+
+    if is_function(callback, 0) and callback.(),
+      do: {:error, :cancelled, "IPMI request was cancelled"},
+      else: :ok
   rescue
     cause -> {:error, Target.BeforeSendError.exception(cause: cause)}
   catch
     kind, reason -> {:error, Target.BeforeSendError.exception(cause: {kind, reason})}
   end
-
-  defp not_cancelled(_invocation), do: :ok
 
   defp read_error(:unreachable, message), do: {:error, :retryable, message}
   defp read_error(:local_capacity, message), do: {:error, :retryable, message}

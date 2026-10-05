@@ -1,6 +1,8 @@
 defmodule Opsonde.Transports.IPMI do
   @moduledoc false
 
+  alias Opsonde.Providers.Target
+
   use Rustler, otp_app: :opsonde, crate: :ipmi_nif
 
   def send_command(_address, _session, _timeout_ms, _request, _token),
@@ -40,7 +42,31 @@ defmodule Opsonde.Transports.IPMI do
 
   defp exchange(invocation, native_call) do
     cancellation = cancellation_token()
-    task = Task.async(fn -> native_call.(cancellation) end)
+
+    task =
+      Task.async(fn ->
+        callback =
+          Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?, fn -> false end))
+
+        case stop_check(callback) do
+          {:ok, false} ->
+            native_call.(cancellation)
+
+          {:ok, true} ->
+            {:error,
+             Target.BeforeSendError.exception(
+               cause:
+                 Target.Error.exception(
+                   category: :cancelled,
+                   message: "IPMI request was cancelled"
+                 )
+             )}
+
+          {:error, cause} ->
+            {:error, Target.BeforeSendError.exception(cause: cause)}
+        end
+      end)
+
     await_exchange(task, cancellation, Map.get(invocation, :cancelled?, fn -> false end))
   end
 
