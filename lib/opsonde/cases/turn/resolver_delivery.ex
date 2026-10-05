@@ -23,11 +23,29 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
   @spec run(String.t(), keyword()) ::
           :ok | {:cancel, String.t()} | {:snooze, pos_integer()} | {:error, term()}
   def run(turn_id, opts \\ []) do
-    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false) do
-      if turn.status == :completed do
-        continue_saved_result(turn)
-      else
-        deliver(turn, opts)
+    with {:ok, turn} <- Cases.get_turn(turn_id, authorize?: false),
+         {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
+      cond do
+        incident.cancel_requested or incident.status != :running ->
+          with {:ok, :ok} <-
+                 Cases.settle_stopped_ai_invocations(
+                   turn.case_id,
+                   turn.resolution_run_id,
+                   :resolver,
+                   turn.id,
+                   nil,
+                   authorize?: false
+                 ) do
+            if incident.cancel_requested,
+              do: {:cancel, "Case resolution was cancelled"},
+              else: :ok
+          end
+
+        turn.status == :completed ->
+          continue_saved_result(turn)
+
+        true ->
+          deliver(turn, opts)
       end
     end
   end

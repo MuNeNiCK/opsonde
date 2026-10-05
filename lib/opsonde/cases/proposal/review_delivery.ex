@@ -20,14 +20,28 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
   def run(proposal_id, opts \\ []) do
     with {:ok, proposal} <- Cases.get_proposal(proposal_id, authorize?: false),
          {:ok, incident} <- Cases.get_case(proposal.case_id, authorize?: false) do
-      if proposal.status == :invalidated or incident.cancel_requested do
-        :ok
-      else
-        case existing_decision(proposal.id) do
-          {:ok, %ReviewDecision{} = decision} -> apply(decision)
-          {:ok, nil} -> select_and_deliver(proposal, opts)
-          {:error, _error} = error -> error
-        end
+      cond do
+        incident.cancel_requested ->
+          with {:ok, :ok} <-
+                 Cases.settle_stopped_ai_invocations(
+                   proposal.case_id,
+                   proposal.resolution_run_id,
+                   :reviewer,
+                   nil,
+                   proposal.id,
+                   authorize?: false
+                 ),
+               do: :ok
+
+        proposal.status == :invalidated ->
+          :ok
+
+        true ->
+          case existing_decision(proposal.id) do
+            {:ok, %ReviewDecision{} = decision} -> apply(decision)
+            {:ok, nil} -> select_and_deliver(proposal, opts)
+            {:error, _error} = error -> error
+          end
       end
     end
   end

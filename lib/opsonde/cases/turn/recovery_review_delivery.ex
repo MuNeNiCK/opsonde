@@ -22,10 +22,25 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         apply_result(turn, event)
       else
         with {:ok, incident} <- Cases.get_case(turn.case_id, authorize?: false) do
-          if incident.status == :running and not incident.cancel_requested and
-               incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id},
-             do: deliver(turn, opts),
-             else: :ok
+          cond do
+            incident.status != :running or incident.cancel_requested ->
+              with {:ok, :ok} <-
+                     Cases.settle_stopped_ai_invocations(
+                       turn.case_id,
+                       turn.resolution_run_id,
+                       :reviewer,
+                       turn.id,
+                       nil,
+                       authorize?: false
+                     ),
+                   do: :ok
+
+            incident.pending_intent == %{"action" => "review_recovery", "turn_id" => turn.id} ->
+              deliver(turn, opts)
+
+            true ->
+              :ok
+          end
         end
       end
     end

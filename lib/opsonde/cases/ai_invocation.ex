@@ -114,6 +114,16 @@ defmodule Opsonde.Cases.AIInvocation do
       change optimistic_lock(:revision)
     end
 
+    action :settle_stopped, :atom do
+      transaction? false
+      argument :case_id, :uuid, allow_nil?: false
+      argument :resolution_run_id, :uuid, allow_nil?: false
+      argument :role, :atom, allow_nil?: false, constraints: [one_of: [:resolver, :reviewer]]
+      argument :turn_id, :uuid
+      argument :proposal_id, :uuid
+      run Opsonde.Cases.AIInvocation.Actions.SettleStopped
+    end
+
     action :claim, :struct do
       constraints instance_of: Opsonde.Cases.AIInvocation.Claim
       transaction? false
@@ -166,6 +176,7 @@ defmodule Opsonde.Cases.AIInvocation do
              :record_outcome,
              :retry_unsent,
              :begin_dispatch,
+             :settle_stopped,
              :claim
            ]) do
       forbid_if always()

@@ -550,6 +550,10 @@ defmodule Opsonde.Cases do
 
       define :create_ai_invocation_record, action: :create_record
 
+      define :settle_stopped_ai_invocations,
+        action: :settle_stopped,
+        args: [:case_id, :resolution_run_id, :role, :turn_id, :proposal_id]
+
       define :retry_unsent_ai_invocation,
         action: :retry_unsent,
         args: [:expected_revision, :before_send_failure]

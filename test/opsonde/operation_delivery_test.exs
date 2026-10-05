@@ -192,104 +192,14 @@ defmodule Opsonde.OperationDeliveryTest do
              )
   end
 
-  @tag native_reviewer_context: true
-  test "a pending native Reviewer retains its context read error after accounting", context do
-    {context, peer} = native_reviewer!(context)
-    configure_mode!(context.admin, :auto)
-    {_incident, run, proposal} = authorized_proposal!("native-review-read-fault", context)
-    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
-    faulted = :atomics.new(1, [])
-    Agent.update(peer, &%{&1 | mode: {:sleep, 1_500}, requests: []})
-
-    assert {:error, cause} =
-             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
-               delivery_attempt: 1,
-               max_delivery_attempts: 3,
-               ai_invocation: %{
-                 cancelled?: fn ->
-                   if Agent.get(peer, &(&1.requests != [])) and
-                        :atomics.compare_exchange(faulted, 1, 0, 1) == :ok do
-                     {:error, error} =
-                       Repo.query("SELECT native_reviewer_context_unavailable", [],
-                         mode: :savepoint
-                       )
-
-                     raise error
-                   end
-
-                   false
-                 end
-               }
-             )
-
-    assert Exception.message(cause) =~ "native_reviewer_context_unavailable"
-    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
-    assert invocation.status == :failed
-    assert invocation.category == "failed"
-    assert invocation.dispatch_confirmed
-    refute invocation.usage_reported
-    expected_units = before_units + invocation.reserved_units
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == expected_units
-
-    assert {:error, _retry} =
-             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
-               delivery_attempt: 1,
-               max_delivery_attempts: 3
-             )
-
-    assert Agent.get(peer, &length(&1.requests)) == 1
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == expected_units
-    assert Cases.list_review_decisions!(actor: context.admin) == []
-  end
-
-  @tag native_reviewer_context: true
-  test "cancelling a pending native Reviewer retains its paid usage on the ended Run", context do
-    {context, peer} = native_reviewer!(context)
-    configure_mode!(context.admin, :auto)
-    {incident, run, proposal} = authorized_proposal!("native-review-case-cancel", context)
-    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
-    cancelled = :atomics.new(1, [])
-    Agent.update(peer, &%{&1 | mode: {:sleep, 1_500}, requests: []})
-
-    assert :ok =
-             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
-               ai_invocation: %{
-                 cancelled?: fn ->
-                   if Agent.get(peer, &(&1.requests != [])) and
-                        :atomics.compare_exchange(cancelled, 1, 0, 1) == :ok do
-                     current = Cases.get_case!(incident.id, actor: context.operator)
-
-                     Cases.request_case_cancellation!(current.id, current.revision,
-                       actor: context.operator
-                     )
-                   end
-
-                   false
-                 end
-               }
-             )
-
-    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
-    assert invocation.status == :failed
-    assert invocation.category == "cancelled"
-    assert invocation.dispatch_confirmed
-    refute invocation.usage_reported
-    ended = Cases.get_resolution_run!(run.id, authorize?: false)
-    assert ended.status == :cancelled
-    refute ended.active
-    assert ended.ai_usage_units == before_units + invocation.reserved_units
-    assert Cases.get_case!(incident.id, actor: context.operator).status == :cancelled
-
-    assert :ok = Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id)
-    assert Agent.get(peer, &length(&1.requests)) == 1
-
-    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
-             ended.ai_usage_units
-
-    assert Cases.list_approvals!(actor: context.admin) == []
-  end
-
-  for role <- [:resolver, :recovery], stop <- [:cancel, :read_fault] do
+  for role <- [:resolver, :proposal, :recovery],
+      stop <- [
+        :cancel,
+        :read_fault,
+        :owner_death_then_cancel,
+        :settlement_save_failure,
+        :previous_unknown_accounted
+      ] do
     @tag native_ai_stop: true, native_role: role, native_stop: stop
     test "native #{role} retains usage and cause after #{stop}", context do
       {context, peer} = native_reviewer!(context)
@@ -328,15 +238,23 @@ defmodule Opsonde.OperationDeliveryTest do
 
           {incident, run, turn}
         else
-          {incident, run, turn, _evidence} = recovery_conclusion!(context, "native-recovery-stop")
-          Cases.route_downstream_decision!(turn.id, authorize?: false)
-          {incident, run, turn}
+          if context.native_role == :proposal do
+            configure_mode!(context.admin, :auto)
+            authorized_proposal!("native-proposal-stop", context)
+          else
+            {incident, run, turn, _evidence} =
+              recovery_conclusion!(context, "native-recovery-stop")
+
+            Cases.route_downstream_decision!(turn.id, authorize?: false)
+            {incident, run, turn}
+          end
         end
 
       before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
       prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
       Agent.update(peer, &%{&1 | mode: {:sleep, 1500}, requests: []})
       changed = :atomics.new(1, [])
+      parent = self()
 
       opts = [
         ai_invocation: %{
@@ -350,10 +268,18 @@ defmodule Opsonde.OperationDeliveryTest do
                   actor: context.operator
                 )
               else
-                {:error, error} =
-                  Repo.query("SELECT native_other_ai_context_unavailable", [], mode: :savepoint)
+                if context.native_stop in [
+                     :owner_death_then_cancel,
+                     :settlement_save_failure,
+                     :previous_unknown_accounted
+                   ] do
+                  send(parent, {:native_waiting, self()})
+                else
+                  {:error, error} =
+                    Repo.query("SELECT native_other_ai_context_unavailable", [], mode: :savepoint)
 
-                raise error
+                  raise error
+                end
               end
             end
 
@@ -363,19 +289,92 @@ defmodule Opsonde.OperationDeliveryTest do
       ]
 
       delivery =
-        if context.native_role == :resolver,
-          do: ResolverDelivery,
-          else: Opsonde.Cases.Turn.RecoveryReviewDelivery
+        case context.native_role do
+          :resolver -> ResolverDelivery
+          :proposal -> Opsonde.Cases.Proposal.ReviewDelivery
+          :recovery -> Opsonde.Cases.Turn.RecoveryReviewDelivery
+        end
 
-      result = delivery.run(turn.id, opts)
+      result =
+        if context.native_stop in [
+             :owner_death_then_cancel,
+             :settlement_save_failure,
+             :previous_unknown_accounted
+           ] do
+          task = Task.async(fn -> delivery.run(turn.id, opts) end)
+          owner = task.pid
+          assert_receive {:native_waiting, ^owner}, 2_000
+          assert nil == Task.shutdown(task, :brutal_kill)
+
+          if context.native_stop == :previous_unknown_accounted do
+            _first_accounting = delivery.run(turn.id)
+
+            assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units >
+                     before_units
+
+            assert Agent.get(peer, &length(&1.requests)) == 1
+          end
+
+          current = Cases.get_case!(incident.id, actor: context.operator)
+          Cases.request_case_cancellation!(current.id, current.revision, actor: context.operator)
+
+          if context.native_stop == :settlement_save_failure do
+            Repo.query!("""
+            CREATE FUNCTION pg_temp.reject_stopped_ai_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW.status = 'unknown' THEN RAISE EXCEPTION 'stopped_ai_outcome_unavailable'; END IF;
+              RETURN NEW;
+            END; $$
+            """)
+
+            Repo.query!(
+              "CREATE TRIGGER reject_stopped_ai_outcome BEFORE UPDATE ON ai_invocations FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_stopped_ai_outcome()"
+            )
+
+            assert {:error, cause} = delivery.run(turn.id)
+            assert Exception.message(cause) =~ "stopped_ai_outcome_unavailable"
+
+            assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+                     before_units
+
+            assert [pending] =
+                     Cases.list_ai_invocations!(authorize?: false)
+                     |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+            assert pending.status == :dispatching
+            Repo.query!("DROP TRIGGER reject_stopped_ai_outcome ON ai_invocations")
+          end
+
+          delivery.run(turn.id)
+        else
+          delivery.run(turn.id, opts)
+        end
+
       assert :atomics.get(changed, 1) == 1
+
+      if context.native_stop in [
+           :owner_death_then_cancel,
+           :settlement_save_failure,
+           :previous_unknown_accounted
+         ],
+         do: assert(result == :ok or match?({:cancel, _}, result), inspect(result))
 
       assert [invocation] =
                Cases.list_ai_invocations!(authorize?: false)
                |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
 
-      assert invocation.status == :failed
-      assert invocation.dispatch_confirmed
+      if context.native_stop in [
+           :owner_death_then_cancel,
+           :settlement_save_failure,
+           :previous_unknown_accounted
+         ] do
+        assert invocation.status == :unknown
+        assert invocation.category == "response_unknown"
+      else
+        assert invocation.status == :failed
+        assert invocation.dispatch_confirmed
+      end
+
       refute invocation.usage_reported
 
       assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
@@ -391,6 +390,12 @@ defmodule Opsonde.OperationDeliveryTest do
 
       _replay = delivery.run(turn.id)
       assert Agent.get(peer, &length(&1.requests)) == 1
+
+      if context.native_stop != :read_fault do
+        ended = Cases.get_resolution_run!(run.id, authorize?: false)
+        assert ended.status == :cancelled
+        refute ended.active
+      end
 
       assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
                before_units + invocation.reserved_units
