@@ -241,6 +241,42 @@ defmodule Opsonde.CaseHistoryTest do
            ) == 1
   end
 
+  test "paid AI usage and its budget stop commit together and replay only once", context do
+    {incident, run} = open!("paid-ai-stop", context.operator)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_paid_ai_stop() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.event_type = 'limit_exhausted' THEN RAISE EXCEPTION 'paid_ai_stop_unavailable'; END IF;
+      RETURN NEW;
+    END; $$;
+    """)
+
+    Repo.query!(
+      "CREATE TRIGGER reject_paid_ai_stop BEFORE INSERT ON case_events FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_paid_ai_stop()"
+    )
+
+    assert {:error, cause} = charge(incident, run, :ai_usage, 2, "paid-ai-stop")
+    assert Exception.message(cause) =~ "paid_ai_stop_unavailable"
+    assert Cases.get_resolution_run!(run.id, actor: context.viewer).ai_usage_units == 0
+    assert Cases.get_resolution_run!(run.id, actor: context.viewer).status == :running
+    assert Cases.get_case!(incident.id, actor: context.viewer).status == :running
+
+    Repo.query!("DROP TRIGGER reject_paid_ai_stop ON case_events")
+
+    for _attempt <- 1..2 do
+      assert {:ok, result} = charge(incident, run, :ai_usage, 2, "paid-ai-stop")
+      assert result.status == :exhausted
+      assert Cases.get_resolution_run!(run.id, actor: context.viewer).ai_usage_units == 2
+      assert Cases.get_case!(incident.id, actor: context.viewer).status == :needs_attention
+    end
+
+    assert Enum.count(
+             Cases.list_case_events!(actor: context.viewer),
+             &(&1.case_id == incident.id and &1.event_type == "limit_exhausted")
+           ) == 1
+  end
+
   test "each finite limit persists its exact handoff and never marks the Case resolved",
        context do
     scenarios = [
@@ -307,6 +343,10 @@ defmodule Opsonde.CaseHistoryTest do
       replayed = operation.(incident, run)
       assert replayed.status == :exhausted
       assert replayed.reason == result.reason
+
+      if expected_limit == :ai_usage do
+        assert Cases.get_resolution_run!(run.id, actor: context.viewer).ai_usage_units == 2
+      end
 
       events =
         Cases.list_case_events!(actor: context.viewer)

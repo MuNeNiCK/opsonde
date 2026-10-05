@@ -402,6 +402,72 @@ defmodule Opsonde.OperationDeliveryTest do
     end
   end
 
+  for boundary <- [:run_limit, :run_deadline] do
+    @tag native_budget_transition: true, budget_boundary: boundary
+    test "native Reviewer accounts its paid attempt after #{boundary}", context do
+      {context, peer} = native_reviewer!(context)
+      configure_mode!(context.admin, :auto)
+      {_incident, run, proposal} = authorized_proposal!("native-budget-stop", context)
+      before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+
+      Agent.update(peer, &%{&1 | mode: {:sleep, 1_500}, requests: []})
+      changed = :atomics.new(1, [])
+
+      _result =
+        Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+          ai_invocation: %{
+            cancelled?: fn ->
+              if Agent.get(peer, &(&1.requests != [])) and
+                   :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                if context.budget_boundary == :run_limit do
+                  current = Cases.get_resolution_run!(run.id, authorize?: false)
+
+                  Cases.reallocate_resolution_run_limits!(
+                    current,
+                    current.revision,
+                    %{max_ai_usage_units: 1},
+                    authorize?: false
+                  )
+                else
+                  Repo.query!(
+                    "UPDATE resolution_runs SET deadline_at = now() - interval '1 second' WHERE id = $1",
+                    [Ecto.UUID.dump!(run.id)]
+                  )
+                end
+              end
+
+              false
+            end
+          }
+        )
+
+      assert :atomics.get(changed, 1) == 1
+      assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+      assert invocation.status == :failed
+      assert invocation.dispatch_confirmed
+
+      units =
+        if context.budget_boundary == :run_limit do
+          assert invocation.usage_reported
+          assert invocation.input_tokens + invocation.output_tokens == 12
+          12
+        else
+          refute invocation.usage_reported
+          invocation.reserved_units
+        end
+
+      for _attempt <- 1..2 do
+        _replay = Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id)
+        current = Cases.get_resolution_run!(run.id, authorize?: false)
+        assert current.ai_usage_units == before_units + units
+        assert current.status == :needs_attention
+        assert Agent.get(peer, &length(&1.requests)) == 1
+      end
+
+      assert Cases.list_approvals!(actor: context.admin) == []
+    end
+  end
+
   @tag native_waiting_context: true
   test "a native Reviewer waits with bounded Case reads and retains its completed result",
        context do

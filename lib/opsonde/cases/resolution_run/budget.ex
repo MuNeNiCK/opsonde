@@ -132,7 +132,8 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
   end
 
   defp exhaust(incident, run, limit, opts) do
-    with {:ok, updated_case} <-
+    with {:ok, run} <- account_exhausted_usage(run, opts[:kind], opts[:amount]),
+         {:ok, updated_case} <-
            Cases.mark_case_budget_exhausted(
              incident,
              incident.revision,
@@ -158,6 +159,11 @@ defmodule Opsonde.Cases.ResolutionRun.Budget do
       }
     end
   end
+
+  defp account_exhausted_usage(run, :ai_usage, amount),
+    do: Cases.record_resolution_run_ai_usage(run, run.revision, amount, authorize?: false)
+
+  defp account_exhausted_usage(run, _kind, _amount), do: {:ok, run}
 
   defp duplicate_result(incident, run, opts) do
     with {:ok, value} <- opts[:duplicate].(incident, run) do
