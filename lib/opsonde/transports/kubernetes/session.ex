@@ -92,17 +92,19 @@ defmodule Opsonde.Transports.Kubernetes.Session do
 
     scheme = if URI.parse(configuration.endpoint).scheme == "https", do: :wss, else: :ws
 
-    case WebSocket.upgrade(scheme, connection, path, headers) do
-      {:ok, connection, ref} ->
-        state = %{state | connection: connection, ref: ref}
+    with :ok <- not_cancelled(invocation) do
+      case WebSocket.upgrade(scheme, connection, path, headers) do
+        {:ok, connection, ref} ->
+          state = %{state | connection: connection, ref: ref}
 
-        case handshake(state, nil, []) do
-          {:ok, state} -> exchange(state, operation.steps)
-          {:error, state, reason} -> unknown(state, reason)
-        end
+          case handshake(state, nil, []) do
+            {:ok, state} -> exchange(state, operation.steps)
+            {:error, state, reason} -> unknown(state, reason)
+          end
 
-      _ ->
-        unknown(state, "upgrade_send_failed")
+        _ ->
+          unknown(state, "upgrade_send_failed")
+      end
     end
   rescue
     _ ->
@@ -276,7 +278,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp send_file(state, %{"size_bytes" => size}, _, _, size), do: {:ok, state}
 
   defp send_file(state, file, reader, prefix, offset) do
-    with :ok <- not_cancelled(state.invocation, true),
+    with :ok <- not_cancelled(state.invocation, :waiting),
          {:ok, bytes} when is_binary(bytes) and byte_size(bytes) > 0 <-
            port_call(fn -> reader.(offset) end, true),
          true <- offset + byte_size(bytes) <= file["size_bytes"],
@@ -359,7 +361,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
     case port_call(
            fn ->
              Target.FileWriter.append(writer, offset, bytes, fn ->
-               not_cancelled(state.invocation, true)
+               not_cancelled(state.invocation, :waiting)
              end)
            end,
            true
@@ -464,7 +466,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
   defp consume(state, _), do: {:error, state, "invalid_frame"}
 
   defp send_frame(state, frame) do
-    with :ok <- not_cancelled(state.invocation, true),
+    with :ok <- not_cancelled(state.invocation, :sending),
          {:ok, websocket, bytes} <- WebSocket.encode(state.websocket, frame),
          {:ok, connection} <- WebSocket.stream_request_body(state.connection, state.ref, bytes) do
       {:ok, %{state | connection: connection, websocket: websocket}}
@@ -484,7 +486,7 @@ defmodule Opsonde.Transports.Kubernetes.Session do
 
   defp wait_wire(state) do
     remaining = state.deadline - System.monotonic_time(:millisecond)
-    check = not_cancelled(state.invocation, true)
+    check = not_cancelled(state.invocation, :waiting)
 
     # A stop check may block while the remote response arrives. Retain that
     # response before returning the stop result; new sends still check context.
@@ -673,14 +675,36 @@ defmodule Opsonde.Transports.Kubernetes.Session do
     end)
   end
 
-  defp not_cancelled(invocation, dispatched? \\ false) do
-    if Map.get(invocation, :cancelled?, fn -> false end).(),
-      do: {:error, :cancelled, "Kubernetes WebSocket was cancelled"},
-      else: :ok
+  defp not_cancelled(invocation, phase \\ :before_send) do
+    dispatched? = phase != :before_send
+    waiting = Map.get(invocation, :cancelled?, fn -> false end)
+
+    callback =
+      if phase == :waiting,
+        do: waiting,
+        else: Map.get(invocation, :before_send?, waiting)
+
+    cond do
+      not callback.() ->
+        :ok
+
+      dispatched? ->
+        {:error, :cancelled, "Kubernetes WebSocket was cancelled"}
+
+      true ->
+        context_failure(
+          Target.Error.exception(
+            category: :cancelled,
+            message: "Kubernetes WebSocket was cancelled"
+          ),
+          false
+        )
+    end
   rescue
-    cause -> context_failure(cause, dispatched?)
+    cause -> context_failure(cause, phase != :before_send)
   catch
-    kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), dispatched?)
+    kind, reason ->
+      context_failure(ErlangError.exception(original: {kind, reason}), phase != :before_send)
   end
 
   defp port_call(callback, dispatched?) do

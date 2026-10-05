@@ -265,6 +265,66 @@ defmodule Opsonde.Targets.KubernetesSessionTest do
     end
   end
 
+  @tag websocket_fresh_send: true
+  test "a later WebSocket send checks fresh context and preserves the preceding native reply",
+       context do
+    input =
+      request(context, %{
+        "path" => "/apis/example.com/v1/namespaces/#{@namespace}/streams/one/connect",
+        "protocols" => ["test.raw.v1"],
+        "steps" => [
+          %{"op" => "send", "opcode" => "binary", "data" => Base.encode64(<<0, "first">>)},
+          %{
+            "op" => "receive",
+            "count" => 1,
+            "response_file" => %{
+              "name" => "first-reply.bin",
+              "media_type" => "application/octet-stream"
+            }
+          },
+          %{"op" => "send", "opcode" => "binary", "data" => Base.encode64(<<0, "second">>)},
+          %{"op" => "close"}
+        ]
+      })
+
+    clearance = Targets.clear_target_request!(input, actor: context.operator)
+
+    before_send? = fn ->
+      receipts = Targets.page_artifacts!(context.target.id, actor: context.operator).results
+
+      if Enum.any?(receipts, &(&1.name == "first-reply.bin" and &1.status == :ready)) do
+        {:error, cause} =
+          Opsonde.Repo.query("SELECT websocket_followup_context_unavailable", [],
+            mode: :savepoint
+          )
+
+        raise cause
+      end
+
+      false
+    end
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(
+               clearance,
+               %{before_send?: before_send?, cancelled?: fn -> false end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    assert Exception.message(error) =~ "websocket_followup_context_unavailable"
+    assert Opsonde.Providers.Target.Error.context_failure?(error)
+    assert is_nil(Opsonde.Providers.Target.BeforeSendError.unwrap(error))
+
+    assert %{"bytes_sent" => 6, "bytes_received" => 6, "steps" => [sent, received]} =
+             Opsonde.Providers.Target.Error.context_progress(error)
+
+    assert sent["op"] == "send"
+    assert received["frames"] == [%{"opcode" => "binary", "offset" => 0, "size_bytes" => 6}]
+    assert read_file(received["file"], context.operator) == <<0, "first">>
+    assert Agent.get(context.agent, & &1.frames) == [{:binary, <<0, "first">>}]
+  end
+
   for mode <- [:postgres, :missing_record] do
     @tag websocket_context_fault: true
     test "WebSocket retains a native reply during #{mode} context failure", context do
