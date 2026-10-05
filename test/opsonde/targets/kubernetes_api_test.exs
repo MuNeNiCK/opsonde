@@ -762,6 +762,88 @@ defmodule Opsonde.Targets.KubernetesAPITest do
     end
   end
 
+  @tag native_target_before_send: true
+  test "checked Kubernetes requests recheck current facts before native send independently of waiting",
+       context do
+    owner = self()
+    path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets/context-probe"
+    resource_requests = fn -> Enum.count(requests(context), &(&1.path == path)) end
+
+    for {kind, verb, capability, operation, dispatch} <- [
+          {:observation, "GET", "request.kubernetes.observe", "request.observe",
+           &Targets.dispatch_target_observation/3},
+          {:effect, "PATCH", "request.kubernetes.effect", "request.execute",
+           &Targets.dispatch_target_effect/3},
+          {:verification, "GET", "request.kubernetes.observe", "request.observe",
+           &Targets.dispatch_target_verification/3}
+        ],
+        phase <- [:provider_entry, :native_send] do
+      parameters = %{"method" => verb, "path" => path}
+
+      parameters =
+        if kind == :effect,
+          do: Map.put(parameters, "body", ~s({"spec":{"mode":"active"}})),
+          else: parameters
+
+      clearance =
+        target_request(context, kind, capability, operation, %{}, parameters)
+        |> Targets.clear_target_request!(actor: context.operator)
+
+      before = resource_requests.()
+
+      before_send? = fn ->
+        if phase == :provider_entry or self() != owner do
+          {:error, cause} =
+            Opsonde.Repo.query("SELECT kubernetes_before_send_unavailable", [], mode: :savepoint)
+
+          raise cause
+        end
+
+        false
+      end
+
+      assert {:error, error} =
+               dispatch.(clearance, %{before_send?: before_send?, cancelled?: fn -> false end},
+                 actor: context.operator,
+                 authorize?: false
+               )
+
+      unsent = Target.BeforeSendError.unwrap(error)
+      assert unsent
+      assert Exception.message(unsent.cause) =~ "kubernetes_before_send_unavailable"
+      assert resource_requests.() == before
+    end
+  end
+
+  @tag native_target_before_send: true
+  test "a current-context stop at native send retains a known-unsent Target result", context do
+    owner = self()
+    path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets/context-probe"
+    before = length(requests(context))
+
+    clearance =
+      target_request(context, :effect, "request.kubernetes.effect", "request.execute", %{}, %{
+        "method" => "PATCH",
+        "path" => path,
+        "body" => ~s({"spec":{"mode":"active"}})
+      })
+      |> Targets.clear_target_request!(actor: context.operator)
+
+    assert {:error, error} =
+             Targets.dispatch_target_effect(
+               clearance,
+               %{before_send?: fn -> self() != owner end, cancelled?: fn -> false end},
+               actor: context.operator,
+               authorize?: false
+             )
+
+    unsent = Target.BeforeSendError.unwrap(error)
+    assert unsent
+    refute Target.BeforeSendError.retryable?(unsent)
+    assert unsent.cause.category == :cancelled
+    assert length(requests(context)) == before
+  end
+
   @tag protocol_context_fault: true
   test "checked Kubernetes Method retains context read failures after dispatch", context do
     path = "/apis/example.com/v1/namespaces/#{@namespace}/widgets/context-probe"

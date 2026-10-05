@@ -467,8 +467,10 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
     end
   end
 
-  defp ensure_not_cancelled(%{cancelled?: cancelled?}) when is_function(cancelled?, 0) do
-    if cancelled?.() do
+  defp ensure_not_cancelled(invocation) do
+    cancelled? = Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?))
+
+    if is_function(cancelled?, 0) and cancelled?.() do
       {:error, target_error(:cancelled, "Target invocation was cancelled")}
     else
       :ok
@@ -480,8 +482,6 @@ defmodule Opsonde.Providers.Provider.Actions.Target do
       {:error,
        Target.BeforeSendError.exception(cause: ErlangError.exception(original: {kind, reason}))}
   end
-
-  defp ensure_not_cancelled(_invocation), do: :ok
 
   defp safe_call(callback, credentials) do
     callback.()

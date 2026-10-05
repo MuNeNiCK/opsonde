@@ -46,6 +46,9 @@ defmodule Opsonde.Transports.HTTP do
         {:error, _category, _message} = error ->
           error
 
+        {:error, %Target.BeforeSendError{}} = error ->
+          error
+
         {:error, %{errors: errors}} = error when is_list(errors) ->
           error
 
@@ -72,7 +75,7 @@ defmodule Opsonde.Transports.HTTP do
         }
 
     notify = if capture, do: fn response -> send(owner, {channel, response}) end
-    task = Task.async(fn -> wire_request(options, writer, notify) end)
+    task = Task.async(fn -> wire_request(options, writer, notify, invocation) end)
 
     try do
       await_wire(task, deadline, writer, invocation, capture)
@@ -82,7 +85,7 @@ defmodule Opsonde.Transports.HTTP do
     end
   end
 
-  defp wire_request(options, writer, notify) do
+  defp wire_request(options, writer, notify, invocation) do
     limiter = options[:data_limiter]
 
     request =
@@ -101,10 +104,12 @@ defmodule Opsonde.Transports.HTTP do
         do: Req.Request.put_private(request, :opsonde_data_limiter, limiter),
         else: request
 
-    case Req.request(request) do
-      {:error, %Req.TransportError{reason: :timeout}} -> timeout_failure(writer)
-      {:error, %Finch.TransportError{reason: :timeout}} -> timeout_failure(writer)
-      result -> result
+    with :ok <- not_cancelled(invocation) do
+      case Req.request(request) do
+        {:error, %Req.TransportError{reason: :timeout}} -> timeout_failure(writer)
+        {:error, %Finch.TransportError{reason: :timeout}} -> timeout_failure(writer)
+        result -> result
+      end
     end
   rescue
     _error -> response_failure(writer)
@@ -521,15 +526,30 @@ defmodule Opsonde.Transports.HTTP do
 
   defp not_cancelled(invocation, dispatched? \\ false)
 
-  defp not_cancelled(%{cancelled?: callback}, dispatched?) when is_function(callback, 0) do
-    if callback.(), do: {:error, :cancelled, "HTTP request was cancelled"}, else: :ok
+  defp not_cancelled(invocation, dispatched?) do
+    callback =
+      if dispatched?,
+        do: Map.get(invocation, :cancelled?),
+        else: Map.get(invocation, :before_send?, Map.get(invocation, :cancelled?))
+
+    cond do
+      not is_function(callback, 0) or not callback.() ->
+        :ok
+
+      dispatched? ->
+        {:error, :cancelled, "HTTP request was cancelled"}
+
+      true ->
+        context_failure(
+          Target.Error.exception(category: :cancelled, message: "HTTP request was cancelled"),
+          false
+        )
+    end
   rescue
     cause -> context_failure(cause, dispatched?)
   catch
     kind, reason -> context_failure(ErlangError.exception(original: {kind, reason}), dispatched?)
   end
-
-  defp not_cancelled(_invocation, _dispatched?), do: :ok
 
   defp context_failure(cause, true), do: {:error, Target.Error.context_failure(cause)}
   defp context_failure(cause, false), do: {:error, Target.BeforeSendError.exception(cause: cause)}
