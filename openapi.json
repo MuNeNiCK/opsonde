@@ -9524,7 +9524,7 @@
   },
   "info": {
     "title": "Opsonde API",
-    "version": "0.1.2"
+    "version": "0.1.1"
   },
   "openapi": "3.0.0",
   "paths": {
