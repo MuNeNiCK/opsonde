@@ -230,13 +230,13 @@ defmodule OpsondeCLI.CLI do
   end
 
   defp emit_registration(%{"registration_id" => id}) do
-    with {:ok, _uuid} <- Ecto.UUID.cast(id) do
+    with true <- Uniq.UUID.valid?(id) do
       IO.puts(
         :stderr,
         Jason.encode!(%{"event" => "registration_prepared", "registration_id" => id})
       )
     else
-      :error -> :error
+      false -> :error
     end
   rescue
     _error -> :error
@@ -381,7 +381,7 @@ defmodule OpsondeCLI.CLI do
          {:ok, decoded} when is_map(decoded) <- Jason.decode(encoded) do
       input =
         if route.method == :post and route.path in ["/providers", "/audit-schedules"],
-          do: Map.put_new_lazy(decoded, "registration_id", &Ash.UUID.generate/0),
+          do: Map.put_new_lazy(decoded, "registration_id", &Uniq.UUID.uuid4/0),
           else: decoded
 
       {:ok, %{root => input}}

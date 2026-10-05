@@ -411,7 +411,16 @@ defmodule OpsondeWeb.API.V1.OutcomeControllerTest do
 
     on_exit(fn -> File.rm_rf(root) end)
     executable = System.find_executable("elixir")
-    paths = Path.wildcard("_build/test/lib/*/ebin") |> Enum.flat_map(&["-pa", Path.expand(&1)])
+
+    # The packaged client excludes server dependencies. A child with the test
+    # application's code paths would hide accidental Ash/Ecto calls in the CLI.
+    assert {_output, 0} =
+             System.cmd("mix", ["compile", "--warnings-as-errors"],
+               env: [{"MIX_ENV", "cli"}, {"ERL_FLAGS", "+S 2:2"}],
+               stderr_to_stdout: true
+             )
+
+    paths = Path.wildcard("_build/cli/lib/*/ebin") |> Enum.flat_map(&["-pa", Path.expand(&1)])
 
     script =
       "Application.ensure_all_started(:req); [config | args] = System.argv(); System.halt(OpsondeCLI.CLI.run(args, config_path: config))"

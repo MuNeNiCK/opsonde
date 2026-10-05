@@ -59,7 +59,7 @@ defmodule Opsonde.MixProject do
   #
   # Type `mix help deps` for examples and options.
   defp deps do
-    client = [{:req, "~> 0.7"}, {:jason, "~> 1.2"}, {:burrito, "== 1.5.0"}]
+    client = [{:req, "~> 0.7"}, {:jason, "~> 1.2"}, {:burrito, "== 1.5.0"}, {:uniq, "~> 0.6"}]
 
     if Mix.env() == :cli, do: client, else: client ++ server_deps()
   end

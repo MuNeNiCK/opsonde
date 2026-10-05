@@ -92,8 +92,10 @@ defmodule OpsondeCLI.TargetAPITest do
       if context.supplied_id, do: assert(id == context.supplied_id)
       assert_receive {:error_output, stderr}
 
-      assert %{"registration_id" => ^id, "http_status" => 503, "outcome" => "unknown"} =
-               Jason.decode!(stderr)
+      assert [
+               %{"event" => "registration_prepared", "registration_id" => ^id},
+               %{"registration_id" => ^id, "http_status" => 503, "outcome" => "unknown"}
+             ] = stderr |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
 
       refute stderr =~ "private-cli-registration"
 
