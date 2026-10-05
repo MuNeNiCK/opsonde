@@ -418,6 +418,8 @@ defmodule Opsonde.Cases.Turn.RecoveryReviewDelivery do
         true ->
           attention(turn, "Recovery Reviewer failed", category)
       end
+    else
+      {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
     end
   end
 

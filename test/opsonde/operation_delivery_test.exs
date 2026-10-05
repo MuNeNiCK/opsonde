@@ -196,6 +196,7 @@ defmodule Opsonde.OperationDeliveryTest do
       stop <- [
         :cancel,
         :read_fault,
+        :read_and_save_fault,
         :owner_death_then_cancel,
         :settlement_save_failure,
         :previous_unknown_accounted
@@ -255,6 +256,20 @@ defmodule Opsonde.OperationDeliveryTest do
       Agent.update(peer, &%{&1 | mode: {:sleep, 1500}, requests: []})
       changed = :atomics.new(1, [])
       parent = self()
+
+      if context.native_stop == :read_and_save_fault do
+        Repo.query!("""
+        CREATE FUNCTION pg_temp.reject_failed_ai_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.status = 'failed' THEN RAISE EXCEPTION 'failed_ai_outcome_unavailable'; END IF;
+          RETURN NEW;
+        END; $$;
+        """)
+
+        Repo.query!(
+          "CREATE TRIGGER reject_failed_ai_outcome BEFORE UPDATE ON ai_invocations FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_failed_ai_outcome()"
+        )
+      end
 
       opts = [
         ai_invocation: %{
@@ -352,6 +367,24 @@ defmodule Opsonde.OperationDeliveryTest do
 
       assert :atomics.get(changed, 1) == 1
 
+      if context.native_stop == :read_and_save_fault do
+        assert {:error, cause} = result
+        assert Exception.message(cause) =~ "native_other_ai_context_unavailable"
+        assert Exception.message(cause) =~ "failed_ai_outcome_unavailable"
+
+        assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units == before_units
+
+        assert [pending] =
+                 Cases.list_ai_invocations!(authorize?: false)
+                 |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+        assert pending.status == :dispatching
+        Repo.query!("DROP TRIGGER reject_failed_ai_outcome ON ai_invocations")
+        current = Cases.get_case!(incident.id, actor: context.operator)
+        Cases.request_case_cancellation!(current.id, current.revision, actor: context.operator)
+        _settled = delivery.run(turn.id)
+      end
+
       if context.native_stop in [
            :owner_death_then_cancel,
            :settlement_save_failure,
@@ -366,7 +399,8 @@ defmodule Opsonde.OperationDeliveryTest do
       if context.native_stop in [
            :owner_death_then_cancel,
            :settlement_save_failure,
-           :previous_unknown_accounted
+           :previous_unknown_accounted,
+           :read_and_save_fault
          ] do
         assert invocation.status == :unknown
         assert invocation.category == "response_unknown"
@@ -380,7 +414,7 @@ defmodule Opsonde.OperationDeliveryTest do
       assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
                before_units + invocation.reserved_units
 
-      if context.native_stop == :read_fault do
+      if context.native_stop in [:read_fault, :read_and_save_fault] do
         assert {:error, error} = result
         assert Exception.message(error) =~ "native_other_ai_context_unavailable"
       else

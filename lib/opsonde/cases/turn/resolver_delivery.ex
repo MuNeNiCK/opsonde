@@ -797,7 +797,11 @@ defmodule Opsonde.Cases.Turn.ResolverDelivery do
                 if AI.Error.context_failure?(error), do: {:error, error}, else: :ok
 
               {:error, persistence_error} ->
-                if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
+                if AI.Error.context_failure?(error) do
+                  {:error, Ash.Error.to_error_class([error, persistence_error])}
+                else
+                  if turn_completed?(turn.id), do: :ok, else: {:error, persistence_error}
+                end
             end
         end
       end

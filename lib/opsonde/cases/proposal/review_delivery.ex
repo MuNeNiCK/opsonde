@@ -498,6 +498,8 @@ defmodule Opsonde.Cases.Proposal.ReviewDelivery do
           true ->
             stop_delivery(proposal, category, reason)
         end
+      else
+        {:error, save_error} -> {:error, Ash.Error.to_error_class([error, save_error])}
       end
     end
   end
