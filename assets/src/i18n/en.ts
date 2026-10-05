@@ -1166,7 +1166,8 @@ const en = {
         "Model each layer independently, then connect layers with relationships.",
       topology: "Infrastructure topology",
       viewTopology: "View topology",
-      chooseTopologyTarget: "Choose a Target from the list to view its relationships.",
+      showOverview: "Show overview",
+      topologyOverview: "Targets in the current list and this page's {{count}} relationships.",
       topologyScope:
         "Selected Target and active related Targets on this page ({{count}} relationships).",
       topologyDescription:

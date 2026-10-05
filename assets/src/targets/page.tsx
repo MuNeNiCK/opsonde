@@ -63,6 +63,17 @@ export function TargetPage() {
           )}
         </div>
       </div>
+      {focus && (
+        <Button variant="outline" onClick={() => setFocus(null)}>
+          {t("targets.showOverview")}
+        </Button>
+      )}
+      <TargetTopologySection
+        key={focus ?? "overview"}
+        targetId={focus ?? undefined}
+        overviewTargets={targets}
+        onChange={inventory.reload}
+      />
       <section className="space-y-4" aria-label={t("targets.inventory")}>
         <div>
           <h2 className="text-xl font-semibold">{t("targets.inventory")}</h2>
@@ -158,11 +169,6 @@ export function TargetPage() {
           </>
         )}
       </section>
-      {focus ? (
-        <TargetTopologySection key={focus} targetId={focus} onChange={inventory.reload} />
-      ) : (
-        <p className="text-sm text-muted-foreground">{t("targets.chooseTopologyTarget")}</p>
-      )}
     </div>
   );
 }

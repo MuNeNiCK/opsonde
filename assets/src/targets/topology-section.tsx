@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiData, commaSeparatedQuery } from "@/api/client";
 import { usePagedData } from "@/api/use-paged-data";
@@ -9,14 +9,16 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import type { TargetReference } from "@/targets/data";
+import type { TargetReference, TargetSummary } from "@/targets/data";
 import { TargetTopology } from "@/targets/topology";
 
 export function TargetTopologySection({
   targetId,
+  overviewTargets,
   onChange,
 }: {
-  targetId: string;
+  targetId?: string;
+  overviewTargets: TargetSummary[];
   onChange: () => Promise<unknown>;
 }) {
   const { t } = useTranslation();
@@ -47,7 +49,7 @@ export function TargetTopologySection({
         signal.throwIfAborted();
         const ids = [
           ...new Set([
-            targetId,
+            ...(targetId ? [targetId] : []),
             ...relations.data.flatMap((relation) => [
               relation.source_target_id,
               relation.destination_target_id,
@@ -55,14 +57,16 @@ export function TargetTopologySection({
             ...(destinationId ? [destinationId] : []),
           ]),
         ];
-        const targets = await apiClient
-          .GET("/api/v1/targets/summaries", {
-            params: { query: { ids, active: true, limit: 100 } },
-            querySerializer: commaSeparatedQuery,
-            signal,
-          })
-          .then(apiData);
-        if (!targets.data.some((target) => target.id === targetId))
+        const targets = ids.length
+          ? await apiClient
+              .GET("/api/v1/targets/summaries", {
+                params: { query: { ids, active: true, limit: 100 } },
+                querySerializer: commaSeparatedQuery,
+                signal,
+              })
+              .then(apiData)
+          : { data: [] };
+        if (targetId && !targets.data.some((target) => target.id === targetId))
           throw new Error("Selected Target is unavailable");
         return {
           data: [
@@ -86,6 +90,17 @@ export function TargetTopologySection({
     ),
   );
   const frame = page.view?.data[0];
+  const graphTargets = useMemo(
+    () =>
+      targetId
+        ? (frame?.targets ?? [])
+        : [
+            ...new Map(
+              [...overviewTargets, ...(frame?.targets ?? [])].map((target) => [target.id, target]),
+            ).values(),
+          ],
+    [targetId, frame, overviewTargets],
+  );
   const loadDestinations = useCallback(
     (after: string | undefined, signal: AbortSignal) =>
       apiClient
@@ -135,7 +150,9 @@ export function TargetTopologySection({
           <h2 className="text-xl font-semibold">{t("targets.topology")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {frame
-              ? t("targets.topologyScope", { count: frame.relationships.length })
+              ? t(targetId ? "targets.topologyScope" : "targets.topologyOverview", {
+                  count: frame.relationships.length,
+                })
               : t("targets.topologyDescription")}
           </p>
         </div>
@@ -192,7 +209,7 @@ export function TargetTopologySection({
             next={page.next}
           />
           <TargetTopology
-            targets={frame.targets}
+            targets={graphTargets}
             relationships={frame.relationships}
             editMode={editing && !saving && !page.pending}
             draft={draft}
@@ -205,23 +222,25 @@ export function TargetTopologySection({
           <p className="text-sm text-muted-foreground">
             {t("targets.connectRelationshipInstruction")}
           </p>
-          <PagedSelect
-            id="topology-destination"
-            label={t("targets.destinationTarget")}
-            placeholder={t("targets.chooseTarget")}
-            selected={destination}
-            load={loadDestinations}
-            disabled={saving}
-            onChange={(target) => {
-              setDestination(target);
-              setDraft(target ? { source: targetId, target: target.id } : null);
-            }}
-          />
+          {targetId && (
+            <PagedSelect
+              id="topology-destination"
+              label={t("targets.destinationTarget")}
+              placeholder={t("targets.chooseTarget")}
+              selected={destination}
+              load={loadDestinations}
+              disabled={saving}
+              onChange={(target) => {
+                setDestination(target);
+                setDraft(target ? { source: targetId, target: target.id } : null);
+              }}
+            />
+          )}
           {draft && (
             <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => void save(event)}>
               <p className="text-sm">
-                {frame?.targets.find((target) => target.id === draft.source)?.name} →{" "}
-                {frame?.targets.find((target) => target.id === draft.target)?.name}
+                {graphTargets.find((target) => target.id === draft.source)?.name} →{" "}
+                {graphTargets.find((target) => target.id === draft.target)?.name}
               </p>
               <div className="space-y-2">
                 <label htmlFor="topology-kind" className="text-sm">

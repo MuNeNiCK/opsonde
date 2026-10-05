@@ -1139,7 +1139,8 @@ const ja = {
       inventoryDescription: "各レイヤーを独立して登録し、関係で接続します。",
       topology: "インフラ構成図",
       viewTopology: "構成図を見る",
-      chooseTopologyTarget: "一覧から対象を選ぶと、関連する対象の構成図を表示します。",
+      showOverview: "構成図の概要に戻る",
+      topologyOverview: "このページの関係（{{count}}件）と、現在の一覧にある対象を表示します。",
       topologyScope:
         "選択した対象と、このページの関係（{{count}}件）に含まれる有効な対象を表示します。",
       topologyDescription: "登録された関係から、各インフラレイヤーの依存と支援関係を表示します。",

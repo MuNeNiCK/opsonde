@@ -45,6 +45,67 @@ function reply(data: unknown) {
   return Response.json(data);
 }
 
+test("The Target page opens on topology with connected and isolated Targets", async () => {
+  await i18n.changeLanguage("en");
+  const requests: URL[] = [];
+  wire.mockImplementation((request: Request) => {
+    const url = new URL(request.url);
+    requests.push(url);
+    if (url.pathname === "/api/v1/target-relationships") {
+      if (url.searchParams.has("target_id"))
+        expect(url.searchParams.get("target_id")).toBe("target-1");
+      expect(url.searchParams.get("limit")).toBe("50");
+      return Promise.resolve(
+        reply({
+          data: [
+            {
+              id: "edge",
+              source_target_id: "target-1",
+              destination_target_id: "target-2",
+              kind: "hosted_by",
+              active: true,
+            },
+          ],
+          page: { next: null },
+        }),
+      );
+    }
+    expect(url.pathname).toBe("/api/v1/targets/summaries");
+    return Promise.resolve(
+      reply({
+        data: url.searchParams.has("ids") ? [target(1), target(2)] : [target(1), target(9)],
+        page: { next: null },
+      }),
+    );
+  });
+  show();
+  const topology = await screen.findByRole("region", { name: "Infrastructure topology" });
+  await within(topology).findByText("Host 2");
+  expect(within(topology).getByText("Host 1")).toBeTruthy();
+  expect(within(topology).getByText("Host 9")).toBeTruthy();
+  const inventory = screen.getByRole("region", { name: "Target list" });
+  expect(
+    topology.compareDocumentPosition(inventory) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(requests).toHaveLength(3);
+  expect(requests.every((url) => !url.searchParams.has("after"))).toBe(true);
+  expect(
+    requests
+      .find((url) => url.pathname === "/api/v1/target-relationships")
+      ?.searchParams.has("target_id"),
+  ).toBe(false);
+  const user = userEvent.setup();
+  const first = within(inventory).getByRole("link", { name: "Host 1" }).closest("tr")!;
+  await user.click(within(first).getByRole("button", { name: "View topology" }));
+  await within(screen.getByRole("region", { name: "Infrastructure topology" })).findByText(
+    /Selected Target and active related Targets/,
+  );
+  await user.click(screen.getByRole("button", { name: "Show overview" }));
+  await within(screen.getByRole("region", { name: "Infrastructure topology" })).findByText(
+    "Host 9",
+  );
+});
+
 test("Target inventory searches server pages with truthful counts and no global detail reads", async () => {
   await i18n.changeLanguage("en");
   const requests: URL[] = [];
@@ -53,6 +114,8 @@ test("Target inventory searches server pages with truthful counts and no global 
     const url = new URL(request.url);
     requests.push(url);
     expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
+    if (url.pathname === "/api/v1/target-relationships")
+      return Promise.resolve(reply({ data: [], page: { next: null } }));
     expect(url.pathname).toBe("/api/v1/targets/summaries");
     expect(url.searchParams.get("active")).toBe("true");
     expect(url.searchParams.get("limit")).toBe("50");
@@ -95,6 +158,8 @@ test("Selected topology pages only its relations and resolves known peer summari
     const url = new URL(request.url);
     requests.push(url);
     if (url.pathname === "/api/v1/target-relationships") {
+      if (!url.searchParams.has("target_id"))
+        return Promise.resolve(reply({ data: [], page: { next: null } }));
       expect(url.searchParams.get("target_id")).toBe("target-1");
       expect(url.searchParams.get("active")).toBe("true");
       expect(url.searchParams.get("limit")).toBe("50");
@@ -173,9 +238,10 @@ test("Changing topology Target aborts old relations before any peer lookup", asy
   });
   show();
   const user = userEvent.setup();
-  const first = (await screen.findByRole("link", { name: "Host 1" })).closest("tr")!;
+  const list = screen.getByRole("region", { name: "Target list" });
+  const first = (await within(list).findByRole("link", { name: "Host 1" })).closest("tr")!;
   await user.click(within(first).getByRole("button", { name: "View topology" }));
-  const second = screen.getByRole("link", { name: "Host 700" }).closest("tr")!;
+  const second = within(list).getByRole("link", { name: "Host 700" }).closest("tr")!;
   await user.click(within(second).getByRole("button", { name: "View topology" }));
   const topology = screen.getByRole("region", { name: "Infrastructure topology" });
   await within(topology).findByText("Host 700");
@@ -339,6 +405,8 @@ test("Search replacement aborts an old inventory response and keeps failures vis
   let fail = true;
   wire.mockImplementation((request: Request) => {
     const url = new URL(request.url);
+    if (url.pathname === "/api/v1/target-relationships")
+      return Promise.resolve(reply({ data: [], page: { next: null } }));
     if (!url.searchParams.get("query")) {
       oldRequest = request;
       return new Promise<Response>((resolve) => {
