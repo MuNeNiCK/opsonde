@@ -1,7 +1,7 @@
 defmodule Opsonde.Targets.KubernetesAPITest do
   use Opsonde.DataCase, async: false
 
-  alias Opsonde.{Accounts, Providers, Targets}
+  alias Opsonde.{Accounts, Cases, Providers, Targets}
   alias Opsonde.Providers.Target
   alias Opsonde.Targets.Adapters.Kubernetes
   alias Opsonde.Targets.TargetRequest.Request
@@ -533,6 +533,233 @@ defmodule Opsonde.Targets.KubernetesAPITest do
       agent: agent,
       endpoint: endpoint
     }
+  end
+
+  @tag native_case_context: true
+  test "Case delivery does not send a native Kubernetes effect after its admitted Method changes",
+       context do
+    operation = case_operation!(context)
+    changed = :atomics.new(1, [])
+    before_requests = length(requests(context))
+
+    assert :ok =
+             Opsonde.Cases.Operation.Delivery.run(operation.id,
+               target_invocation: %{
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                     Targets.update_access_method!(
+                       context.method,
+                       context.method.revision,
+                       %{priority: 101},
+                       actor: context.admin
+                     )
+                   end
+
+                   false
+                 end
+               }
+             )
+
+    assert :atomics.get(changed, 1) == 1
+    assert length(requests(context)) == before_requests
+    saved = Cases.get_operation!(operation.id, actor: context.operator)
+    assert saved.status == :failed
+    assert saved.dispatch_started_at == nil
+
+    assert Cases.get_case!(operation.case_id, actor: context.operator).pending_intent["action"] ==
+             "resolve_turn"
+
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    assert length(requests(context)) == before_requests
+  end
+
+  @tag native_case_context: true
+  test "Case verification observes the native effect but refuses a changed admitted Method",
+       context do
+    operation = case_operation!(context)
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    applied = Cases.get_operation!(operation.id, actor: context.operator)
+
+    assert applied.status == :applied,
+           inspect(Map.take(applied, [:outcome_category, :result_details]))
+
+    assert Enum.count(requests(context), &(&1.method == "PATCH")) == 1
+
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    changed = :atomics.new(1, [])
+    before_requests = length(requests(context))
+
+    assert :ok =
+             Opsonde.Cases.VerificationAttempt.Delivery.run(attempt.id,
+               target_invocation: %{
+                 cancelled?: fn ->
+                   if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                     Targets.update_access_method!(
+                       context.method,
+                       context.method.revision,
+                       %{priority: 101},
+                       actor: context.admin
+                     )
+                   end
+
+                   false
+                 end
+               }
+             )
+
+    assert :atomics.get(changed, 1) == 1
+    assert length(requests(context)) == before_requests
+    saved = Cases.get_verification_attempt!(attempt.id, actor: context.operator)
+    assert saved.status == :unknown
+    assert saved.dispatch_started_at == nil
+
+    assert :ok = Opsonde.Cases.VerificationAttempt.Delivery.run(attempt.id)
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    assert length(requests(context)) == before_requests
+  end
+
+  @tag native_case_context: true
+  test "known native Case effect and verification receipts survive Evidence failure without resending",
+       context do
+    operation = case_operation!(context)
+
+    Repo.query!("""
+    CREATE FUNCTION pg_temp.reject_native_case_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Native Case Evidence unavailable'; END;
+    $$;
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER reject_native_case_evidence BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source IN ('operation', 'verification'))
+    EXECUTE FUNCTION pg_temp.reject_native_case_evidence()
+    """)
+
+    try do
+      assert {:error, error} = Opsonde.Cases.Operation.Delivery.run(operation.id)
+      assert Exception.message(error) =~ "Native Case Evidence unavailable"
+      assert Cases.get_operation!(operation.id, actor: context.operator).status == :applied
+      assert Enum.count(requests(context), &(&1.method == "PATCH")) == 1
+    after
+      Repo.query!("DROP TRIGGER reject_native_case_evidence ON evidences")
+    end
+
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    assert Enum.count(requests(context), &(&1.method == "PATCH")) == 1
+    attempt = Cases.verification_attempt_by_operation!(operation.id, authorize?: false)
+    before_requests = length(requests(context))
+
+    Repo.query!("""
+    CREATE TRIGGER reject_native_case_evidence BEFORE INSERT ON evidences
+    FOR EACH ROW WHEN (NEW.source = 'verification')
+    EXECUTE FUNCTION pg_temp.reject_native_case_evidence()
+    """)
+
+    try do
+      assert {:error, error} = Opsonde.Cases.VerificationAttempt.Delivery.run(attempt.id)
+      assert Exception.message(error) =~ "Native Case Evidence unavailable"
+      saved = Cases.get_verification_attempt!(attempt.id, actor: context.operator)
+      assert saved.status == :verified
+      assert saved.facts["http_status"] == 200
+      assert get_in(saved.facts, ["response", "spec", "replicas"]) == 2
+      assert length(requests(context)) == before_requests + 1
+    after
+      Repo.query!("DROP TRIGGER reject_native_case_evidence ON evidences")
+    end
+
+    assert :ok = Opsonde.Cases.VerificationAttempt.Delivery.run(attempt.id)
+    assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+    assert length(requests(context)) == before_requests + 1
+    assert Cases.get_case!(operation.case_id, actor: context.operator).status == :running
+  end
+
+  for change <- [:case_cancellation, :target_instructions, :provider_disabled] do
+    @tag native_case_context: true, admitted_change: change
+    test "native Case effect observes #{change} after claim without sending or replaying",
+         context do
+      operation = case_operation!(context)
+      changed = :atomics.new(1, [])
+      before_requests = length(requests(context))
+
+      assert :ok =
+               Opsonde.Cases.Operation.Delivery.run(operation.id,
+                 target_invocation: %{
+                   cancelled?: fn ->
+                     if :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                       case context.admitted_change do
+                         :case_cancellation ->
+                           incident = Cases.get_case!(operation.case_id, actor: context.operator)
+
+                           Cases.request_case_cancellation!(incident.id, incident.revision,
+                             actor: context.operator
+                           )
+
+                         :target_instructions ->
+                           Targets.update_target!(
+                             context.target,
+                             context.target.revision,
+                             %{
+                               operating_instructions:
+                                 "Review the updated maintenance constraints"
+                             },
+                             actor: context.admin
+                           )
+
+                         :provider_disabled ->
+                           provider =
+                             Providers.get_provider!(context.provider.id, actor: context.admin)
+
+                           Providers.disable_provider!(provider, provider.revision,
+                             actor: context.admin
+                           )
+                       end
+                     end
+
+                     false
+                   end
+                 }
+               )
+
+      assert :atomics.get(changed, 1) == 1
+      assert length(requests(context)) == before_requests
+      saved = Cases.get_operation!(operation.id, actor: context.operator)
+      assert saved.status == :failed
+      assert saved.dispatch_started_at == nil
+      assert :ok = Opsonde.Cases.Operation.Delivery.run(operation.id)
+      assert length(requests(context)) == before_requests
+    end
+  end
+
+  for change <- [:retired_run, :lost_subject_owner] do
+    @tag native_case_context: true, admitted_change: change
+    test "a checked native Method cannot make an admitted Case context current after #{change}",
+         context do
+      operation = case_operation!(context)
+      claim = Cases.claim_operation_dispatch!(operation.id, authorize?: false)
+      assert claim.state == :claimed
+      assert Cases.invocation_context_current!(claim.invocation_context, authorize?: false)
+      before_requests = length(requests(context))
+
+      case context.admitted_change do
+        :retired_run ->
+          run = Cases.get_resolution_run!(operation.resolution_run_id, authorize?: false)
+
+          Cases.retire_resolution_run!(
+            run,
+            run.revision,
+            %{status: :superseded, ended_at: DateTime.utc_now()},
+            authorize?: false
+          )
+
+        :lost_subject_owner ->
+          interrupted = Cases.claim_operation_dispatch!(operation.id, authorize?: false)
+          assert interrupted.state == :terminal
+          assert interrupted.operation.status == :unknown
+      end
+
+      refute Cases.invocation_context_current!(claim.invocation_context, authorize?: false)
+      assert length(requests(context)) == before_requests
+    end
   end
 
   @tag protocol_context_fault: true
@@ -2026,6 +2253,150 @@ defmodule Opsonde.Targets.KubernetesAPITest do
 
     assert {:error, :invalid_configuration} =
              Kubernetes.build(configuration(), %{"kubeconfig" => insecure})
+  end
+
+  defp case_operation!(context) do
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      :full_access,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      current.max_ai_usage_units,
+      current.max_no_progress_turns,
+      "Exercise the native Kubernetes delivery path",
+      actor: context.admin
+    )
+
+    resolver =
+      Providers.create_provider!(
+        "native-case-resolver",
+        :ai,
+        "fixture-ai",
+        %{"model" => "resolver-model"},
+        %{"api_key" => "native-case-fixture-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    assignment =
+      Opsonde.TestAIUsage.configure!(resolver.id, :resolver, 10, context.admin).resolver
+
+    incident =
+      Cases.open_case!(
+        :manual,
+        "test",
+        "native-kubernetes-case",
+        "Restore the registered workload",
+        :warning,
+        %{"desired_outcome" => "The deployment has two ready replicas"},
+        context.target.id,
+        :en,
+        actor: context.operator
+      )
+
+    run = Cases.active_resolution_run!(incident.id, authorize?: false)
+    observed = deployment_observation!(context)
+
+    evidence =
+      Cases.append_evidence!(
+        incident.id,
+        run.id,
+        nil,
+        "native-kubernetes-observation",
+        "observation",
+        "fixture",
+        "native-kubernetes-observation",
+        observed,
+        DateTime.utc_now(),
+        authorize?: false
+      )
+
+    turn =
+      Cases.start_turn!(
+        incident.id,
+        run.id,
+        "native-kubernetes-turn",
+        %{"objective" => "Restore the deployment"},
+        %{"action" => "continue"},
+        "Review the native target evidence",
+        authorize?: false
+      ).value
+
+    tool = %{
+      "id" => "native-kubernetes-effect",
+      "request_kind" => "effect",
+      "target_id" => context.target.id,
+      "target_revision" => context.target.revision,
+      "access_method_id" => context.method.id,
+      "access_method_revision" => context.method.revision,
+      "provider_id" => context.provider.id,
+      "provider_revision" => context.provider.revision,
+      "capability" => "request.kubernetes.effect",
+      "operation" => "request.execute"
+    }
+
+    verification_tool = %{
+      tool
+      | "id" => "native-kubernetes-verification",
+        "request_kind" => "verification",
+        "capability" => "request.kubernetes.observe",
+        "operation" => "request.observe"
+    }
+
+    intent =
+      tool
+      |> Map.drop(["id", "provider_id", "provider_revision"])
+      |> Map.merge(%{
+        "type" => "proposal",
+        "tool_id" => tool["id"],
+        "tool" => tool,
+        "purpose" => "remediation",
+        "delay_seconds" => 0,
+        "selectors" => %{},
+        "parameters" => deployment_patch(context, observed["response"], 2).parameters,
+        "reason" => "Restore the deployment replica count",
+        "evidence_ids" => [evidence.id],
+        "affected_conditions" => [],
+        "expected_result" => %{"http_status" => 200},
+        "verification_tool" => verification_tool,
+        "verification_intent" => %{
+          "tool_id" => verification_tool["id"],
+          "selectors" => %{},
+          "parameters" => deployment_get_parameters(),
+          "expected_result" => %{"http_status" => 200}
+        }
+      })
+
+    Cases.complete_turn!(
+      turn.id,
+      turn.revision,
+      %{
+        "outcome" => "decision",
+        "intent" => intent,
+        "resolver" => %{
+          "provider_id" => resolver.id,
+          "provider_revision" => resolver.revision,
+          "assignment_id" => assignment.id,
+          "assignment_revision" => assignment.revision
+        },
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      },
+      :proposal,
+      %{"action" => "route_resolver_decision", "turn_id" => turn.id},
+      "Review the fixture Resolver decision",
+      authorize?: false
+    )
+
+    proposal = Cases.materialize_proposal!(turn.id, authorize?: false)
+    Cases.route_proposal_authority!(proposal.id, authorize?: false)
+    Cases.accept_operation!(proposal.id, authorize?: false)
   end
 
   defp observe!(context, capability, operation, selectors, parameters) do

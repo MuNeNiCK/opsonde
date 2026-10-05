@@ -101,6 +101,188 @@ defmodule Opsonde.OperationDeliveryTest do
     }
   end
 
+  @tag native_reviewer_context: true
+  test "a native proposal Reviewer observes its changed assignment and settles paid uncertainty once",
+       context do
+    {context, peer} = native_reviewer!(context)
+    configure_mode!(context.admin, :auto)
+    {incident, run, proposal} = authorized_proposal!("native-review-role-change", context)
+    before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+    changed = :atomics.new(1, [])
+    Agent.update(peer, &%{&1 | mode: {:sleep, 1_000}, requests: []})
+
+    assert {:error, _retry} =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3,
+               ai_invocation: %{
+                 cancelled?: fn ->
+                   if Agent.get(peer, &(&1.requests != [])) and
+                        :atomics.compare_exchange(changed, 1, 0, 1) == :ok,
+                      do:
+                        Opsonde.TestAIUsage.configure!(
+                          context.reviewer_provider.id,
+                          :reviewer,
+                          11,
+                          context.admin
+                        )
+
+                   false
+                 end
+               }
+             )
+
+    assert :atomics.get(changed, 1) == 1
+    assert Agent.get(peer, &length(&1.requests)) == 1
+    assert [invocation] = Cases.list_ai_invocations!(authorize?: false)
+    assert invocation.status == :failed
+    assert invocation.category == "context_changed"
+    assert invocation.dispatch_confirmed
+    refute invocation.usage_reported
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_units + invocation.reserved_units
+
+    assert Cases.get_case!(incident.id, actor: context.operator).status == :running
+    assert Cases.list_review_decisions!(actor: context.admin) == []
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    assert {:error, _retry} =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               delivery_attempt: 1,
+               max_delivery_attempts: 3
+             )
+
+    assert Agent.get(peer, &length(&1.requests)) == 1
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_units + invocation.reserved_units
+
+    Agent.update(
+      peer,
+      &%{
+        &1
+        | mode:
+            {:decision,
+             %{
+               "verdict" => "rejected",
+               "purpose_assessment" => "unknown",
+               "reason" => "The proposed change needs fresh evidence"
+             }}
+      }
+    )
+
+    assert :ok =
+             Opsonde.Cases.Proposal.ReviewDelivery.run(proposal.id,
+               delivery_attempt: 2,
+               max_delivery_attempts: 3
+             )
+
+    assert Agent.get(peer, &length(&1.requests)) == 2
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             before_units + invocation.reserved_units + 12
+
+    assert Cases.list_approvals!(actor: context.admin) == []
+
+    assert Cases.get_case!(incident.id, actor: context.operator).pending_intent["action"] ==
+             "resolve_turn"
+  end
+
+  for change <- [:reviewer_assignment, :condition_refired] do
+    @tag native_reviewer_context: true, native_recovery_change: change
+    test "a native Recovery Reviewer retains paid uncertainty and queues reassessment after #{change}",
+         context do
+      {context, peer} = native_reviewer!(context)
+
+      if context.native_recovery_change == :condition_refired,
+        do: enable_signal_automation!(context.admin)
+
+      {incident, run, turn, _evidence} =
+        recovery_conclusion!(context, "native-recovery-context-change",
+          trigger_kind:
+            if(context.native_recovery_change == :condition_refired, do: :signal, else: :manual),
+          recover_before_proposal: true
+        )
+
+      signal_provider =
+        if context.native_recovery_change == :condition_refired,
+          do: Enum.find(Providers.list_providers!(actor: context.admin), &(&1.kind == :signal))
+
+      Cases.route_downstream_decision!(turn.id, authorize?: false)
+      before_units = Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units
+      prior_ids = MapSet.new(Cases.list_ai_invocations!(authorize?: false), & &1.id)
+      changed = :atomics.new(1, [])
+      Agent.update(peer, &%{&1 | mode: {:sleep, 1_000}, requests: []})
+
+      assert :ok =
+               Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id,
+                 ai_invocation: %{
+                   cancelled?: fn ->
+                     if Agent.get(peer, &(&1.requests != [])) and
+                          :atomics.compare_exchange(changed, 1, 0, 1) == :ok do
+                       if context.native_recovery_change == :reviewer_assignment do
+                         Opsonde.TestAIUsage.configure!(
+                           context.reviewer_provider.id,
+                           :reviewer,
+                           11,
+                           context.admin
+                         )
+                       else
+                         fire_signal!(
+                           signal_provider,
+                           context,
+                           incident.initial_context["signal_event_key"],
+                           "refired-during-native-review",
+                           DateTime.add(DateTime.utc_now(), 1, :second)
+                         )
+                       end
+                     end
+
+                     false
+                   end
+                 }
+               )
+
+      assert :atomics.get(changed, 1) == 1
+      assert Agent.get(peer, &length(&1.requests)) == 1
+
+      assert [invocation] =
+               Cases.list_ai_invocations!(authorize?: false)
+               |> Enum.reject(&MapSet.member?(prior_ids, &1.id))
+
+      assert invocation.role == :reviewer
+      assert invocation.status == :failed
+      assert invocation.category == "context_changed"
+      assert invocation.dispatch_confirmed
+      refute invocation.usage_reported
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_units + invocation.reserved_units
+
+      current = Cases.get_case!(incident.id, actor: context.operator)
+      assert current.status == :running
+      assert current.pending_intent["action"] == "resolve_turn"
+      refute current.pending_intent["turn_id"] == turn.id
+      successor = Cases.get_turn!(current.pending_intent["turn_id"], actor: context.operator)
+      assert successor.intent["source"] == "recovery_review_context_changed"
+
+      refute Enum.any?(
+               Cases.list_case_events!(actor: context.admin),
+               &(&1.event_type == "case_resolved")
+             )
+
+      assert :ok = Opsonde.Cases.Turn.RecoveryReviewDelivery.run(turn.id)
+      assert Agent.get(peer, &length(&1.requests)) == 1
+
+      assert Cases.get_case!(incident.id, actor: context.operator).pending_intent ==
+               current.pending_intent
+
+      assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+               before_units + invocation.reserved_units
+    end
+  end
+
   @tag normalized_capacity: true
   test "maximum raw effect survives redaction and failed Evidence storage without losing its known result",
        context do
@@ -8150,6 +8332,57 @@ defmodule Opsonde.OperationDeliveryTest do
       Repo.query!("ALTER TABLE #{table}_projection_source RENAME TO #{table}")
       Repo.query!("DROP FUNCTION pg_temp.projection_read_fault(#{type})")
     end
+  end
+
+  defp native_reviewer!(context) do
+    peer = start_supervised!({Agent, fn -> %{mode: {:decision, %{}}, requests: []} end})
+
+    server =
+      start_supervised!(
+        {Bandit, plug: {Opsonde.AIHTTPFixture, peer}, port: 0, startup_log: false}
+      )
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+    Providers.disable_provider!(context.reviewer_provider, context.reviewer_provider.revision,
+      actor: context.admin
+    )
+
+    provider =
+      Providers.create_provider!(
+        "native-reviewer",
+        :ai,
+        "req-llm",
+        %{
+          "provider" => "openai",
+          "model" => "test-model",
+          "endpoint" => "http://127.0.0.1:#{port}/v1"
+        },
+        %{"api_key" => "native-reviewer-fixture-secret"},
+        actor: context.admin
+      )
+      |> then(&Providers.check_provider!(&1.id, 1, %{}, actor: context.admin))
+      |> then(&Providers.enable_provider!(&1, 1, actor: context.admin))
+
+    Opsonde.TestAIUsage.configure!(provider.id, :reviewer, 10, context.admin)
+    current = Cases.current_authority_setting!(actor: context.admin)
+
+    Cases.configure_authority_setting!(
+      current.setting_revision,
+      current.authority_mode,
+      current.signal_automation_enabled,
+      current.max_elapsed_seconds,
+      current.max_resolver_turns,
+      current.max_target_requests,
+      current.max_effects,
+      current.max_related_targets,
+      100_000,
+      current.max_no_progress_turns,
+      "Allow bounded native Reviewer cancellation",
+      actor: context.admin
+    )
+
+    {%{context | reviewer_provider: provider}, peer}
   end
 
   defp authorized_proposal!(suffix, context, opts \\ []) do
