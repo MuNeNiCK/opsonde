@@ -652,16 +652,30 @@ defmodule Opsonde.FileOperationTest do
     approve!(proposal)
     operation = Cases.accept_operation!(proposal.id, authorize?: false)
 
+    requester = self()
+
     Agent.update(context.agent, fn state ->
       Map.put(state, :after_write, fn ->
         incident = Cases.get_case!(proposal.case_id, actor: context.operator)
         Cases.request_case_cancellation!(incident.id, incident.revision, actor: context.operator)
+
+        # Keep the response outstanding while the bounded context poll sees cancellation.
+        send(requester, {:effect_sent, self()})
+
+        receive do
+          :release_response -> :ok
+        after
+          5_000 -> raise "test peer response was not released"
+        end
       end)
     end)
 
     assert :ok = Delivery.run(operation.id)
+    assert_received {:effect_sent, peer}
+    send(peer, :release_response)
     stored = Cases.get_operation!(operation.id, actor: context.operator)
     assert stored.status == :unknown
+    assert stored.result_details["reason"] =~ "cancellation"
     refute Map.has_key?(stored.result_details, "file")
     page = Targets.page_artifacts!(context.target.id, actor: context.operator)
     receipt = Enum.find(page.results, &(&1.name == "case-result.bin"))

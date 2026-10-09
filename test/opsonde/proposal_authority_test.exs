@@ -2396,13 +2396,21 @@ defmodule Opsonde.ProposalAuthorityTest do
 
     paused = Cases.get_resolution_run!(run.id, authorize?: false)
     assert paused.status == :needs_attention
-    assert paused.ai_usage_units == run.max_ai_usage_units - 1
+    assert paused.ai_usage_units == run.ai_usage_units + 4
 
     [invocation] = Cases.list_ai_invocations!(authorize?: false)
     assert invocation.status == :failed
     assert invocation.category == "budget_exhausted"
     assert {invocation.input_tokens, invocation.output_tokens} == {2, 2}
     assert Cases.list_approvals!(actor: context.admin) == []
+
+    assert :ok = ReviewDelivery.run(reviewing.id, ai_invocation: %{test_pid: self()})
+    refute_receive {:review, _, _}
+
+    assert Cases.get_resolution_run!(run.id, authorize?: false).ai_usage_units ==
+             paused.ai_usage_units
+
+    assert Cases.list_ai_invocations!(authorize?: false) == [invocation]
   end
 
   test "stale Target context invalidates Ask approval and cannot be overridden", context do
